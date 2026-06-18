@@ -113,6 +113,12 @@ surface_count() {
     python3 -c 'import json,sys; print(len(json.load(sys.stdin)))'
 }
 
+surface_exists() {
+  local id="$1"
+  "$BIN" --socket "$FORKTTY_SOCKET_PATH" surfaces --json |
+    python3 -c 'import json,sys; id=sys.argv[1]; sys.exit(0 if any(item.get("id") == id for item in json.load(sys.stdin)) else 1)' "$id"
+}
+
 focused_surface_id() {
   "$BIN" --socket "$FORKTTY_SOCKET_PATH" top --json |
     python3 -c 'import json,sys; data=json.load(sys.stdin); workspaces=data.get("workspaces", []); active=next((workspace for workspace in workspaces if workspace.get("active")), workspaces[0] if workspaces else {}); print(active.get("focused_surface_id", ""))'
@@ -238,6 +244,61 @@ send_text_wait "$surface_id" $'echo forktty-smoke-after-restart\r' "restarted te
 wait_surface_contains "$surface_id" "forktty-smoke-after-restart" "restarted terminal readback"
 wait_capture_tail_contains "$surface_id" "$scrollback_restore_marker" "restored scrollback marker"
 
+tab_count="$(surface_count)"
+tab_surface_id="$("$BIN" --socket "$FORKTTY_SOCKET_PATH" new-tab --surface-id "$surface_id" --json |
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+for _ in {1..40}; do
+  if surface_exists "$tab_surface_id" && [[ "$(focused_surface_id)" == "$tab_surface_id" ]]; then
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$(focused_surface_id)" != "$tab_surface_id" ]]; then
+  echo "gtk-ghostty smoke: new-tab did not create and focus a new tab" >&2
+  exit 1
+fi
+send_text_wait "$tab_surface_id" $'echo forktty-smoke-tab-ok\r' "tab terminal"
+wait_surface_contains "$tab_surface_id" "forktty-smoke-tab-ok" "tab terminal readback"
+
+"$BIN" --socket "$FORKTTY_SOCKET_PATH" select-tab "$surface_id" >/dev/null
+for _ in {1..40}; do
+  if [[ "$(focused_surface_id)" == "$surface_id" ]]; then
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$(focused_surface_id)" != "$surface_id" ]]; then
+  echo "gtk-ghostty smoke: select-tab did not restore the original tab" >&2
+  exit 1
+fi
+
+"$BIN" --socket "$FORKTTY_SOCKET_PATH" select-tab "$tab_surface_id" >/dev/null
+for _ in {1..40}; do
+  if [[ "$(focused_surface_id)" == "$tab_surface_id" ]]; then
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$(focused_surface_id)" != "$tab_surface_id" ]]; then
+  echo "gtk-ghostty smoke: select-tab did not focus the new tab" >&2
+  exit 1
+fi
+
+"$BIN" --socket "$FORKTTY_SOCKET_PATH" close-surface "$tab_surface_id" >/dev/null
+tab_closed=0
+for _ in {1..40}; do
+  count="$(surface_count)"
+  if ! surface_exists "$tab_surface_id" && (( count == tab_count )); then
+    tab_closed=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$tab_closed" != "1" ]]; then
+  echo "gtk-ghostty smoke: close-surface did not remove the tab surface" >&2
+  exit 1
+fi
+
 base_cols="$(snapshot_field cols)"
 base_rows="$(snapshot_field rows)"
 gapplication action dev.forktty.forktty zoom-in >/dev/null
@@ -329,6 +390,22 @@ for _ in {1..40}; do
 done
 if [[ "$previous_focus_ok" != "1" ]]; then
   echo "gtk-ghostty smoke: focus-previous-pane action did not restore focus" >&2
+  exit 1
+fi
+
+close_count="$(surface_count)"
+"$BIN" --socket "$FORKTTY_SOCKET_PATH" close-surface "$action_surface_id" >/dev/null
+split_closed=0
+for _ in {1..40}; do
+  count="$(surface_count)"
+  if ! surface_exists "$action_surface_id" && (( count < close_count )); then
+    split_closed=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$split_closed" != "1" ]]; then
+  echo "gtk-ghostty smoke: close-surface did not remove the split surface" >&2
   exit 1
 fi
 

@@ -138,6 +138,8 @@ const VTE_CHECK_PATHS: &[&str] = &[
 const GHOSTTY_VENDOR_PATH: &str = "vendor/ghostty";
 const GHOSTTY_VENDOR_URL: &str = "https://github.com/Lucenx9/ghostty.git";
 const GHOSTTY_VENDOR_REV: &str = "2d6400f56af4af03cc59ac5b87754de717cf6bdc";
+const GHOSTTY_GTK_LIB_PROBE_SCRIPT: &str = "scripts/ghostty-gtk-lib-probe.sh";
+const PACKAGING_SCRIPTS: &[&str] = &["scripts/build-deb.sh", "scripts/build-appimage.sh"];
 
 fn main() -> ExitCode {
     match run() {
@@ -180,6 +182,7 @@ fn check_all() -> Result<()> {
     check_no_legacy_node_cli()?;
     check_no_vte_references()?;
     check_full_ghostty_vendor()?;
+    check_packaging_ghostty_gtk_lib_guard()?;
     check_hook_templates()
 }
 
@@ -322,6 +325,39 @@ fn validate_ghostty_gitmodules(raw: &str) -> Result<()> {
             return Err(format!(".gitmodules is missing `{line}`"));
         }
     }
+    Ok(())
+}
+
+fn check_packaging_ghostty_gtk_lib_guard() -> Result<()> {
+    let root = repo_root();
+    let probe_path = root.join(GHOSTTY_GTK_LIB_PROBE_SCRIPT);
+    let probe = fs::read_to_string(&probe_path)
+        .map_err(|err| format!("failed to read {}: {err}", probe_path.display()))?;
+    for needle in ["--ensure", "--print-path"] {
+        if !probe.contains(needle) {
+            return Err(format!(
+                "{} must support `{needle}` so packaging can reuse the Ghostty GTK probe",
+                GHOSTTY_GTK_LIB_PROBE_SCRIPT
+            ));
+        }
+    }
+
+    for script in PACKAGING_SCRIPTS {
+        let path = root.join(script);
+        let raw = fs::read_to_string(&path)
+            .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+        for needle in [
+            GHOSTTY_GTK_LIB_PROBE_SCRIPT,
+            "--ensure",
+            "--print-path",
+            "ghostty-gtk-embed.so",
+        ] {
+            if !raw.contains(needle) {
+                return Err(format!("{script} is missing `{needle}`"));
+            }
+        }
+    }
+    println!("Ghostty GTK packaging guard: ok");
     Ok(())
 }
 

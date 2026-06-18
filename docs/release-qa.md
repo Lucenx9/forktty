@@ -9,11 +9,12 @@ package regressions that unit tests cannot see.
 cargo fmt --all --check
 git submodule update --init vendor/ghostty
 cargo run -p xtask -- check
-cargo test --workspace --no-default-features --features gtk-ghostty
-cargo clippy --workspace --no-default-features --features gtk-ghostty -- -D warnings
+scripts/ghostty-gtk-lib-probe.sh --ensure --print-path
+cargo test --workspace --all-targets --no-default-features --features gtk-ghostty
+cargo clippy --workspace --all-targets --no-default-features --features gtk-ghostty -- -D warnings
 cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty
 scripts/gtk-ghostty-smoke.sh
-cargo test -p forktty-ui-gtk --features browser
+cargo test -p forktty-ui-gtk --all-targets --no-default-features --features browser
 desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
 bash scripts/build-deb.sh
 bash scripts/build-appimage.sh
@@ -48,10 +49,12 @@ experimental in this alpha; they have a separate opt-in smoke section.
 `scripts/gtk-ghostty-smoke.sh` runs a short GTK/Ghostty launch in a fresh
 DBus session against isolated config/data/state/socket paths under
 `$XDG_RUNTIME_DIR`, and verifies socket ping, surface listing, terminal
-input/readback, runtime zoom reflow/reset, GTK action split/focus behavior,
-socket split readback, and the socket notification create/list/clear flow. The temporary config disables desktop
-notifications and telemetry so the smoke does not depend on host notification
-services. It uses the current display or `xvfb-run` when available.
+input/readback, tab create/select/close, runtime zoom reflow/reset, GTK action
+split/focus behavior, socket split readback, live pane close, restart with
+scrollback restore, and the socket notification create/list/clear flow. The
+temporary config disables desktop notifications and telemetry so the smoke does
+not depend on host notification services. It uses the current display or
+`xvfb-run` when available.
 
 ## Manual Runtime Smoke
 
@@ -179,7 +182,7 @@ rebuilding.
 This is not part of release artifact QA. Run it only when intentionally
 checking that the opt-in browser feature still builds and starts.
 
-- Launch with `cargo run -p forktty-ui-gtk --features browser`.
+- Launch with `cargo run -p forktty-ui-gtk --no-default-features --features browser`.
 - `forktty browser profile list` — returns the built-in Default profile.
 - `forktty browser profile create QA` — creates a named profile; `forktty browser profile delete <id>` removes it when no open pane uses it.
 - `forktty browser open --profile Default https://example.com` — opens a browser pane with an address bar and WebKit content.
@@ -260,6 +263,8 @@ checking that the opt-in browser feature still builds and starts.
 ## Debian Package Smoke
 
 - Install the generated `.deb` with `sudo dpkg -i target/packaging/deb/forktty_*.deb`.
+- Inspect the package contents and confirm `usr/lib/ghostty-gtk-embed.so` is
+  present.
 - Launch `forktty` from a terminal.
 - Launch ForkTTY from the desktop/app launcher.
 - Confirm the app icon and desktop name render correctly.
@@ -310,6 +315,8 @@ checking that the opt-in browser feature still builds and starts.
 
 - Build or download the generated AppImage from `target/packaging/appimage/`.
 - Mark it executable and launch it directly.
+- Extract or inspect the AppImage and confirm `usr/lib/ghostty-gtk-embed.so` is
+  present.
 - Confirm `forktty --version`, `forktty --help`, `forktty doctor`, and `forktty hooks setup --dry-run codex` work from the AppImage.
 - Launch the GTK app and walk the basic terminal, split-pane, desktop icon, and notification checks above.
 - If the GTK UI renders incorrectly, retry with `GSK_RENDERER=ngl` and
@@ -323,6 +330,7 @@ checking that the opt-in browser feature still builds and starts.
 
 - Ubuntu 24.04 or newer, GNOME Wayland.
 - Ubuntu 24.04 or newer, X11 session if available.
-- Debian testing/stable where Ghostty 0.76+ is available.
+- Debian testing/stable with libadwaita 1.4+ and the packaged embedded Ghostty
+  library loading.
 - One Arch/CachyOS system for rolling-release dependency drift.
 - One Fedora-family system; note that the dependency package names differ from Debian (e.g. `git zig` instead of `git zig`).

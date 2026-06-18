@@ -14,10 +14,14 @@ are all driven from `Cargo.toml`'s `[workspace.package].version`.
 2. Run the full QA checklist locally on at least one supported distro
    (see [`docs/QA.md`](docs/QA.md)):
    - `cargo fmt --all --check`
+   - `git submodule update --init vendor/ghostty`
+   - `cargo run -p xtask -- check`
+   - `scripts/ghostty-gtk-lib-probe.sh --ensure --print-path`
    - `cargo clippy --workspace --all-targets --no-default-features --features gtk-ghostty -- -D warnings`
    - `cargo test --workspace --all-targets --no-default-features --features gtk-ghostty`
    - `cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty`
-   - `cargo test -p forktty-ui-gtk --all-targets --features browser`
+   - `scripts/gtk-ghostty-smoke.sh`
+   - `cargo test -p forktty-ui-gtk --all-targets --no-default-features --features browser`
    - `desktop-file-validate packaging/linux/dev.forktty.forktty.desktop`
    - `bash scripts/build-deb.sh`
    - `bash scripts/build-appimage.sh`

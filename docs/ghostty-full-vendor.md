@@ -13,9 +13,8 @@ ForkTTY can use Ghostty's renderer/widget integration instead of expanding
 GTK/Pango/Cairo parity forever.
 
 The Linux GTK runtime still links through `vendor/libghostty-rs` for PTY/VT
-support, and the classic ForkTTY GTK/Pango/Cairo renderer remains as a runtime
-fallback. The default pane renderer is now the vendored Ghostty GTK embedding
-library built from this source pin. The fork adds an `emit-gtk-lib` build
+support, while terminal pane rendering now requires the vendored Ghostty GTK
+embedding library built from this source pin. The fork adds an `emit-gtk-lib` build
 artifact and `ghostty_gtk.h`. The GTK embedding library keeps Ghostty's internal
 application pointer separate from the host `GApplication` default so loading
 the library does not claim ForkTTY's process-global GTK application. The embedded
@@ -38,11 +37,10 @@ for the current upstream embedding status and the next Ghostty-side API cut.
 ```bash
 git submodule update --init vendor/ghostty
 cargo run -p xtask -- check
-scripts/ghostty-gtk-build-probe.sh
-scripts/ghostty-gtk-lib-probe.sh
+scripts/ghostty-gtk-lib-probe.sh --ensure --print-path
 ```
 
-After building the shared library, the Ghostty-rendered default pane path can
+After verifying the shared library, the Ghostty-rendered default pane path can
 be run locally with:
 
 ```bash
@@ -103,13 +101,15 @@ through `ghostty_gtk_surface_read_text` into the session on child exit,
 programmatic close/restart, and a throttled poll.
 
 For installed builds, `FORKTTY_GHOSTTY_GTK_LIB` is only needed during local
-development. When `scripts/ghostty-gtk-lib-probe.sh` has produced
-`vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so`, `scripts/build-deb.sh` and
-`scripts/build-appimage.sh` install it into `usr/lib`, and the binary loads it
-through its RUNPATH (`$ORIGIN/../lib`). The install step is required for release
-packages: `scripts/build-deb.sh`, `scripts/build-appimage.sh`, and release CI
-fail if the embedding library is absent. `forktty doctor` warns about a missing
-library because terminal panes cannot open without it.
+development. `scripts/build-deb.sh` and `scripts/build-appimage.sh` call
+`scripts/ghostty-gtk-lib-probe.sh --ensure --print-path` before packaging, which
+reuses or builds `ghostty-gtk-embed.so` and verifies the required ABI symbols.
+The packagers install the verified library into `usr/lib`, and the binary loads
+it through its RUNPATH (`$ORIGIN/../lib`). The install step is required for
+release packages: `scripts/build-deb.sh`, `scripts/build-appimage.sh`, and
+release CI fail if the embedding library cannot be built, located, or verified.
+`forktty doctor` warns about a missing library because terminal panes cannot
+open without it.
 
 `xtask check` fails if the submodule is missing, points at the wrong fork,
 or is checked out at a different revision.

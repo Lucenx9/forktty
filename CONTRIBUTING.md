@@ -4,8 +4,9 @@ Thanks for your interest in ForkTTY. This document covers how to set up a
 development environment, what to run before opening a PR, and how patches
 are reviewed.
 
-ForkTTY is Linux-only and currently in alpha (`0.2.0-alpha.x`). The GTK4 +
-ForkTTY hook is the primary implementation.
+ForkTTY is Linux-only and currently in alpha (`0.2.0-alpha.x`). The
+GTK4/libadwaita shell with embedded Ghostty terminal panes is the primary
+implementation.
 
 ## Quick links
 
@@ -22,9 +23,9 @@ You will need:
 
 - Linux
 - Rust 1.96+ (install via [rustup](https://rustup.rs/))
-- GTK4, libadwaita, git, Zig, and libghostty-vt GTK4 development libraries
-- `git` and Zig for the vendored `libghostty-vt-sys` build path used during
-  the libghostty-vt terminal migration
+- GTK4 and libadwaita development files
+- `git`, Zig, and the full Ghostty source submodule for the vendored Ghostty
+  terminal libraries
 - WebKitGTK 6 development files when working on the optional browser-pane feature
 
 Distro-specific install commands are in the [README](README.md#build-from-source).
@@ -34,7 +35,9 @@ Clone and build:
 ```bash
 git clone https://github.com/Lucenx9/forktty.git
 cd forktty
-cargo run -p forktty-ui-gtk --features gtk-ghostty
+git submodule update --init vendor/ghostty
+scripts/ghostty-gtk-lib-probe.sh --ensure --print-path
+cargo run -p forktty-ui-gtk
 ```
 
 ## Workflow
@@ -60,10 +63,12 @@ Run these locally before pushing. CI runs the same set in
 ```bash
 cargo fmt --all --check
 cargo run -p xtask -- check
-cargo clippy --workspace --features gtk-ghostty -- -D warnings
-cargo test --workspace
-cargo build -p forktty-ui-gtk --features gtk-ghostty
-desktop-file-validate packaging/linux/forktty.desktop
+cargo test --workspace --all-targets --no-default-features --features gtk-ghostty
+cargo clippy --workspace --all-targets --no-default-features --features gtk-ghostty -- -D warnings
+cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty
+cargo test -p forktty-ui-gtk --all-targets --no-default-features --features browser
+cargo clippy -p forktty-ui-gtk --all-targets --no-default-features --features browser -- -D warnings
+desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
 bash scripts/build-deb.sh
 bash scripts/build-appimage.sh
 ```
@@ -71,8 +76,8 @@ bash scripts/build-appimage.sh
 If your change touches browser-pane code, also run:
 
 ```bash
-cargo build -p forktty-ui-gtk --features browser
-cargo test -p forktty-ui-gtk --features browser browser_pane
+cargo build -p forktty-ui-gtk --no-default-features --features browser
+cargo test -p forktty-ui-gtk --all-targets --no-default-features --features browser
 ```
 
 If your change touches dependencies, also run:
@@ -92,7 +97,9 @@ cargo deny check    # optional, requires cargo-deny
   `git submodule update --init vendor/ghostty` once, then
   `cargo run -p xtask -- check` after editing hook templates, release
   automation, or the Ghostty source pin.
-- GTK runtime smoke is manual; see [`docs/release-qa.md`](docs/release-qa.md).
+- GTK runtime smoke has an automated embedded-pane path in
+  `scripts/gtk-ghostty-smoke.sh`; manual desktop and packaging coverage is in
+  [`docs/release-qa.md`](docs/release-qa.md).
 
 Prefer tests that pin observable behavior (socket responses, config
 quarantine, validation rejections) over tests that mock internals.
@@ -100,7 +107,7 @@ quarantine, validation rejections) over tests that mock internals.
 ## Code style
 
 - Run `cargo fmt`; do not hand-format.
-- Keep `clippy --workspace --features gtk-ghostty -- -D warnings` clean.
+- Keep `cargo clippy --workspace --all-targets --no-default-features --features gtk-ghostty -- -D warnings` clean.
 - Match the surrounding style in the file you are editing. Do not
   introduce new abstractions to "make room" for hypothetical future
   changes.

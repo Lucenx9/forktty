@@ -140,21 +140,11 @@ copy_vendored_ghostty_runtime_lib() {
 
   # Embedded Ghostty widget library. Required for release AppImages because
   # terminal panes require the embedded renderer at runtime.
-  local candidate ghostty_gtk_lib=""
-  for candidate in \
-    "$ROOT_DIR/vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so" \
-    "$ROOT_DIR/vendor/ghostty/zig-out/lib/libghostty-gtk-embed.so"; do
-    if [[ -f "$candidate" ]]; then
-      ghostty_gtk_lib="$candidate"
-      break
-    fi
-  done
-  if [[ -z "$ghostty_gtk_lib" ]]; then
-    echo "Could not find required embedded Ghostty library. Run scripts/ghostty-gtk-lib-probe.sh before packaging." >&2
-    exit 1
-  fi
+  local ghostty_gtk_lib
+  ghostty_gtk_lib="$("$ROOT_DIR/scripts/ghostty-gtk-lib-probe.sh" --ensure --print-path)"
   rm -f "$lib_dir/ghostty-gtk-embed.so"
   install -Dm755 "$ghostty_gtk_lib" "$lib_dir/ghostty-gtk-embed.so"
+  test -f "$lib_dir/ghostty-gtk-embed.so"
 }
 
 copy_vendored_ghostty_shell_integration() {

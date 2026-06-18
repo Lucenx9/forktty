@@ -1,7 +1,12 @@
 # Ghostty Renderer Embedding Spike
 
 Inspected against `vendor/ghostty` at
-`eba2d75a85e4b08d6c9c6b03de1b9f9c0ceaa1a9`.
+`2d6400f56af4af03cc59ac5b87754de717cf6bdc`.
+
+> **Status:** Historical spike notes plus the landed embedding ABI record.
+> Current ForkTTY terminal panes are Ghostty-only: the embedded GTK widget is the
+> runtime path, and missing `ghostty-gtk-embed.so` is a spawn/package error, not
+> a classic renderer fallback.
 
 ## Result
 
@@ -36,9 +41,9 @@ ForkTTY bridge that packs that Ghostty GTK surface inside ForkTTY panes.
 
 ## Decision
 
-Stop expanding ForkTTY renderer parity as the primary strategy. Keep the
-current renderer only as the working fallback while we make Ghostty's Linux GTK
-surface embeddable.
+Stop expanding ForkTTY renderer parity as the primary strategy. The classic
+GTK/Pango/Cairo renderer stayed useful during the spike, but it is no longer a
+runtime fallback in current ForkTTY builds.
 
 The current fork starts the Ghostty-side API spike with:
 
@@ -243,7 +248,7 @@ Or run the same command on GitHub's Ubuntu runner through the manual
 The GTK widget probe is intentionally separate from the normal app launch:
 
 ```bash
-scripts/ghostty-gtk-lib-probe.sh
+scripts/ghostty-gtk-lib-probe.sh --ensure --print-path
 FORKTTY_GHOSTTY_GTK_LIB=vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so \
   cargo run -p forktty-ui-gtk -- ghostty-gtk-probe
 ```

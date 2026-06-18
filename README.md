@@ -103,9 +103,11 @@ Requirements:
 
 - Linux
 - [Rust 1.96+](https://rustup.rs/)
-- GTK4, libadwaita, git and Zig for the vendored libghostty-vt build
-- `git` and Zig for the vendored `libghostty-vt-sys` build path used during
-  the libghostty-vt terminal migration
+- GTK4 and libadwaita development files
+- `git`, Zig, and the full Ghostty source submodule for the vendored Ghostty
+  terminal libraries
+- No system Ghostty package is required; source and packaged builds use the
+  pinned vendored Ghostty libraries
 
 Developer repository checks also expect the full Ghostty source submodule:
 
@@ -128,16 +130,20 @@ sudo dnf install gcc gcc-c++ openssl-devel gtk4-devel libadwaita-devel git zig d
 Arch / CachyOS:
 
 ```bash
-sudo pacman -S base-devel openssl gtk4 libadwaita desktop-file-utils
+sudo pacman -S base-devel openssl gtk4 libadwaita git zig desktop-file-utils
 ```
 
-ForkTTY requires libadwaita 1.4+ and Ghostty 0.76 or newer, matching Ubuntu 24.04 LTS and newer distro packages. For compositor-anchored quake/dropdown placement on Wayland, install `gtk4-layer-shell` as an optional runtime dependency.
+ForkTTY requires libadwaita 1.4+, matching Ubuntu 24.04 LTS and newer distro
+packages. For compositor-anchored quake/dropdown placement on Wayland, install
+`gtk4-layer-shell` as an optional runtime dependency.
 
 Clone and run:
 
 ```bash
 git clone https://github.com/Lucenx9/forktty.git
 cd forktty
+git submodule update --init vendor/ghostty
+scripts/ghostty-gtk-lib-probe.sh --ensure --print-path
 cargo run -p forktty-ui-gtk
 ```
 
@@ -155,7 +161,7 @@ For the source-only browser experiment, install WebKitGTK 6 development files
 and opt in:
 
 ```bash
-cargo run -p forktty-ui-gtk --features browser
+cargo run -p forktty-ui-gtk --no-default-features --features browser
 ```
 
 Build the Debian package locally:
@@ -164,6 +170,13 @@ Build the Debian package locally:
 bash scripts/build-deb.sh
 sudo dpkg -i target/packaging/deb/forktty_*.deb
 ```
+
+`scripts/build-deb.sh` and `scripts/build-appimage.sh` call
+`scripts/ghostty-gtk-lib-probe.sh --ensure --print-path` before packaging and
+fail if `ghostty-gtk-embed.so` cannot be built, located, or verified. The
+verified library is installed into `usr/lib` beside the `forktty` binary so
+installed terminal panes can load it through the binary RUNPATH without
+`FORKTTY_GHOSTTY_GTK_LIB`.
 
 Build the AppImage locally (requires `appimagetool` on
 `PATH`, or `APPIMAGETOOL=/path/to/appimagetool`):
@@ -445,7 +458,7 @@ anonymous_ping = true
 
 `notification_command` is split with `shell_words`; ForkTTY does not use `sh -c`. The first token must be an absolute executable path. Notification title/body are passed through `FORKTTY_NOTIFICATION_TITLE` and `FORKTTY_NOTIFICATION_BODY`; OSC 99 `f`/`t` metadata is exposed as `FORKTTY_NOTIFICATION_TERMINAL_APP` and `FORKTTY_NOTIFICATION_TERMINAL_TYPES_JSON`. `blocked_terminal_apps` and `blocked_terminal_types` suppress terminal-originated OSC 99 notifications whose exact `f` application or `t` type matches one of the listed strings.
 
-`scrollback_lines` controls Ghostty scrollback per pane; set it to `0` to disable scrollback. `persistent_scrollback_lines` is off by default; when set above `0`, ForkTTY stores a bounded plain-text tail per surface in `session-v2.json` and restores it before the fresh shell starts. Terminal font, colors, `scrollback-limit`, cursor/faint opacity, mouse scroll multiplier, cell size adjustments, and inactive split dimming come from Ghostty's config (`~/.config/ghostty/config` and `config.ghostty`) when present, including `config-file`, `theme`, named colors, 16-color palette entries, `cursor-opacity`, `faint-opacity`, `mouse-scroll-multiplier`, `adjust-cell-width`, `adjust-cell-height`, `unfocused-split-opacity`, and `unfocused-split-fill`; legacy ForkTTY font/theme keys are kept only for config compatibility. `terminal_renderer` is kept for config compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK app uses Ghostty. Terminal panes require the embedded Ghostty GTK widget; if `ghostty-gtk-embed.so` is missing or fails to load, panes report a spawn failure rather than opening with the old renderer.
+`scrollback_lines` controls Ghostty scrollback per pane; set it to `0` to disable scrollback. `persistent_scrollback_lines` is off by default; when set above `0`, ForkTTY stores a bounded plain-text tail per surface in `session-v2.json` and restores it before the fresh shell starts. Terminal font, colors, `scrollback-limit`, cursor/faint opacity, mouse scroll multiplier, cell size adjustments, and inactive split dimming come from Ghostty's config (`~/.config/ghostty/config.ghostty` or the legacy `~/.config/ghostty/config`) when present, including `config-file`, `theme`, named colors, 16-color palette entries, `cursor-opacity`, `faint-opacity`, `mouse-scroll-multiplier`, `adjust-cell-width`, `adjust-cell-height`, `unfocused-split-opacity`, and `unfocused-split-fill`; no system Ghostty install is required. Legacy ForkTTY font/theme keys are kept only for config compatibility. `terminal_renderer` is kept for config compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK app uses Ghostty. Terminal panes require the embedded Ghostty GTK widget; if `ghostty-gtk-embed.so` is missing or fails to load, panes report a spawn failure rather than opening with the old renderer.
 
 `updates.auto_check = true` checks GitHub Releases no more than once every 24 hours. The stamp is written on both success and failure so offline machines are not probed on every launch.
 
@@ -477,7 +490,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 ## Known Limitations
 
 - Linux only. There are no supported macOS or Windows builds.
-- libadwaita 1.4+ are required by the native terminal integration.
+- libadwaita 1.4+ is required by the native terminal integration.
 - The AppImage bundles GTK4/libadwaita/Ghostty but still relies on the host's glibc, GSettings/GIO data, fontconfig, OpenGL/Vulkan/Mesa driver stack, and desktop session services. Test it on the target distro/desktop environment; prefer the `.deb` on Debian/Ubuntu when package-manager integration matters.
 - PTYs are not persisted across restart; restored sessions spawn fresh shells. Scrollback persistence is opt-in, plain-text only, and bounded.
 - OSC 9 and basic OSC 99 terminal notifications are parsed from the Ghostty-owned PTY stream and rate-limited per surface; OSC 99 title/body base64 payloads and same-id title/body chunks are decoded with multipart title/body kept separate, same-id update/close controls affect ForkTTY's notification model, and in-app Open/Dismiss/Clear All plus basic same-id buttons can send OSC 99 reports. Icon names, application-name icon fallback, application/type filtering metadata, occasion filtering, urgency, expiry, and sound metadata feed notification handling, positive `w` expiry values dismiss in-app notifications, and bounded `p=icon` data can be cached by `g`; broader chunk lifecycle behavior remains partial.
@@ -488,6 +501,12 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 ## Troubleshooting
 
 - `forktty doctor` is the first stop: it explains config, session, socket, and hook config problems before they trigger a launch failure.
+- If terminal panes report `ghostty-gtk-embed.so` as missing in a source tree,
+  run `git submodule update --init vendor/ghostty` and
+  `scripts/ghostty-gtk-lib-probe.sh --ensure --print-path`. For packaged
+  builds, rebuild or reinstall with `bash scripts/build-deb.sh` or
+  `bash scripts/build-appimage.sh`; the packagers install the verified library
+  into `usr/lib`.
 - If the GTK app refuses to start, run it from a terminal to see GLib/GTK error output, then re-run `forktty doctor`.
 - The local socket lives at `$XDG_RUNTIME_DIR/forktty.sock` (or `/tmp/forktty-<uid>/forktty.sock`). Stale or foreign sockets are refused on startup; remove them by hand only after confirming no other ForkTTY instance owns them.
 - A corrupt `~/.config/forktty/config.toml` or `~/.local/share/forktty/session-v2.json` is renamed aside as `*.bad-<timestamp>` so the app can start with defaults; the rename reason is logged to stderr.
@@ -508,10 +527,12 @@ Useful commands:
 cargo fmt --all --check
 git submodule update --init vendor/ghostty
 cargo run -p xtask -- check
+scripts/ghostty-gtk-lib-probe.sh --ensure --print-path
 cargo test --workspace --all-targets --no-default-features --features gtk-ghostty
 cargo clippy --workspace --all-targets --no-default-features --features gtk-ghostty -- -D warnings
 cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty
-cargo test -p forktty-ui-gtk --all-targets --features browser
+scripts/gtk-ghostty-smoke.sh
+cargo test -p forktty-ui-gtk --all-targets --no-default-features --features browser
 desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
 bash scripts/build-deb.sh
 bash scripts/build-appimage.sh

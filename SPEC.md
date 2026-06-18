@@ -67,20 +67,22 @@ Splits are represented as recursive `PaneNode::Split { axis, children, sizes }`;
 
 1. A workspace or split creates a surface in `WorkspaceModel`.
 2. `forktty-ui-gtk` sends a `SpawnRequest` through `TerminalBackend`.
-3. The Ghostty adapter creates a Ghostty-backed terminal, applies font and color appearance from Ghostty's config plus ForkTTY scrollback settings, and spawns the configured shell. Runtime zoom shortcuts scale the open GTK panes without persisting font settings. When Ghostty shell-integration resources are available, ForkTTY injects the upstream zsh/bash/fish/elvish/nushell startup integration and packages those resources plus Ghostty terminfo in Linux release artifacts.
-4. Child processes inherit:
-   - `TERM=xterm-ghostty` with matching terminfo when available, otherwise `TERM=xterm-256color`
-   - `COLORTERM=truecolor`
-   - `TERM_PROGRAM=ForkTTY`
-   - `TERM_PROGRAM_VERSION`
-   - `FORKTTY_WORKSPACE_ID`
-   - `FORKTTY_SURFACE_ID`
-   - `FORKTTY_SOCKET_PATH`
-   - `GHOSTTY_RESOURCES_DIR` and shell-specific `GHOSTTY_*` startup variables when Ghostty shell integration is active
-5. Socket methods and GTK actions can send text, split, focus, close, or resize surfaces.
-6. Closing a pane/workspace closes the corresponding Ghostty surface.
+3. The GTK controller loads `ghostty-gtk-embed.so`, creates an embedded
+   Ghostty GTK surface with the ForkTTY surface cwd, and packs that widget into
+   ForkTTY pane chrome. Ghostty owns the child PTY and terminal widget; ForkTTY
+   owns the workspace model, pane tree, socket API, and surrounding GTK shell.
+4. If the embedding library cannot load or the Ghostty surface cannot be
+   created, ForkTTY records a terminal spawn failure and does not open a
+   classic-renderer fallback pane.
+5. Socket methods and GTK actions send text, read visible/full/tail text,
+   perform copy/paste/select-all/find, restart, split, focus, close, or resize
+   surfaces through ForkTTY's model plus the Ghostty GTK embedding ABI.
+6. Ghostty GObject signals and ABI calls mirror title, child-exit status, close
+   requests, child PID, and scrollback snapshots into ForkTTY state.
+7. Closing a pane/workspace closes the corresponding Ghostty surface.
 
-ForkTTY owns the child PTY. Prompt/status detection uses ForkTTY hook integration termprops, bell/child-exit signals, and a bounded visible-tail prompt fallback.
+Prompt/status detection uses ForkTTY hook integration termprops, Ghostty
+bell/child-exit state, and a bounded visible-tail prompt fallback.
 
 ## Session Persistence
 
@@ -136,7 +138,7 @@ auto_check = true
 anonymous_ping = true
 ```
 
-Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Saved settings validate shell path, theme source, worktree layout, scrollback bounds, persistent scrollback bounds (max 1,000 lines), sidebar position, window mode, renderer value, PR lookup toggle, update auto-check toggle, telemetry anonymous-ping toggle, notification filters, and notification command. Legacy `font_family`, `font_size`, `terminal_theme`, and the temporary alpha `embedded_ghostty` switch are accepted on load for compatibility, omitted from new saves, and ignored by the GTK runtime; terminal panes always require the embedded Ghostty GTK renderer. Terminal font and color preferences come from Ghostty's config when present. The GTK runtime loads `~/.config/ghostty/config` and `config.ghostty`, follows `config-file`, resolves `theme` for dark mode, searches Ghostty theme directories, and applies font size/family/style-family/style/synthetic-style entries, font features/variations, foreground/background, cursor, selection, named colors, `cell-foreground`/`cell-background` cursor and selection color references, `cursor-opacity`, DECSCUSR-backed `cursor-style`/`cursor-style-blink` defaults, `selection-clear-on-typing`, `selection-clear-on-copy`, `selection-word-chars`, `clipboard-trim-trailing-spaces`, `clipboard-codepoint-map`, `copy-on-select`, `right-click-action`, `scroll-to-bottom`, SGR faint text plus `faint-opacity`, `mouse-reporting`, `mouse-shift-capture`, `mouse-hide-while-typing`, `mouse-scroll-multiplier`, `adjust-cell-width`, `adjust-cell-height`, `adjust-font-baseline`, underline/strikethrough/overline/cursor metric adjustments, `bold-color`/`bold-is-bright`, short/full hex colors, ANSI palette entries 0-15, `scrollback-limit`, `image-storage-limit`, `unfocused-split-opacity`, and `unfocused-split-fill`. `terminal_renderer` is retained for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
+Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Saved settings validate shell path, theme source, worktree layout, scrollback bounds, persistent scrollback bounds (max 1,000 lines), sidebar position, window mode, renderer value, PR lookup toggle, update auto-check toggle, telemetry anonymous-ping toggle, notification filters, and notification command. Legacy `font_family`, `font_size`, `terminal_theme`, and the temporary alpha `embedded_ghostty` switch are accepted on load for compatibility, omitted from new saves, and ignored by the GTK runtime; terminal panes always require the embedded Ghostty GTK renderer. Terminal font and color preferences come from Ghostty's config when present; no system Ghostty install is required. The GTK runtime loads `~/.config/ghostty/config.ghostty` and the legacy `~/.config/ghostty/config`, follows `config-file`, resolves `theme` for dark mode, searches Ghostty theme directories, and applies font size/family/style-family/style/synthetic-style entries, font features/variations, foreground/background, cursor, selection, named colors, `cell-foreground`/`cell-background` cursor and selection color references, `cursor-opacity`, DECSCUSR-backed `cursor-style`/`cursor-style-blink` defaults, `selection-clear-on-typing`, `selection-clear-on-copy`, `selection-word-chars`, `clipboard-trim-trailing-spaces`, `clipboard-codepoint-map`, `copy-on-select`, `right-click-action`, `scroll-to-bottom`, SGR faint text plus `faint-opacity`, `mouse-reporting`, `mouse-shift-capture`, `mouse-hide-while-typing`, `mouse-scroll-multiplier`, `adjust-cell-width`, `adjust-cell-height`, `adjust-font-baseline`, underline/strikethrough/overline/cursor metric adjustments, `bold-color`/`bold-is-bright`, short/full hex colors, ANSI palette entries 0-15, `scrollback-limit`, `image-storage-limit`, `unfocused-split-opacity`, and `unfocused-split-fill`. `terminal_renderer` is retained for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
 
 Ghostty compatibility scope:
 
@@ -147,7 +149,7 @@ Ghostty compatibility scope:
 | Runtime terminal state | Delegated to `libghostty-vt` for VT parsing, key/paste encoding, OSC 8 links, OSC 9/99 notifications, bracketed paste/focus mode mirrors, XTSHIFTESCAPE mouse-shift capture overrides, selection formatting, word selection, and Kitty image protocol storage/loading media plus PNG decode/placement geometry. Shell startup integration uses Ghostty's upstream shell scripts when resources are available. |
 | ForkTTY-owned UI | Intentionally not read from Ghostty config. Window layout, tabs, splits, sidebar, socket automation, worktrees, agent controls, notifications UI, and session restore use ForkTTY config/session state. |
 | Ghostty GUI/window/platform options | Ignored unless ForkTTY has the same runtime concept. Examples include Ghostty keybinds, quick terminal, window decorations, titlebar/font, shell integration UI, macOS-only options, shaders, background blur/opacity, and Linux cgroup settings. |
-| Renderer parity | Terminal panes use the embedded Ghostty GTK widget and require `ghostty-gtk-embed.so`; if the library cannot load or an embedded surface cannot spawn, ForkTTY records a terminal spawn failure instead of falling back to the classic GTK/Pango/Cairo renderer. The full upstream Ghostty source is pinned at `vendor/ghostty` for the cmux-style renderer/widget integration. Upstream's current public C embedding API is macOS/iOS-only for surfaces, while the Linux `GhosttySurface` GTK widget is internal to Ghostty's GTK app runtime. ForkTTY's Ghostty fork now carries a GTK widget embedding ABI with cwd, socket text-input, and visible/full text-read hooks. Embedded panes also mirror Ghostty surface title, child-exit readiness/status (with the real exit code via `ghostty_gtk_surface_exit_code`, falling back to a neutral "Closed" on older libraries), abnormal-exit notifications, and close-request teardown into the model via GObject signals. Embedded panes reach copy/paste/select-all/find parity through `ghostty_gtk_surface_perform_action`, which performs a Ghostty keybinding action by name on the focused surface; mouse selection works natively inside the surface, and libraries lacking the symbol degrade to a logged no-op. Embedded panes also expose their child PID via `ghostty_gtk_surface_child_pid`, so listening-port discovery and the socket `surfaces` PID field reach parity. The deb and AppImage packagers require `ghostty-gtk-embed.so` in `usr/lib`, so installed builds load it via the binary RUNPATH (`$ORIGIN/../lib`) without `FORKTTY_GHOSTTY_GTK_LIB`; release CI builds the library before packaging and fails if it is absent. When `appearance.persistent_scrollback_lines` is greater than zero, embedded panes snapshot their scrollback tail into the session and restore it through `ghostty_gtk_surface_restore_scrollback`, which feeds Ghostty's VT stream rather than the child PTY. `forktty doctor` warns about a missing embedding library because terminal panes cannot open without it. Rows 4/6/7/8 in `docs/ghostty-embedded-parity.md` remain deferred manual validation items. |
+| Renderer parity | Terminal panes use the embedded Ghostty GTK widget and require `ghostty-gtk-embed.so`; if the library cannot load or an embedded surface cannot spawn, ForkTTY records a terminal spawn failure instead of falling back to the classic GTK/Pango/Cairo renderer. The full upstream Ghostty source is pinned at `vendor/ghostty` for the cmux-style renderer/widget integration. Upstream's current public C embedding API is macOS/iOS-only for surfaces, while the Linux `GhosttySurface` GTK widget is internal to Ghostty's GTK app runtime. ForkTTY's Ghostty fork now carries a GTK widget embedding ABI with cwd, socket text-input, and visible/full text-read hooks. Embedded panes also mirror Ghostty surface title, child-exit readiness/status (with the real exit code via `ghostty_gtk_surface_exit_code`, falling back to a neutral "Closed" on older libraries), abnormal-exit notifications, and close-request teardown into the model via GObject signals. Embedded panes reach copy/paste/select-all/find parity through `ghostty_gtk_surface_perform_action`, which performs a Ghostty keybinding action by name on the focused surface; mouse selection works natively inside the surface, and libraries lacking the symbol degrade to a logged no-op. Embedded panes also expose their child PID via `ghostty_gtk_surface_child_pid`, so listening-port discovery and the socket `surfaces` PID field reach parity. The deb and AppImage packagers invoke `scripts/ghostty-gtk-lib-probe.sh --ensure --print-path` before packaging, require the probe to build or locate a `ghostty-gtk-embed.so` with the required ABI symbols, and install it into `usr/lib`; installed builds load it via the binary RUNPATH (`$ORIGIN/../lib`) without `FORKTTY_GHOSTTY_GTK_LIB`. When `appearance.persistent_scrollback_lines` is greater than zero, embedded panes snapshot their scrollback tail into the session and restore it through `ghostty_gtk_surface_restore_scrollback`, which feeds Ghostty's VT stream rather than the child PTY. `forktty doctor` warns about a missing embedding library because terminal panes cannot open without it. Rows 9/10/12/13/14 in `docs/ghostty-embedded-parity.md` remain deferred manual validation items. |
 
 ## Updates
 
@@ -442,9 +444,9 @@ Current automated coverage:
 - Rust tests for browser command types, profile metadata, and history/bookmark stores.
 - Rust tests in `crates/forktty-ui-gtk/src/socket_cli.rs` for CLI parameter building, hook config merging, notification formatting, and socket-target fallbacks.
 - CI for Rust fmt/test/clippy/build, repository consistency (`cargo run -p xtask -- check`), desktop entry validation, `.deb` packaging, dependency review, and cargo audit.
+- The Ghostty GTK Probe workflow builds `ghostty-gtk-embed.so`, runs `forktty ghostty-gtk-probe`, and runs `scripts/gtk-ghostty-smoke.sh` against live embedded panes.
 
 Backlog validation:
 
-- runtime smoke tests for GTK/Ghostty interactions;
 - manual package QA across supported Linux environments;
-- persistent scrollback tests for the opt-in plain-text tail.
+- expanded pointer/clipboard/search checks for embedded Ghostty panes that still need trusted real-input validation.

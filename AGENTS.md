@@ -30,6 +30,8 @@ Additional PR CI parity / release-sensitive checks:
 cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty
 cargo build -p forktty-ui-gtk --no-default-features --features browser
 desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
+scripts/ghostty-gtk-lib-probe.sh --ensure --print-path
+scripts/gtk-ghostty-smoke.sh
 bash scripts/build-deb.sh
 readelf -d target/release/forktty | grep -E 'RUNPATH|RPATH' | grep -F '$ORIGIN/../lib'
 cargo audit
@@ -47,8 +49,8 @@ cargo test -p forktty-core <module>::tests
 Packaging (validate locally before tagging a release):
 
 ```bash
-bash scripts/build-deb.sh        # → target/packaging/deb/
-bash scripts/build-appimage.sh   # → target/packaging/appimage/ (needs appimagetool on PATH)
+bash scripts/build-deb.sh        # → target/packaging/deb/; builds/verifies ghostty-gtk-embed.so
+bash scripts/build-appimage.sh   # → target/packaging/appimage/; builds/verifies ghostty-gtk-embed.so, needs appimagetool on PATH
 ```
 
 ## Critical constraints (violating these has broken releases before)
@@ -70,9 +72,9 @@ bash scripts/build-appimage.sh   # → target/packaging/appimage/ (needs appimag
 Five workspace crates plus `xtask`, with a strict dependency flow: `forktty-core` (no GUI deps) ← `forktty-terminal` / `forktty-import` ← `forktty-socket` ← `forktty-ui-gtk` (the only binary, named `forktty`).
 
 - **forktty-core** — domain logic and pure types: `config.rs` (TOML config with validation/quarantine), `model.rs` (workspaces/surfaces/panes), `protocol.rs` (socket JSON-RPC request/response types), `worktree.rs` (git2 worktree create/attach/remove/merge), `session.rs` (session-v2.json persistence), `agents.rs` + `notification.rs` (hook events), `command_safety.rs` (argv validation — no `sh -c` anywhere).
-- **forktty-terminal** — PTY + VT layer over libghostty-vt: `ghostty/pty.rs` (fork/exec, CLOEXEC handling), `ghostty/core.rs` (VT state, scrollback, OSC parsing, theme-reset re-seeding). Behind the `ghostty-vt` feature so core/socket tests don't need zig.
+- **forktty-terminal** — terminal boundary types plus the headless test backend and legacy ForkTTY-owned libghostty-vt/PTY stack (`ghostty/pty.rs`, `ghostty/core.rs`). Current GTK terminal panes do not use this as a renderer fallback; they are embedded Ghostty GTK widgets. The `ghostty-vt` feature still gates libghostty-vt so core/socket tests don't need zig.
 - **forktty-socket** — tokio Unix-socket JSON-RPC server logic, shared by the GTK app (server) and CLI (client). Owner-only permissions, size-bounded request lines.
-- **forktty-ui-gtk** — the `forktty` binary is *both* the GTK app and the socket CLI: `main.rs` dispatches CLI subcommands (`socket_cli.rs`, covered by Rust tests) vs. GUI launch. The GTK shell lives in `src/gtk_app/`: `controller.rs` is the central orchestrator (workspaces, pane tree, focus); `terminal_runtime.rs` bridges PTY I/O to the UI (pump loop, resize); `terminal_widget.rs` + `terminal_renderer.rs` draw cells and handle input/selection; `socket_server.rs` connects socket requests to controller actions. Pane chrome (header, dividers) is hidden when a workspace has a single pane — that's by design, not a bug.
+- **forktty-ui-gtk** — the `forktty` binary is *both* the GTK app and the socket CLI: `main.rs` dispatches CLI subcommands (`cli.rs`, covered by Rust tests) vs. GUI launch. The GTK shell lives in `src/gtk_app/`: `controller.rs` is the central orchestrator (workspaces, pane tree, focus); `ghostty_gtk_embed.rs` loads `ghostty-gtk-embed.so` and drives embedded Ghostty surfaces; `pane_chrome.rs` wraps those surfaces in ForkTTY headers/dividers; `socket_server.rs` connects socket requests to controller actions. `terminal_runtime.rs`, `terminal_widget.rs`, and `terminal_renderer.rs` are legacy classic-pane cleanup debt unless the code you are reading proves a path still calls them. Pane chrome (header, dividers) is hidden when a workspace has a single pane — that's by design, not a bug.
 - **forktty-import** — headless browser-profile import (history/bookmarks/cookies from Firefox/Chromium); `keyring` feature gates the Secret Service path.
 - **hooks/** — agent hook templates (Claude Code, Codex, Gemini) installed by `forktty hooks setup`; after editing them run `cargo run -p xtask -- check`.
 

@@ -36,11 +36,17 @@ ForkTTY uses that embedded Ghostty GTK widget as the terminal pane renderer. If
 the library is unavailable or a surface fails to spawn, the pane records a
 terminal spawn failure instead of falling back to the old renderer.
 
+For source-tree runs, build or verify the embedding library before launching:
+
+```bash
+scripts/ghostty-gtk-lib-probe.sh --ensure --print-path
+```
+
 For the experimental source-only browser pane, install WebKitGTK 6 development
 files and opt in:
 
 ```bash
-cargo run -p forktty-ui-gtk --features browser
+cargo run -p forktty-ui-gtk --no-default-features --features browser
 ```
 
 The AppImage target is the primary portable Linux package for alpha
@@ -90,13 +96,17 @@ Arch-style names:
 - `git`, `zig`
 - `desktop-file-utils`
 
-ForkTTY currently requires libadwaita 1.4+ and Ghostty 0.76 or newer, matching Ubuntu 24.04 LTS and newer distro packages. `gtk4-layer-shell` is optional and only improves quake/dropdown placement on supported Wayland compositors.
+ForkTTY currently requires libadwaita 1.4+, matching Ubuntu 24.04 LTS and newer
+distro packages. It does not require a system Ghostty package; terminal widgets
+come from the pinned vendored Ghostty GTK embedding library.
+`gtk4-layer-shell` is optional and only improves quake/dropdown placement on
+supported Wayland compositors.
 
 ## Runtime Notes
 
-- ForkTTY owns the child PTY; ForkTTY drives terminals through Ghostty widgets rather than a separate portable-pty stream.
-- Spawned shells receive `TERM=xterm-ghostty` with matching terminfo when available, otherwise `TERM=xterm-256color`, plus `COLORTERM=truecolor`, `TERM_PROGRAM=ForkTTY`, `TERM_PROGRAM_VERSION`, `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, and `FORKTTY_SOCKET_PATH`.
-- When Ghostty shell-integration resources are available, ForkTTY injects the upstream zsh/bash/fish/elvish/nushell startup integration; Linux release artifacts bundle those shell-integration resources and Ghostty terminfo.
+- Embedded Ghostty owns the child PTY and terminal widget; ForkTTY drives panes through the Ghostty GTK embedding ABI.
+- The embedded Ghostty surface starts in the ForkTTY surface cwd and exposes child PID, title, child-exit state, text input/readback, actions, and scrollback restore through the embedding ABI.
+- Linux release artifacts bundle Ghostty shell-integration resources and terminfo alongside the required embedded GTK library.
 - Prompt/metadata detection uses ForkTTY hooks and terminal events and a bounded visible-tail prompt fallback.
 - Native session data is written to `~/.local/share/forktty/session-v2.json`.
 - The legacy `session.json` import path exists only for migration; native saves do not overwrite that file.

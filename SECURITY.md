@@ -76,7 +76,7 @@ Do not point `notification_command` at a script unless you trust that script wit
 - Worktree operations modify local Git checkouts and branches; users should review changes before merging or removing worktrees.
 - Session files and logs can contain local paths, branch names, workspace names, and notification text.
 - Optional browser profile data can contain cookies, cache, localStorage, history, bookmarks, and URLs for pages the user opens.
-- ForkTTY owns the child PTY, so byte-level terminal escape parsing is intentionally narrower than the legacy PTY-owner path.
+- Embedded Ghostty owns the child PTY and terminal escape handling for current GTK panes; ForkTTY treats terminal output as local, user-owned data and keeps socket/config/session boundaries size-limited and owner-scoped.
 - AppImage checksum verification protects transport/integrity errors, not compromise of the GitHub repository, release account, or checksum asset. Detached release signing is not implemented yet.
 
 ## Dependencies and CI

@@ -202,9 +202,15 @@ All notable changes to ForkTTY are documented here.
 - Ghostty-backed terminals now use Ghostty's 320MB Kitty image storage default instead of libghostty-vt's lower library default, enable Ghostty's file/temp/shared-memory Kitty image loading media, decode and draw Kitty PNG image uploads, and honor Ghostty `image-storage-limit`.
 - Finished terminal selections now format their clipboard payload through `libghostty-vt`'s selection formatter, with the existing GTK frame extraction kept as a fallback.
 - Double-click word selection now asks `libghostty-vt` for the word range first, falling back to the GTK frame logic when Ghostty has no selectable word.
-- The GTK/Ghostty smoke script now verifies GTK action split/focus behavior, socket split readback, and the socket notification create/list/clear flow.
+- The GTK/Ghostty smoke script now verifies tab create/select/close, GTK action
+  split/focus behavior, socket split readback, live pane close, restart with
+  scrollback restore, and the socket notification create/list/clear flow.
 
 ### Fixed
+- Debian and AppImage packaging now invoke the shared Ghostty GTK library probe
+  to build or locate `ghostty-gtk-embed.so`, verify the required embedded ABI
+  symbols, and install the verified library into `usr/lib` before producing
+  artifacts.
 - The documented `forktty read-screen` and `forktty capture-tail` socket CLI
   commands now route through the top-level CLI instead of being rejected before
   reaching the socket client.

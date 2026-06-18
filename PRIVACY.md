@@ -64,7 +64,7 @@ ForkTTY stores local application data only:
 
 | File | Location | Purpose |
 | ---- | -------- | ------- |
-| Configuration | `~/.config/forktty/config.toml` | Theme, font, shell, scrollback, terminal bell, worktree, notification, sidebar, renderer, and window settings |
+| Configuration | `~/.config/forktty/config.toml` | Shell, scrollback, terminal bell, worktree, notification, sidebar, renderer compatibility, and window settings |
 | Native session data | `~/.local/share/forktty/session-v2.json` | Workspace layout and metadata needed for GTK/Ghostty session restore |
 | Legacy session import | `~/.local/share/forktty/session.json` | Imported if present; native saves do not overwrite it |
 | Quarantined sessions | `~/.local/share/forktty/session-v2.json.bad-*` | Invalid/corrupt session files kept for debugging |
@@ -90,7 +90,11 @@ Use a custom notification command only if you trust that executable with local t
 
 ## Third-Party Components
 
-ForkTTY uses GTK4/libadwaita and Ghostty from the local Linux system to render the window and terminal widgets. Source builds with the optional browser feature also use WebKitGTK6 to render pages the user opens.
+ForkTTY uses GTK4/libadwaita for the window shell and a vendored embedded
+Ghostty GTK library for terminal widgets. Packaged builds ship the required
+Ghostty libraries; source builds build or reuse them from the pinned
+`vendor/ghostty` and `vendor/libghostty-rs` trees. Source builds with the
+optional browser feature also use WebKitGTK6 to render pages the user opens.
 
 The ForkTTY socket CLI talks only to the local Unix socket.
 

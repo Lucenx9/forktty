@@ -25,8 +25,8 @@ exit-status mapping) are pinned by host-runnable Rust unit tests.
 
 - **auto (smoke)** — `scripts/gtk-ghostty-smoke.sh` run in the Ghostty GTK
   Probe workflow. Drives the app through the socket API (send-text,
-  read-screen, surfaces, split, focus, zoom, notifications) against live
-  embedded panes.
+  read-screen, surfaces, tab create/select/close, split, focus, live pane close,
+  zoom, restart, notifications) against live embedded panes.
 - **auto (unit)** — host-runnable `cargo test` that pins the ForkTTY↔ABI
   contract (no `.so` needed).
 - **probe** — covered by the `forktty ghostty-gtk-probe` widget smoke (launch /
@@ -44,17 +44,22 @@ blocker) · `fail` (file a blocker) · `pending` (not yet exercised) · `n/a`.
 
 | # | Dimension | Parity target | How verified | Status |
 | - | --------- | ------------- | ------------ | ------ |
-| 1 | Resize | Cols/rows track pane size and zoom; reflow matches classic | auto (smoke): zoom-in/out/reset asserts `cols`/`rows` change and restore | pass |
-| 2 | Input | Keystrokes and socket `send_text` reach the child PTY | auto (smoke): `send-text` then `read-screen` readback of an echoed marker | pass |
-| 3 | Scrollback | Full history is readable; persisted scrollback restores on respawn | auto (unit): `read_text(ALL)`/tail snapshot derivation, snapshot + restore decision logic; auto (smoke): restart then `capture-tail` confirms a pre-restart marker was restored | pass |
-| 4 | OSC 8 hyperlinks | Hyperlinks render and are clickable | manual (visual; Ghostty renders natively) | deferred |
-| 5 | Images (Kitty/iTerm) | Inline images render in the embedded surface | manual (visual; Ghostty renders natively); local manual 2026-06-18 confirmed Kitty graphics | pass with notes |
-| 6 | Selection | Mouse drag selects; selection survives soft-wrap | manual (native to the embedded widget) | deferred |
-| 7 | Copy / paste | `Ctrl+Shift+C/V` + command palette copy/paste the selection | auto (unit): `perform_action` grammar pins `copy_to_clipboard`/`paste_from_clipboard`; **manual**: clipboard round-trip | deferred |
-| 8 | Search | `Ctrl+Shift+F` opens Ghostty's native search overlay | auto (unit): `start_search` grammar pinned; **manual**: overlay + navigate | deferred |
-| 9 | Exit / restart | Child exit flips readiness, sets status, raises abnormal-exit notification; session restore re-spawns | auto (unit): `embedded_child_exit_status` mapping; auto (smoke): child exit marks surface not writable and sets `Closed`; **manual**: session restore after app restart (local manual 2026-06-18) | pass |
-| 10 | Socket API | `read_text`, `capture_tail`, `send_text`, and `surfaces` listing/focus behavior work on embedded panes | auto (smoke): surfaces/read-screen/capture-tail/send-text plus action and socket splits | pass |
-| 11 | Port discovery / child PID | Embedded panes populate child PID in socket `surfaces` so listening-port discovery reaches classic-pane parity | auto (unit): child-pid symbol; auto (smoke): Probe requires a positive `surfaces` PID for the initial embedded pane | pass |
+| 1 | Launch | A clean app launch creates a live embedded terminal pane | probe: `forktty ghostty-gtk-probe`; auto (smoke): app launches under isolated DBus/XDG paths and `ping`/`surfaces` succeed | pass |
+| 2 | Tabs | New tab, tab selection, and tab close keep embedded surfaces and model focus consistent | auto (smoke): `new-tab`, `select-tab`, `close-surface`, focus/readback assertions | pass |
+| 3 | Split / focus | Split panes can be created by GTK action and socket API; focus moves between embedded panes | auto (smoke): action split, socket split, `focus-next-pane`, `focus-previous-pane`, focused-surface readback | pass |
+| 4 | Resize | Cols/rows track pane size and zoom; reflow matches classic | auto (smoke): zoom-in/out/reset asserts `cols`/`rows` change and restore | pass |
+| 5 | Input | Keystrokes and socket `send_text` reach the child PTY | auto (smoke): `send-text` then `read-screen` readback of echoed markers | pass |
+| 6 | Close | Closing a live embedded surface removes it without stale model/widget state; child exit marks closed | auto (smoke): live split `close-surface` removes the pane; child `exit` marks the pane non-writable with `Closed` | pass |
+| 7 | Restart / scrollback restore | Restart re-spawns the embedded pane; persisted scrollback restores on respawn | auto (unit): `read_text(ALL)`/tail snapshot derivation, snapshot + restore decision logic; auto (smoke): restart then `capture-tail` confirms a pre-restart marker was restored | pass |
+| 8 | Session restore | Saved workspace/pane layout reopens embedded panes on app restart | manual: local manual 2026-06-18 confirmed session restore after GUI relaunch | pass |
+| 9 | OSC 8 hyperlinks | Hyperlinks render and are clickable | manual (visual; Ghostty renders natively); rendering confirmed 2026-06-18, click deferred | deferred |
+| 10 | Right click | Terminal context/right-click behavior reaches Ghostty or ForkTTY action as configured | manual: requires trusted pointer input and clipboard/menu observation | deferred |
+| 11 | Images (Kitty/iTerm) | Inline images render in the embedded surface | manual (visual; Ghostty renders natively); local manual 2026-06-18 confirmed Kitty graphics | pass with notes |
+| 12 | Selection | Mouse drag selects; selection survives soft-wrap | manual (native to the embedded widget) | deferred |
+| 13 | Copy / paste | `Ctrl+Shift+C/V` + command palette copy/paste the selection | auto (unit): `perform_action` grammar pins `copy_to_clipboard`/`paste_from_clipboard`; **manual**: clipboard round-trip | deferred |
+| 14 | Search | `Ctrl+Shift+F` opens Ghostty's native search overlay | auto (unit): `start_search` grammar pinned; **manual**: overlay + navigate | deferred |
+| 15 | Socket API | `read_text`, `capture_tail`, `send_text`, and `surfaces` listing/focus behavior work on embedded panes | auto (smoke): surfaces/read-screen/capture-tail/send-text plus tab, action split, socket split, close, and focus checks | pass |
+| 16 | Port discovery / child PID | Embedded panes populate child PID in socket `surfaces` so listening-port discovery reaches classic-pane parity | auto (unit): child-pid symbol; auto (smoke): Probe requires a positive `surfaces` PID for the initial embedded pane | pass |
 
 ## Local manual validation — 2026-06-18
 
@@ -77,7 +82,7 @@ socket CLI once those documented commands are routed by the top-level CLI.
 
 **Validated:**
 
-- **Row 5 (Images) → pass with notes.** A generated 168×98 PNG was emitted with
+- **Row 11 (Images) → pass with notes.** A generated 168×98 PNG was emitted with
   the Kitty graphics protocol (`\e_Gf=100,a=T,m=…;<base64>\e\\`, chunked) and the
   iTerm2 protocol (`OSC 1337;File=inline=1;…:<base64>\a`) from one script. The
   Kitty image rendered correctly in the embedded surface; the iTerm2 image did
@@ -87,7 +92,7 @@ socket CLI once those documented commands are routed by the top-level CLI.
   renderer draws no inline images at all, so Kitty support already meets/exceeds
   classic parity; the iTerm2 gap is an upstream-Ghostty limitation, tracked as
   the follow-up note for this row.
-- **Row 9 (Exit / restart / session restore) → pass.** Sending `exit 3` to the
+- **Row 8 (Session restore) → pass.** Sending `exit 3` to the
   focused embedded pane flipped the workspace to an `EXITED` badge reading
   `Terminal: Exited (3)` (exit-code mapping), raised an abnormal-exit
   notification (notification badge incremented), and re-spawned a fresh shell in
@@ -95,8 +100,8 @@ socket CLI once those documented commands are routed by the top-level CLI.
   workspaces and their embedded panes (re-spawn confirmed visually and via
   `surfaces`). Scrollback *content* is not persisted across restart because
   `persistent_scrollback_lines` is unset in the local config — that path is
-  Row 3, already covered by the Probe.
-- **Row 4 (OSC 8 hyperlinks) — rendering confirmed, click deferred.** Two
+  Row 7, already covered by the Probe.
+- **Row 9 (OSC 8 hyperlinks) — rendering confirmed, click deferred.** Two
   OSC 8 hyperlinks were emitted and their anchor text rendered correctly in the
   embedded surface. The hover-underline and click-to-open behavior could not be
   exercised (see blocker below), so this row is deferred rather than marked
@@ -121,13 +126,14 @@ maintainer at a real pointer/keyboard, a working input-injection daemon, or a
   Probe extension that can drive GTK input directly. These rows are accepted
   follow-ups and no longer block the default renderer switch:
 
-- **Row 4 (OSC 8)** — pointer hover/click on the rendered link (render already
+- **Row 9 (OSC 8)** — pointer hover/click on the rendered link (render already
   confirmed above).
-- **Row 6 (Selection)** — mouse drag-select, including across soft-wrapped and
+- **Row 10 (Right click)** — terminal context menu/right-click action behavior.
+- **Row 12 (Selection)** — mouse drag-select, including across soft-wrapped and
   wide-character lines.
-- **Row 7 (Copy / paste)** — `Ctrl+Shift+C/V` and command-palette clipboard
+- **Row 13 (Copy / paste)** — `Ctrl+Shift+C/V` and command-palette clipboard
   round-trip (the `perform_action` grammar half is already `auto (unit)`).
-- **Row 8 (Search)** — `Ctrl+Shift+F` to open Ghostty's native search overlay and
+- **Row 14 (Search)** — `Ctrl+Shift+F` to open Ghostty's native search overlay and
   navigate (the `start_search` grammar half is already `auto (unit)`).
 
 ## Wiring already in place (so the rows above can pass)
@@ -185,12 +191,12 @@ not depend on the throttled snapshot poll.
 
 ## Default renderer gate
 
-Embedded Ghostty is accepted with rows 4/6/7/8 deferred. The remaining release
+Embedded Ghostty is accepted with rows 9/10/12/13/14 deferred. The remaining release
 guard is:
 
 1. The embedding `.so` ships in the deb/AppImage and its release-CI build is
    required.
 2. Missing or failed embedded startup records an explicit terminal spawn
    failure; it must not silently open a classic-renderer pane.
-3. Deferred rows 4/6/7/8 stay tracked here until a maintainer validates them
+3. Deferred rows 9/10/12/13/14 stay tracked here until a maintainer validates them
    with a real pointer/keyboard or a CI input driver.

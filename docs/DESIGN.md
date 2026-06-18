@@ -38,7 +38,7 @@ Use these rules for GTK UI changes so the app stays quiet, dense, and native.
 - Padding is a GTK-layer concern: the renderer fills the whole widget background, then offsets the grid.
 - Input mapping, selection, mouse forwarding, and drawing must use the same renderer cell metrics.
 - Balance padding remainder on both axes so the grid is centered when pixels do not divide evenly.
-- Unfocused split dimming is `UNFOCUSED_SPLIT_DIM_ALPHA = 0.08` in `terminal_renderer.rs`.
+- Unfocused split dimming for current panes comes from Ghostty config (`unfocused-split-opacity` / `unfocused-split-fill`) when present; legacy `terminal_renderer.rs` dimming applies only to the old classic renderer code path.
 - Dim only unfocused panes when the visible workspace has more than one terminal pane.
 - Visual bell uses the accent color as a short 2px inner border. Do not add sound.
 - The scrollback indicator is a minimal right-edge overlay; avoid permanent chrome.

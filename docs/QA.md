@@ -5,8 +5,10 @@ alpha release. It complements [`release-qa.md`](release-qa.md) (the
 detailed runtime checklist) and [`../RELEASING.md`](../RELEASING.md)
 (the end-to-end release flow).
 
-ForkTTY is Linux-only. The supported runtime baseline is libadwaita 1.4+
-and Ghostty 0.76+, which matches Ubuntu 24.04 LTS and newer distro packages.
+ForkTTY is Linux-only. The supported runtime baseline is libadwaita 1.4+,
+which matches Ubuntu 24.04 LTS and newer distro packages. Terminal panes use
+the vendored embedded Ghostty GTK library; a system Ghostty package is not a
+release prerequisite.
 
 ## Supported platforms
 
@@ -16,8 +18,9 @@ and Ghostty 0.76+, which matches Ubuntu 24.04 LTS and newer distro packages.
 | Fedora                   | Current stable                         | `dnf`           |
 | Arch / CachyOS / Manjaro | Rolling                                | `pacman`        |
 
-Other distros are best-effort: they should work if libadwaita 1.4+
-and Ghostty 0.76+ are available, but they are not part of the release gate.
+Other distros are best-effort: they should work if libadwaita 1.4+ is
+available and the packaged `ghostty-gtk-embed.so` loads, but they are not part
+of the release gate.
 
 ## Display server coverage
 
@@ -39,8 +42,9 @@ should be one of:
 | Area                                  | Ubuntu / Debian (Wayland) | Ubuntu / Debian (X11) | Fedora (Wayland) | Arch / CachyOS (Wayland) |
 | ------------------------------------- | ------------------------- | --------------------- | ---------------- | ------------------------ |
 | Install dependencies (per README)     |                           |                       |                  |                          |
+| `scripts/ghostty-gtk-lib-probe.sh --ensure --print-path` |          |                       |                  |                          |
 | `cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty` | |                 |                  |                          |
-| Source-only browser build: `cargo build -p forktty-ui-gtk --features browser` | |             |                  |                          |
+| Source-only browser build: `cargo build -p forktty-ui-gtk --no-default-features --features browser` | |             |                  |                          |
 | `bash scripts/build-deb.sh`           |                           |                       |                  | n/a                      |
 | `bash scripts/build-appimage.sh`      |                           |                       |                  |                          |
 | `dpkg -i target/packaging/deb/forktty_*.deb` |                    |                       | n/a              | n/a                      |
