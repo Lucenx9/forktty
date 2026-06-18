@@ -1974,12 +1974,15 @@ pub(super) fn effective_layout_signature(
 fn install_embedded_ghostty_accelerators(widget: &gtk::Widget, embedder: Rc<GhosttyGtkEmbedder>) {
     let key_controller = gtk::EventControllerKey::new();
     key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let widget_for_key = widget.clone();
+    let weak_widget = widget.downgrade();
     key_controller.connect_key_pressed(move |_, key, _keycode, modifiers| {
         let Some(action) = embedded_surface_action_for_accelerator(key, modifiers) else {
             return glib::Propagation::Proceed;
         };
-        match unsafe { embedder.perform_action(&widget_for_key, action) } {
+        let Some(widget) = weak_widget.upgrade() else {
+            return glib::Propagation::Proceed;
+        };
+        match unsafe { embedder.perform_action(&widget, action) } {
             Ok(_) => glib::Propagation::Stop,
             Err(err) => {
                 eprintln!(

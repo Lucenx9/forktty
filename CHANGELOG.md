@@ -4,6 +4,10 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- Avoided a strong GTK reference cycle in embedded Ghostty accelerator handling
+  so closed terminal panes can be finalized and release their native resources.
+
 ### Added
 - Embedded Ghostty panes now snapshot their scrollback tail into
   the session (on child exit, on programmatic close/restart, and via a throttled
