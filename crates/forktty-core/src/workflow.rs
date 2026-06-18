@@ -427,14 +427,18 @@ impl WorkflowStoreData {
         // and `validate_store` enforces strictly increasing event seqs, so
         // trusting `next_event_seq` alone could mint a colliding seq and wedge
         // every subsequent save permanently. Reconciling against the last
-        // (highest) event seq keeps the store self-healing.
-        let seq = self
+        // (highest) event seq keeps the store self-healing. Use `checked_add`
+        // so a store sitting at u64::MAX fails loudly instead of reusing the
+        // same seq (which `saturating_add` would do) and silently wedging.
+        let highest_seq = self
             .events
             .last()
-            .map(|last| last.seq.saturating_add(1))
-            .unwrap_or(1)
-            .max(self.next_event_seq)
-            .max(1);
+            .map(|last| last.seq)
+            .unwrap_or(0)
+            .max(self.next_event_seq.saturating_sub(1));
+        let seq = highest_seq.checked_add(1).ok_or_else(|| {
+            WorkflowError::InvalidData("workflow event sequence overflow".to_string())
+        })?;
         let event = WorkflowEvent {
             seq,
             workflow_id: clean_id("event.workflow_id", workflow_id)?,
@@ -1000,6 +1004,37 @@ mod tests {
         );
         validate_store(&store)
             .expect("store must remain valid after recovering from a stale next_event_seq");
+    }
+
+    #[test]
+    fn push_event_rejects_sequence_overflow() {
+        // A store sitting at u64::MAX cannot mint a strictly greater seq; it must
+        // fail loudly rather than reuse the same seq and wedge validate_store.
+        let mut store = WorkflowStoreData {
+            version: default_workflow_version(),
+            workflows: Vec::new(),
+            events: vec![WorkflowEvent {
+                seq: u64::MAX,
+                workflow_id: "session:codex:codex-session:review".to_string(),
+                kind: "workflow.created".to_string(),
+                at_ms: 1,
+                summary: "s".to_string(),
+            }],
+            next_event_seq: u64::MAX,
+        };
+
+        let err = store
+            .upsert(
+                WorkflowUpsert {
+                    agent: Some("codex".to_string()),
+                    session_id: Some("codex-session".to_string()),
+                    mode: Some("review".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                100,
+            )
+            .unwrap_err();
+        assert!(matches!(err, WorkflowError::InvalidData(_)));
     }
 
     #[test]

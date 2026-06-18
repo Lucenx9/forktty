@@ -996,6 +996,13 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 }
                 params.insert("text".to_string(), Value::String(text));
             }
+            // The socket server requires at least one of text/path; reject here
+            // too so MCP validation fails early and consistently.
+            if !params.contains_key("text") && !params.contains_key("path") {
+                return Err(ToolCallError::validation(
+                    "workflow_evidence_add requires text or path",
+                ));
+            }
             SocketCall {
                 method: "workflow.evidence.add",
                 params,
@@ -2864,6 +2871,13 @@ mod tests {
         assert!(build_socket_call_for_test(
             "workflow_evidence_add",
             json!({"workflow_id": "workflow-1", "text": "x"}),
+        )
+        .is_err());
+
+        // At least one of text/path is required, matching the socket server.
+        assert!(build_socket_call_for_test(
+            "workflow_evidence_add",
+            json!({"workflow_id": "workflow-1", "kind": "test", "title": "cargo test"}),
         )
         .is_err());
 

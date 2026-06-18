@@ -3641,6 +3641,11 @@ mod tests {
         assert!(statuses
             .iter()
             .any(|entry| entry.key == format!("key-{}", overflow - 1)));
+        let progress = model.list_progress(&workspace.id);
+        assert!(progress.iter().all(|entry| entry.key != "key-0"));
+        assert!(progress
+            .iter()
+            .any(|entry| entry.key == format!("key-{}", overflow - 1)));
         // Updating an existing key never grows past the cap.
         model
             .set_status(
@@ -3652,6 +3657,19 @@ mod tests {
             )
             .unwrap();
         assert_eq!(model.list_status(&workspace.id).len(), MAX_STATUS_ENTRIES);
+        model
+            .set_progress(
+                &workspace.id,
+                format!("key-{}", overflow - 1),
+                "Label",
+                1.0,
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            model.list_progress(&workspace.id).len(),
+            MAX_PROGRESS_ENTRIES
+        );
     }
 
     #[test]
