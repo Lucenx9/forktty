@@ -5,6 +5,9 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Security
+- Rejected control characters in restored session identifiers and embedded
+  Ghostty bootstrap values so tampered session state cannot inject terminal
+  control input into the bootstrap shell.
 - Hardened embedded Ghostty GTK library loading by canonicalizing candidate
   paths and rejecting relative paths, non-regular files, untrusted ownership,
   or group/other-writable files and parent directories before `dlopen`, while

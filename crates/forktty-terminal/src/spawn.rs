@@ -95,8 +95,12 @@ pub fn embedded_ghostty_bootstrap_command(request: &SpawnRequest) -> Result<Stri
     let env = request
         .forktty_env()
         .into_iter()
-        .map(|(key, value)| shell_quote(&format!("{key}={value}")));
-    let argv = argv.iter().map(|value| shell_quote(value));
+        .map(|(key, value)| shell_input_atom(&format!("{key}={value}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let argv = argv
+        .iter()
+        .map(|value| shell_input_atom(value))
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(std::iter::once("exec".to_string())
         .chain(std::iter::once(shell_quote(&env_command)))
         .chain(env)
@@ -104,6 +108,15 @@ pub fn embedded_ghostty_bootstrap_command(request: &SpawnRequest) -> Result<Stri
         .collect::<Vec<_>>()
         .join(" ")
         + "\r")
+}
+
+fn shell_input_atom(value: &str) -> Result<String, String> {
+    if value.chars().any(char::is_control) {
+        return Err(
+            "embedded Ghostty bootstrap values must not contain control characters".to_string(),
+        );
+    }
+    Ok(shell_quote(value))
 }
 
 fn shell_quote(value: &str) -> String {
@@ -730,6 +743,16 @@ mod tests {
         assert!(command.contains("'FORKTTY_SOCKET_PATH=/run/user/1000/forktty.sock'"));
         assert!(command.contains("'/usr/bin/ssh' 'user@example.test' 'echo '\"'\"'ready'\"'\"''"));
         assert!(command.ends_with('\r'));
+    }
+
+    #[test]
+    fn embedded_ghostty_bootstrap_rejects_control_character_values() {
+        let mut request = spawn_request();
+        request.surface_id = "surface-1\u{3}touch /tmp/forktty-pwn\r#".to_string();
+
+        let err = embedded_ghostty_bootstrap_command(&request).unwrap_err();
+
+        assert!(err.contains("control characters"));
     }
 
     #[test]
