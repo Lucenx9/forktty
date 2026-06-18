@@ -249,6 +249,9 @@ All notable changes to ForkTTY are documented here.
   `SpawnRequest` command and ForkTTY environment on initialization, so SSH
   panes, agent resume panes, configured shell arguments, and per-surface
   environment values no longer fall back to Ghostty's default shell.
+- Embedded Ghostty panes now clear cached child PIDs when the child exits and
+  ignore stale PID poll results after exit, close, or respawn, preventing exited
+  panes from exposing or using reused PIDs for port discovery.
 - ForkTTY and dialog titlebars now stay on the app's neutral dark chrome even
   when a GTK user theme defines a blue/purple titlebar color.
 - Clicking a split pane's top bar now focuses that pane and routes subsequent
