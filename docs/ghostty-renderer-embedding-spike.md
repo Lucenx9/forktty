@@ -1,7 +1,7 @@
 # Ghostty Renderer Embedding Spike
 
 Inspected against `vendor/ghostty` at
-`c26320d93448c42b78c5315a660e6d9359fcd26a`.
+`ed42e50743a1b2e77f8e465ff8954c1c9cba36d3`.
 
 > **Status:** Historical spike notes plus the landed embedding ABI record.
 > Current ForkTTY terminal panes are Ghostty-only: the embedded GTK widget is the
@@ -129,7 +129,7 @@ text into terminal-ready bytes (same as classic panes), and seeds it on surface
 init, degrading to a no-op when the symbol is absent.
 
 The Ghostty fork now exports the symbol: the design below landed on
-`Lucenx9/ghostty` at `c26320d93448c42b78c5315a660e6d9359fcd26a`, and ForkTTY's
+`Lucenx9/ghostty` at `ed42e50743a1b2e77f8e465ff8954c1c9cba36d3`, and ForkTTY's
 submodule pin (and `GHOSTTY_VENDOR_REV`) is bumped to it. The fork commit was
 verified locally as far as the toolchain allows — `zig fmt --check`,
 `zig ast-check`, and the full `zig build test -Dapp-runtime=none` core suite
@@ -234,11 +234,11 @@ than the existing `write_small`).
    ```
 
 This change landed on `Lucenx9/ghostty` (branch `forktty-gtk-embed`,
-`c26320d93448c42b78c5315a660e6d9359fcd26a`), and the submodule pin +
+`ed42e50743a1b2e77f8e465ff8954c1c9cba36d3`), and the submodule pin +
 `GHOSTTY_VENDOR_REV` + the pin in `ghostty-full-vendor.md` are bumped to it.
 ForkTTY's loader picks up the symbol automatically with no further Rust changes.
-The end-to-end restore is covered by the Ghostty GTK Probe workflow because the
-`.so` cannot be built on the current local toolchain — see below.
+The end-to-end restore is covered by the Ghostty GTK Probe workflow and can also
+be smoke-tested locally with the probe command below.
 
 ## Build Probe
 
@@ -267,19 +267,21 @@ FORKTTY_GHOSTTY_GTK_PROBE_EXIT_AFTER_MS=750 \
   cargo run -p forktty-ui-gtk -- ghostty-gtk-probe
 ```
 
-On the current Arch-style local toolchain this does not reach the Ghostty API
-work yet. Zig 0.15.2 attempts to link helper executables against GCC 16.1.1
-startup objects containing `.sframe` relocations and fails with:
+On Arch-style toolchains with GCC 16 startup objects, Zig 0.15.2 can fail to
+link Ghostty's small GTK Blueprint helper when that helper uses Zig's default
+ELF linker:
 
 ```text
 fatal linker error: unhandled relocation type R_X86_64_PC64
 note: in .../crt1.o:.sframe
 ```
 
-Forcing `use_lld = false` on the helper executables still emits `-fno-lld` and
-fails on the same relocation. Forcing `use_lld = true` changes the command to
-`-flld`, but the helper compile terminates without a useful diagnostic. The
-submodule was restored after this probe; no unverified Ghostty patch is kept.
+ForkTTY's pinned Ghostty fork now builds that helper with Zig's LLVM backend and
+`scripts/ghostty-gtk-lib-probe.sh` builds the embedded GTK library with
+`-Doptimize=ReleaseSafe`. That combination avoids the local `.sframe` linker
+failure and the `ReleaseFast` startup crash observed in
+`ghostty_gtk_context_new`, while preserving the same embedding ABI.
 
-The GitHub Ghostty GTK Probe remains the runtime source of truth for this
-embedding path until the local Zig/linker stack can build the `.so` again.
+The GitHub Ghostty GTK Probe remains the release source of truth for this
+embedding path, but the local probe should now build and run on the same
+Arch-style development machine.

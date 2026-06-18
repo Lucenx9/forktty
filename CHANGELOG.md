@@ -25,6 +25,10 @@ All notable changes to ForkTTY are documented here.
   ForkTTY-owned behavior and appearance.
 
 ### Fixed
+- The embedded Ghostty GTK library probe now builds Ghostty with the stable
+  `ReleaseSafe` optimization profile and a linker-compatible Blueprint helper,
+  avoiding local Zig/GCC `.sframe` linker failures and `ReleaseFast`
+  startup crashes when running ForkTTY from cargo.
 - Refined the per-pane tab close button styling so hover changes only the X
   color instead of drawing a filled control around it.
 - Embedded Ghostty panes now focus the terminal's internal focusable widget
@@ -81,7 +85,7 @@ All notable changes to ForkTTY are documented here.
   `capture_tail`. See `docs/ghostty-renderer-embedding-spike.md` for the
   Ghostty-side design.
 - Bumped the vendored Ghostty pin to
-  `c26320d93448c42b78c5315a660e6d9359fcd26a`, which adds the
+  `ed42e50743a1b2e77f8e465ff8954c1c9cba36d3`, which adds the
   `ghostty_gtk_surface_restore_scrollback`,
   `ghostty_gtk_surface_new_with_working_directory_and_command`, and
   `ghostty_gtk_surface_read_text_limited` GTK embedding ABIs.

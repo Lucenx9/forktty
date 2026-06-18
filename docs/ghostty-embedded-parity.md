@@ -12,14 +12,14 @@ are explicitly deferred manual follow-ups.
 
 ## Verification constraint
 
-The embedding library `ghostty-gtk-embed.so` cannot be built on the current
-local toolchain (Zig 0.15.2 hits `fatal linker error: unhandled relocation type
-R_X86_64_PC64` at `gtk_blueprint_compiler`; see
-[`ghostty-renderer-embedding-spike.md`](ghostty-renderer-embedding-spike.md)).
-So every *runtime* row is verified on GitHub's Ubuntu runner through the manual
-**Ghostty GTK Probe** workflow, which builds the `.so` and runs the embedded
-smoke under Xvfb. Contract-level rows (ABI symbol names, action grammar,
-exit-status mapping) are pinned by host-runnable Rust unit tests.
+The embedding library `ghostty-gtk-embed.so` is built by
+`scripts/ghostty-gtk-lib-probe.sh`, using the pinned Ghostty fork's
+linker-compatible Blueprint helper and the `ReleaseSafe` optimization profile
+(see [`ghostty-renderer-embedding-spike.md`](ghostty-renderer-embedding-spike.md)).
+Release validation still treats GitHub's **Ghostty GTK Probe** workflow as the
+source of truth: it builds the `.so` on Ubuntu and runs the embedded smoke under
+Xvfb. Contract-level rows (ABI symbol names, action grammar, exit-status
+mapping) are pinned by host-runnable Rust unit tests.
 
 ## How verified — legend
 
@@ -177,7 +177,7 @@ maintainer at a real pointer/keyboard, a working input-injection daemon, or a
 ## Verified — scrollback restore ABI
 
 The Ghostty fork now ships the `ghostty_gtk_surface_restore_scrollback` export
-(pin `c26320d93448c42b78c5315a660e6d9359fcd26a`): an IO-thread `inject_output`
+(pin `ed42e50743a1b2e77f8e465ff8954c1c9cba36d3`): an IO-thread `inject_output`
 mailbox message routed to `Termio.processOutput` injects bytes into the surface's
 VT stream without writing them to the child PTY. A raw GTK-main-thread feed into
 `processOutput` was rejected because it races the IO thread's PTY reader; the

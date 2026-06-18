@@ -6,6 +6,7 @@ GHOSTTY_DIR="$ROOT_DIR/vendor/ghostty"
 ENSURE=0
 PRINT_PATH=0
 BUILT_BEFORE_VERIFY=0
+BUILD_OPTIMIZE="${FORKTTY_GHOSTTY_GTK_BUILD_OPTIMIZE:-ReleaseSafe}"
 
 usage() {
   cat <<'USAGE'
@@ -78,7 +79,7 @@ build_ghostty_gtk_lib() {
   (
     cd "$GHOSTTY_DIR"
     zig build \
-      -Doptimize=ReleaseFast \
+      -Doptimize="$BUILD_OPTIMIZE" \
       -Dapp-runtime=gtk \
       -Demit-exe=false \
       -Demit-gtk-lib=true \
@@ -96,6 +97,19 @@ build_ghostty_gtk_lib() {
       -fno-sys=gtk4-layer-shell \
       --summary failures
   ) >&2
+
+  local lib_path
+  if lib_path="$(find_ghostty_gtk_lib)"; then
+    printf 'optimize=%s\nblueprint-helper=llvm\n' "$BUILD_OPTIMIZE" >"${lib_path}.forktty-build"
+  fi
+}
+
+ghostty_gtk_lib_build_stamp_matches() {
+  local lib_path="$1"
+  local stamp_path="${lib_path}.forktty-build"
+  [[ -f "$stamp_path" ]] || return 1
+  grep -Fxq "optimize=${BUILD_OPTIMIZE}" "$stamp_path" || return 1
+  grep -Fxq "blueprint-helper=llvm" "$stamp_path" || return 1
 }
 
 verify_ghostty_gtk_lib_symbols() {
@@ -115,7 +129,7 @@ verify_ghostty_gtk_lib_symbols() {
     ghostty_gtk_surface_perform_action \
     ghostty_gtk_surface_restore_scrollback
   do
-    if ! nm -D "$lib_path" | grep -Eq "(^|[[:space:]])${symbol}$"; then
+    if ! nm -D "$lib_path" | awk -v symbol="$symbol" '$NF == symbol { found = 1 } END { exit found ? 0 : 1 }'; then
       echo "Ghostty GTK embedding library is missing ${symbol}: $lib_path" >&2
       return 1
     fi
@@ -137,6 +151,20 @@ verified_lib_path() {
       echo "Ghostty GTK probe did not emit an embedding library" >&2
       return 1
     fi
+  fi
+
+  if ! ghostty_gtk_lib_build_stamp_matches "$lib_path"; then
+    if [[ "$ENSURE" != "1" && "$built" == "1" ]]; then
+      echo "Ghostty GTK embedding library build stamp does not match ${BUILD_OPTIMIZE}: $lib_path" >&2
+      return 1
+    fi
+    echo "Existing Ghostty GTK embedding library was not built with ${BUILD_OPTIMIZE}; rebuilding." >&2
+    build_ghostty_gtk_lib
+    built=1
+    lib_path="$(find_ghostty_gtk_lib)" || {
+      echo "Ghostty GTK probe did not emit an embedding library" >&2
+      return 1
+    }
   fi
 
   if ! verify_ghostty_gtk_lib_symbols "$lib_path"; then
