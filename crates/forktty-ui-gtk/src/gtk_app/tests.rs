@@ -2652,12 +2652,24 @@ fn embedded_ghostty_context_tick_fallback_is_not_frame_rate() {
 #[test]
 fn embedded_ghostty_event_driven_ticks_are_output_throttled() {
     assert!(
-        EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL >= Duration::from_millis(50),
+        EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL >= Duration::from_millis(100),
         "continuous output wakeups must be coalesced instead of ticking Ghostty at frame rate"
     );
     assert!(
         EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL > EMBEDDED_GHOSTTY_WAKEUP_CHECK_INTERVAL,
         "the wakeup timer may poll the atomic flag frequently, but Ghostty ticks are rate-limited"
+    );
+}
+
+#[test]
+fn embedded_ghostty_heap_trim_is_rate_limited_for_heavy_redraws() {
+    assert!(
+        EMBEDDED_GHOSTTY_HEAP_TRIM_INTERVAL <= Duration::from_secs(1),
+        "heavy embedded redraws should give glibc arenas frequent chances to return memory"
+    );
+    assert!(
+        EMBEDDED_GHOSTTY_HEAP_TRIM_INTERVAL > EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL,
+        "heap trim is a periodic cleanup, not work to do after every tick"
     );
 }
 

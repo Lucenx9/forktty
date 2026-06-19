@@ -91,7 +91,11 @@ pub(super) const EMBEDDED_GHOSTTY_WAKEUP_CHECK_INTERVAL: Duration = Duration::fr
 /// wakeup callback fires continuously. A busy terminal can enqueue app redraw
 /// work much faster than the host should drain/render it; coalescing those
 /// wakeups keeps output responsive without ticking Ghostty at frame rate.
-pub(super) const EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL: Duration = Duration::from_millis(66);
+pub(super) const EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL: Duration = Duration::from_millis(100);
+/// How often the GTK host gives glibc malloc arenas a chance to return freed
+/// redraw allocations after embedded Ghostty ticks. This is Linux/glibc-only
+/// and rate-limited so normal interaction does not pay a trim cost per frame.
+pub(super) const EMBEDDED_GHOSTTY_HEAP_TRIM_INTERVAL: Duration = Duration::from_secs(1);
 /// Fallback for older embedding libraries that do not expose the wakeup
 /// callback ABI. Keep it slow: polling `ghostty_gtk_context_tick()` while idle
 /// leaks memory in the GTK host.
@@ -250,6 +254,24 @@ fn snapshot_embedded_scrollback_tail_to_model(
         let _ = model.set_surface_persisted_scrollback(surface_id, Some(text));
     }
 }
+
+fn maybe_trim_embedded_ghostty_heap(last_heap_trim: &mut Instant) {
+    if last_heap_trim.elapsed() < EMBEDDED_GHOSTTY_HEAP_TRIM_INTERVAL {
+        return;
+    }
+    trim_process_heap();
+    *last_heap_trim = Instant::now();
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn trim_process_heap() {
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn trim_process_heap() {}
 
 impl TerminalController {
     pub(super) fn new(
@@ -755,6 +777,7 @@ impl TerminalController {
         if embedder.supports_wakeup_callback() {
             let embedder_for_wakeup = Rc::clone(&embedder);
             let mut last_context_tick = Instant::now() - EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL;
+            let mut last_heap_trim = Instant::now() - EMBEDDED_GHOSTTY_HEAP_TRIM_INTERVAL;
             glib::timeout_add_local(EMBEDDED_GHOSTTY_WAKEUP_CHECK_INTERVAL, move || {
                 if embedder_for_wakeup.has_pending_wakeup()
                     && last_context_tick.elapsed() >= EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL
@@ -764,6 +787,7 @@ impl TerminalController {
                         embedder_for_wakeup.tick();
                     }
                     last_context_tick = Instant::now();
+                    maybe_trim_embedded_ghostty_heap(&mut last_heap_trim);
                 }
                 glib::ControlFlow::Continue
             });

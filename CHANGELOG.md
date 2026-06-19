@@ -68,6 +68,9 @@ All notable changes to ForkTTY are documented here.
 - Embedded Ghostty panes now coalesce continuous wakeups before ticking
   Ghostty's GTK app mailbox, preventing heavy terminal output from driving the
   embedded renderer at frame rate and rapidly growing ForkTTY memory usage.
+- Embedded Ghostty panes now periodically trim freed glibc heap arenas after
+  heavy embedded redraws, reducing RSS retention from long full-screen agent
+  transcripts such as Codex sessions.
 - AppImages now prefer the bundled `usr/lib/ghostty-gtk-embed.so` before any
   development checkout under `vendor/ghostty`, so package smoke tests and user
   runs exercise the same embedded Ghostty library unless explicitly overridden
