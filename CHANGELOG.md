@@ -4,6 +4,8 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.14] - 2026-06-19
+
 ### Security
 - Rejected control characters in restored session identifiers and embedded
   Ghostty command-spawn values so tampered session state cannot influence
