@@ -26,6 +26,10 @@ All notable changes to ForkTTY are documented here.
   back to Ghostty's bounded default budget (10 MB per surface) instead of
   disabling retained history, so mouse-wheel scrollback works in freshly opened
   terminal panes.
+- Embedded Ghostty panes now pack the raw Ghostty surface inside a GTK scrolled
+  window and honor Ghostty's `scrollbar = system|never` config, so retained
+  scrollback has the same visible vertical scrollbar behavior as standalone
+  Ghostty.
 - Agent health, explicit resume, and restore-time auto-resume now preserve
   hook-reported `bypassPermissions` sessions for Codex and Claude Code by
   rebuilding argv with the providers' documented dangerous-mode flags
@@ -84,20 +88,13 @@ All notable changes to ForkTTY are documented here.
   ForkTTY-owned behavior and appearance.
 
 ### Fixed
-- Embedded Ghostty panes now disable retained scrollback history in the GTK
-  host process instead of keeping a small history cap, preventing very long
-  Codex/Claude transcripts from pushing ForkTTY into multi-GiB RSS/swap usage
-  while leaving the user's standalone Ghostty configuration unchanged.
 - Embedded Ghostty panes now disable cursor blinking in the embedded runtime
   and drain Ghostty's app mailbox from a wakeup callback instead of polling
   `ghostty_gtk_context_tick()` while idle, preventing background memory growth
   even when no terminal output is being rendered.
 - Embedded Ghostty panes now coalesce continuous wakeups before ticking
-  Ghostty's GTK app mailbox, preventing heavy terminal output from driving the
-  embedded renderer at frame rate and rapidly growing ForkTTY memory usage.
-- Embedded Ghostty panes now periodically trim freed glibc heap arenas after
-  heavy embedded redraws, reducing RSS retention from long full-screen agent
-  transcripts such as Codex sessions.
+  Ghostty's GTK app mailbox, avoiding redundant GTK runtime work during bursty
+  terminal output.
 - AppImages now prefer the bundled `usr/lib/ghostty-gtk-embed.so` before any
   development checkout under `vendor/ghostty`, so package smoke tests and user
   runs exercise the same embedded Ghostty library unless explicitly overridden

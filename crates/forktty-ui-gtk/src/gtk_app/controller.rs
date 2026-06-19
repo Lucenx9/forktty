@@ -22,7 +22,7 @@ pub(super) struct TerminalController {
     state: Option<SocketAppState>,
     toast_handle: Option<ToastHandle>,
     pub(super) widgets: BTreeMap<String, GhosttyTerminalWidget>,
-    embedded_ghostty_panes: BTreeMap<String, gtk::Widget>,
+    embedded_ghostty_panes: BTreeMap<String, EmbeddedGhosttyPane>,
     embedded_ghostty: Option<Rc<GhosttyGtkEmbedder>>,
     chromes: BTreeMap<String, PaneChrome>,
     pending_spawns: BTreeMap<String, PendingSpawn>,
@@ -40,6 +40,11 @@ pub(super) struct TerminalController {
     terminal_zoom_level: Cell<i32>,
     #[cfg(feature = "browser")]
     browser_panes: Rc<RefCell<BTreeMap<String, Rc<crate::browser_pane::BrowserPaneWidget>>>>,
+}
+
+#[derive(Clone)]
+struct EmbeddedGhosttyPane {
+    surface: gtk::Widget,
 }
 
 #[derive(Clone)]
@@ -109,6 +114,27 @@ pub(super) fn embedded_ghostty_scrollback_limit_bytes_for_appearance(
     appearance
         .scrollback_limit_bytes
         .unwrap_or(EMBEDDED_GHOSTTY_SCROLLBACK_LIMIT_BYTES)
+}
+
+pub(super) fn build_embedded_ghostty_scroll_view(
+    surface: &gtk::Widget,
+    scrollbar: GhosttyScrollbarPolicy,
+) -> gtk::Widget {
+    surface.set_hexpand(true);
+    surface.set_vexpand(true);
+    let scroller = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vscrollbar_policy(match scrollbar {
+            GhosttyScrollbarPolicy::System => gtk::PolicyType::Automatic,
+            GhosttyScrollbarPolicy::Never => gtk::PolicyType::Never,
+        })
+        .overlay_scrolling(true)
+        .kinetic_scrolling(false)
+        .child(surface)
+        .build();
+    scroller.set_hexpand(true);
+    scroller.set_vexpand(true);
+    scroller.upcast()
 }
 
 pub(super) fn model_focus_still_targets_surface(
@@ -303,9 +329,9 @@ impl TerminalController {
             GtkTerminalCommand::SendText { surface_id, text } => {
                 if let Some(widget) = self.widgets.get(&surface_id) {
                     widget.send_text(&text);
-                } else if let Some(widget) = self.embedded_ghostty_panes.get(&surface_id) {
+                } else if let Some(pane) = self.embedded_ghostty_panes.get(&surface_id) {
                     if let Some(embedder) = &self.embedded_ghostty {
-                        if let Err(err) = unsafe { embedder.send_text(widget, &text) } {
+                        if let Err(err) = unsafe { embedder.send_text(&pane.surface, &text) } {
                             eprintln!(
                                 "Failed to send text to embedded Ghostty GTK surface {surface_id}: {err}"
                             );
@@ -327,10 +353,15 @@ impl TerminalController {
             } => {
                 let result = if let Some(widget) = self.widgets.get(&surface_id) {
                     widget.read_text(&surface_id, capture, max_bytes)
-                } else if let Some(widget) = self.embedded_ghostty_panes.get(&surface_id) {
+                } else if let Some(pane) = self.embedded_ghostty_panes.get(&surface_id) {
                     match &self.embedded_ghostty {
                         Some(embedder) if embedder.supports_read_text() => unsafe {
-                            embedder.read_text_snapshot(widget, &surface_id, capture, max_bytes)
+                            embedder.read_text_snapshot(
+                                &pane.surface,
+                                &surface_id,
+                                capture,
+                                max_bytes,
+                            )
                         },
                         Some(_) => Err(TerminalError::Backend(
                             "embedded Ghostty GTK library does not export read-text support"
@@ -356,7 +387,7 @@ impl TerminalController {
             }
             GtkTerminalCommand::Close { surface_id } => {
                 self.pending_spawns.remove(&surface_id);
-                if let (Some(embedder), Some(widget)) = (
+                if let (Some(embedder), Some(pane)) = (
                     self.embedded_ghostty.as_ref(),
                     self.embedded_ghostty_panes.get(&surface_id),
                 ) {
@@ -366,7 +397,7 @@ impl TerminalController {
                     snapshot_embedded_scrollback_tail_to_model(
                         &self.model,
                         embedder,
-                        widget,
+                        &pane.surface,
                         &surface_id,
                         persistent_scrollback_lines,
                     );
@@ -445,6 +476,7 @@ impl TerminalController {
         };
         widget.set_hexpand(true);
         widget.set_vexpand(true);
+        let view = build_embedded_ghostty_scroll_view(&widget, terminal_appearance.scrollbar);
         install_embedded_ghostty_accelerators(&widget, Rc::clone(&embedder));
         if let Some(state) = self.state.as_ref() {
             install_embedded_ghostty_context_menu(
@@ -746,13 +778,15 @@ impl TerminalController {
         }
         let chrome = build_embedded_ghostty_pane_chrome(
             &request.surface_id,
-            &widget,
+            &view,
             self.state.as_ref(),
             &self.parent_window,
         );
         self.chromes.insert(request.surface_id.clone(), chrome);
-        self.embedded_ghostty_panes
-            .insert(request.surface_id.clone(), widget);
+        self.embedded_ghostty_panes.insert(
+            request.surface_id.clone(),
+            EmbeddedGhosttyPane { surface: widget },
+        );
         self.rebuild_layout();
         Ok(())
     }
@@ -905,8 +939,8 @@ impl TerminalController {
         } else {
             EmbeddedSurfaceAction::DecreaseFontSize
         };
-        for widget in self.embedded_ghostty_panes.values() {
-            let _ = self.perform_embedded_action(widget, embedded_action);
+        for pane in self.embedded_ghostty_panes.values() {
+            let _ = self.perform_embedded_action(&pane.surface, embedded_action);
         }
     }
 
@@ -939,8 +973,8 @@ impl TerminalController {
     fn focused_embedded_pane(&self) -> Option<gtk::Widget> {
         self.embedded_ghostty_panes
             .values()
-            .find(|widget| self.embedded_widget_has_focus(widget))
-            .cloned()
+            .find(|pane| self.embedded_widget_has_focus(&pane.surface))
+            .map(|pane| pane.surface.clone())
     }
 
     /// The embedded Ghostty surface the model considers focused; used by the
@@ -950,7 +984,9 @@ impl TerminalController {
             let model = self.model.lock().ok()?;
             model.active_workspace()?.focused_surface_id
         };
-        self.embedded_ghostty_panes.get(&surface_id).cloned()
+        self.embedded_ghostty_panes
+            .get(&surface_id)
+            .map(|pane| pane.surface.clone())
     }
 
     /// Routes a clipboard/search action to the embedded Ghostty surface via its
@@ -1041,7 +1077,7 @@ impl TerminalController {
                 .ok()?;
             return Some((generation, last_nonempty_line(&snapshot.text)));
         }
-        let widget = self.embedded_ghostty_panes.get(surface_id)?;
+        let pane = self.embedded_ghostty_panes.get(surface_id)?;
         let embedder = self.embedded_ghostty.as_ref()?;
         if !embedder.supports_read_text() {
             return None;
@@ -1050,7 +1086,7 @@ impl TerminalController {
         let snapshot = unsafe {
             embedder
                 .read_text_snapshot(
-                    widget,
+                    &pane.surface,
                     surface_id,
                     TerminalTextCapture::Tail { lines: 8 },
                     4096,
@@ -1067,13 +1103,13 @@ impl TerminalController {
             widget.send_text(text);
             return true;
         }
-        let Some(widget) = self.embedded_ghostty_panes.get(surface_id) else {
+        let Some(pane) = self.embedded_ghostty_panes.get(surface_id) else {
             return false;
         };
         let Some(embedder) = self.embedded_ghostty.as_ref() else {
             return false;
         };
-        match unsafe { embedder.send_text(widget, text) } {
+        match unsafe { embedder.send_text(&pane.surface, text) } {
             Ok(()) => true,
             Err(err) => {
                 eprintln!(
@@ -1096,7 +1132,7 @@ impl TerminalController {
             .or_else(|| {
                 self.embedded_ghostty_panes
                     .iter()
-                    .find(|(_, widget)| self.embedded_widget_has_focus(widget))
+                    .find(|(_, pane)| self.embedded_widget_has_focus(&pane.surface))
                     .map(|(surface_id, _)| surface_id.clone())
             })
             .or_else(|| {
@@ -1107,8 +1143,8 @@ impl TerminalController {
             return false;
         };
         // Embedded panes have no ForkTTY search bar; open Ghostty's own overlay.
-        if let Some(widget) = self.embedded_ghostty_panes.get(&surface_id) {
-            return self.perform_embedded_action(widget, EmbeddedSurfaceAction::StartSearch);
+        if let Some(pane) = self.embedded_ghostty_panes.get(&surface_id) {
+            return self.perform_embedded_action(&pane.surface, EmbeddedSurfaceAction::StartSearch);
         }
         let Some(chrome) = self.chromes.get(&surface_id) else {
             return false;
@@ -1178,11 +1214,11 @@ impl TerminalController {
     fn queue_focus_for_surface(&self, surface_id: &str) {
         if let Some(widget) = self.widgets.get(surface_id) {
             queue_widget_focus(widget.widget());
-        } else if let Some(widget) = self.embedded_ghostty_panes.get(surface_id) {
+        } else if let Some(pane) = self.embedded_ghostty_panes.get(surface_id) {
             let model = self.model.clone();
             let surface_id = surface_id.to_string();
             queue_focusable_descendant_focus_when(
-                widget.clone(),
+                pane.surface.clone(),
                 Rc::new(move || model_focus_still_targets_surface(&model, &surface_id)),
             );
         } else {
@@ -2673,4 +2709,41 @@ fn build_tab_context_menu(state: &SocketAppState, surface_id: &str) -> gtk::Popo
 
     popover.set_child(Some(&menu));
     popover
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embedded_ghostty_view_wraps_surface_in_vertical_scroller() {
+        if gtk::init().is_err() {
+            return;
+        }
+
+        let surface = gtk::TextView::new().upcast::<gtk::Widget>();
+        let view = build_embedded_ghostty_scroll_view(&surface, GhosttyScrollbarPolicy::System);
+        let scroller = view
+            .downcast::<gtk::ScrolledWindow>()
+            .expect("embedded view should be a scrolled window");
+
+        assert_eq!(
+            scroller.policy(),
+            (gtk::PolicyType::Never, gtk::PolicyType::Automatic)
+        );
+        assert!(scroller.property::<bool>("overlay-scrolling"));
+        assert_eq!(scroller.child().as_ref(), Some(&surface));
+        assert!(surface.property::<bool>("hexpand"));
+        assert!(surface.property::<bool>("vexpand"));
+
+        let hidden_surface = gtk::TextView::new().upcast::<gtk::Widget>();
+        let hidden =
+            build_embedded_ghostty_scroll_view(&hidden_surface, GhosttyScrollbarPolicy::Never)
+                .downcast::<gtk::ScrolledWindow>()
+                .expect("hidden policy still uses a scrolled window");
+        assert_eq!(
+            hidden.policy(),
+            (gtk::PolicyType::Never, gtk::PolicyType::Never)
+        );
+    }
 }

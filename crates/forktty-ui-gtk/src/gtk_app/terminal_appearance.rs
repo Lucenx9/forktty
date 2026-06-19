@@ -162,6 +162,7 @@ pub(super) struct GhosttyTerminalAppearance {
     pub(super) font_variation_bold_italic: Option<String>,
     pub(super) font_size_pt: Option<f64>,
     pub(super) scrollback_limit_bytes: Option<usize>,
+    pub(super) scrollbar: GhosttyScrollbarPolicy,
     pub(super) image_storage_limit_bytes: Option<u64>,
     pub(super) cursor_style: Option<TerminalCursorStyle>,
     pub(super) cursor_style_blink: Option<bool>,
@@ -194,6 +195,13 @@ pub(super) struct GhosttyTerminalAppearance {
     pub(super) unfocused_split_fill: String,
     pub(super) colors: TerminalColors,
     bold_color_explicit: bool,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) enum GhosttyScrollbarPolicy {
+    #[default]
+    System,
+    Never,
 }
 
 pub(super) struct TerminalFontVariants {
@@ -796,6 +804,7 @@ impl Default for GhosttyTerminalAppearance {
             font_variation_bold_italic: None,
             font_size_pt: None,
             scrollback_limit_bytes: None,
+            scrollbar: GhosttyScrollbarPolicy::default(),
             image_storage_limit_bytes: None,
             cursor_style: None,
             cursor_style_blink: None,
@@ -869,6 +878,7 @@ impl GhosttyTerminalAppearance {
             "scrollback-limit" => {
                 self.scrollback_limit_bytes = parse_ghostty_integer_literal(&value)
             }
+            "scrollbar" => self.apply_scrollbar_policy(&value),
             "image-storage-limit" => {
                 self.image_storage_limit_bytes = parse_ghostty_byte_limit(&value)
             }
@@ -1037,6 +1047,19 @@ impl GhosttyTerminalAppearance {
             return;
         }
         self.cursor_style_blink = parse_ghostty_optional_bool(value).or(self.cursor_style_blink);
+    }
+
+    fn apply_scrollbar_policy(&mut self, value: &str) {
+        let value = value.trim();
+        if value.is_empty() {
+            self.scrollbar = GhosttyScrollbarPolicy::default();
+            return;
+        }
+        self.scrollbar = match value {
+            "system" => GhosttyScrollbarPolicy::System,
+            "never" => GhosttyScrollbarPolicy::Never,
+            _ => self.scrollbar,
+        };
     }
 
     fn apply_right_click_action(&mut self, value: &str) {
@@ -2035,6 +2058,31 @@ mod tests {
 
         let disabled = ghostty_terminal_appearance_from_text("image-storage-limit = 0");
         assert_eq!(disabled.image_storage_limit_bytes, Some(0));
+    }
+
+    #[test]
+    fn ghostty_appearance_reads_scrollbar_policy() {
+        let hidden = ghostty_terminal_appearance_from_text("scrollbar = never");
+        assert_eq!(hidden.scrollbar, GhosttyScrollbarPolicy::Never);
+
+        let system = ghostty_terminal_appearance_from_text("scrollbar = system");
+        assert_eq!(system.scrollbar, GhosttyScrollbarPolicy::System);
+
+        let reset = ghostty_terminal_appearance_from_text(
+            r#"
+            scrollbar = never
+            scrollbar =
+            "#,
+        );
+        assert_eq!(reset.scrollbar, GhosttyScrollbarPolicy::System);
+
+        let unknown = ghostty_terminal_appearance_from_text(
+            r#"
+            scrollbar = never
+            scrollbar = always
+            "#,
+        );
+        assert_eq!(unknown.scrollbar, GhosttyScrollbarPolicy::Never);
     }
 
     #[test]
