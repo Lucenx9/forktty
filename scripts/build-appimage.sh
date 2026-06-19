@@ -89,6 +89,7 @@ copy_appimage_runtime_libs() {
   # Bundled GUI-stack directory: AppRun always adds it to the search path so
   # GTK/libadwaita availability does not depend on host packages. We still keep
   # host display/font/GL/driver libraries via should_skip_appimage_lib().
+  local private_lib_dir="$APPDIR/usr/lib"
   local lib_dir="$APPDIR/usr/lib/bundled"
   local copied=0
   local lib_path
@@ -101,7 +102,7 @@ copy_appimage_runtime_libs() {
     if should_skip_appimage_lib "$lib_name"; then
       continue
     fi
-    if [[ -e "$lib_dir/$lib_name" ]]; then
+    if [[ -e "$private_lib_dir/$lib_name" || -e "$lib_dir/$lib_name" ]]; then
       continue
     fi
     install -Dm644 "$lib_path" "$lib_dir/$lib_name"
@@ -121,6 +122,45 @@ copy_appimage_runtime_libs() {
     fi
   done
   echo "Bundled $copied shared libraries into $lib_dir" >&2
+}
+
+verify_appimage_private_lib_deps() {
+  local binary="$1"
+  local private_lib_dir="$APPDIR/usr/lib"
+  local bundled_lib_dir="$APPDIR/usr/lib/bundled"
+  local missing=0
+  local line
+  local lib_name
+
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    line="$(echo "$line" | xargs)"
+    [[ -n "$line" ]] || continue
+    case "$line" in
+      *"not found"*)
+        lib_name="${line%% =>*}"
+        ;;
+      /*)
+        lib_name="$(basename "${line%% *}")"
+        ;;
+      *)
+        lib_name="$(echo "$line" | awk '$2 == "=>" { print $1 }')"
+        ;;
+    esac
+    [[ -n "$lib_name" ]] || continue
+    if should_skip_appimage_lib "$lib_name"; then
+      continue
+    fi
+    if [[ -e "$private_lib_dir/$lib_name" || -e "$bundled_lib_dir/$lib_name" ]]; then
+      continue
+    fi
+    echo "AppImage is missing non-system dependency for $(basename "$binary"): $lib_name" >&2
+    missing=1
+  done < <(LD_LIBRARY_PATH="$private_lib_dir:$bundled_lib_dir" ldd "$binary")
+
+  if [[ "$missing" -ne 0 ]]; then
+    exit 1
+  fi
 }
 
 copy_vendored_ghostty_runtime_lib() {
@@ -452,6 +492,11 @@ copy_vendored_ghostty_shell_integration
 copy_vendored_ghostty_themes
 copy_vendored_ghostty_terminfo
 copy_appimage_runtime_libs "$ROOT_DIR/target/release/forktty"
+copy_appimage_runtime_libs "$APPDIR/usr/lib/ghostty-gtk-embed.so"
+copy_appimage_runtime_libs "$APPDIR/usr/lib/libgtk4-layer-shell.so"
+verify_appimage_private_lib_deps "$ROOT_DIR/target/release/forktty"
+verify_appimage_private_lib_deps "$APPDIR/usr/lib/ghostty-gtk-embed.so"
+verify_appimage_private_lib_deps "$APPDIR/usr/lib/libgtk4-layer-shell.so"
 "$ROOT_DIR/scripts/write-package-legal-docs.sh" "$APPDIR"
 
 ln -s "usr/share/applications/$APPIMAGE_DESKTOP_ID.desktop" "$APPDIR/$APPIMAGE_DESKTOP_ID.desktop"

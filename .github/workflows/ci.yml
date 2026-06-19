@@ -169,7 +169,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev desktop-file-utils \
             libgtk-4-dev libadwaita-1-dev git appstream curl zsync \
-            meson ninja-build python3-gi libxml2-utils pkg-config
+            meson ninja-build python3-gi libxml2-utils pkg-config xvfb xauth
 
       - name: Install Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
@@ -325,6 +325,14 @@ jobs:
             echo "Embedded Ghostty library was required but not built." >&2
             exit 1
           fi
+
+          # `--version`/`doctor` only exercise the Rust binary. Launch the
+          # packaged AppImage through the real GTK/Ghostty socket smoke so CI
+          # catches missing dlopen dependencies in ghostty-gtk-embed.so before
+          # uploading an artifact whose terminal panes cannot start.
+          FORKTTY_SMOKE_BUILD=0 \
+            FORKTTY_SMOKE_BIN="$PWD/$appimage_artifact" \
+            scripts/gtk-ghostty-smoke.sh
 
       - name: Stage release artifacts
         run: |

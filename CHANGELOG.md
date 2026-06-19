@@ -18,6 +18,10 @@ All notable changes to ForkTTY are documented here.
   continuous output. That 100ms floor was a throttle against the old cairo
   software-renderer leak; with the GL renderer default it only added latency,
   so the tick now follows the 16ms wakeup-check cadence and GTK's frame clock.
+- AppImage packaging now bundles and verifies the runtime dependencies of the
+  embedded Ghostty GTK library itself, not only the main ForkTTY binary, so
+  GitHub-built AppImages do not ship smaller artifacts whose terminal panes
+  fail to start on distributions missing those libraries system-wide.
 
 ### Security
 - Rejected control characters in restored session identifiers and embedded

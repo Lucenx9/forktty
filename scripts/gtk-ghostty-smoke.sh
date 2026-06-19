@@ -54,6 +54,7 @@ export XDG_DATA_HOME="$TMP_DIR/data"
 export XDG_STATE_HOME="$TMP_DIR/state"
 export XDG_CACHE_HOME="$TMP_DIR/cache"
 export FORKTTY_SOCKET_PATH="$TMP_DIR/run/forktty.sock"
+unset FORKTTY_WORKSPACE_ID FORKTTY_SURFACE_ID
 
 mkdir -p "$XDG_CONFIG_HOME/forktty" "$XDG_STATE_HOME/forktty"
 cat >"$XDG_CONFIG_HOME/forktty/config.toml" <<'EOF'

@@ -363,7 +363,12 @@ fn check_packaging_ghostty_gtk_lib_guard() -> Result<()> {
     }
     let appimage = fs::read_to_string(root.join("scripts/build-appimage.sh"))
         .map_err(|err| format!("failed to read scripts/build-appimage.sh: {err}"))?;
-    for needle in ["libgtk4-layer-shell.so", "usr/lib/bundled"] {
+    for needle in [
+        "libgtk4-layer-shell.so",
+        "usr/lib/bundled",
+        "copy_appimage_runtime_libs \"$APPDIR/usr/lib/ghostty-gtk-embed.so\"",
+        "verify_appimage_private_lib_deps \"$APPDIR/usr/lib/ghostty-gtk-embed.so\"",
+    ] {
         if !appimage.contains(needle) {
             return Err(format!("scripts/build-appimage.sh is missing `{needle}`"));
         }
@@ -415,6 +420,21 @@ fn check_ci_builds_ghostty_gtk_lib_before_deb(root: &Path) -> Result<()> {
         if !before_deb.contains(needle) {
             return Err(format!(
                 "{CI_WORKFLOW} check job must prepare `{needle}` before Debian packaging"
+            ));
+        }
+    }
+    let release_index = raw
+        .find("\n  release-package:\n")
+        .ok_or_else(|| format!("{CI_WORKFLOW} is missing the release-package job"))?;
+    let release_job = &raw[release_index..];
+    for needle in [
+        "xvfb",
+        "FORKTTY_SMOKE_BIN=\"$PWD/$appimage_artifact\"",
+        "scripts/gtk-ghostty-smoke.sh",
+    ] {
+        if !release_job.contains(needle) {
+            return Err(format!(
+                "{CI_WORKFLOW} release-package job must run packaged AppImage smoke with `{needle}`"
             ));
         }
     }
