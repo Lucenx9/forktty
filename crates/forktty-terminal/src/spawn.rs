@@ -91,10 +91,15 @@ pub fn embedded_ghostty_command_argv(request: &SpawnRequest) -> Result<Vec<Strin
     })?;
     argv[0] = resolved.to_string_lossy().into_owned();
 
-    let env = request
-        .forktty_env()
+    let env = embedded_ghostty_appimage_env_atoms()
         .into_iter()
-        .map(|(key, value)| embedded_ghostty_command_atom(&format!("{key}={value}")))
+        .chain(
+            request
+                .forktty_env()
+                .into_iter()
+                .map(|(key, value)| format!("{key}={value}")),
+        )
+        .map(|value| embedded_ghostty_command_atom(&value))
         .collect::<Result<Vec<_>, _>>()?;
     let argv = argv
         .into_iter()
@@ -114,6 +119,74 @@ fn embedded_ghostty_command_atom(value: &str) -> Result<String, String> {
         );
     }
     Ok(value.to_string())
+}
+
+/// `/usr/bin/env` atoms that neutralize AppImage runtime environment pollution
+/// for embedded Ghostty children. Empty when not running inside an AppImage.
+///
+/// Embedded Ghostty starts each terminal child from the inherited GTK-process
+/// environment (`defaultTermioEnv` -> `getEnvMap`) and strips only a handful of
+/// GTK/D-Bus vars. Unlike the legacy `child_environment` path, none of
+/// ForkTTY's AppImage sanitization runs, so without this the AppImage's
+/// `LD_LIBRARY_PATH`, `APPDIR`/`APPIMAGE`/`OWD`, and GTK/GObject module search
+/// paths leak into every spawned process and can make a child (git, an editor,
+/// an agent) load the AppImage's bundled libraries instead of the host's.
+///
+/// `XDG_DATA_DIRS` is deliberately left untouched: Ghostty prepends its own
+/// shell-integration directory, which lives inside the AppImage mount, to
+/// `XDG_DATA_DIRS`, so stripping AppImage entries here would break shell
+/// integration.
+fn embedded_ghostty_appimage_env_atoms() -> Vec<String> {
+    let appimage_dirs = appimage_runtime_dirs();
+    if appimage_dirs.is_empty() {
+        return Vec::new();
+    }
+
+    let mut atoms = Vec::new();
+    // Drop the pure AppImage runtime markers entirely (APPDIR, APPIMAGE, OWD, etc.).
+    for key in appimage_runtime_env_keys() {
+        atoms.push("-u".to_string());
+        atoms.push(key);
+    }
+
+    // Loader/module search paths that Ghostty never manages itself, cleaned the
+    // same way `sanitize_appimage_child_environment` cleans them on the legacy
+    // path. `XDG_DATA_DIRS` is intentionally excluded (see the doc comment).
+    const SEARCH_PATH_KEYS: [&str; 9] = [
+        "GIO_EXTRA_MODULES",
+        "GI_TYPELIB_PATH",
+        "GTK_PATH",
+        "LD_LIBRARY_PATH",
+        "GST_PLUGIN_PATH",
+        "GST_PLUGIN_SYSTEM_PATH_1_0",
+        "GDK_PIXBUF_MODULE_FILE",
+        "GSETTINGS_SCHEMA_DIR",
+        "GST_PLUGIN_SCANNER",
+    ];
+    let mut env = SEARCH_PATH_KEYS
+        .iter()
+        .filter_map(|key| {
+            let value = std::env::var_os(key)?.into_string().ok()?;
+            Some(((*key).to_string(), value))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let original = env.clone();
+    sanitize_appimage_child_environment(&mut env, &appimage_dirs);
+    for key in SEARCH_PATH_KEYS {
+        match (original.contains_key(key), env.get(key)) {
+            // Cleaning removed the var (it pointed only inside the AppImage).
+            (true, None) => {
+                atoms.push("-u".to_string());
+                atoms.push(key.to_string());
+            }
+            // Cleaning changed the value: re-set the AppImage-free version.
+            (_, Some(cleaned)) if original.get(key) != Some(cleaned) => {
+                atoms.push(format!("{key}={cleaned}"));
+            }
+            _ => {}
+        }
+    }
+    atoms
 }
 
 fn apply_ghostty_shell_integration_env(
@@ -736,6 +809,81 @@ mod tests {
             "user@example.test".to_string(),
             "echo 'ready'".to_string()
         ]));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn embedded_ghostty_command_argv_neutralizes_appimage_runtime_env() {
+        let trusted = TestDir::new("appimage-bin");
+        let tool = trusted.path().join("claude");
+        fs::write(&tool, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let appimage_dir = "/run/user/1000/.mount_forktty";
+        let ld_library_path = format!("{appimage_dir}/usr/lib:/usr/lib");
+        let xdg_data_dirs = format!("{appimage_dir}/usr/share:/usr/share");
+        let pixbuf = format!("{appimage_dir}/usr/lib/gdk-pixbuf/loaders.cache");
+        let argv = with_env(
+            &[
+                ("PATH", Some(trusted.path().to_str().unwrap())),
+                ("APPDIR", Some(appimage_dir)),
+                ("APPIMAGE", Some("/opt/ForkTTY.AppImage")),
+                ("OWD", Some("/home/me")),
+                ("LD_LIBRARY_PATH", Some(ld_library_path.as_str())),
+                ("XDG_DATA_DIRS", Some(xdg_data_dirs.as_str())),
+                ("GDK_PIXBUF_MODULE_FILE", Some(pixbuf.as_str())),
+            ],
+            || {
+                let mut request = spawn_request();
+                request.shell = "claude".to_string();
+                request.args.clear();
+                embedded_ghostty_command_argv(&request).expect("command argv")
+            },
+        );
+
+        let has_unset = |key: &str| argv.windows(2).any(|w| w[0] == "-u" && w[1] == key);
+
+        // Pure AppImage runtime markers are unset for the child.
+        assert!(has_unset("APPDIR"));
+        assert!(has_unset("APPIMAGE"));
+        assert!(has_unset("OWD"));
+        // LD_LIBRARY_PATH is re-set with the AppImage entry stripped, so the
+        // child links against host libraries rather than the bundled ones.
+        assert!(argv.contains(&"LD_LIBRARY_PATH=/usr/lib".to_string()));
+        // A module-file var pointing into the AppImage is dropped entirely.
+        assert!(has_unset("GDK_PIXBUF_MODULE_FILE"));
+        // XDG_DATA_DIRS is left to Ghostty (its shell-integration dir lives
+        // inside the AppImage mount), so it is neither unset nor re-set here.
+        assert!(!has_unset("XDG_DATA_DIRS"));
+        assert!(!argv.iter().any(|atom| atom.starts_with("XDG_DATA_DIRS=")));
+        // ForkTTY env and the resolved program still survive.
+        assert!(argv.contains(&"FORKTTY_WORKSPACE_ID=workspace-1".to_string()));
+        assert!(argv.ends_with(&[tool.to_string_lossy().into_owned()]));
+    }
+
+    #[test]
+    fn embedded_ghostty_command_argv_keeps_env_untouched_outside_appimage() {
+        let program = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let argv = with_env(
+            &[
+                ("APPDIR", None),
+                ("FORKTTY_APPIMAGE_DIR", None),
+                ("LD_LIBRARY_PATH", Some("/some/host/lib")),
+            ],
+            || {
+                let mut request = spawn_request();
+                request.shell = program.clone();
+                request.args.clear();
+                embedded_ghostty_command_argv(&request).expect("command argv")
+            },
+        );
+
+        // No AppImage context => no `-u` atoms and no path rewrites are emitted.
+        assert!(!argv.iter().any(|atom| atom == "-u"));
+        assert!(!argv.iter().any(|atom| atom.starts_with("LD_LIBRARY_PATH=")));
     }
 
     #[test]

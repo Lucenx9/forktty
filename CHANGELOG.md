@@ -42,6 +42,12 @@ All notable changes to ForkTTY are documented here.
   ForkTTY-owned behavior and appearance.
 
 ### Fixed
+- Embedded Ghostty terminals launched from the AppImage no longer leak the
+  AppImage runtime environment (`LD_LIBRARY_PATH`, `APPDIR`/`APPIMAGE`/`OWD`,
+  and GTK/GObject module search paths) into spawned children, so a child
+  process such as git, an editor, or an agent links against the host's
+  libraries instead of the AppImage's bundled copies. `XDG_DATA_DIRS` is left
+  intact because Ghostty's own shell integration depends on it.
 - AppImage and Debian packages now include Ghostty's bundled themes, so
   embedded Ghostty panes can resolve user configs such as
   `theme = Catppuccin Mocha` instead of falling back to the default colors.
