@@ -25,6 +25,8 @@ All notable changes to ForkTTY are documented here.
   panels.
 - The Agent HUD now uses a calmer dense-card layout with compact actions,
   subtler status pills, and terminal-like output snippets.
+- The About dialog now uses a more compact identity layout, calmer metadata
+  rows, and lighter action buttons.
 - App chrome now uses quieter top/status bars, subtler split-pane focus,
   softer per-pane tabs, and less intrusive pane/browser toolbars.
 - Sidebar navigation, popovers, badges, and terminal empty/error states now use

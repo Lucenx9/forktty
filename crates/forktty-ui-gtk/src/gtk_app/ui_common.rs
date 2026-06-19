@@ -256,8 +256,8 @@ pub(super) fn show_about_dialog(parent: &adw::ApplicationWindow) {
         .title("About ForkTTY")
         .transient_for(parent)
         .modal(true)
-        .default_width(420)
-        .default_height(430)
+        .default_width(400)
+        .default_height(390)
         .resizable(false)
         .build();
     dialog.add_css_class("ft-dialog");
@@ -272,7 +272,7 @@ pub(super) fn show_about_dialog(parent: &adw::ApplicationWindow) {
     let hero = gtk::Box::new(gtk::Orientation::Vertical, 7);
     hero.add_css_class("about-hero");
     let logo = gtk::Image::from_icon_name("forktty");
-    logo.set_pixel_size(96);
+    logo.set_pixel_size(78);
     logo.add_css_class("about-logo");
     let name = gtk::Label::builder().label("ForkTTY").build();
     name.add_css_class("about-name");
@@ -281,10 +281,10 @@ pub(super) fn show_about_dialog(parent: &adw::ApplicationWindow) {
         .build();
     version.add_css_class("about-version");
     let description = gtk::Label::builder()
-        .label("A native GTK/Ghostty terminal for panes, worktrees, and automation.")
+        .label("Ghostty-powered workspaces for coding agents.")
         .wrap(true)
         .justify(gtk::Justification::Center)
-        .max_width_chars(44)
+        .max_width_chars(38)
         .build();
     description.add_css_class("about-description");
     hero.append(&logo);
