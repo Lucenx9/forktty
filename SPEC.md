@@ -186,7 +186,7 @@ When `telemetry.anonymous_ping = true`, GTK startup sends at most one anonymous
 usage ping per UTC day to:
 
 ```text
-https://forktty-site.vercel.app/api/telemetry/ping
+https://forktty.dev/api/telemetry/ping
 ```
 
 The request is a best-effort HTTPS POST with this JSON shape:

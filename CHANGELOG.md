@@ -5,6 +5,9 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- ForkTTY documentation, package metadata, first-run privacy link, and the
+  anonymous telemetry endpoint now use the canonical `https://forktty.dev`
+  domain.
 - Documented the `.deb` runtime baseline as Debian 13/Trixie+ and Ubuntu
   24.04 LTS+, and added a repeatable `piuparts` install/purge release check.
 - Clarified privacy/security documentation around the anonymous daily ping,

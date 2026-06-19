@@ -7,7 +7,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const WELCOME_MARKER_FILE: &str = "welcome-seen.json";
-const PRIVACY_URL: &str = "https://github.com/Lucenx9/forktty/blob/main/PRIVACY.md";
+const PRIVACY_URL: &str = "https://forktty.dev/privacy";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct WelcomeMarker {

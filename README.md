@@ -14,7 +14,7 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 [![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://rustup.rs/)
 [![GTK4](https://img.shields.io/badge/GTK4%20%2B%20Ghostty-native-blue.svg)](docs/native-gtk-ghostty.md)
 
-[Website](https://forktty-site.vercel.app/) ·
+[Website](https://forktty.dev/) ·
 [Download v0.2.0-alpha.14 AppImage](https://github.com/Lucenx9/forktty/releases/download/v0.2.0-alpha.14/forktty-0.2.0-alpha.14-x86_64.AppImage)
 
 </div>
@@ -472,7 +472,7 @@ anonymous_ping = true
 
 `updates.auto_check = true` checks GitHub Releases no more than once every 24 hours. The stamp is written on both success and failure so offline machines are not probed on every launch.
 
-`telemetry.anonymous_ping = true` sends at most one GTK-startup ping per UTC day to `https://forktty-site.vercel.app/api/telemetry/ping`. The JSON body is limited to `schema`, `kind`, `app`, `version`, and `date`; it contains no install id, username, hostname, cwd, repository path, branch, shell, agent metadata, terminal buffer, socket payload, or crash data. Set it to `false` to disable the ping.
+`telemetry.anonymous_ping = true` sends at most one GTK-startup ping per UTC day to `https://forktty.dev/api/telemetry/ping`. The JSON body is limited to `schema`, `kind`, `app`, `version`, and `date`; it contains no install id, username, hostname, cwd, repository path, branch, shell, agent metadata, terminal buffer, socket payload, or crash data. Set it to `false` to disable the ping.
 
 See [SPEC.md](SPEC.md#config) for the full list of validated fields and their bounds.
 

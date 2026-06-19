@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const TELEMETRY_ENDPOINT: &str = "https://forktty-site.vercel.app/api/telemetry/ping";
+const TELEMETRY_ENDPOINT: &str = "https://forktty.dev/api/telemetry/ping";
 const TELEMETRY_STAMP_FILE: &str = "telemetry-ping.json";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -197,12 +197,8 @@ mod tests {
 
     #[test]
     fn endpoint_must_be_https() {
-        assert!(valid_endpoint(
-            "https://forktty-site.vercel.app/api/telemetry/ping"
-        ));
-        assert!(!valid_endpoint(
-            "http://forktty-site.vercel.app/api/telemetry/ping"
-        ));
+        assert!(valid_endpoint("https://forktty.dev/api/telemetry/ping"));
+        assert!(!valid_endpoint("http://forktty.dev/api/telemetry/ping"));
     }
 
     #[test]
