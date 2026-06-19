@@ -465,6 +465,7 @@ fn append_agent_row(
     }
 
     let text = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    text.add_css_class("agent-row-text");
     text.set_hexpand(true);
     let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     top.add_css_class("agent-row-top");
@@ -549,6 +550,7 @@ fn append_agent_row(
     }
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    actions.add_css_class("agent-actions");
     actions.set_valign(gtk::Align::Center);
     let focus = gtk::Button::with_label("Focus");
     focus.add_css_class("agent-primary-action");
