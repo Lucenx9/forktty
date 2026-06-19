@@ -15,11 +15,19 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 [![GTK4](https://img.shields.io/badge/GTK4%20%2B%20Ghostty-native-blue.svg)](docs/native-gtk-ghostty.md)
 
 [Website](https://forktty.dev/) ·
+[Docs](https://forktty.dev/docs) ·
+[Agent context](https://forktty.dev/llms.txt) ·
 [Download v0.2.0-alpha.14 AppImage](https://github.com/Lucenx9/forktty/releases/download/v0.2.0-alpha.14/forktty-0.2.0-alpha.14-x86_64.AppImage)
 
 </div>
 
 > **Status**: Early alpha (v0.2.0-alpha.14). ForkTTY is Linux-only and the GTK/Ghostty runtime is now the primary implementation. The AppImage is the primary Linux download for this alpha; the Debian package remains available for Debian/Ubuntu users.
+
+For the complete user guide, read [forktty.dev/docs](https://forktty.dev/docs).
+For agent-oriented retrieval, start with
+[llms.txt](https://forktty.dev/llms.txt) or the single-file
+[llms-full.txt](https://forktty.dev/llms-full.txt). This README stays focused
+on the project overview, install paths, quick start, and contributor commands.
 
 <p align="center">
   <img src="docs/assets/forktty-alpha14.png" alt="ForkTTY with embedded Ghostty panes, workspace sidebar, split terminals, and agent status indicators" width="960" />
@@ -307,7 +315,7 @@ not suspend or close panes.
 
 Source-only builds with the `browser` feature expose experimental browser-pane
 automation over the same socket. This is intentionally not included in the
-prebuilt AppImage or `.deb` for alpha.9:
+prebuilt AppImage or `.deb` for the current alpha:
 
 ```bash
 forktty browser open --profile Default https://example.com
@@ -484,7 +492,7 @@ See [SPEC.md](SPEC.md#config) for the full list of validated fields and their bo
 GTK/Ghostty sessions are stored as:
 
 ```text
-~/.local/share/forktty/session-v2.json
+~/.local/state/forktty/session-v2.json
 ```
 
 ForkTTY imports legacy `session.json` when present, but saves the native runtime as v2. Restore does not preserve running PTY processes; new Ghostty-backed terminals are spawned for restored panes. Scrollback restore is limited to the opt-in plain-text tail controlled by `persistent_scrollback_lines`. Corrupt or structurally invalid session files are quarantined.
@@ -522,7 +530,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
   into `usr/lib`.
 - If the GTK app refuses to start, run it from a terminal to see GLib/GTK error output, then re-run `forktty doctor`.
 - The local socket lives at `$XDG_RUNTIME_DIR/forktty.sock` (or `/tmp/forktty-<uid>/forktty.sock`). Stale or foreign sockets are refused on startup; remove them by hand only after confirming no other ForkTTY instance owns them.
-- A corrupt `~/.config/forktty/config.toml` or `~/.local/share/forktty/session-v2.json` is renamed aside as `*.bad-<timestamp>` so the app can start with defaults; the rename reason is logged to stderr.
+- A corrupt `~/.config/forktty/config.toml` or `~/.local/state/forktty/session-v2.json` is renamed aside as `*.bad-<timestamp>` so the app can start with defaults; the rename reason is logged to stderr.
 - Local logs live under `~/.local/share/forktty/logs/`.
 
 ## Support

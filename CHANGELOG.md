@@ -4,6 +4,10 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Changed
+- README now points GitHub readers to the canonical `forktty.dev` docs and
+  agent retrieval files, and corrects stale alpha/session-path references.
+
 ## [0.2.0-alpha.14] - 2026-06-19
 
 ### Fixed
