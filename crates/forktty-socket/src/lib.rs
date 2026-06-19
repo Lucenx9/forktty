@@ -14449,7 +14449,7 @@ mod tests {
                 let err = dispatch(&state, "browser.history.search", json!({"query": query}))
                     .await
                     .unwrap_err();
-                assert_eq!(err.code(), "error");
+                assert_eq!(err.code(), "invalid_param");
                 assert!(err.to_string().contains("Invalid parameter query"));
             }
         }

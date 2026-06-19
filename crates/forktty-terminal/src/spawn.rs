@@ -889,6 +889,11 @@ mod tests {
     #[test]
     fn embedded_ghostty_command_argv_rejects_control_character_values() {
         let mut request = spawn_request();
+        request.shell = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        request.args.clear();
         request.surface_id = "surface-1\u{3}touch /tmp/forktty-pwn\r#".to_string();
 
         let err = embedded_ghostty_command_argv(&request).unwrap_err();
