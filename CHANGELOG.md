@@ -4,6 +4,15 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- Embedded Ghostty terminal panes no longer force GTK's `cairo` software
+  renderer, which leaked multi-GiB of live, `malloc_trim`-immune heap while
+  compositing the embedded Ghostty `GtkGLArea` every frame (most visible during
+  long full-screen agent TUI sessions such as Codex; idle and standalone
+  Ghostty were unaffected). ForkTTY now defaults `GSK_RENDERER` to the GL
+  renderer (`ngl`), which composites the GLArea natively with no such growth.
+  An explicit `GSK_RENDERER` override is still honored for QA/debugging.
+
 ## [0.2.0-alpha.14] - 2026-06-19
 
 ### Security

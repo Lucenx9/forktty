@@ -5,7 +5,7 @@ const TERMINAL_LAYOUT_SYNC_INTERVAL: Duration = Duration::from_millis(500);
 
 pub(super) fn install_gtk_runtime_defaults() {
     if std::env::var_os("GSK_RENDERER").is_none() {
-        std::env::set_var("GSK_RENDERER", "cairo");
+        std::env::set_var("GSK_RENDERER", default_gsk_renderer());
     }
     if std::env::var_os("GHOSTTY_LOG").is_none() {
         // Embedded Ghostty logs to stderr by default because it is built as a
@@ -18,6 +18,20 @@ pub(super) fn install_gtk_runtime_defaults() {
         "GDK_DISABLE",
         gdk_disable_with_ghostty_opengl_defaults(&gdk_disable),
     );
+}
+
+/// GSK renderer ForkTTY selects when the user has not set `GSK_RENDERER`.
+///
+/// Terminal panes are embedded Ghostty `GtkGLArea` widgets (OpenGL). GTK's
+/// `cairo` software renderer cannot composite a GL texture directly: it downloads
+/// the surface to a CPU buffer every frame, and under sustained full-screen agent
+/// redraws (e.g. a long Codex TUI session) those per-frame downloads accumulate
+/// as live, `malloc_trim`-immune heap that pushes ForkTTY into multi-GiB RSS. The
+/// GL renderer composites the GLArea natively with no such growth. A `cairo`
+/// default lingered from the removed GTK/Pango/Cairo terminal renderer; an
+/// explicit `GSK_RENDERER` override is still honored for QA/debugging.
+fn default_gsk_renderer() -> &'static str {
+    "ngl"
 }
 
 fn gdk_disable_with_ghostty_opengl_defaults(value: &str) -> String {
@@ -1551,10 +1565,20 @@ pub(super) fn install_global_quake_shortcut(
 #[cfg(test)]
 mod tests {
     use super::{
-        app_chrome_override_css, app_chrome_override_priority,
+        app_chrome_override_css, app_chrome_override_priority, default_gsk_renderer,
         gdk_disable_with_ghostty_opengl_defaults,
     };
     use gtk4 as gtk;
+
+    #[test]
+    fn default_gsk_renderer_avoids_leaky_cairo_software_path() {
+        // Embedded Ghostty panes are GLArea/OpenGL widgets. GTK's cairo software
+        // renderer leaks live heap while compositing them every frame, so the
+        // default must be a GL renderer, never cairo.
+        let renderer = default_gsk_renderer();
+        assert_ne!(renderer, "cairo");
+        assert_eq!(renderer, "ngl");
+    }
 
     #[test]
     fn gdk_disable_defaults_force_desktop_opengl_for_embedded_ghostty() {
