@@ -327,9 +327,11 @@ checking that the opt-in browser feature still builds and starts.
   present.
 - Confirm `forktty --version`, `forktty --help`, `forktty doctor`, and `forktty hooks setup --dry-run codex` work from the AppImage.
 - Launch the GTK app and walk the basic terminal, split-pane, desktop icon, and notification checks above.
-- If the GTK UI renders incorrectly, retry with `GSK_RENDERER=ngl` and
-  compare against the `.deb`; treat AppImage-only GL/Vulkan artifacts as
-  package notes, not as proof that the native GTK runtime is broken.
+- ForkTTY defaults to `GSK_RENDERER=ngl`. If the GTK UI renders incorrectly,
+  retry with `GSK_RENDERER=gl` (or `cairo` only as a last resort; it is slower
+  and far heavier on memory under sustained redraws) and compare against the
+  `.deb`; treat AppImage-only GL/Vulkan artifacts as package notes, not as
+  proof that the native GTK runtime is broken.
 - `sha256sum -c SHA256SUMS` (run from the release download dir) prints
   `OK` for the published AppImage.
 - Treat any missing runtime library or desktop integration issue as an AppImage-specific alpha note unless it also reproduces from the `.deb`.

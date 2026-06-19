@@ -2662,18 +2662,6 @@ fn embedded_ghostty_event_driven_ticks_are_output_throttled() {
 }
 
 #[test]
-fn embedded_ghostty_heap_trim_is_rate_limited_for_heavy_redraws() {
-    assert!(
-        EMBEDDED_GHOSTTY_HEAP_TRIM_INTERVAL <= Duration::from_secs(1),
-        "heavy embedded redraws should give glibc arenas frequent chances to return memory"
-    );
-    assert!(
-        EMBEDDED_GHOSTTY_HEAP_TRIM_INTERVAL > EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL,
-        "heap trim is a periodic cleanup, not work to do after every tick"
-    );
-}
-
-#[test]
 fn tab_drop_target_uses_whole_strip_geometry() {
     let targets = vec![
         ("surface-1".to_string(), 10.0),

@@ -77,12 +77,16 @@ stable writable AppImage path; if ForkTTY sees an extracted, read-only, or
 otherwise unsafe path, it falls back to the release page and leaves the manager
 in control.
 
-If the AppImage launches but the GTK interface renders incorrectly, try
-an explicit GTK renderer from a terminal:
+ForkTTY defaults to the OpenGL GTK renderer (`GSK_RENDERER=ngl`). If the
+AppImage launches but the GTK interface renders incorrectly, override it with a
+different renderer from a terminal:
 
 ```bash
-GSK_RENDERER=ngl ./forktty-0.2.0-alpha.14-x86_64.AppImage
+GSK_RENDERER=gl ./forktty-0.2.0-alpha.14-x86_64.AppImage
 ```
+
+Use `GSK_RENDERER=cairo` only as a last resort: the software renderer is slower
+and retains far more memory under heavy terminal redraws.
 
 ### Debian / Ubuntu (.deb)
 
