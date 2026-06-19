@@ -20,8 +20,8 @@ The JSON body is:
   "schema": 1,
   "kind": "daily_ping",
   "app": "forktty",
-  "version": "0.2.0-alpha.12",
-  "date": "2026-06-13"
+  "version": "<app version>",
+  "date": "YYYY-MM-DD"
 }
 ```
 

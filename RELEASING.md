@@ -24,6 +24,7 @@ are all driven from `Cargo.toml`'s `[workspace.package].version`.
    - `cargo test -p forktty-ui-gtk --all-targets --no-default-features --features browser`
    - `desktop-file-validate packaging/linux/dev.forktty.forktty.desktop`
    - `bash scripts/build-deb.sh`
+   - `dpkg-deb -c target/packaging/deb/forktty_*.deb | grep -F /usr/share/doc/forktty/copyright`
    - `scripts/check-deb-piuparts.sh` (optional but recommended for `.deb`
      install/purge validation; defaults to Debian 13/Trixie)
    - `bash scripts/build-appimage.sh`
@@ -81,6 +82,10 @@ Or via the GitHub UI:
    - A note that the AppImage is the primary download for this alpha,
      while the `.deb` remains available for Debian 13/Trixie+ and Ubuntu
      24.04 LTS+.
+   - Source availability: link to the release tag and note that source builds
+     should clone with `git clone --recurse-submodules
+     https://github.com/Lucenx9/forktty.git` to include the pinned Ghostty
+     submodules used by the release artifacts.
    - The SHA256SUMS lines for the `.deb` and AppImage.
 4. Tick "Set as a pre-release" while we are in alpha.
 5. Publish.
@@ -102,9 +107,13 @@ Publishing the release triggers the `release-package` job in
    packaged `.deb` baseline because it does not provide libadwaita 1.4+.
 4. Launch `forktty`, run `forktty doctor`, and walk the runtime smoke
    checks from [`docs/release-qa.md`](docs/release-qa.md).
-5. Mark the AppImage executable, launch it on the same VM, and note any
+5. Confirm the `.deb` contains `/usr/share/doc/forktty/copyright` and
+   `THIRD_PARTY_NOTICES.md`.
+6. Mark the AppImage executable, launch it on the same VM, and note any
    AppImage-specific runtime dependency issue in the release notes.
-6. Remove the package and confirm `/usr/bin/forktty` and the desktop
+7. Mount or extract the AppImage and confirm it contains
+   `usr/share/doc/forktty/copyright` and `THIRD_PARTY_NOTICES.md`.
+8. Remove the package and confirm `/usr/bin/forktty` and the desktop
    entry are gone (`dpkg -L forktty` should fail after removal).
 
 ## 6. If anything is wrong

@@ -28,7 +28,7 @@ Assumptions:
 - Same-user local processes may interact with user-owned runtime resources.
 - User-authored hooks and notification commands execute with the user's privileges.
 
-ForkTTY makes no telemetry or product-service network calls and does not treat the local Unix socket as a remote security boundary. Optional update checks query GitHub Releases at most once per day and can be disabled. Optional browser panes load user-requested URLs, and optional PR lookup delegates to the local `gh` CLI.
+ForkTTY does not upload crash reports, terminal contents, project data, socket payloads, or product event analytics. The GTK app can send one anonymous daily usage ping when `telemetry.anonymous_ping = true`; disable it by setting that value to `false` in config or from the first-run welcome dialog. Optional update checks query GitHub Releases at most once per day and can be disabled. Optional browser panes load user-requested URLs, and optional PR lookup delegates to the local `gh` CLI. ForkTTY does not treat the local Unix socket as a remote security boundary.
 
 ## Security Boundaries
 

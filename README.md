@@ -181,6 +181,8 @@ fail if `ghostty-gtk-embed.so` cannot be built, located, or verified. The
 verified library is installed into `usr/lib` beside the `forktty` binary so
 installed terminal panes can load it through the binary RUNPATH without
 `FORKTTY_GHOSTTY_GTK_LIB`.
+Debian packages also install ForkTTY copyright/license information and
+third-party notices under `/usr/share/doc/forktty/`.
 
 Build the AppImage locally (requires `appimagetool` on
 `PATH`, or `APPIMAGETOOL=/path/to/appimagetool`):
@@ -193,6 +195,8 @@ bash scripts/build-appimage.sh
 Set `APPIMAGE_UPDATE_INFO=1` when building release-style AppImages with
 embedded update metadata; this requires `zsyncmake` on `PATH` and emits a
 matching `.zsync` file.
+The AppImage includes the same ForkTTY copyright/license information and
+third-party notices under `usr/share/doc/forktty/` inside the AppDir/AppImage.
 
 ## First Run
 

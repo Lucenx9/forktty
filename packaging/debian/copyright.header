@@ -1,0 +1,25 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: ForkTTY
+Upstream-Contact: https://github.com/Lucenx9/forktty/issues
+Source: https://github.com/Lucenx9/forktty
+
+Files: *
+Copyright: 2026 Lucenx9
+License: AGPL-3.0-only
+ See the verbatim AGPL-3.0-only text below.
+
+Files: vendor/ghostty/* usr/lib/ghostty-gtk-embed.so usr/share/ghostty/*
+Copyright: 2024 Mitchell Hashimoto, Ghostty contributors
+License: MIT
+ See the verbatim MIT text below.
+
+Files: vendor/libghostty-rs/* usr/lib/libghostty-vt.so*
+Copyright: 2026 Uzair Aftab, Leah Amelia Chen
+License: MIT
+ See the verbatim MIT text below.
+
+Comment:
+ ForkTTY release packages include the ForkTTY application plus vendored
+ Ghostty runtime artifacts pinned in the source tree. Complete corresponding
+ source is available from the upstream repository and its submodules:
+ `git clone --recurse-submodules https://github.com/Lucenx9/forktty.git`.

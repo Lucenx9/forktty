@@ -7,6 +7,12 @@ All notable changes to ForkTTY are documented here.
 ### Changed
 - Documented the `.deb` runtime baseline as Debian 13/Trixie+ and Ubuntu
   24.04 LTS+, and added a repeatable `piuparts` install/purge release check.
+- Clarified privacy/security documentation around the anonymous daily ping,
+  update checks, and packaged source/license availability.
+
+### Fixed
+- Debian and AppImage packaging now include ForkTTY copyright/license text and
+  third-party notices for the vendored Ghostty runtime artifacts.
 
 ## [0.2.0-alpha.14] - 2026-06-19
 

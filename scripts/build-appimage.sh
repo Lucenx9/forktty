@@ -418,6 +418,7 @@ copy_vendored_ghostty_shell_integration
 copy_vendored_ghostty_themes
 copy_vendored_ghostty_terminfo
 copy_appimage_runtime_libs "$ROOT_DIR/target/release/forktty"
+"$ROOT_DIR/scripts/write-package-legal-docs.sh" "$APPDIR"
 
 ln -s "usr/share/applications/$APPIMAGE_DESKTOP_ID.desktop" "$APPDIR/$APPIMAGE_DESKTOP_ID.desktop"
 ln -s usr/share/icons/hicolor/128x128/apps/forktty.png "$APPDIR/forktty.png"

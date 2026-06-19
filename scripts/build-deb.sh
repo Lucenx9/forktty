@@ -207,6 +207,7 @@ if [[ -d "$ROOT_DIR/packaging/linux/icons/hicolor" ]]; then
 fi
 install -Dm644 "$APPSTREAM_FILE" "$PKG_ROOT/usr/share/metainfo/$DESKTOP_ID.metainfo.xml"
 verify_forktty_icon_assets "$PKG_ROOT"
+"$ROOT_DIR/scripts/write-package-legal-docs.sh" "$PKG_ROOT"
 
 mkdir -p "$PKG_ROOT/DEBIAN"
 INSTALLED_SIZE="$(du -sk "$PKG_ROOT/usr" | awk '{print $1}')"
