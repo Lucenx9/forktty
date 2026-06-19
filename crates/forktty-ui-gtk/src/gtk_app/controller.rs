@@ -87,6 +87,11 @@ const EMBEDDED_GHOSTTY_SCROLLBACK_SNAPSHOT_INTERVAL: Duration = Duration::from_s
 /// pending app-mailbox work through the wakeup callback. This timer reads one
 /// atomic flag; it does not tick Ghostty unless work is pending.
 pub(super) const EMBEDDED_GHOSTTY_WAKEUP_CHECK_INTERVAL: Duration = Duration::from_millis(16);
+/// Minimum interval between real `ghostty_gtk_context_tick()` calls when the
+/// wakeup callback fires continuously. A busy terminal can enqueue app redraw
+/// work much faster than the host should drain/render it; coalescing those
+/// wakeups keeps output responsive without ticking Ghostty at frame rate.
+pub(super) const EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL: Duration = Duration::from_millis(66);
 /// Fallback for older embedding libraries that do not expose the wakeup
 /// callback ABI. Keep it slow: polling `ghostty_gtk_context_tick()` while idle
 /// leaks memory in the GTK host.
@@ -749,11 +754,16 @@ impl TerminalController {
         let embedder = Rc::new(unsafe { GhosttyGtkEmbedder::load()? });
         if embedder.supports_wakeup_callback() {
             let embedder_for_wakeup = Rc::clone(&embedder);
+            let mut last_context_tick = Instant::now() - EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL;
             glib::timeout_add_local(EMBEDDED_GHOSTTY_WAKEUP_CHECK_INTERVAL, move || {
-                if embedder_for_wakeup.take_pending_wakeup() {
+                if embedder_for_wakeup.has_pending_wakeup()
+                    && last_context_tick.elapsed() >= EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL
+                    && embedder_for_wakeup.take_pending_wakeup()
+                {
                     unsafe {
                         embedder_for_wakeup.tick();
                     }
+                    last_context_tick = Instant::now();
                 }
                 glib::ControlFlow::Continue
             });

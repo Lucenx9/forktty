@@ -273,6 +273,12 @@ impl GhosttyGtkEmbedder {
         self.wakeup_pending.is_some()
     }
 
+    pub(super) fn has_pending_wakeup(&self) -> bool {
+        self.wakeup_pending
+            .as_ref()
+            .is_some_and(|pending| pending.load(Ordering::Acquire))
+    }
+
     pub(super) fn take_pending_wakeup(&self) -> bool {
         self.wakeup_pending
             .as_ref()
@@ -685,6 +691,13 @@ pub(crate) fn library_candidates() -> Vec<PathBuf> {
         candidates.push(PathBuf::from(path));
     }
 
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(bin_dir) = exe.parent() {
+            candidates.push(bin_dir.join("../lib/ghostty-gtk-embed.so"));
+            candidates.push(bin_dir.join("../lib/libghostty-gtk-embed.so"));
+        }
+    }
+
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|path| path.parent())
@@ -692,13 +705,6 @@ pub(crate) fn library_candidates() -> Vec<PathBuf> {
     if let Some(root) = repo_root {
         candidates.push(root.join("vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so"));
         candidates.push(root.join("vendor/ghostty/zig-out/lib/libghostty-gtk-embed.so"));
-    }
-
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(bin_dir) = exe.parent() {
-            candidates.push(bin_dir.join("../lib/ghostty-gtk-embed.so"));
-            candidates.push(bin_dir.join("../lib/libghostty-gtk-embed.so"));
-        }
     }
 
     candidates
@@ -902,6 +908,24 @@ mod tests {
         assert!(candidates
             .iter()
             .any(|path| path.ends_with("vendor/ghostty/zig-out/lib/libghostty-gtk-embed.so")));
+    }
+
+    #[test]
+    fn default_candidates_prefer_packaged_lib_dir_before_repo_vendor() {
+        let candidates = library_candidates();
+        let packaged_index = candidates
+            .iter()
+            .position(|path| path.ends_with("../lib/ghostty-gtk-embed.so"))
+            .expect("packaged libdir candidate");
+        let repo_index = candidates
+            .iter()
+            .position(|path| path.ends_with("vendor/ghostty/zig-out/lib/ghostty-gtk-embed.so"))
+            .expect("repo vendor candidate");
+
+        assert!(
+            packaged_index < repo_index,
+            "packaged AppImages must load their bundled Ghostty GTK library before a dev checkout"
+        );
     }
 
     #[test]

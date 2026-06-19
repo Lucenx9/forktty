@@ -65,6 +65,13 @@ All notable changes to ForkTTY are documented here.
   and drain Ghostty's app mailbox from a wakeup callback instead of polling
   `ghostty_gtk_context_tick()` while idle, preventing background memory growth
   even when no terminal output is being rendered.
+- Embedded Ghostty panes now coalesce continuous wakeups before ticking
+  Ghostty's GTK app mailbox, preventing heavy terminal output from driving the
+  embedded renderer at frame rate and rapidly growing ForkTTY memory usage.
+- AppImages now prefer the bundled `usr/lib/ghostty-gtk-embed.so` before any
+  development checkout under `vendor/ghostty`, so package smoke tests and user
+  runs exercise the same embedded Ghostty library unless explicitly overridden
+  with `FORKTTY_GHOSTTY_GTK_LIB`.
 - First-launch onboarding now describes the default workspace as the user's
   home directory instead of the process current directory, matching the actual
   startup behavior.

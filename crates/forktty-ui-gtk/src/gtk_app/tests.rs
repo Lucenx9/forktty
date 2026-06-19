@@ -2650,6 +2650,18 @@ fn embedded_ghostty_context_tick_fallback_is_not_frame_rate() {
 }
 
 #[test]
+fn embedded_ghostty_event_driven_ticks_are_output_throttled() {
+    assert!(
+        EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL >= Duration::from_millis(50),
+        "continuous output wakeups must be coalesced instead of ticking Ghostty at frame rate"
+    );
+    assert!(
+        EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL > EMBEDDED_GHOSTTY_WAKEUP_CHECK_INTERVAL,
+        "the wakeup timer may poll the atomic flag frequently, but Ghostty ticks are rate-limited"
+    );
+}
+
+#[test]
 fn tab_drop_target_uses_whole_strip_geometry() {
     let targets = vec![
         ("surface-1".to_string(), 10.0),
