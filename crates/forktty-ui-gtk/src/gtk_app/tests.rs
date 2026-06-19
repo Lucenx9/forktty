@@ -3241,8 +3241,24 @@ fn ghostty_scrollback_limit_overrides_legacy_scrollback_lines() {
 }
 
 #[test]
-fn embedded_ghostty_disables_retained_scrollback_for_agent_stability() {
-    assert_eq!(EMBEDDED_GHOSTTY_SCROLLBACK_LIMIT_BYTES, 0);
+fn embedded_ghostty_uses_upstream_default_bounded_scrollback() {
+    assert_eq!(EMBEDDED_GHOSTTY_SCROLLBACK_LIMIT_BYTES, 10_000_000);
+    let appearance = ghostty_terminal_appearance_from_text("");
+
+    assert_eq!(
+        embedded_ghostty_scrollback_limit_bytes_for_appearance(&appearance),
+        10_000_000
+    );
+}
+
+#[test]
+fn embedded_ghostty_scrollback_limit_follows_ghostty_config() {
+    let appearance = ghostty_terminal_appearance_from_text("scrollback-limit = 4096");
+
+    assert_eq!(
+        embedded_ghostty_scrollback_limit_bytes_for_appearance(&appearance),
+        4096
+    );
 }
 
 #[test]

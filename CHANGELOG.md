@@ -22,6 +22,10 @@ All notable changes to ForkTTY are documented here.
   embedded Ghostty GTK library itself, not only the main ForkTTY binary, so
   GitHub-built AppImages do not ship smaller artifacts whose terminal panes
   fail to start on distributions missing those libraries system-wide.
+- Embedded Ghostty panes now follow Ghostty's `scrollback-limit` config, falling
+  back to Ghostty's bounded default budget (10 MB per surface) instead of
+  disabling retained history, so mouse-wheel scrollback works in freshly opened
+  terminal panes.
 
 ### Security
 - Rejected control characters in restored session identifiers and embedded

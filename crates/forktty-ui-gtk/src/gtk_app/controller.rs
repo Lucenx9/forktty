@@ -98,12 +98,18 @@ pub(super) const EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL: Duration = Duration
 /// callback ABI. Keep it slow: polling `ghostty_gtk_context_tick()` while idle
 /// leaks memory in the GTK host.
 pub(super) const EMBEDDED_GHOSTTY_CONTEXT_TICK_FALLBACK_INTERVAL: Duration = Duration::from_secs(1);
-/// ForkTTY panes run long-lived agents that can emit very large transcripts.
-/// Disable retained history in embedded Ghostty panes independently of the
-/// user's standalone Ghostty config file: the visible screen still renders
-/// normally, while unbounded agent output cannot accumulate in the GTK host
-/// process and push the machine into swap.
-pub(super) const EMBEDDED_GHOSTTY_SCROLLBACK_LIMIT_BYTES: usize = 0;
+/// Embedded Ghostty's default retained history budget, matching upstream's
+/// `scrollback-limit` default. Keep this bounded so long-running agent panes
+/// cannot accumulate unlimited history in the GTK host process.
+pub(super) const EMBEDDED_GHOSTTY_SCROLLBACK_LIMIT_BYTES: usize = 10_000_000;
+
+pub(super) fn embedded_ghostty_scrollback_limit_bytes_for_appearance(
+    appearance: &GhosttyTerminalAppearance,
+) -> usize {
+    appearance
+        .scrollback_limit_bytes
+        .unwrap_or(EMBEDDED_GHOSTTY_SCROLLBACK_LIMIT_BYTES)
+}
 
 pub(super) fn model_focus_still_targets_surface(
     model: &Arc<Mutex<WorkspaceModel>>,
@@ -414,9 +420,11 @@ impl TerminalController {
 
     fn spawn_embedded_ghostty(&mut self, request: SpawnRequest) -> Result<(), String> {
         let embedder = self.embedded_ghostty()?;
-        let persistent_scrollback_lines = config::load_config()
-            .map(|config| config.appearance.persistent_scrollback_lines)
-            .unwrap_or(0);
+        let config = config::load_config().unwrap_or_default();
+        let persistent_scrollback_lines = config.appearance.persistent_scrollback_lines;
+        let terminal_appearance = ghostty_terminal_appearance_for_config(&config);
+        let scrollback_limit_bytes =
+            embedded_ghostty_scrollback_limit_bytes_for_appearance(&terminal_appearance);
         #[cfg(target_os = "linux")]
         let child_pids_before_spawn = current_process_child_pids();
         let widget = if embedder.supports_spawn_command() {
@@ -425,7 +433,7 @@ impl TerminalController {
                 embedder.create_widget_for_cwd_and_command(
                     Some(&request.cwd),
                     &argv,
-                    EMBEDDED_GHOSTTY_SCROLLBACK_LIMIT_BYTES,
+                    scrollback_limit_bytes,
                 )?
             }
         } else {
