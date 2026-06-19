@@ -4,6 +4,10 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Changed
+- Documented the `.deb` runtime baseline as Debian 13/Trixie+ and Ubuntu
+  24.04 LTS+, and added a repeatable `piuparts` install/purge release check.
+
 ## [0.2.0-alpha.14] - 2026-06-19
 
 ### Security

@@ -22,7 +22,7 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 > **Status**: Early alpha (v0.2.0-alpha.14). ForkTTY is Linux-only and the GTK/Ghostty runtime is now the primary implementation. The AppImage is the primary Linux download for this alpha; the Debian package remains available for Debian/Ubuntu users.
 
 <p align="center">
-  <img src="docs/assets/forktty-alpha6.png" alt="ForkTTY with workspace sidebar, split terminal panes, active pane focus, and agent status notifications" width="960" />
+  <img src="docs/assets/forktty-alpha14.png" alt="ForkTTY with embedded Ghostty panes, workspace sidebar, split terminals, and agent status indicators" width="960" />
 </p>
 
 ## Why ForkTTY
@@ -86,6 +86,10 @@ GSK_RENDERER=ngl ./forktty-0.2.0-alpha.14-x86_64.AppImage
 
 ### Debian / Ubuntu (.deb)
 
+The `.deb` targets Debian 13/Trixie or newer and Ubuntu 24.04 LTS or newer.
+Debian 12/Bookworm is below the package baseline because it does not provide
+libadwaita 1.4+.
+
 ```bash
 sudo apt install ./forktty_0.2.0.alpha.14_amd64.deb
 # or, if apt cannot read the file path directly:
@@ -133,9 +137,9 @@ Arch / CachyOS:
 sudo pacman -S base-devel openssl gtk4 libadwaita git zig desktop-file-utils
 ```
 
-ForkTTY requires libadwaita 1.4+, matching Ubuntu 24.04 LTS and newer distro
-packages. For compositor-anchored quake/dropdown placement on Wayland, install
-`gtk4-layer-shell` as an optional runtime dependency.
+ForkTTY requires libadwaita 1.4+, matching Debian 13/Trixie, Ubuntu 24.04 LTS,
+and newer distro packages. For compositor-anchored quake/dropdown placement on
+Wayland, install `gtk4-layer-shell` as an optional runtime dependency.
 
 Clone and run:
 

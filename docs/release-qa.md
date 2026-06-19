@@ -17,8 +17,14 @@ scripts/gtk-ghostty-smoke.sh
 cargo test -p forktty-ui-gtk --all-targets --no-default-features --features browser
 desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
 bash scripts/build-deb.sh
+scripts/check-deb-piuparts.sh
 bash scripts/build-appimage.sh
 ```
+
+`scripts/check-deb-piuparts.sh` validates install and purge in a fresh Debian
+13/Trixie chroot. It is optional for quick local loops, but recommended before
+tagging or publishing `.deb` artifacts. Debian 12/Bookworm is intentionally not
+used here because ForkTTY's `.deb` depends on libadwaita 1.4+.
 
 ### Already covered by automated tests
 

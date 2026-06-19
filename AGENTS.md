@@ -50,6 +50,7 @@ Packaging (validate locally before tagging a release):
 
 ```bash
 bash scripts/build-deb.sh        # → target/packaging/deb/; builds/verifies ghostty-gtk-embed.so
+scripts/check-deb-piuparts.sh    # optional .deb install/purge check; defaults to Debian 13/trixie
 bash scripts/build-appimage.sh   # → target/packaging/appimage/; builds/verifies ghostty-gtk-embed.so, needs appimagetool on PATH
 ```
 

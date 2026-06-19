@@ -24,6 +24,8 @@ are all driven from `Cargo.toml`'s `[workspace.package].version`.
    - `cargo test -p forktty-ui-gtk --all-targets --no-default-features --features browser`
    - `desktop-file-validate packaging/linux/dev.forktty.forktty.desktop`
    - `bash scripts/build-deb.sh`
+   - `scripts/check-deb-piuparts.sh` (optional but recommended for `.deb`
+     install/purge validation; defaults to Debian 13/Trixie)
    - `bash scripts/build-appimage.sh`
 3. Run `cargo audit` and (optionally) `cargo deny check`. Resolve any
    `high`/`critical` advisories before tagging.
@@ -77,7 +79,8 @@ Or via the GitHub UI:
 3. Body: copy the section you just moved in `CHANGELOG.md`, plus:
    - Supported distros (link to `docs/QA.md`).
    - A note that the AppImage is the primary download for this alpha,
-     while the `.deb` remains available for Debian/Ubuntu.
+     while the `.deb` remains available for Debian 13/Trixie+ and Ubuntu
+     24.04 LTS+.
    - The SHA256SUMS lines for the `.deb` and AppImage.
 4. Tick "Set as a pre-release" while we are in alpha.
 5. Publish.
@@ -94,7 +97,9 @@ Publishing the release triggers the `release-package` job in
 1. Download the `.deb`, AppImage, and `SHA256SUMS` from the published release.
 2. Run `sha256sum -c SHA256SUMS` in the download directory — it must
    print `OK` for both artifacts.
-3. Install on a clean VM (`sudo dpkg -i forktty_*.deb`).
+3. Install on a clean Debian 13/Trixie+ or Ubuntu 24.04 LTS+ VM
+   (`sudo apt install ./forktty_*.deb`). Debian 12/Bookworm is below the
+   packaged `.deb` baseline because it does not provide libadwaita 1.4+.
 4. Launch `forktty`, run `forktty doctor`, and walk the runtime smoke
    checks from [`docs/release-qa.md`](docs/release-qa.md).
 5. Mark the AppImage executable, launch it on the same VM, and note any

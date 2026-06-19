@@ -6,15 +6,15 @@ detailed runtime checklist) and [`../RELEASING.md`](../RELEASING.md)
 (the end-to-end release flow).
 
 ForkTTY is Linux-only. The supported runtime baseline is libadwaita 1.4+,
-which matches Ubuntu 24.04 LTS and newer distro packages. Terminal panes use
-the vendored embedded Ghostty GTK library; a system Ghostty package is not a
-release prerequisite.
+which matches Ubuntu 24.04 LTS, Debian 13/Trixie, and newer distro packages.
+Terminal panes use the vendored embedded Ghostty GTK library; a system Ghostty
+package is not a release prerequisite.
 
 ## Supported platforms
 
 | Distro family            | Versions covered                       | Package manager |
 | ------------------------ | -------------------------------------- | --------------- |
-| Ubuntu / Debian          | Ubuntu 24.04 LTS+, Debian testing+     | `apt`           |
+| Ubuntu / Debian          | Ubuntu 24.04 LTS+, Debian 13/Trixie+   | `apt`           |
 | Fedora                   | Current stable                         | `dnf`           |
 | Arch / CachyOS / Manjaro | Rolling                                | `pacman`        |
 
@@ -46,6 +46,7 @@ should be one of:
 | `cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty` | |                 |                  |                          |
 | Source-only browser build: `cargo build -p forktty-ui-gtk --no-default-features --features browser` | |             |                  |                          |
 | `bash scripts/build-deb.sh`           |                           |                       |                  | n/a                      |
+| `scripts/check-deb-piuparts.sh` (Debian 13/Trixie install/purge) |     |                       | n/a              | n/a                      |
 | `bash scripts/build-appimage.sh`      |                           |                       |                  |                          |
 | `dpkg -i target/packaging/deb/forktty_*.deb` |                    |                       | n/a              | n/a                      |
 | Run `target/packaging/appimage/*.AppImage` |                       |                       |                  |                          |
