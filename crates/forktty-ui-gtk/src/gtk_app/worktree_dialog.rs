@@ -51,6 +51,7 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
         .default_height(360)
         .build();
     dialog.add_css_class("ft-dialog");
+    dialog.add_css_class("worktree-dialog");
     apply_dialog_chrome(&dialog);
     restore_focus_after_hide(&dialog, parent);
 
@@ -59,7 +60,7 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     let title = gtk::Label::builder().label("Worktree").xalign(0.0).build();
     title.add_css_class("ft-dialog-title");
     let subtitle = gtk::Label::builder()
-        .label("Choose one worktree action, then enter the branch or worktree name.")
+        .label("Create, attach, merge, or remove a git worktree.")
         .xalign(0.0)
         .wrap(true)
         .build();
@@ -136,14 +137,14 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     status.add_css_class("ft-inline-status");
 
     let (primary, primary_icon, primary_label) =
-        labeled_icon_button_parts("forktty-add-symbolic", "Create Worktree");
+        labeled_icon_button_parts("forktty-add-symbolic", "Create");
     primary.add_css_class("suggested-action");
     primary.set_sensitive(false);
     let cancel = gtk::Button::with_label("Cancel");
 
     let body = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
-        .spacing(12)
+        .spacing(10)
         .build();
     body.add_css_class("ft-dialog-body");
     body.append(&context);
@@ -408,20 +409,20 @@ impl WorktreeDialogMode {
 
     fn dialog_subtitle(self) -> &'static str {
         match self {
-            WorktreeDialogMode::Create => "Create a new isolated git worktree workspace.",
+            WorktreeDialogMode::Create => "Create a workspace from a new branch.",
             WorktreeDialogMode::Attach => "Open an existing branch or linked worktree.",
-            WorktreeDialogMode::Merge => {
-                "Choose an existing worktree to merge into the base checkout."
-            }
-            WorktreeDialogMode::Remove => {
-                "Choose an existing worktree to remove after dirty-state checks."
-            }
+            WorktreeDialogMode::Merge => "Merge a linked worktree back into the base checkout.",
+            WorktreeDialogMode::Remove => "Remove a linked worktree after dirty-state checks.",
         }
     }
 
     fn action_label(self) -> &'static str {
-        // The confirm button reuses the dialog title verbatim across all modes.
-        self.dialog_title()
+        match self {
+            WorktreeDialogMode::Create => "Create",
+            WorktreeDialogMode::Attach => "Attach",
+            WorktreeDialogMode::Merge => "Merge",
+            WorktreeDialogMode::Remove => "Remove",
+        }
     }
 
     fn icon_name(self) -> &'static str {
@@ -435,18 +436,10 @@ impl WorktreeDialogMode {
 
     fn hint(self) -> &'static str {
         match self {
-            WorktreeDialogMode::Create => {
-                "Creates a new git worktree from the active workspace repository."
-            }
-            WorktreeDialogMode::Attach => {
-                "Attaches an existing branch or worktree and opens it as a workspace."
-            }
-            WorktreeDialogMode::Merge => {
-                "Merges the named worktree branch back into the repository checkout."
-            }
-            WorktreeDialogMode::Remove => {
-                "Removes the named worktree and closes the matching ForkTTY workspace."
-            }
+            WorktreeDialogMode::Create => "New branch name.",
+            WorktreeDialogMode::Attach => "Existing branch or worktree name.",
+            WorktreeDialogMode::Merge => "Worktree to merge.",
+            WorktreeDialogMode::Remove => "Worktree to remove.",
         }
     }
 
@@ -516,7 +509,7 @@ pub(super) fn refresh_worktree_dialog(
     }
     controls.hint.set_label(
         if mode.uses_existing_chooser() && !controls.has_existing_worktrees.get() {
-            "No linked worktrees were found for this repository. Type a worktree or branch name manually."
+            "No linked worktrees found. Type a worktree or branch name."
         } else {
             mode.hint()
         },

@@ -30,11 +30,11 @@ pub(super) fn browser_unavailable_placeholder(surface_id: &str) -> gtk::Box {
     body.set_hexpand(true);
     body.set_vexpand(true);
     let description = format!(
-        "Surface {surface_id} was restored as a browser pane, but this build was compiled without browser support."
+        "Surface {surface_id} was restored as a browser pane, but this build does not include browser support."
     );
     body.append(&compact_status_page(
         "forktty-browser-symbolic",
-        "Browser Feature Unavailable",
+        "Browser Unavailable",
         &description,
     ));
 
@@ -111,8 +111,8 @@ pub(super) fn empty_terminal_stage(
 
     let status = compact_status_page(
         "forktty-terminal-symbolic",
-        "No Workspace Open",
-        "Create a workspace to start a terminal session.",
+        "No Workspace",
+        "Create or open a workspace to start a terminal.",
     );
     container.append(&status);
 
@@ -186,7 +186,7 @@ pub(super) fn surface_placeholder_details(
                 icon_name: "forktty-warning-symbolic",
                 title: "Terminal Exited",
                 description: format!(
-                    "{}. Restart this pane to open a new shell in the same directory.",
+                    "{}. Restart the pane to open a new shell here.",
                     truncate_single_line(&status.value, 180)
                 ),
                 can_restart: true,
@@ -204,9 +204,9 @@ pub(super) fn surface_placeholder_details(
 
     SurfacePlaceholderDetails {
         icon_name: "forktty-terminal-symbolic",
-        title: "Terminal Waiting to Start",
+        title: "Terminal Waiting",
         description: format!(
-            "This pane is waiting for its terminal process. Restart the pane if it stays here. Diagnostic ID: {surface_id}."
+            "This pane is waiting for its terminal process. Restart it if it stays here. Diagnostic ID: {surface_id}."
         ),
         can_restart: true,
     }

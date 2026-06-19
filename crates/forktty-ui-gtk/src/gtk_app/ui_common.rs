@@ -229,6 +229,7 @@ where
 
 pub(super) fn install_escape_close(window: &gtk::Window) {
     let controller = gtk::EventControllerKey::new();
+    controller.set_propagation_phase(gtk::PropagationPhase::Capture);
     let window_for_close = window.clone();
     controller.connect_key_pressed(move |_, key, _, modifiers| {
         let is_close_shortcut =

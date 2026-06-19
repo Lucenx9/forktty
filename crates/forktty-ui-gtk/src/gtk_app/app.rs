@@ -45,8 +45,8 @@ window.ft-dialog headerbar.ft-dialog-titlebar,
 window.ft-dialog headerbar.ft-dialog-titlebar windowhandle,
 window.ft-settings-window headerbar.settings-titlebar,
 window.ft-settings-window headerbar.settings-titlebar windowhandle {
-  background: #181818;
-  background-color: #181818;
+  background: #171717;
+  background-color: #171717;
   background-image: none;
   color: #b7b7b7;
 }
@@ -620,13 +620,14 @@ pub(super) fn build_ui(app: &adw::Application) {
         );
     });
 
+    let settings_apply_for_actions = settings_apply.clone();
     install_actions(
         app,
         &window,
         &state,
         &sidebar_shell,
         &controller,
-        settings_apply,
+        settings_apply_for_actions,
         quake_mode,
     );
     if quake_mode {
@@ -645,7 +646,21 @@ pub(super) fn build_ui(app: &adw::Application) {
         // First launch: greet the user and let them confirm telemetry and set
         // up agent integration. Skip the update check this once to avoid
         // stacking a second dialog on a freshly installed build.
-        show_welcome_dialog(&window, app_config.telemetry.anonymous_ping);
+        let settings_parent = window.clone();
+        let settings_state = state.clone();
+        let settings_apply = settings_apply.clone();
+        show_welcome_dialog(
+            &window,
+            app_config.telemetry.anonymous_ping,
+            Rc::new(move || {
+                show_settings_dialog_page(
+                    &settings_parent,
+                    &settings_state,
+                    settings_apply.clone(),
+                    SettingsInitialPage::Agents,
+                );
+            }),
+        );
     } else {
         maybe_start_update_check(&window, &app_config);
     }
@@ -669,7 +684,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         controller_for_bootstrap
             .borrow_mut()
             .ensure_layout_current();
-        show_hook_setup_reminder(&state_for_bootstrap);
+        start_agent_integration_auto_refresh(&state_for_bootstrap);
         refresh_sidebar(
             &sidebar_ui_for_bootstrap,
             &state_for_bootstrap,
@@ -969,6 +984,46 @@ pub(super) fn show_hook_setup_reminder(state: &SocketAppState) {
             NotificationKind::Info,
         );
     }
+}
+
+pub(super) fn start_agent_integration_auto_refresh(state: &SocketAppState) {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(auto_refresh_managed_agent_integrations());
+    });
+    let state = state.clone();
+    glib::timeout_add_local(Duration::from_millis(250), move || match rx.try_recv() {
+        Ok(outcome) => {
+            if !outcome.hooks_updated.is_empty() || !outcome.mcp_updated.is_empty() {
+                let mut parts = Vec::new();
+                if !outcome.hooks_updated.is_empty() {
+                    parts.push(format!("hooks: {}", outcome.hooks_updated.join(", ")));
+                }
+                if !outcome.mcp_updated.is_empty() {
+                    parts.push(format!("MCP: {}", outcome.mcp_updated.join(", ")));
+                }
+                create_global_notification(
+                    &state,
+                    "Agent Integrations Updated",
+                    &format!(
+                        "Refreshed managed ForkTTY integrations ({})",
+                        parts.join("; ")
+                    ),
+                    NotificationKind::Info,
+                );
+            }
+            for error in outcome.errors {
+                eprintln!("forktty: agent integration auto-refresh failed: {error}");
+            }
+            show_hook_setup_reminder(&state);
+            glib::ControlFlow::Break
+        }
+        Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            show_hook_setup_reminder(&state);
+            glib::ControlFlow::Break
+        }
+    });
 }
 
 pub(super) fn repair_restored_workspace_paths(

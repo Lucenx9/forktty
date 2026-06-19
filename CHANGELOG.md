@@ -20,6 +20,19 @@ All notable changes to ForkTTY are documented here.
   per-placement copies on every redraw.
 
 ### Changed
+- App dialogs now use tighter shared spacing, shorter copy, and calmer inline
+  actions across the command palette, shortcuts, worktree, and notification
+  panels.
+- App chrome now uses quieter top/status bars, subtler split-pane focus,
+  softer per-pane tabs, and less intrusive pane/browser toolbars.
+- Sidebar navigation, popovers, badges, and terminal empty/error states now use
+  calmer density, shorter copy, and less dominant status styling.
+- Settings now use a clamped, denser layout with calmer inline actions, and the
+  Agents page presents one recommended integration action plus advanced
+  per-component actions.
+- The welcome dialog's agent setup action now opens Settings directly on the
+  Agents page, so first-time setup shows installed/update state before writing
+  provider configuration files.
 - Settings no longer exposes a shell editor; advanced users can still set
   `general.shell` manually in `config.toml`, while the dialog focuses on
   ForkTTY-owned behavior and appearance.
@@ -29,6 +42,10 @@ All notable changes to ForkTTY are documented here.
   scrollback cap, preventing long agent transcripts from growing the host GTK
   process into multi-GiB memory usage without modifying the user's standalone
   Ghostty configuration file.
+- Embedded Ghostty panes now keep the cursor blink timer disabled while the
+  rendered terminal state uses a steady cursor, preventing idle OpenGL redraws
+  from steadily growing RSS for Ghostty configs such as
+  `cursor-style-blink = false`.
 - The embedded Ghostty GTK library probe now builds Ghostty with the stable
   `ReleaseSafe` optimization profile and a linker-compatible Blueprint helper,
   avoiding local Zig/GCC `.sframe` linker failures and `ReleaseFast`
@@ -38,6 +55,8 @@ All notable changes to ForkTTY are documented here.
 - Embedded Ghostty panes now focus the terminal's internal focusable widget
   after new workspace, tab, split, or pane-header selection, so typing reaches
   the newly focused pane without an extra click inside the terminal.
+- Dialogs now handle `Escape` in capture phase, so command palette and other
+  dialogs close even when a search field or text entry has focus.
 - Embedded Ghostty panes now use a native command-spawn ABI when the bundled
   library supports it, so per-surface `FORKTTY_*` environment setup no longer
   appears as a typed `exec /usr/bin/env ...` command in every new workspace.
@@ -73,6 +92,10 @@ All notable changes to ForkTTY are documented here.
 - Ghostty Nushell shell integration now imports the bundled `ghostty.nu` module by absolute path and skips injection when that trusted module is missing, preventing workspace files from shadowing the startup import.
 
 ### Added
+- Settings now includes an Agents page for installing or refreshing ForkTTY
+  agent hooks and the local MCP bridge after first launch. ForkTTY also
+  auto-refreshes already-managed hook/MCP entries on startup when a new build
+  would update them, while leaving first-time setup explicit.
 - Embedded Ghostty panes now snapshot their scrollback tail into
   the session (on child exit, on programmatic close/restart, and via a throttled
   poll) when
@@ -89,7 +112,7 @@ All notable changes to ForkTTY are documented here.
   `capture_tail`. See `docs/ghostty-renderer-embedding-spike.md` for the
   Ghostty-side design.
 - Bumped the vendored Ghostty pin to
-  `6dd6da6f4d9d58e6fc31062da3db4174986d4685`, which adds the
+  `470d3174eb10d25e21d17eff69ffcefdd4f4f91c`, which adds the
   `ghostty_gtk_surface_restore_scrollback`,
   `ghostty_gtk_surface_new_with_working_directory_and_command`, and
   `ghostty_gtk_surface_read_text_limited`,

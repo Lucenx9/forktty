@@ -321,8 +321,8 @@ pub(super) fn show_notification_panel(
         .transient_for(parent)
         .modal(true)
         .resizable(true)
-        .default_width(440)
-        .default_height(if has_notifications { 420 } else { 300 })
+        .default_width(460)
+        .default_height(if has_notifications { 400 } else { 280 })
         .build();
     dialog.set_size_request(380, 300);
     dialog.add_css_class("ft-dialog");
@@ -369,12 +369,16 @@ pub(super) fn show_notification_panel(
     list.add_css_class("notification-list");
     list.update_property(&[gtk::accessible::Property::Label("Notifications list")]);
 
-    let jump = gtk::Button::with_label("Open Latest");
+    let jump = gtk::Button::with_label("Open");
+    jump.add_css_class("settings-inline-action");
+    jump.add_css_class("subtle");
     let has_openable_notification = latest_openable_notification(state).is_some();
     jump.set_sensitive(has_openable_notification);
     jump.set_visible(has_openable_notification);
     jump.set_tooltip_text(Some("Open the latest notification with a workspace target"));
-    let clear = gtk::Button::with_label("Clear All");
+    let clear = gtk::Button::with_label("Clear");
+    clear.add_css_class("settings-inline-action");
+    clear.add_css_class("subtle");
     clear.set_sensitive(has_notifications);
     clear.set_tooltip_text(Some("Clear pending notifications"));
 

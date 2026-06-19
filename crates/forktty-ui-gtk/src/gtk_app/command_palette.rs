@@ -14,10 +14,11 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
         .transient_for(parent)
         .modal(true)
         .resizable(false)
-        .default_width(460)
-        .default_height(440)
+        .default_width(500)
+        .default_height(460)
         .build();
     dialog.add_css_class("ft-dialog");
+    dialog.add_css_class("shortcuts-dialog");
     apply_dialog_chrome(&dialog);
     install_escape_close(&dialog);
     restore_focus_after_hide(&dialog, parent);
@@ -30,7 +31,7 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
         .build();
     title.add_css_class("ft-dialog-title");
     let subtitle = gtk::Label::builder()
-        .label("Common workspace, pane, and app commands.")
+        .label("Workspace, pane, terminal, and app commands.")
         .xalign(0.0)
         .build();
     subtitle.add_css_class("ft-dialog-subtitle");
@@ -117,6 +118,8 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     spacer.set_hexpand(true);
     let close = gtk::Button::with_label("Close");
+    close.add_css_class("settings-inline-action");
+    close.add_css_class("subtle");
     let dialog_for_close = dialog.clone();
     close.connect_clicked(move |_| dialog_for_close.close());
     footer.append(&spacer);
@@ -168,8 +171,8 @@ pub(super) fn show_command_palette_with_query(
         .transient_for(parent)
         .modal(true)
         .resizable(false)
-        .default_width(420)
-        .default_height(360)
+        .default_width(460)
+        .default_height(390)
         .build();
     dialog.add_css_class("ft-dialog");
     dialog.add_css_class("command-palette-dialog");
@@ -180,7 +183,7 @@ pub(super) fn show_command_palette_with_query(
     let header = gtk::Box::new(gtk::Orientation::Vertical, 2);
     header.add_css_class("ft-dialog-header");
     let title = gtk::Label::builder()
-        .label("Command Palette")
+        .label("Run Command")
         .xalign(0.0)
         .build();
     title.add_css_class("ft-dialog-title");
@@ -191,7 +194,7 @@ pub(super) fn show_command_palette_with_query(
     body.set_vexpand(true);
 
     let search = gtk::SearchEntry::builder()
-        .placeholder_text("Search commands")
+        .placeholder_text("Search commands or shortcuts")
         .hexpand(true)
         .build();
     search.update_property(&[gtk::accessible::Property::Label("Search commands")]);

@@ -45,33 +45,33 @@ window {
 
 headerbar.app-header,
 .app-header {
-  min-height: 30px;
-  padding: 0 3px;
-  background: #181818;
-  background-color: #181818;
+  min-height: 31px;
+  padding: 0 4px;
+  background: #171717;
+  background-color: #171717;
   background-image: none;
   color: #b7b7b7;
-  border-bottom: 1px solid #292929;
+  border-bottom: 1px solid #242424;
   box-shadow: none;
 }
 
 headerbar.app-header windowhandle,
 .app-header windowhandle {
-  background: #181818;
-  background-color: #181818;
+  background: #171717;
+  background-color: #171717;
   background-image: none;
   color: #b7b7b7;
 }
 
 .app-brand {
-  min-height: 24px;
+  min-height: 26px;
   margin: 0 2px 0 0;
-  padding: 0 8px 0 2px;
+  padding: 0 7px 0 3px;
   color: #b7b7b7;
 }
 
 .app-brand-logo {
-  opacity: 0.50;
+  opacity: 0.58;
 }
 
 .app-brand-wordmark {
@@ -79,8 +79,8 @@ headerbar.app-header windowhandle,
 }
 
 .app-brand-name {
-  color: #8a8a8a;
-  font-size: 0.82em;
+  color: #9a9a9a;
+  font-size: 0.80em;
   font-weight: 560;
 }
 
@@ -90,18 +90,18 @@ headerbar.app-header windowhandle,
 
 .app-header-title {
   min-height: 24px;
-  padding: 0 8px;
+  padding: 0 10px;
   background: transparent;
   border: 0;
-  border-radius: 4px;
+  border-radius: 999px;
   color: #8a8a8a;
-  font-size: 0.86em;
-  font-weight: 500;
+  font-size: 0.84em;
+  font-weight: 560;
   transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
 .app-header-title:hover {
-  background: #232323;
+  background: #202020;
   color: #d7d7d7;
 }
 
@@ -112,12 +112,12 @@ headerbar.app-header windowhandle,
 
 .app-header .header-action,
 .app-header menubutton.header-action > button {
-  min-width: 24px;
-  min-height: 24px;
+  min-width: 26px;
+  min-height: 26px;
   margin: 0;
   padding: 0;
   color: #8a8a8a;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
   border: 0;
   box-shadow: none;
@@ -132,18 +132,18 @@ headerbar.app-header windowhandle,
 .app-header .header-action:hover,
 .app-header menubutton.header-action > button:hover {
   color: #d7d7d7;
-  background: #232323;
+  background: #202020;
 }
 
 .app-header .header-action:active,
 .app-header menubutton.header-action > button:active {
-  background: #30251d;
+  background: #26211d;
   color: #d7d7d7;
 }
 
 .app-header .header-action:focus-visible,
 .app-header menubutton.header-action > button:focus-visible {
-  background: #232323;
+  background: #202020;
   color: #d7d7d7;
 }
 
@@ -170,9 +170,9 @@ headerbar.app-header windowhandle,
 .app-header .header-action-separator {
   min-width: 1px;
   min-height: 13px;
-  margin: 0 6px;
-  background: #292929;
-  opacity: 0.62;
+  margin: 0 5px;
+  background: #242424;
+  opacity: 0.72;
 }
 
 .app-header windowcontrols {
@@ -271,11 +271,11 @@ headerbar.app-header windowhandle,
 popover.ft-app-menu contents,
 popover.ft-context-menu contents,
 popover.ft-workspace-popover contents {
-  padding: 6px;
+  padding: 5px;
   background: #181818;
-  border: 1px solid #303030;
-  border-radius: 7px;
-  box-shadow: 0 12px 28px alpha(#000000, 0.34);
+  border: 1px solid #292929;
+  border-radius: 8px;
+  box-shadow: 0 14px 32px alpha(#000000, 0.38);
 }
 
 popover.ft-app-menu contents {
@@ -291,13 +291,13 @@ popover.ft-context-menu contents {
 }
 
 .ft-menu-header {
-  padding: 6px 8px 5px;
+  padding: 6px 8px 4px;
 }
 
 .ft-menu-header-title {
   color: #d7d7d7;
-  font-size: 0.92em;
-  font-weight: 700;
+  font-size: 0.90em;
+  font-weight: 680;
 }
 
 .ft-menu-header-subtitle {
@@ -306,8 +306,8 @@ popover.ft-context-menu contents {
 }
 
 .ft-menu-item {
-  min-height: 32px;
-  padding: 4px 8px;
+  min-height: 30px;
+  padding: 3px 8px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
@@ -326,7 +326,7 @@ popover.ft-context-menu contents {
 }
 
 .ft-menu-item:hover {
-  background: #282828;
+  background: #232323;
   color: #d7d7d7;
 }
 
@@ -350,9 +350,9 @@ popover.ft-context-menu contents {
 }
 
 .ft-menu-separator {
-  background: #292929;
+  background: #242424;
   min-height: 1px;
-  margin: 5px 4px;
+  margin: 4px 4px;
 }
 
 /* --------------------------------------------------------------------------
@@ -360,7 +360,7 @@ popover.ft-context-menu contents {
  * -------------------------------------------------------------------------- */
 
 .workspace-paned > separator {
-  background: alpha(@window_fg_color, 0.10);
+  background: alpha(@window_fg_color, 0.075);
   min-width: 3px;
   min-height: 3px;
   transition: background-color 90ms ease-out;
@@ -368,31 +368,31 @@ popover.ft-context-menu contents {
 
 .workspace-paned > separator:hover,
 .workspace-paned > separator:focus-visible {
-  background: alpha(#e88745, 0.42);
+  background: alpha(#e88745, 0.28);
 }
 
 /* GTK marks the separator `:active` while the divider is being dragged. */
 .workspace-paned > separator:active {
-  background: alpha(#e88745, 0.80);
+  background: alpha(#e88745, 0.56);
 }
 
 .sidebar-shell {
-  background: #1b1b1b;
+  background: #171717;
   color: #b7b7b7;
 }
 
 .sidebar-shell.left {
-  border-right: 1px solid #292929;
+  border-right: 1px solid #242424;
 }
 
 .sidebar-shell.right {
-  border-left: 1px solid #292929;
+  border-left: 1px solid #242424;
 }
 
 .sidebar-header {
   min-height: 30px;
   padding: 0 8px 0 10px;
-  border-bottom: 1px solid #292929;
+  border-bottom: 1px solid #242424;
 }
 
 .sidebar-section-label {
@@ -404,10 +404,10 @@ popover.ft-context-menu contents {
 }
 
 .sidebar-add {
-  min-width: 22px;
-  min-height: 22px;
+  min-width: 24px;
+  min-height: 24px;
   padding: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   color: #8a8a8a;
   background: transparent;
   border: 0;
@@ -415,12 +415,12 @@ popover.ft-context-menu contents {
 }
 
 .sidebar-add:hover {
-  background: #232323;
+  background: #202020;
   color: #d7d7d7;
 }
 
 .sidebar-add:active {
-  background: #30251d;
+  background: #26211d;
   color: #d7d7d7;
 }
 
@@ -429,7 +429,7 @@ popover.ft-context-menu contents {
 }
 
 .navigation-sidebar {
-  padding: 5px 0;
+  padding: 6px 0;
   background: transparent;
   color: #b7b7b7;
 }
@@ -471,8 +471,8 @@ popover.ft-context-menu contents {
 
 .workspace-card {
   min-height: 38px;
-  padding: 6px 10px 6px 14px;
-  margin: 0;
+  padding: 6px 10px 6px 12px;
+  margin: 0 4px;
   border-radius: 0;
   background: transparent;
   border: 0;
@@ -492,35 +492,35 @@ popover.ft-context-menu contents {
 }
 
 .navigation-sidebar row:hover .workspace-card {
-  background: #232323;
+  background: #202020;
 }
 
 .workspace-row.active .workspace-card {
-  background: #232323;
-  border-left-color: #c9793f;
+  background: #1f1f1f;
+  border-left-color: alpha(#e88745, 0.72);
   box-shadow: none;
 }
 
 .workspace-row.active:hover .workspace-card {
-  background: #282828;
+  background: #232323;
 }
 
 .workspace-row:drop(active) .workspace-card,
 .workspace-card:drop(active) {
-  background: #282828;
+  background: #232323;
   background-image: none;
   border-left-color: #e88745;
   box-shadow: inset 2px 0 0 #e88745;
 }
 
 .workspace-card.drop-before {
-  background: #282828;
+  background: #232323;
   border-left-color: #e88745;
   box-shadow: inset 0 2px 0 #e88745, inset 2px 0 0 #e88745;
 }
 
 .workspace-card.drop-after {
-  background: #282828;
+  background: #232323;
   border-left-color: #e88745;
   box-shadow: inset 0 -2px 0 #e88745, inset 2px 0 0 #e88745;
 }
@@ -533,19 +533,19 @@ popover.ft-context-menu contents {
 /* Active + needs-attention: keep active selection subtle and swap the rail to
  * warning so urgency is visible without a full warning fill. */
 .workspace-row.active.needs-attention .workspace-card {
-  background: #232323;
+  background: #1f1f1f;
   border-left-color: #c8a75d;
   box-shadow: none;
 }
 
 .workspace-row.active.needs-attention:hover .workspace-card {
-  background: #282828;
+  background: #232323;
 }
 
 .workspace-name {
   color: #b7b7b7;
   font-weight: 540;
-  font-size: 0.90em;
+  font-size: 0.88em;
 }
 
 .workspace-name-line {
@@ -559,8 +559,8 @@ popover.ft-context-menu contents {
 
 .workspace-status-badge {
   padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 0.66em;
+  border-radius: 999px;
+  font-size: 0.64em;
   font-weight: 600;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -568,8 +568,8 @@ popover.ft-context-menu contents {
 
 .workspace-status-badge.running,
 .workspace-status-badge.working {
-  color: #9a9a9a;
-  background: #252525;
+  color: #8a8a8a;
+  background: #202020;
 }
 
 /* Needs-input is the loudest badge; a thin inset ring helps it read as a
@@ -597,12 +597,12 @@ popover.ft-context-menu contents {
 
 .workspace-meta {
   color: #8a8a8a;
-  font-size: 0.78em;
+  font-size: 0.76em;
 }
 
 .workspace-summary {
   color: #b7b7b7;
-  font-size: 0.82em;
+  font-size: 0.80em;
 }
 
 .workspace-count {
@@ -632,16 +632,16 @@ popover.ft-context-menu contents {
 /* Sidebar empty state */
 
 .sidebar-empty {
-  padding: 32px 20px;
+  padding: 28px 18px;
   color: #8a8a8a;
-  font-size: 0.88em;
+  font-size: 0.84em;
 }
 
 .sidebar-empty-title {
   color: #d7d7d7;
   font-weight: 700;
-  font-size: 0.95em;
-  margin-bottom: 4px;
+  font-size: 0.92em;
+  margin-bottom: 3px;
 }
 
 .sidebar-empty-body {
@@ -650,62 +650,62 @@ popover.ft-context-menu contents {
 
 .keycap {
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: 5px;
   color: #8a8a8a;
-  background: #232323;
-  border: 1px solid #292929;
-  font-size: 0.74em;
+  background: #1c1c1c;
+  border: 1px solid #242424;
+  font-size: 0.72em;
   font-weight: 600;
 }
 
 .app-status-bar {
-  min-height: 24px;
-  padding: 1px 12px;
-  background: #181818;
-  border-top: 1px solid #303030;
+  min-height: 22px;
+  padding: 0 10px;
+  background: #171717;
+  border-top: 1px solid #242424;
   box-shadow: none;
-  color: #b7b7b7;
-  font-size: 0.78em;
+  color: #8a8a8a;
+  font-size: 0.76em;
 }
 
 .status-location {
-  padding: 1px 7px;
+  padding: 0 7px;
   background: transparent;
   border: 0;
-  color: #d7d7d7;
-  font-size: 0.85em;
-  font-weight: 700;
+  color: #9a9a9a;
+  font-size: 0.82em;
+  font-weight: 620;
   letter-spacing: 0;
-  border-radius: 5px;
+  border-radius: 999px;
 }
 
 .app-status-bar .keycap {
-  min-height: 18px;
+  min-height: 17px;
   padding: 0 6px;
-  font-size: 0.74em;
+  font-size: 0.72em;
 }
 
 .status-shortcut {
-  border-color: #292929;
-  background: #232323;
+  border-color: #242424;
+  background: #1c1c1c;
   color: #8a8a8a;
   transition: background-color 90ms ease-out, color 90ms ease-out, border-color 90ms ease-out;
 }
 
 .status-shortcut:hover {
-  background: #282828;
+  background: #202020;
   color: #d7d7d7;
   border-color: #303030;
 }
 
 .pane-status {
-  color: #626262;
-  font-size: 0.80em;
-  margin-left: 14px;
+  color: #595959;
+  font-size: 0.78em;
+  margin-left: 12px;
 }
 
 .status-location:hover {
-  background: #232323;
+  background: #202020;
   color: #d7d7d7;
 }
 
@@ -798,7 +798,7 @@ popover.ft-context-menu contents {
 }
 
 .terminal-stage paned > separator {
-  background: alpha(@window_fg_color, 0.12);
+  background: alpha(@window_fg_color, 0.075);
   min-width: 4px;
   min-height: 4px;
   transition: background-color 90ms ease-out;
@@ -806,12 +806,12 @@ popover.ft-context-menu contents {
 
 .terminal-stage paned > separator:hover,
 .terminal-stage paned > separator:focus-visible {
-  background: alpha(#e88745, 0.46);
+  background: alpha(#e88745, 0.28);
 }
 
 /* GTK marks the separator `:active` while the divider is being dragged. */
 .terminal-stage paned > separator:active {
-  background: alpha(#e88745, 0.80);
+  background: alpha(#e88745, 0.56);
 }
 
 .terminal-pane {
@@ -821,8 +821,8 @@ popover.ft-context-menu contents {
 }
 
 .terminal-pane.active {
-  border-color: alpha(#e88745, 0.70);
-  box-shadow: inset 0 0 0 1px alpha(#e88745, 0.18);
+  border-color: alpha(#e88745, 0.28);
+  box-shadow: inset 0 1px 0 alpha(#e88745, 0.34);
 }
 
 .terminal-pane:focus-visible {
@@ -835,16 +835,16 @@ popover.ft-context-menu contents {
 
 .terminal-pane-header {
   min-height: 22px;
-  padding: 0 7px;
-  background: #242424;
-  border-bottom: 1px solid #292929;
+  padding: 0 8px;
+  background: #1b1b1b;
+  border-bottom: 1px solid #242424;
   color: #8a8a8a;
 }
 
 .terminal-pane.active .terminal-pane-header {
-  background: #2e2e2e;
+  background: #202020;
   color: #d7d7d7;
-  border-bottom-color: alpha(@window_fg_color, 0.11);
+  border-bottom-color: #2a2a2a;
 }
 
 .terminal-pane.needs-attention .terminal-pane-header {
@@ -863,10 +863,10 @@ popover.ft-context-menu contents {
 /* Per-pane tab strip, shown when a leaf has >1 tab. Kept deliberately
  * smaller than Adwaita's app-level TabBar because it lives inside pane chrome. */
 .pane-tabstrip {
-  background: #141414;
-  border-bottom: 1px solid #292929;
-  min-height: 25px;
-  padding: 1px 5px 1px 7px;
+  background: #171717;
+  border-bottom: 1px solid #242424;
+  min-height: 26px;
+  padding: 2px 6px 2px 7px;
   transition: background-color 90ms ease-out, border-color 90ms ease-out;
 }
 
@@ -879,19 +879,19 @@ popover.ft-context-menu contents {
 
 .pane-tab {
   min-width: 72px;
-  min-height: 21px;
+  min-height: 22px;
   margin: 0 2px 0 0;
-  padding: 0 2px 0 6px;
-  border: 1px solid #292929;
-  border-radius: 3px;
-  background: #141414;
+  padding: 0 2px 0 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
   color: #8a8a8a;
   transition: background-color 90ms ease-out, border-color 90ms ease-out, color 90ms ease-out;
 }
 
 .pane-tab:hover {
-  background: #1b1b1b;
-  border-color: #303030;
+  background: #202020;
+  border-color: #242424;
   color: #b7b7b7;
 }
 
@@ -900,10 +900,10 @@ popover.ft-context-menu contents {
  * rather than a bottom underline. */
 .pane-tab.active {
   background: #1c1c1c;
-  border-color: transparent;
-  border-top-color: #c9793f;
+  border-color: #242424;
+  border-top-color: alpha(#e88745, 0.72);
   color: #d7d7d7;
-  box-shadow: inset 0 1px 0 #c9793f;
+  box-shadow: inset 0 1px 0 alpha(#e88745, 0.72);
 }
 
 .pane-tab:drop(active),
@@ -969,7 +969,7 @@ popover.ft-context-menu contents {
 
 .pane-tab-label {
   color: #8a8a8a;
-  font-size: 0.78em;
+  font-size: 0.77em;
   font-weight: 500;
 }
 
@@ -1040,7 +1040,7 @@ button.flat.pane-tab-close:active {
 
 .terminal-pane-title {
   color: #8a8a8a;
-  font-size: 0.78em;
+  font-size: 0.77em;
 }
 
 .terminal-pane.active .terminal-pane-title {
@@ -1050,7 +1050,7 @@ button.flat.pane-tab-close:active {
 
 .terminal-pane-cwd {
   color: #626262;
-  font-size: 0.74em;
+  font-size: 0.72em;
 }
 
 /* Inactive attention panes already carry a 2px warning border on top.
@@ -1101,7 +1101,7 @@ button.flat.pane-tab-close:active {
 
 .terminal-pane-action:hover {
   color: #d7d7d7;
-  background: #232323;
+  background: #262626;
 }
 
 .pane-action-separator {
@@ -1130,17 +1130,17 @@ button.flat.pane-tab-close:active {
   margin: 6px 8px 0 0;
   padding: 2px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 7px;
   background: transparent;
   box-shadow: none;
-  opacity: 0.42;
+  opacity: 0.36;
   transition: opacity 90ms ease-out, background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
 .single-pane-actions:hover,
 .single-pane-actions:focus-within {
   opacity: 1;
-  background: alpha(#232323, 0.72);
+  background: alpha(#202020, 0.78);
   border-color: transparent;
   box-shadow: none;
 }
@@ -1195,14 +1195,14 @@ button.flat.pane-tab-close:active {
 .browser-toolbar {
   min-height: 30px;
   padding: 3px 6px;
-  background: #242424;
-  border-bottom: 1px solid #292929;
+  background: #1b1b1b;
+  border-bottom: 1px solid #242424;
   color: #8a8a8a;
 }
 
 .browser-pane.active .browser-toolbar {
-  background: #2e2e2e;
-  border-bottom-color: alpha(@window_fg_color, 0.11);
+  background: #202020;
+  border-bottom-color: #2a2a2a;
   color: #d7d7d7;
 }
 
@@ -1210,7 +1210,7 @@ button.flat.pane-tab-close:active {
   min-width: 24px;
   min-height: 24px;
   padding: 0;
-  border-radius: 5px;
+  border-radius: 6px;
   color: #8a8a8a;
   background: transparent;
   border: 0;
@@ -1223,12 +1223,12 @@ button.flat.pane-tab-close:active {
 
 .browser-action:hover {
   color: #d7d7d7;
-  background: #232323;
+  background: #262626;
 }
 
 .browser-action:focus-visible {
   color: #d7d7d7;
-  background: #232323;
+  background: #262626;
 }
 
 .browser-action.pane-close-action:hover {
@@ -1252,8 +1252,8 @@ button.flat.pane-tab-close:active {
   padding: 2px 8px;
   border-radius: 6px;
   font-size: 0.82em;
-  background: #181818;
-  border: 1px solid #292929;
+  background: #171717;
+  border: 1px solid #242424;
   color: #8a8a8a;
   box-shadow: none;
 }
@@ -1277,20 +1277,21 @@ button.flat.pane-tab-close:active {
 
 .terminal-placeholder,
 .terminal-empty-stage {
-  padding: 34px 22px;
+  padding: 28px 22px;
   background: #1c1c1c;
 }
 
 .terminal-placeholder-actions {
-  margin-top: -4px;
+  margin-top: -2px;
 }
 
 .terminal-empty-shortcuts {
-  margin-top: 2px;
+  margin-top: 0;
 }
 
 .shortcut-hint {
   color: #8a8a8a;
+  font-size: 0.84em;
 }
 
 .focused-terminal {
@@ -1544,19 +1545,19 @@ window.ft-dialog,
 }
 
 .ft-dialog-header {
-  padding: 8px 16px 4px 16px;
+  padding: 9px 14px 3px 14px;
 }
 
 .ft-dialog-title {
   color: #d7d7d7;
   font-weight: 700;
-  font-size: 1.05em;
+  font-size: 1.0em;
   letter-spacing: 0;
 }
 
 .ft-dialog-subtitle {
   color: #8a8a8a;
-  font-size: 0.86em;
+  font-size: 0.83em;
 }
 
 /* Body copy for destructive confirmations — readable, not muted-tiny. */
@@ -1567,13 +1568,19 @@ window.ft-dialog,
 }
 
 .ft-dialog-body {
-  padding: 12px 16px 16px 16px;
+  padding: 10px 14px 14px 14px;
 }
 
 .ft-dialog-footer {
-  padding: 12px 16px 12px 16px;
-  border-top: 1px solid #292929;
-  background: #141414;
+  padding: 10px 14px 11px 14px;
+  border-top: 1px solid #242424;
+  background: #181818;
+}
+
+.ft-dialog-footer button {
+  min-height: 28px;
+  padding: 3px 11px;
+  border-radius: 7px;
 }
 
 .about-dialog {
@@ -1652,43 +1659,64 @@ window.ft-dialog,
 }
 
 .welcome-body {
-  padding: 16px 22px 18px 22px;
+  padding: 22px 24px 18px 24px;
   background: #181818;
 }
 
 .welcome-hero {
-  margin: 0 8px 18px 8px;
+  margin: 0 8px 20px 8px;
 }
 
 .welcome-logo {
-  margin-bottom: 4px;
+  margin-bottom: 2px;
+  opacity: 0.96;
 }
 
 .welcome-heading {
   color: #d7d7d7;
-  font-size: 1.30em;
+  font-size: 1.22em;
   font-weight: 750;
 }
 
 .welcome-subtitle {
   color: #8a8a8a;
-  font-size: 0.90em;
-  margin-top: 2px;
+  font-size: 0.88em;
+  margin-top: 0;
 }
 
 .welcome-setup-box {
-  margin-bottom: 16px;
+  margin-bottom: 10px;
+}
+
+.welcome-integration-row {
+  min-height: 38px;
+  padding: 7px 8px 7px 11px;
+  border-radius: 7px;
+  background: #232323;
+}
+
+.welcome-integration-title {
+  color: #d7d7d7;
+  font-size: 0.90em;
+  font-weight: 560;
+}
+
+.welcome-integration-subtitle {
+  color: #8a8a8a;
+  font-size: 0.78em;
 }
 
 .welcome-setup {
-  min-height: 38px;
-  border-radius: 8px;
+  min-height: 26px;
+  padding: 1px 10px;
+  border-radius: 6px;
+  font-size: 0.82em;
 }
 
 .welcome-setup-status {
   color: #8a8a8a;
-  font-size: 0.82em;
-  margin-top: 2px;
+  font-size: 0.80em;
+  margin: 0 6px;
 }
 
 .welcome-setup-status.error {
@@ -1697,11 +1725,12 @@ window.ft-dialog,
 
 .welcome-card {
   margin-bottom: 10px;
+  border-radius: 8px;
 }
 
 .welcome-link {
   color: #e88745;
-  font-size: 0.86em;
+  font-size: 0.84em;
 }
 
 .welcome-link:hover {
@@ -1710,8 +1739,8 @@ window.ft-dialog,
 
 .welcome-telemetry-status {
   color: #8a8a8a;
-  font-size: 0.82em;
-  margin-top: 2px;
+  font-size: 0.80em;
+  margin: 0 12px 0 12px;
 }
 
 .welcome-telemetry-status.error {
@@ -1719,13 +1748,13 @@ window.ft-dialog,
 }
 
 .welcome-footer {
-  margin-top: 16px;
+  margin-top: 14px;
 }
 
 .welcome-start {
-  min-height: 34px;
-  padding: 5px 18px;
-  border-radius: 8px;
+  min-height: 32px;
+  padding: 4px 16px;
+  border-radius: 999px;
 }
 
 .ft-section-title {
@@ -1750,6 +1779,67 @@ window.ft-dialog,
 
 .settings-row:last-child {
   border-bottom: none;
+}
+
+.settings-inline-action {
+  min-height: 24px;
+  min-width: 54px;
+  padding: 1px 8px;
+  border-radius: 6px;
+  font-size: 0.84em;
+  font-weight: 650;
+}
+
+.settings-inline-action.primary {
+  color: #17110c;
+  background: #e88745;
+  border-color: #e88745;
+}
+
+.settings-inline-action.primary:hover {
+  background: #f09a58;
+  border-color: #f09a58;
+}
+
+.settings-inline-action.subtle {
+  color: #9a9a9a;
+  background: transparent;
+  border-color: #303030;
+  box-shadow: none;
+}
+
+.settings-inline-action.subtle:hover {
+  color: #d7d7d7;
+  background: #232323;
+  border-color: #3a3a3a;
+}
+
+.settings-status-pill {
+  min-height: 22px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.75em;
+  font-weight: 650;
+}
+
+.settings-status-pill.checking {
+  color: #8a8a8a;
+  background: #242424;
+}
+
+.settings-status-pill.ok {
+  color: #9ac18e;
+  background: #1c2a1b;
+}
+
+.settings-status-pill.warning {
+  color: #e6b173;
+  background: #302515;
+}
+
+.settings-status-pill.error {
+  color: #d36b6b;
+  background: #321c1c;
 }
 
 .ft-settings-window {
@@ -1807,8 +1897,8 @@ window.ft-dialog,
 }
 
 .settings-nav {
-  min-width: 192px;
-  padding: 12px 10px 16px 10px;
+  min-width: 184px;
+  padding: 11px 9px 15px 9px;
   background: #141414;
   border-right: 1px solid #292929;
 }
@@ -1823,7 +1913,7 @@ window.ft-dialog,
 }
 
 .settings-nav-item {
-  min-height: 40px;
+  min-height: 38px;
   padding: 0 9px;
   border: 1px solid transparent;
   border-radius: 7px;
@@ -1871,25 +1961,29 @@ window.ft-dialog,
   background: transparent;
 }
 
+.settings-page-clamp {
+  margin: 20px 28px 28px 28px;
+}
+
 .settings-page {
-  margin: 22px 28px 30px 28px;
+  margin: 0;
 }
 
 .settings-page-header {
   margin-left: 2px;
-  margin-bottom: 2px;
+  margin-bottom: 0;
 }
 
 .settings-page-title {
   color: #d7d7d7;
-  font-size: 1.05em;
+  font-size: 1.02em;
   font-weight: 750;
   letter-spacing: 0;
 }
 
 .settings-page-description {
   color: #8a8a8a;
-  font-size: 0.84em;
+  font-size: 0.82em;
 }
 
 .settings-section-header {
@@ -1899,13 +1993,13 @@ window.ft-dialog,
 .settings-section-title {
   color: #d7d7d7;
   font-weight: 700;
-  font-size: 0.92em;
+  font-size: 0.90em;
   letter-spacing: 0;
 }
 
 .settings-section-description {
   color: #8a8a8a;
-  font-size: 0.84em;
+  font-size: 0.80em;
 }
 
 .settings-list {
@@ -1917,8 +2011,8 @@ window.ft-dialog,
 
 .settings-list row,
 .settings-list .settings-row {
-  min-height: 52px;
-  padding: 0 14px;
+  min-height: 48px;
+  padding: 0 12px;
   background: transparent;
   border-radius: 0;
   border-bottom: 1px solid #292929;
@@ -1942,15 +2036,27 @@ window.ft-dialog,
   background: #232323;
 }
 
+.settings-list row.settings-primary-row {
+  min-height: 50px;
+}
+
+.settings-list row.settings-secondary-row {
+  min-height: 44px;
+}
+
+.settings-list row.settings-secondary-row label.title {
+  color: #b7b7b7;
+}
+
 .settings-list row label.title {
   color: #d7d7d7;
   font-weight: 560;
-  font-size: 0.92em;
+  font-size: 0.90em;
 }
 
 .settings-list row label.subtitle {
   color: #8a8a8a;
-  font-size: 0.80em;
+  font-size: 0.78em;
 }
 
 .settings-list row.entry entry,
@@ -2118,12 +2224,12 @@ window.ft-dialog,
 }
 
 .worktree-context {
-  padding: 7px 9px;
+  padding: 6px 9px;
   border-radius: 7px;
   color: #8a8a8a;
   background: #141414;
   border: 1px solid #292929;
-  font-size: 0.84em;
+  font-size: 0.82em;
 }
 
 .worktree-mode-selector {
@@ -2131,8 +2237,8 @@ window.ft-dialog,
 }
 
 .worktree-mode-button {
-  min-height: 34px;
-  padding: 4px 10px;
+  min-height: 30px;
+  padding: 3px 10px;
   font-weight: 600;
 }
 
@@ -2151,9 +2257,17 @@ window.ft-dialog,
 }
 
 combobox.worktree-existing button {
-  min-height: 34px;
-  padding: 4px 10px;
+  min-height: 32px;
+  padding: 3px 10px;
   border-radius: 8px;
+}
+
+.worktree-dialog .ft-dialog-body {
+  padding-top: 9px;
+}
+
+.worktree-dialog entry {
+  min-height: 32px;
 }
 
 /* --------------------------------------------------------------------------
@@ -2165,21 +2279,22 @@ combobox.worktree-existing button {
 }
 
 .command-palette-dialog .ft-dialog-header {
-  padding: 10px 14px 4px 14px;
+  padding: 7px 14px 0 14px;
 }
 
 .command-palette-dialog .ft-dialog-title {
-  font-size: 0.98em;
-  font-weight: 700;
+  color: #9a9a9a;
+  font-size: 0.86em;
+  font-weight: 650;
 }
 
 .command-palette-dialog .ft-dialog-body {
-  padding: 8px 14px 14px 14px;
+  padding: 7px 14px 12px 14px;
 }
 
 .command-search {
-  min-height: 36px;
-  margin-bottom: 8px;
+  min-height: 34px;
+  margin-bottom: 7px;
   border-color: #3a3a3a;
   border-radius: 7px;
   background: #181818;
@@ -2232,13 +2347,13 @@ entry.search.command-search:focus-within,
 }
 
 .command-item {
-  padding: 7px 10px;
+  padding: 6px 9px;
 }
 
 .command-item-label {
   color: #b7b7b7;
   font-weight: 580;
-  font-size: 0.92em;
+  font-size: 0.90em;
 }
 
 .command-item .keycap {
@@ -2262,7 +2377,20 @@ entry.search.command-search:focus-within,
 
 .command-item-hint {
   color: #626262;
-  font-size: 0.82em;
+  font-size: 0.80em;
+}
+
+.shortcuts-dialog .ft-dialog-body {
+  padding-top: 8px;
+}
+
+.shortcuts-dialog .settings-group {
+  border-radius: 7px;
+}
+
+.shortcuts-dialog .settings-row {
+  min-height: 34px;
+  padding: 8px 10px;
 }
 
 .shortcut-list {
@@ -2270,13 +2398,13 @@ entry.search.command-search:focus-within,
 }
 
 .shortcut-row {
-  min-height: 40px;
+  min-height: 34px;
 }
 
 .shortcut-label {
   color: #b7b7b7;
   font-weight: 600;
-  font-size: 0.9em;
+  font-size: 0.88em;
 }
 
 /* --------------------------------------------------------------------------
@@ -2288,15 +2416,15 @@ entry.search.command-search:focus-within,
 }
 
 .notification-panel .ft-dialog-header {
-  padding: 10px 14px 4px 14px;
+  padding: 8px 14px 2px 14px;
 }
 
 .notification-panel .ft-dialog-body {
-  padding: 8px 14px 14px 14px;
+  padding: 7px 14px 12px 14px;
 }
 
 .notification-panel-footer {
-  padding: 10px 14px 12px 14px;
+  padding: 9px 14px 11px 14px;
 }
 
 .notification-panel statuspage.compact > scrolledwindow > viewport > box {
@@ -2306,12 +2434,12 @@ entry.search.command-search:focus-within,
 .notification-list row {
   background: transparent;
   border-radius: 7px;
-  margin: 0 0 6px 0;
+  margin: 0 0 5px 0;
   padding: 0;
 }
 
 .notification-row {
-  padding: 9px 10px;
+  padding: 8px 9px;
   border: 1px solid #292929;
   border-radius: 7px;
   background: #1b1b1b;
@@ -2326,12 +2454,12 @@ entry.search.command-search:focus-within,
 .notification-title {
   color: #d7d7d7;
   font-weight: 600;
-  font-size: 0.92em;
+  font-size: 0.90em;
 }
 
 .notification-body {
   color: #8a8a8a;
-  font-size: 0.86em;
+  font-size: 0.84em;
 }
 
 .notification-time {
@@ -2345,21 +2473,21 @@ entry.search.command-search:focus-within,
 }
 
 .notification-badge {
-  background: #d36b6b;
+  background: #c95f5f;
   color: #17110c;
   border-radius: 999px;
-  font-size: 0.62em;
+  font-size: 0.60em;
   font-weight: 700;
-  padding: 0 4px;
-  min-width: 14px;
-  min-height: 14px;
-  margin: -6px -8px 0 0;
-  box-shadow: 0 0 0 1.5px #141414;
+  padding: 0 3px;
+  min-width: 12px;
+  min-height: 12px;
+  margin: -5px -7px 0 0;
+  box-shadow: 0 0 0 1.5px #171717;
   letter-spacing: 0;
 }
 
 .notification-open {
-  min-height: 24px;
+  min-height: 22px;
   padding: 1px 7px;
   border-radius: 6px;
   color: #e88745;
@@ -2422,7 +2550,7 @@ entry.search.command-search:focus-within,
  * -------------------------------------------------------------------------- */
 
 .agent-badge {
-  background: #e88745;
+  background: #d97c3e;
 }
 
 .agent-panel .ft-dialog-header {
@@ -2578,37 +2706,37 @@ button.agent-danger-action:hover {
  * -------------------------------------------------------------------------- */
 
 .empty-state {
-  padding: 32px 20px;
+  padding: 28px 20px;
 }
 
 .empty-state-title {
   color: #d7d7d7;
   font-weight: 700;
-  font-size: 0.98em;
+  font-size: 0.94em;
 }
 
 .empty-state-body {
   color: #8a8a8a;
-  font-size: 0.86em;
+  font-size: 0.84em;
 }
 
 /* Compact AdwStatusPage used inside dialogs and placeholders. AdwStatusPage
  * defaults to a poster-sized icon/title; we tighten it for in-dialog use. */
 statuspage.compact > scrolledwindow > viewport > box {
-  margin: 6px 12px;
+  margin: 4px 12px;
   padding: 0;
 }
 
 statuspage.compact .icon {
-  -gtk-icon-size: 36px;
+  -gtk-icon-size: 32px;
   color: #626262;
-  margin-bottom: 8px;
-  min-width: 36px;
-  min-height: 36px;
+  margin-bottom: 7px;
+  min-width: 32px;
+  min-height: 32px;
 }
 
 statuspage.compact .title {
-  font-size: 1.02em;
+  font-size: 0.98em;
   font-weight: 700;
   color: #d7d7d7;
   margin-bottom: 2px;
@@ -2616,7 +2744,7 @@ statuspage.compact .title {
 
 statuspage.compact .description {
   color: #8a8a8a;
-  font-size: 0.86em;
+  font-size: 0.84em;
 }
 
 /* --------------------------------------------------------------------------

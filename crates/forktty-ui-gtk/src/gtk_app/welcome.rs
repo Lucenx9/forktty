@@ -5,12 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
-use std::time::Duration;
 
 const WELCOME_MARKER_FILE: &str = "welcome-seen.json";
-const SETUP_POLL_INTERVAL: Duration = Duration::from_millis(150);
 const PRIVACY_URL: &str = "https://github.com/Lucenx9/forktty/blob/main/PRIVACY.md";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,17 +32,21 @@ fn welcome_marker_path() -> Option<PathBuf> {
 }
 
 /// Present the one-time welcome dialog: a branded hero, an informed telemetry
-/// notice, and a one-click agent-integration setup. Built as a native
+/// notice, and a direct path into agent-integration settings. Built as a native
 /// `.ft-dialog` window (matching the About dialog) rather than a generic
 /// message dialog so it carries ForkTTY's own look. The first anonymous ping
 /// is deferred to dialog dismissal so the user always sees the (default-on)
 /// toggle first.
-pub(super) fn show_welcome_dialog(parent: &adw::ApplicationWindow, telemetry_enabled: bool) {
+pub(super) fn show_welcome_dialog(
+    parent: &adw::ApplicationWindow,
+    telemetry_enabled: bool,
+    open_agent_settings: Rc<dyn Fn()>,
+) {
     let window = gtk::Window::builder()
         .title("Welcome to ForkTTY")
         .transient_for(parent)
         .modal(true)
-        .default_width(460)
+        .default_width(430)
         .resizable(false)
         .build();
     window.add_css_class("ft-dialog");
@@ -58,23 +58,21 @@ pub(super) fn show_welcome_dialog(parent: &adw::ApplicationWindow, telemetry_ena
     let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
     body.add_css_class("welcome-body");
 
-    // Hero: logo + one-line value proposition, mirroring the About dialog.
-    let hero = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    // Hero: compact status-page style intro, without turning first launch into
+    // a marketing screen.
+    let hero = gtk::Box::new(gtk::Orientation::Vertical, 8);
     hero.add_css_class("welcome-hero");
     hero.set_halign(gtk::Align::Center);
     let logo = gtk::Image::from_icon_name("forktty");
-    logo.set_pixel_size(72);
+    logo.set_pixel_size(52);
     logo.add_css_class("welcome-logo");
     let heading = gtk::Label::new(Some("Welcome to ForkTTY"));
     heading.add_css_class("welcome-heading");
     let subtitle = gtk::Label::builder()
-        .label(
-            "A terminal multiplexer built for coding agents — embedded terminals, \
-             git worktrees, and agent hook integration.",
-        )
+        .label("Ghostty-powered workspaces for coding agents.")
         .wrap(true)
         .justify(gtk::Justification::Center)
-        .max_width_chars(42)
+        .max_width_chars(38)
         .build();
     subtitle.add_css_class("welcome-subtitle");
     hero.append(&logo);
@@ -82,27 +80,57 @@ pub(super) fn show_welcome_dialog(parent: &adw::ApplicationWindow, telemetry_ena
     hero.append(&subtitle);
     body.append(&hero);
 
-    // Agent integration: the encouraged action gets the accent button.
-    let setup_button = gtk::Button::with_label("Set up agent integration (hooks + MCP)");
+    // Agent integration: compact callout, not a full preference row.
+    let integration_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    integration_row.add_css_class("welcome-integration-row");
+    integration_row.set_valign(gtk::Align::Center);
+    let integration_text = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    integration_text.set_hexpand(true);
+    let integration_title = gtk::Label::builder()
+        .label("Agent integrations")
+        .xalign(0.0)
+        .build();
+    integration_title.add_css_class("welcome-integration-title");
+    let integration_subtitle = gtk::Label::builder()
+        .label("Hooks and local MCP bridge.")
+        .xalign(0.0)
+        .build();
+    integration_subtitle.add_css_class("welcome-integration-subtitle");
+    integration_text.append(&integration_title);
+    integration_text.append(&integration_subtitle);
+    integration_row.append(&integration_text);
+    let setup_button = gtk::Button::builder()
+        .label("Configure")
+        .valign(gtk::Align::Center)
+        .build();
     setup_button.add_css_class("suggested-action");
     setup_button.add_css_class("welcome-setup");
+    integration_row.append(&setup_button);
     let setup_status = gtk::Label::builder()
-        .label(
-            "Installs ForkTTY hooks for Codex, Claude Code, Antigravity, and OpenCode, \
-             plus the MCP bridge for Codex, Claude Code, and Antigravity.",
-        )
+        .label("Review install status, update managed entries, or set up providers.")
         .wrap(true)
-        .justify(gtk::Justification::Center)
-        .max_width_chars(44)
+        .justify(gtk::Justification::Left)
+        .xalign(0.0)
+        .max_width_chars(46)
         .build();
     setup_status.add_css_class("welcome-setup-status");
     setup_button.connect_clicked({
-        let setup_status = setup_status.clone();
-        move |button| run_agent_setup(button, &setup_status)
+        let open_agent_settings = open_agent_settings.clone();
+        let window = window.clone();
+        move |_| {
+            window.close();
+            let open_agent_settings = open_agent_settings.clone();
+            let window = window.clone();
+            glib::idle_add_local_once(move || {
+                if !window.is_visible() {
+                    open_agent_settings();
+                }
+            });
+        }
     });
     let setup_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
     setup_box.add_css_class("welcome-setup-box");
-    setup_box.append(&setup_button);
+    setup_box.append(&integration_row);
     setup_box.append(&setup_status);
     body.append(&setup_box);
 
@@ -113,10 +141,7 @@ pub(super) fn show_welcome_dialog(parent: &adw::ApplicationWindow, telemetry_ena
     privacy_list.set_selection_mode(gtk::SelectionMode::None);
     let ping_row = adw::SwitchRow::builder()
         .title("Anonymous daily ping")
-        .subtitle(
-            "One daily ping with app version and date only — no install id or project \
-             data. Change this any time in Settings.",
-        )
+        .subtitle("Version and date only. No install id or project data.")
         .active(telemetry_enabled)
         .build();
     let telemetry_status = gtk::Label::builder()
@@ -136,29 +161,29 @@ pub(super) fn show_welcome_dialog(parent: &adw::ApplicationWindow, telemetry_ena
     privacy_list.append(&ping_row);
     body.append(&privacy_list);
 
+    // Footer: a clear way into the app, with privacy as a secondary text link.
+    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    footer.add_css_class("welcome-footer");
+    footer.set_valign(gtk::Align::Center);
+
     // A real, openable link (GtkLabel opens http(s) hrefs via its default
     // activate-link handler), so the consent notice is legible, not just text.
     let privacy_link = gtk::Label::new(None);
-    privacy_link.set_markup(&format!(
-        "<a href=\"{PRIVACY_URL}\">Read the ForkTTY privacy notice</a>"
-    ));
+    privacy_link.set_markup(&format!("<a href=\"{PRIVACY_URL}\">Privacy notice</a>"));
     privacy_link.add_css_class("welcome-link");
-    privacy_link.set_halign(gtk::Align::Center);
-    body.append(&privacy_link);
-    body.append(&telemetry_status);
+    privacy_link.set_halign(gtk::Align::Start);
+    privacy_link.set_hexpand(true);
+    footer.append(&privacy_link);
 
-    // Footer: a clear way into the app. Closing by any route (button, the
-    // titlebar close, or Escape) runs the same dismissal logic below.
-    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    footer.add_css_class("welcome-footer");
-    footer.set_halign(gtk::Align::End);
-    let get_started = gtk::Button::with_label("Get started");
+    let get_started = gtk::Button::with_label("Get Started");
     get_started.add_css_class("welcome-start");
+    get_started.add_css_class("pill");
     get_started.connect_clicked({
         let window = window.clone();
         move |_| window.close()
     });
     footer.append(&get_started);
+    body.append(&telemetry_status);
     body.append(&footer);
 
     window.connect_close_request({
@@ -243,67 +268,6 @@ fn show_telemetry_error(status: &gtk::Label, enabled: bool, error: &str) {
     status.set_visible(true);
     if !status.has_css_class("error") {
         status.add_css_class("error");
-    }
-}
-
-fn run_agent_setup(button: &gtk::Button, status: &gtk::Label) {
-    button.set_sensitive(false);
-    status.remove_css_class("error");
-    status.set_text("Configuring agent hooks and MCP…");
-
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(run_setup_subcommands());
-    });
-
-    let button = button.clone();
-    let status = status.clone();
-    glib::timeout_add_local(SETUP_POLL_INTERVAL, move || match rx.try_recv() {
-        Ok(Ok(())) => {
-            status.set_text("✓ Agent hooks and MCP bridge configured.");
-            glib::ControlFlow::Break
-        }
-        Ok(Err(err)) => {
-            status.add_css_class("error");
-            status.set_text(&format!(
-                "Setup failed: {err}\nRun `forktty hooks setup` and `forktty mcp setup` in a terminal."
-            ));
-            button.set_sensitive(true);
-            glib::ControlFlow::Break
-        }
-        Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-        Err(mpsc::TryRecvError::Disconnected) => {
-            button.set_sensitive(true);
-            glib::ControlFlow::Break
-        }
-    });
-}
-
-/// Run `forktty hooks setup` and `forktty mcp setup` against this same binary.
-/// Both subcommands are dispatched by the CLI layer before any GUI launch, so
-/// they write their config files and exit without touching the socket server.
-fn run_setup_subcommands() -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|err| err.to_string())?;
-    run_setup_subcommand(&exe, &["hooks", "setup"])?;
-    run_setup_subcommand(&exe, &["mcp", "setup"])?;
-    Ok(())
-}
-
-fn run_setup_subcommand(exe: &Path, args: &[&str]) -> Result<(), String> {
-    let output = Command::new(exe)
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|err| err.to_string())?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let detail = String::from_utf8_lossy(&output.stderr);
-    let detail = detail.trim();
-    if detail.is_empty() {
-        Err(format!("`forktty {}` failed", args.join(" ")))
-    } else {
-        Err(format!("`forktty {}`: {detail}", args.join(" ")))
     }
 }
 

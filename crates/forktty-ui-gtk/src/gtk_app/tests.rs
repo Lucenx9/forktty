@@ -3406,6 +3406,11 @@ fn settings_dialog_does_not_expose_shell_editor() {
 }
 
 #[test]
+fn settings_agents_initial_page_targets_agents_stack() {
+    assert_eq!(SettingsInitialPage::Agents.stack_name(), "agents");
+}
+
+#[test]
 fn maximized_layout_signature_tracks_focused_pane() {
     // In maximize mode only the focused pane is rendered, so a focus-only
     // change must produce a different signature and trigger a rebuild.
@@ -3490,6 +3495,13 @@ fn accessible_shortcut_text_uses_accessibility_key_names() {
     );
     assert_eq!(accessible_shortcut_text("Ctrl+,"), "Control+comma");
     assert_eq!(accessible_shortcut_text("Esc"), "Escape");
+}
+
+#[test]
+fn dialog_escape_close_uses_capture_phase() {
+    let source = include_str!("ui_common.rs");
+
+    assert!(source.contains("controller.set_propagation_phase(gtk::PropagationPhase::Capture);"));
 }
 
 #[test]

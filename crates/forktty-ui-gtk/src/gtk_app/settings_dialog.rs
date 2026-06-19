@@ -1,9 +1,35 @@
 use super::*;
 
+const SETTINGS_SETUP_POLL_INTERVAL: Duration = Duration::from_millis(150);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SettingsInitialPage {
+    Terminal,
+    Agents,
+}
+
+impl SettingsInitialPage {
+    pub(super) fn stack_name(self) -> &'static str {
+        match self {
+            Self::Terminal => "terminal",
+            Self::Agents => "agents",
+        }
+    }
+}
+
 pub(super) fn show_settings_dialog(
     parent: &adw::ApplicationWindow,
     state: &SocketAppState,
     on_apply: SettingsApplyCallback,
+) {
+    show_settings_dialog_page(parent, state, on_apply, SettingsInitialPage::Terminal);
+}
+
+pub(super) fn show_settings_dialog_page(
+    parent: &adw::ApplicationWindow,
+    state: &SocketAppState,
+    on_apply: SettingsApplyCallback,
+    initial_page: SettingsInitialPage,
 ) {
     #[cfg(not(feature = "browser"))]
     let _ = state;
@@ -13,10 +39,10 @@ pub(super) fn show_settings_dialog(
         .transient_for(parent)
         .modal(true)
         .resizable(true)
-        .default_width(820)
-        .default_height(600)
+        .default_width(860)
+        .default_height(580)
         .build();
-    window.set_size_request(680, 440);
+    window.set_size_request(700, 440);
     window.add_css_class("ft-settings-window");
     apply_settings_dialog_chrome(&window);
 
@@ -42,7 +68,7 @@ pub(super) fn show_settings_dialog(
     nav.add_css_class("settings-nav");
     nav.set_hexpand(false);
     nav.set_vexpand(true);
-    nav.set_width_request(192);
+    nav.set_width_request(184);
     body.append(&nav);
 
     let stack = gtk::Stack::builder()
@@ -57,33 +83,29 @@ pub(super) fn show_settings_dialog(
     let terminal_nav = settings_nav_button(
         "forktty-terminal-symbolic",
         "Terminal",
-        "Scrollback, behavior",
+        "Scrollback and alerts",
     );
-    let interface_nav = settings_nav_button(
-        "forktty-theme-symbolic",
-        "Interface",
-        "Window mode, sidebar",
-    );
-    let worktrees_nav = settings_nav_button(
-        "forktty-grid-symbolic",
-        "Worktrees",
-        "Workspace creation, PR hints",
-    );
+    let interface_nav =
+        settings_nav_button("forktty-theme-symbolic", "Interface", "Window and sidebar");
+    let worktrees_nav =
+        settings_nav_button("forktty-grid-symbolic", "Worktrees", "Workspaces and PRs");
+    let agents_nav = settings_nav_button("forktty-keyboard-symbolic", "Agents", "Hooks and MCP");
     let alerts_nav = settings_nav_button(
         "forktty-notifications-symbolic",
         "Notifications",
-        "Desktop alerts, sound, command hook",
+        "Alerts and commands",
     );
-    let advanced_nav =
-        settings_nav_button("forktty-refresh-symbolic", "Privacy", "Telemetry and reset");
+    let advanced_nav = settings_nav_button("forktty-refresh-symbolic", "Privacy", "Telemetry");
     interface_nav.set_group(Some(&terminal_nav));
     worktrees_nav.set_group(Some(&terminal_nav));
+    agents_nav.set_group(Some(&terminal_nav));
     alerts_nav.set_group(Some(&terminal_nav));
     advanced_nav.set_group(Some(&terminal_nav));
     nav.append(&settings_nav_heading("Essentials"));
     nav.append(&terminal_nav);
     nav.append(&interface_nav);
     nav.append(&settings_nav_heading("Workflow"));
+    nav.append(&agents_nav);
     nav.append(&worktrees_nav);
     #[cfg(feature = "browser")]
     let browser_nav = {
@@ -100,13 +122,12 @@ pub(super) fn show_settings_dialog(
     nav.append(&alerts_nav);
     nav.append(&advanced_nav);
 
-    let (terminal_page, terminal_content) =
-        settings_page("Terminal", "Scrollback and terminal behavior.");
+    let (terminal_page, terminal_content) = settings_page("Terminal", "Terminal behavior.");
 
     let (behavior_section, behavior_list) = settings_section("Behavior", "");
     let scrollback_lines = settings_spin_row(
         "Scrollback lines",
-        "Set to 0 to disable saved scrollback for each pane.",
+        "Set to 0 to disable saved scrollback.",
         0.0,
         500_000.0,
         1000.0,
@@ -123,8 +144,7 @@ pub(super) fn show_settings_dialog(
     terminal_content.append(&behavior_section);
     stack.add_named(&terminal_page, Some("terminal"));
 
-    let (interface_page, interface_content) =
-        settings_page("Interface", "Window and workspace sidebar.");
+    let (interface_page, interface_content) = settings_page("Interface", "Window and sidebar.");
     let (window_section, window_list) = settings_section("Window", "");
     let window_mode = settings_combo_row(
         "Window mode",
@@ -145,7 +165,7 @@ pub(super) fn show_settings_dialog(
     sidebar_list.append(&sidebar_visible);
     let sidebar_position = settings_combo_row(
         "Sidebar position",
-        "Side of the main window used for workspaces.",
+        "Side used for the workspace list.",
         SIDEBAR_POSITION_ITEMS,
         &loaded.appearance.sidebar_position,
     );
@@ -153,13 +173,12 @@ pub(super) fn show_settings_dialog(
     interface_content.append(&sidebar_section);
     stack.add_named(&interface_page, Some("interface"));
 
-    let (worktrees_page, worktrees_content) =
-        settings_page("Worktrees", "Workspace creation and branch status.");
+    let (worktrees_page, worktrees_content) = settings_page("Worktrees", "Workspace creation.");
 
     let (worktree_section, worktree_list) = settings_section("Git Worktrees", "");
     let worktree_layout = settings_combo_row(
         "Worktree layout",
-        "Placement for new worktree directories relative to the repository root.",
+        "Where new worktree directories are created.",
         WORKTREE_LAYOUT_ITEMS,
         &loaded.general.worktree_layout,
     );
@@ -174,16 +193,52 @@ pub(super) fn show_settings_dialog(
     worktrees_content.append(&worktree_section);
     stack.add_named(&worktrees_page, Some("worktrees"));
 
+    let (agents_page, agents_content) = settings_page("Agents", "Agent integrations.");
+    let (agent_setup_section, agent_setup_list) = settings_section("Recommended", "");
+    let all_setup_row = settings_action_row(
+        "Agent integration",
+        "Hooks and MCP for supported coding agents. Ghostty config is untouched.",
+    );
+    all_setup_row.add_css_class("settings-primary-row");
+    let all_setup_button = settings_setup_button("Set Up");
+    let all_setup_status = settings_setup_status_label();
+    all_setup_row.add_suffix(&all_setup_status);
+    all_setup_row.add_suffix(&all_setup_button);
+    all_setup_row.set_activatable_widget(Some(&all_setup_button));
+    agent_setup_list.append(&all_setup_row);
+    agents_content.append(&agent_setup_section);
+
+    let (agent_advanced_section, agent_advanced_list) = settings_section("Advanced", "");
+    let hooks_row = settings_action_row("Agent hooks", "Install provider hook entries.");
+    hooks_row.add_css_class("settings-secondary-row");
+    let hooks_button = settings_setup_button("Hooks");
+    let hooks_status = settings_setup_status_label();
+    hooks_row.add_suffix(&hooks_status);
+    hooks_row.add_suffix(&hooks_button);
+    hooks_row.set_activatable_widget(Some(&hooks_button));
+    agent_advanced_list.append(&hooks_row);
+    let mcp_row = settings_action_row("MCP bridge", "Register the local stdio MCP server.");
+    mcp_row.add_css_class("settings-secondary-row");
+    let mcp_button = settings_setup_button("MCP");
+    let mcp_status = settings_setup_status_label();
+    mcp_row.add_suffix(&mcp_status);
+    mcp_row.add_suffix(&mcp_button);
+    mcp_row.set_activatable_widget(Some(&mcp_button));
+    agent_advanced_list.append(&mcp_row);
+    agents_content.append(&agent_advanced_section);
+    stack.add_named(&agents_page, Some("agents"));
+
     #[cfg(feature = "browser")]
     {
-        let (browser_page, browser_content) =
-            settings_page("Browser", "Imported browser profile data.");
-        let (import_section, import_list) = settings_section("Browser Data", "");
+        let (browser_page, browser_content) = settings_page("Browser", "Imported browser data.");
+        let (import_section, import_list) = settings_section("Profiles", "");
         let import_row = settings_action_row(
             "Import Browser Data",
             "Import history and bookmarks from discovered local browser profiles.",
         );
         let import_button = gtk::Button::with_label("Import");
+        import_button.add_css_class("settings-inline-action");
+        import_button.add_css_class("subtle");
         import_row.add_suffix(&import_button);
         import_row.set_activatable_widget(Some(&import_button));
         import_list.append(&import_row);
@@ -197,29 +252,25 @@ pub(super) fn show_settings_dialog(
         });
     }
 
-    let (alerts_page, alerts_content) = settings_page(
-        "Notifications",
-        "Desktop alerts, sounds, and command hooks.",
-    );
+    let (alerts_page, alerts_content) = settings_page("Notifications", "Alerts and command hooks.");
     let (delivery_section, delivery_list) = settings_section("Delivery", "");
     let desktop_notifications = adw::SwitchRow::builder()
         .title("Desktop notifications")
-        .subtitle("Forward alerts to the system notification daemon.")
+        .subtitle("Forward alerts to the system notification service.")
         .active(loaded.notifications.desktop)
         .build();
     desktop_notifications.add_css_class("settings-row");
     delivery_list.append(&desktop_notifications);
     let notification_sound = adw::SwitchRow::builder()
         .title("Alert sound")
-        .subtitle("Play the default system alert sound for ForkTTY alerts.")
+        .subtitle("Play the system alert sound.")
         .active(loaded.notifications.sound)
         .build();
     notification_sound.add_css_class("settings-row");
     delivery_list.append(&notification_sound);
     alerts_content.append(&delivery_section);
 
-    let (notification_command_section, notification_command_list) =
-        settings_section("Command Hook", "");
+    let (notification_command_section, notification_command_list) = settings_section("Command", "");
     let notification_command = adw::EntryRow::builder()
         .title("Custom command")
         .text(&loaded.general.notification_command)
@@ -232,7 +283,7 @@ pub(super) fn show_settings_dialog(
     alerts_content.append(&notification_command_section);
     stack.add_named(&alerts_page, Some("alerts"));
 
-    let (advanced_page, advanced_content) = settings_page("Privacy", "Telemetry and reset.");
+    let (advanced_page, advanced_content) = settings_page("Privacy", "Telemetry.");
     let (privacy_section, privacy_list) = settings_section("Privacy", "");
     let anonymous_ping = adw::SwitchRow::builder()
         .title("Anonymous daily ping")
@@ -245,12 +296,11 @@ pub(super) fn show_settings_dialog(
     privacy_list.append(&anonymous_ping);
     advanced_content.append(&privacy_section);
 
-    let (advanced_section, advanced_list) = settings_section("Reset", "");
-    let reset_row = settings_action_row(
-        "Reset to defaults",
-        "Restore saved preferences to defaults.",
-    );
+    let (advanced_section, advanced_list) = settings_section("Maintenance", "");
+    let reset_row =
+        settings_action_row("Reset preferences", "Restore ForkTTY settings to defaults.");
     let reset = gtk::Button::with_label("Reset");
+    reset.add_css_class("settings-inline-action");
     reset.add_css_class("destructive-action");
     reset_row.add_suffix(&reset);
     reset_row.set_activatable_widget(Some(&reset));
@@ -260,13 +310,86 @@ pub(super) fn show_settings_dialog(
 
     connect_settings_nav(&terminal_nav, &stack, "terminal");
     connect_settings_nav(&interface_nav, &stack, "interface");
+    connect_settings_nav(&agents_nav, &stack, "agents");
     connect_settings_nav(&worktrees_nav, &stack, "worktrees");
     #[cfg(feature = "browser")]
     connect_settings_nav(&browser_nav, &stack, "browser");
     connect_settings_nav(&alerts_nav, &stack, "alerts");
     connect_settings_nav(&advanced_nav, &stack, "advanced");
-    terminal_nav.set_active(true);
-    stack.set_visible_child_name("terminal");
+    match initial_page {
+        SettingsInitialPage::Terminal => terminal_nav.set_active(true),
+        SettingsInitialPage::Agents => agents_nav.set_active(true),
+    }
+    stack.set_visible_child_name(initial_page.stack_name());
+
+    let refresh_agent_setup_statuses = {
+        let all_setup_status = all_setup_status.clone();
+        let all_setup_button = all_setup_button.clone();
+        let hooks_status = hooks_status.clone();
+        let hooks_button = hooks_button.clone();
+        let mcp_status = mcp_status.clone();
+        let mcp_button = mcp_button.clone();
+        Rc::new(move || {
+            refresh_settings_setup_statuses(
+                &all_setup_status,
+                &all_setup_button,
+                &hooks_status,
+                &hooks_button,
+                &mcp_status,
+                &mcp_button,
+            );
+        })
+    };
+    refresh_agent_setup_statuses.as_ref()();
+
+    all_setup_button.connect_clicked({
+        let dialog = dialog.clone();
+        let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
+        move |button| {
+            run_settings_setup(
+                button,
+                &dialog,
+                "Agent integrations configured.",
+                run_agent_integrations_setup,
+                {
+                    let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
+                    move || refresh_agent_setup_statuses.as_ref()()
+                },
+            );
+        }
+    });
+    hooks_button.connect_clicked({
+        let dialog = dialog.clone();
+        let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
+        move |button| {
+            run_settings_setup(
+                button,
+                &dialog,
+                "Agent hooks configured.",
+                run_agent_hooks_setup,
+                {
+                    let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
+                    move || refresh_agent_setup_statuses.as_ref()()
+                },
+            );
+        }
+    });
+    mcp_button.connect_clicked({
+        let dialog = dialog.clone();
+        let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
+        move |button| {
+            run_settings_setup(
+                button,
+                &dialog,
+                "MCP bridge configured.",
+                run_mcp_bridge_setup,
+                {
+                    let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
+                    move || refresh_agent_setup_statuses.as_ref()()
+                },
+            );
+        }
+    });
 
     scrollback_lines.connect_notify_local(Some("value"), {
         let dialog = dialog.clone();
@@ -654,7 +777,7 @@ pub(super) fn connect_settings_nav(
 }
 
 pub(super) fn settings_page(title: &str, description: &str) -> (gtk::ScrolledWindow, gtk::Box) {
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 16);
     content.add_css_class("settings-page");
     let header = gtk::Box::new(gtk::Orientation::Vertical, 3);
     header.add_css_class("settings-page-header");
@@ -674,11 +797,18 @@ pub(super) fn settings_page(title: &str, description: &str) -> (gtk::ScrolledWin
     header.append(&title);
     header.append(&description);
     content.append(&header);
+    let clamp = adw::Clamp::builder()
+        .maximum_size(620)
+        .tightening_threshold(520)
+        .child(&content)
+        .build();
+    clamp.add_css_class("settings-page-clamp");
+
     let scroll = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
         .hexpand(true)
-        .child(&content)
+        .child(&clamp)
         .build();
     scroll.add_css_class("settings-page-scroll");
     (scroll, content)
@@ -720,6 +850,163 @@ pub(super) fn settings_action_row(title: &str, subtitle: &str) -> adw::ActionRow
         .build();
     row.add_css_class("settings-row");
     row
+}
+
+fn settings_setup_button(label: &str) -> gtk::Button {
+    let button = gtk::Button::with_label(label);
+    button.add_css_class("settings-inline-action");
+    button.set_valign(gtk::Align::Center);
+    button
+}
+
+fn settings_setup_status_label() -> gtk::Label {
+    let label = gtk::Label::new(Some("Checking..."));
+    label.add_css_class("settings-status-pill");
+    label.add_css_class("checking");
+    label.set_valign(gtk::Align::Center);
+    label
+}
+
+fn refresh_settings_setup_statuses(
+    all_status: &gtk::Label,
+    all_button: &gtk::Button,
+    hooks_status: &gtk::Label,
+    hooks_button: &gtk::Button,
+    mcp_status: &gtk::Label,
+    mcp_button: &gtk::Button,
+) {
+    apply_pending_setup_status(all_status, all_button);
+    apply_pending_setup_status(hooks_status, hooks_button);
+    apply_pending_setup_status(mcp_status, mcp_button);
+
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let hooks = inspect_agent_hooks_setup();
+        let mcp = inspect_mcp_bridge_setup();
+        let all = inspect_agent_integrations_setup();
+        let _ = tx.send((all, hooks, mcp));
+    });
+
+    let all_status = all_status.clone();
+    let all_button = all_button.clone();
+    let hooks_status = hooks_status.clone();
+    let hooks_button = hooks_button.clone();
+    let mcp_status = mcp_status.clone();
+    let mcp_button = mcp_button.clone();
+    glib::timeout_add_local(SETTINGS_SETUP_POLL_INTERVAL, move || match rx.try_recv() {
+        Ok((all, hooks, mcp)) => {
+            apply_setup_status(&all_status, &all_button, &all);
+            apply_setup_status(&hooks_status, &hooks_button, &hooks);
+            apply_setup_status(&mcp_status, &mcp_button, &mcp);
+            glib::ControlFlow::Break
+        }
+        Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            let status = AgentSetupStatus {
+                kind: AgentSetupStatusKind::CheckFailed,
+                label: "Check failed".to_string(),
+                detail: "Setup status check stopped before completing.".to_string(),
+            };
+            apply_setup_status(&all_status, &all_button, &status);
+            apply_setup_status(&hooks_status, &hooks_button, &status);
+            apply_setup_status(&mcp_status, &mcp_button, &status);
+            glib::ControlFlow::Break
+        }
+    });
+}
+
+fn apply_pending_setup_status(label: &gtk::Label, button: &gtk::Button) {
+    label.set_text("Checking...");
+    label.set_tooltip_text(Some("Checking installed configuration."));
+    set_setup_status_class(label, "checking");
+    set_setup_button_class(button, "subtle");
+    button.set_label("...");
+}
+
+fn apply_setup_status(label: &gtk::Label, button: &gtk::Button, status: &AgentSetupStatus) {
+    label.set_text(&status.label);
+    label.set_tooltip_text(Some(&status.detail));
+    set_setup_status_class(
+        label,
+        match status.kind {
+            AgentSetupStatusKind::UpToDate => "ok",
+            AgentSetupStatusKind::NotInstalled => "warning",
+            AgentSetupStatusKind::UpdateAvailable => "warning",
+            AgentSetupStatusKind::CheckFailed => "error",
+        },
+    );
+    set_setup_button_class(
+        button,
+        match status.kind {
+            AgentSetupStatusKind::NotInstalled | AgentSetupStatusKind::UpdateAvailable => "primary",
+            AgentSetupStatusKind::UpToDate | AgentSetupStatusKind::CheckFailed => "subtle",
+        },
+    );
+    button.set_label(status.action_label());
+}
+
+fn set_setup_status_class(label: &gtk::Label, class_name: &str) {
+    for class in ["checking", "ok", "warning", "error"] {
+        label.remove_css_class(class);
+    }
+    label.add_css_class(class_name);
+}
+
+fn set_setup_button_class(button: &gtk::Button, class_name: &str) {
+    for class in ["primary", "subtle"] {
+        button.remove_css_class(class);
+    }
+    button.add_css_class(class_name);
+}
+
+fn run_settings_setup<F, C>(
+    button: &gtk::Button,
+    dialog: &adw::ToastOverlay,
+    success_message: &'static str,
+    task: F,
+    after_complete: C,
+) where
+    F: FnOnce() -> Result<(), String> + Send + 'static,
+    C: Fn() + 'static,
+{
+    let original_label = button
+        .label()
+        .map(|label| label.to_string())
+        .unwrap_or_default();
+    button.set_sensitive(false);
+    button.set_label("Working...");
+
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(task());
+    });
+
+    let button = button.clone();
+    let dialog = dialog.clone();
+    glib::timeout_add_local(SETTINGS_SETUP_POLL_INTERVAL, move || match rx.try_recv() {
+        Ok(Ok(())) => {
+            button.set_label(&original_label);
+            button.set_sensitive(true);
+            dialog.add_toast(adw::Toast::new(success_message));
+            after_complete();
+            glib::ControlFlow::Break
+        }
+        Ok(Err(err)) => {
+            button.set_label(&original_label);
+            button.set_sensitive(true);
+            dialog.add_toast(adw::Toast::new(&format!("Setup failed: {err}")));
+            after_complete();
+            glib::ControlFlow::Break
+        }
+        Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            button.set_label(&original_label);
+            button.set_sensitive(true);
+            dialog.add_toast(adw::Toast::new("Setup stopped before completing."));
+            after_complete();
+            glib::ControlFlow::Break
+        }
+    });
 }
 
 pub(super) fn normalized_settings_entry_text(row: &adw::EntryRow) -> String {
