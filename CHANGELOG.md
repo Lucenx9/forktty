@@ -14,6 +14,13 @@ All notable changes to ForkTTY are documented here.
   update checks, and packaged source/license availability.
 
 ### Fixed
+- AppImages now bundle `libgtk4-layer-shell.so` beside the embedded Ghostty
+  GTK library, and Debian packages now declare `libgtk4-layer-shell0`, so
+  terminal panes can start on systems such as Fedora that do not have
+  gtk4-layer-shell installed globally.
+- AppRun now always uses the bundled GTK/libadwaita userspace stack, while
+  still leaving glibc, fontconfig/text shaping, display-server libraries, and
+  GPU drivers host-side, so AppImages no longer depend on host GTK packages.
 - Debian and AppImage packaging now include ForkTTY copyright/license text and
   third-party notices for the vendored Ghostty runtime artifacts.
 

@@ -66,7 +66,7 @@ bash scripts/build-appimage.sh   # → target/packaging/appimage/; builds/verifi
 - **Browser feature is source-only**: release artifacts (AppImage, deb) are built with `--no-default-features --features gtk-ghostty` and must never include the browser feature. Browser code stays behind `#[cfg(feature = "browser")]` and must keep compiling.
 - **Single-instance app**: the GtkApplication uses DBus single-instance; a second launch delegates to the running one and exits immediately. Kill existing instances before launching for manual testing.
 - **Test sockets**: bind under `$XDG_RUNTIME_DIR`, never `/tmp` — the socket security check rejects parents owned by another uid (e.g. root-owned `/tmp`).
-- **AppImage library policy**: `usr/lib` carries only the vendored libghostty; the host GUI stack is preferred. A GTK fallback lives in `usr/lib/bundled`, added to `LD_LIBRARY_PATH` by AppRun only when `ldconfig -p` finds no host libgtk-4. Canonical excludelist libraries (fontconfig, freetype, harfbuzz, wayland-*, X11/xcb) are never bundled.
+- **AppImage library policy**: `usr/lib` carries ForkTTY's private runtime libraries (`libghostty-vt`, `ghostty-gtk-embed.so`, and `libgtk4-layer-shell.so`). `usr/lib/bundled` carries the GTK/libadwaita userspace stack and is always added by AppRun so terminal panes do not depend on host GTK packages. Canonical excludelist libraries (glibc, fontconfig, freetype, harfbuzz, wayland-*, X11/xcb, OpenGL/Vulkan/Mesa/driver stack) are never bundled.
 
 ## Architecture
 

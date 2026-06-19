@@ -361,6 +361,21 @@ fn check_packaging_ghostty_gtk_lib_guard() -> Result<()> {
             }
         }
     }
+    let appimage = fs::read_to_string(root.join("scripts/build-appimage.sh"))
+        .map_err(|err| format!("failed to read scripts/build-appimage.sh: {err}"))?;
+    for needle in ["libgtk4-layer-shell.so", "usr/lib/bundled"] {
+        if !appimage.contains(needle) {
+            return Err(format!("scripts/build-appimage.sh is missing `{needle}`"));
+        }
+    }
+    let deb = fs::read_to_string(root.join("scripts/build-deb.sh"))
+        .map_err(|err| format!("failed to read scripts/build-deb.sh: {err}"))?;
+    if !deb.contains("libgtk4-layer-shell0") {
+        return Err(
+            "scripts/build-deb.sh must depend on `libgtk4-layer-shell0` for Ghostty GTK"
+                .to_string(),
+        );
+    }
     let zon_path = root.join(GHOSTTY_VENDOR_PATH).join("build.zig.zon");
     let zon = fs::read_to_string(&zon_path)
         .map_err(|err| format!("failed to read {}: {err}", zon_path.display()))?;

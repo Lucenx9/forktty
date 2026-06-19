@@ -10,9 +10,9 @@ APPIMAGE_DESKTOP_ID="dev.forktty.forktty"
 DESKTOP_FILE="$ROOT_DIR/packaging/linux/$APPIMAGE_DESKTOP_ID.desktop"
 ICON_FILE="$ROOT_DIR/packaging/linux/icons/forktty.png"
 APPSTREAM_FILE="$ROOT_DIR/packaging/linux/$APPIMAGE_DESKTOP_ID.metainfo.xml"
-# GUI-stack fallback libraries, used only when the host has no GTK4 (AppRun
-# appends usr/lib/bundled to the search path in that case). libghostty is the
-# only library the binary always takes from the AppImage (usr/lib).
+# GUI-stack libraries bundled for portability. AppRun always adds
+# usr/lib/bundled to the search path, while display/font/GL/driver libraries
+# stay host-side through should_skip_appimage_lib().
 BUNDLED_RUNTIME_LIBS=(
   "libgtk-4.so"
   "libadwaita-1.so"
@@ -86,9 +86,9 @@ should_skip_appimage_lib() {
 
 copy_appimage_runtime_libs() {
   local binary="$1"
-  # Fallback directory: AppRun adds it to the search path only when the host
-  # has no GTK4, so a modern host keeps its own GUI stack (correct cursor
-  # themes via the compositor, host fontconfig, portals).
+  # Bundled GUI-stack directory: AppRun always adds it to the search path so
+  # GTK/libadwaita availability does not depend on host packages. We still keep
+  # host display/font/GL/driver libraries via should_skip_appimage_lib().
   local lib_dir="$APPDIR/usr/lib/bundled"
   local copied=0
   local lib_path
@@ -145,6 +145,39 @@ copy_vendored_ghostty_runtime_lib() {
   rm -f "$lib_dir/ghostty-gtk-embed.so"
   install -Dm755 "$ghostty_gtk_lib" "$lib_dir/ghostty-gtk-embed.so"
   test -f "$lib_dir/ghostty-gtk-embed.so"
+}
+
+copy_required_ghostty_layer_shell_lib() {
+  local ghostty_gtk_lib="$APPDIR/usr/lib/ghostty-gtk-embed.so"
+  local lib_dir="$APPDIR/usr/lib"
+  local source
+
+  source="$(
+    ldd "$ghostty_gtk_lib" |
+      awk '
+        $1 == "libgtk4-layer-shell.so" && $2 == "=>" && $3 ~ /^\// && found == "" { found = $3 }
+        END { if (found != "") print found }
+      '
+  )"
+  if [[ -z "$source" ]]; then
+    source="$(
+      { ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null || true; } |
+        awk '/libgtk4-layer-shell\.so/ && found == "" { found = $NF } END { if (found != "") print found }'
+    )"
+  fi
+  if [[ -z "$source" || ! -f "$source" ]]; then
+    cat >&2 <<'ERROR'
+Failed to locate libgtk4-layer-shell.so for the embedded Ghostty GTK library.
+
+Ghostty's GTK embed library links against gtk4-layer-shell, and the AppImage
+must carry that small runtime library so panes can start on hosts that do not
+install gtk4-layer-shell system-wide.
+ERROR
+    exit 1
+  fi
+
+  install -Dm755 "$source" "$lib_dir/libgtk4-layer-shell.so"
+  test -f "$lib_dir/libgtk4-layer-shell.so"
 }
 
 copy_vendored_ghostty_shell_integration() {
@@ -414,6 +447,7 @@ write_appimage_hicolor_index_theme
 # would see it missing. (The binary reaches it at runtime via its RUNPATH
 # $ORIGIN/../lib; AppRun's LD_LIBRARY_PATH also covers it.)
 copy_vendored_ghostty_runtime_lib
+copy_required_ghostty_layer_shell_lib
 copy_vendored_ghostty_shell_integration
 copy_vendored_ghostty_themes
 copy_vendored_ghostty_terminfo
@@ -451,13 +485,11 @@ case ",${GDK_DISABLE:-}," in
   *) GDK_DISABLE="${GDK_DISABLE:+$GDK_DISABLE,}vulkan" ;;
 esac
 export GDK_DISABLE
-# usr/lib holds only libghostty (always needed); the GUI stack in
-# usr/lib/bundled is a fallback used solely when the host has no GTK4 —
-# a host GTK gives native cursor themes, fontconfig, and portals.
-export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-if ! { ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null; } | grep -q 'libgtk-4\.so'; then
-  export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$HERE/usr/lib/bundled"
-fi
+# usr/lib holds ForkTTY's required private libraries; usr/lib/bundled carries
+# the GTK/libadwaita userspace stack so terminal panes do not depend on distro
+# GTK packages. Host fontconfig/display/GL/driver libraries are deliberately
+# not bundled.
+export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/bundled${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 if [ -n "${XDG_DATA_DIRS:-}" ]; then
   export XDG_DATA_DIRS="$HERE/usr/share:$XDG_DATA_DIRS"
 else

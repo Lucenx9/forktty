@@ -50,16 +50,15 @@ cargo run -p forktty-ui-gtk --no-default-features --features browser
 ```
 
 The AppImage target is the primary portable Linux package for alpha
-releases. `scripts/build-appimage.sh` always installs the vendored
-libghostty-vt into `AppDir/usr/lib`, and resolves the `forktty` binary's
-`ldd` graph into `AppDir/usr/lib/bundled` as a GUI-stack fallback:
-AppRun adds that directory to the library path only when the host has
-no GTK4, so modern hosts run against their own GTK4/libadwaita (native
-cursor themes, fontconfig, portals). Per the canonical AppImage
-excludelist it never bundles glibc, fontconfig/freetype/harfbuzz,
-Wayland/X11 client libraries, the OpenGL/Vulkan/Mesa driver stack,
-GSettings schemas, GIO modules, or desktop session services, so the
-AppImage relies on those parts of the host system.
+releases. `scripts/build-appimage.sh` installs the vendored libghostty-vt,
+embedded Ghostty GTK library, and gtk4-layer-shell into `AppDir/usr/lib`,
+and resolves the `forktty` binary's `ldd` graph into
+`AppDir/usr/lib/bundled` for GTK/libadwaita portability. AppRun always adds
+that bundled directory to the library path so terminal panes do not depend on
+host GTK packages. Per the canonical AppImage excludelist it never bundles
+glibc, fontconfig/freetype/harfbuzz, Wayland/X11 client libraries, the
+OpenGL/Vulkan/Mesa driver stack, GSettings schemas, GIO modules, or desktop
+session services, so the AppImage relies on those parts of the host system.
 
 Before tagging an alpha, run the runtime and package checklist in
 [release-qa.md](release-qa.md).
@@ -99,8 +98,9 @@ Arch-style names:
 ForkTTY currently requires libadwaita 1.4+, matching Ubuntu 24.04 LTS and newer
 distro packages. It does not require a system Ghostty package; terminal widgets
 come from the pinned vendored Ghostty GTK embedding library.
-`gtk4-layer-shell` is optional and only improves quake/dropdown placement on
-supported Wayland compositors.
+The `.deb` package depends on `libgtk4-layer-shell0`, and AppImages bundle the
+matching small runtime library because the embedded Ghostty GTK library links
+against it.
 
 ## Runtime Notes
 

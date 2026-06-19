@@ -26,7 +26,7 @@ of the release gate.
 
 | Session   | Notes                                                                                 |
 | --------- | ------------------------------------------------------------------------------------- |
-| Wayland   | Primary target. Quake/dropdown anchoring uses `gtk4-layer-shell` when installed.      |
+| Wayland   | Primary target. Quake/dropdown anchoring uses gtk4-layer-shell; AppImages bundle it.  |
 | X11       | Must launch and pass the runtime smoke. Layer-shell features fall back to GTK defaults.|
 
 ## Matrix to walk per release

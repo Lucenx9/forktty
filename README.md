@@ -137,9 +137,10 @@ Arch / CachyOS:
 sudo pacman -S base-devel openssl gtk4 libadwaita git zig desktop-file-utils
 ```
 
-ForkTTY requires libadwaita 1.4+, matching Debian 13/Trixie, Ubuntu 24.04 LTS,
-and newer distro packages. For compositor-anchored quake/dropdown placement on
-Wayland, install `gtk4-layer-shell` as an optional runtime dependency.
+Source builds require libadwaita 1.4+, matching Debian 13/Trixie, Ubuntu
+24.04 LTS, and newer distro packages. Release AppImages bundle GTK4,
+libadwaita, and gtk4-layer-shell so terminal panes do not depend on those host
+packages.
 
 Clone and run:
 
@@ -501,7 +502,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 
 - Linux only. There are no supported macOS or Windows builds.
 - libadwaita 1.4+ is required by the native terminal integration.
-- The AppImage bundles GTK4/libadwaita/Ghostty but still relies on the host's glibc, GSettings/GIO data, fontconfig, OpenGL/Vulkan/Mesa driver stack, and desktop session services. Test it on the target distro/desktop environment; prefer the `.deb` on Debian/Ubuntu when package-manager integration matters.
+- The AppImage bundles GTK4/libadwaita/Ghostty plus gtk4-layer-shell, but still relies on the host's glibc, fontconfig, OpenGL/Vulkan/Mesa driver stack, display-server libraries, and desktop session services. Test it on the target distro/desktop environment; prefer the `.deb` on Debian/Ubuntu when package-manager integration matters.
 - PTYs are not persisted across restart; restored sessions spawn fresh shells. Scrollback persistence is opt-in, plain-text only, and bounded.
 - OSC 9 and basic OSC 99 terminal notifications are parsed from the Ghostty-owned PTY stream and rate-limited per surface; OSC 99 title/body base64 payloads and same-id title/body chunks are decoded with multipart title/body kept separate, same-id update/close controls affect ForkTTY's notification model, and in-app Open/Dismiss/Clear All plus basic same-id buttons can send OSC 99 reports. Icon names, application-name icon fallback, application/type filtering metadata, occasion filtering, urgency, expiry, and sound metadata feed notification handling, positive `w` expiry values dismiss in-app notifications, and bounded `p=icon` data can be cached by `g`; broader chunk lifecycle behavior remains partial.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
