@@ -1568,7 +1568,7 @@ mod tests {
         assert!(css.contains("window.forktty-main-window headerbar.app-header windowhandle"));
         assert!(css.contains("window.ft-dialog headerbar.ft-dialog-titlebar"));
         assert!(css.contains("window.ft-settings-window headerbar.settings-titlebar"));
-        assert!(css.contains("background-color: #181818"));
+        assert!(css.contains("background-color: #171717"));
         assert!(css.contains("background-image: none"));
     }
 }
