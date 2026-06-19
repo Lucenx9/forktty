@@ -4,6 +4,8 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.14] - 2026-06-19
+
 ### Fixed
 - Embedded Ghostty terminal panes no longer force GTK's `cairo` software
   renderer, which leaked multi-GiB of live, `malloc_trim`-immune heap while
@@ -16,8 +18,6 @@ All notable changes to ForkTTY are documented here.
   continuous output. That 100ms floor was a throttle against the old cairo
   software-renderer leak; with the GL renderer default it only added latency,
   so the tick now follows the 16ms wakeup-check cadence and GTK's frame clock.
-
-## [0.2.0-alpha.14] - 2026-06-19
 
 ### Security
 - Rejected control characters in restored session identifiers and embedded
