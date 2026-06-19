@@ -12,6 +12,10 @@ All notable changes to ForkTTY are documented here.
   Ghostty were unaffected). ForkTTY now defaults `GSK_RENDERER` to the GL
   renderer (`ngl`), which composites the GLArea natively with no such growth.
   An explicit `GSK_RENDERER` override is still honored for QA/debugging.
+- Embedded Ghostty panes no longer cap their redraw tick at ~10fps during
+  continuous output. That 100ms floor was a throttle against the old cairo
+  software-renderer leak; with the GL renderer default it only added latency,
+  so the tick now follows the 16ms wakeup-check cadence and GTK's frame clock.
 
 ## [0.2.0-alpha.14] - 2026-06-19
 

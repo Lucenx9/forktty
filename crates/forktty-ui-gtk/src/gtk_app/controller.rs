@@ -88,10 +88,12 @@ const EMBEDDED_GHOSTTY_SCROLLBACK_SNAPSHOT_INTERVAL: Duration = Duration::from_s
 /// atomic flag; it does not tick Ghostty unless work is pending.
 pub(super) const EMBEDDED_GHOSTTY_WAKEUP_CHECK_INTERVAL: Duration = Duration::from_millis(16);
 /// Minimum interval between real `ghostty_gtk_context_tick()` calls when the
-/// wakeup callback fires continuously. A busy terminal can enqueue app redraw
-/// work much faster than the host should drain/render it; coalescing those
-/// wakeups keeps output responsive without ticking Ghostty at frame rate.
-pub(super) const EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL: Duration = Duration::from_millis(100);
+/// wakeup callback fires continuously. This only stops ticking faster than the
+/// wakeup-check cadence; GTK's frame clock paces the actual GL redraw. It was
+/// 100ms as a throttle against the old cairo software-renderer leak — with the
+/// GL renderer (`GSK_RENDERER=ngl`) redraws are cheap and leak-free, so a 100ms
+/// floor would only cap agent/TUI output to ~10fps for no benefit.
+pub(super) const EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL: Duration = Duration::from_millis(16);
 /// Fallback for older embedding libraries that do not expose the wakeup
 /// callback ABI. Keep it slow: polling `ghostty_gtk_context_tick()` while idle
 /// leaks memory in the GTK host.

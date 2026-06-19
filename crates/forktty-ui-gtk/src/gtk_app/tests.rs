@@ -2650,14 +2650,15 @@ fn embedded_ghostty_context_tick_fallback_is_not_frame_rate() {
 }
 
 #[test]
-fn embedded_ghostty_event_driven_ticks_are_output_throttled() {
+fn embedded_ghostty_event_driven_ticks_are_not_capped_below_wakeup_rate() {
+    // The wakeup-check timer already coalesces output bursts to its own cadence;
+    // the tick floor must not throttle below it, or agent/TUI redraws would be
+    // capped well under the display frame rate. The old 100ms floor existed only
+    // to slow the cairo software-renderer leak; the GL renderer makes it
+    // unnecessary, and GTK's frame clock paces the actual redraw.
     assert!(
-        EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL >= Duration::from_millis(100),
-        "continuous output wakeups must be coalesced instead of ticking Ghostty at frame rate"
-    );
-    assert!(
-        EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL > EMBEDDED_GHOSTTY_WAKEUP_CHECK_INTERVAL,
-        "the wakeup timer may poll the atomic flag frequently, but Ghostty ticks are rate-limited"
+        EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL <= EMBEDDED_GHOSTTY_WAKEUP_CHECK_INTERVAL,
+        "tick floor must not throttle below the wakeup-check cadence"
     );
 }
 
