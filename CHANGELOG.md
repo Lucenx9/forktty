@@ -38,6 +38,9 @@ All notable changes to ForkTTY are documented here.
   ForkTTY-owned behavior and appearance.
 
 ### Fixed
+- AppImage and Debian packages now include Ghostty's bundled themes, so
+  embedded Ghostty panes can resolve user configs such as
+  `theme = Catppuccin Mocha` instead of falling back to the default colors.
 - Embedded Ghostty panes now create command-spawned surfaces with a ForkTTY
   scrollback cap, preventing long agent transcripts from growing the host GTK
   process into multi-GiB memory usage without modifying the user's standalone

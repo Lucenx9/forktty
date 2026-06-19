@@ -342,7 +342,6 @@ fn check_packaging_ghostty_gtk_lib_guard() -> Result<()> {
             ));
         }
     }
-
     for script in PACKAGING_SCRIPTS {
         let path = root.join(script);
         let raw = fs::read_to_string(&path)
@@ -352,10 +351,25 @@ fn check_packaging_ghostty_gtk_lib_guard() -> Result<()> {
             "--ensure",
             "--print-path",
             "ghostty-gtk-embed.so",
+            "copy_vendored_ghostty_themes",
+            "Catppuccin Mocha",
+            "ghostty_iterm2_themes_field",
+            "zig fetch",
         ] {
             if !raw.contains(needle) {
                 return Err(format!("{script} is missing `{needle}`"));
             }
+        }
+    }
+    let zon_path = root.join(GHOSTTY_VENDOR_PATH).join("build.zig.zon");
+    let zon = fs::read_to_string(&zon_path)
+        .map_err(|err| format!("failed to read {}: {err}", zon_path.display()))?;
+    for needle in [".iterm2_themes", "ghostty-themes-release", ".hash"] {
+        if !zon.contains(needle) {
+            return Err(format!(
+                "{} must keep Ghostty's pinned `{needle}` theme dependency",
+                zon_path.display()
+            ));
         }
     }
     check_ci_builds_ghostty_gtk_lib_before_deb(&root)?;

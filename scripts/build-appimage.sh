@@ -159,6 +159,52 @@ copy_vendored_ghostty_shell_integration() {
   cp -a "$source_dir" "$APPDIR/usr/share/ghostty/shell-integration"
 }
 
+ghostty_iterm2_themes_field() {
+  local field="$1"
+  sed -n "/\\.iterm2_themes = /,/},/s/.*\\.${field} = \"\\([^\"]*\\)\".*/\\1/p" \
+    "$ROOT_DIR/vendor/ghostty/build.zig.zon" |
+    head -1
+}
+
+copy_vendored_ghostty_themes() {
+  command -v curl >/dev/null || {
+    echo "curl is required to package Ghostty themes" >&2
+    exit 1
+  }
+  command -v tar >/dev/null || {
+    echo "tar is required to package Ghostty themes" >&2
+    exit 1
+  }
+  command -v zig >/dev/null || {
+    echo "zig is required to verify Ghostty themes" >&2
+    exit 1
+  }
+
+  local url hash actual tmp_dir
+  url="$(ghostty_iterm2_themes_field "url")"
+  hash="$(ghostty_iterm2_themes_field "hash")"
+  if [[ -z "$url" || -z "$hash" ]]; then
+    echo "Could not read pinned Ghostty theme URL/hash from vendor/ghostty/build.zig.zon" >&2
+    exit 1
+  fi
+
+  tmp_dir="$(mktemp -d)"
+  curl -fsSL "$url" -o "$tmp_dir/themes.tgz"
+  actual="$(zig fetch "$tmp_dir/themes.tgz")"
+  if [[ "$actual" != "$hash" ]]; then
+    echo "Ghostty theme archive hash mismatch: expected $hash, got $actual" >&2
+    rm -rf "$tmp_dir"
+    exit 1
+  fi
+
+  mkdir -p "$APPDIR/usr/share/ghostty"
+  rm -rf "$APPDIR/usr/share/ghostty/themes"
+  mkdir -p "$APPDIR/usr/share/ghostty/themes"
+  tar -xzf "$tmp_dir/themes.tgz" -C "$APPDIR/usr/share/ghostty/themes" --strip-components=1
+  rm -rf "$tmp_dir"
+  test -f "$APPDIR/usr/share/ghostty/themes/Catppuccin Mocha"
+}
+
 copy_vendored_ghostty_terminfo() {
   command -v tic >/dev/null || {
     echo "tic is required to package Ghostty terminfo" >&2
@@ -369,6 +415,7 @@ write_appimage_hicolor_index_theme
 # $ORIGIN/../lib; AppRun's LD_LIBRARY_PATH also covers it.)
 copy_vendored_ghostty_runtime_lib
 copy_vendored_ghostty_shell_integration
+copy_vendored_ghostty_themes
 copy_vendored_ghostty_terminfo
 copy_appimage_runtime_libs "$ROOT_DIR/target/release/forktty"
 

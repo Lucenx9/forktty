@@ -54,6 +54,52 @@ copy_vendored_ghostty_shell_integration() {
   cp -a "$source_dir" "$PKG_ROOT/usr/share/ghostty/shell-integration"
 }
 
+ghostty_iterm2_themes_field() {
+  local field="$1"
+  sed -n "/\\.iterm2_themes = /,/},/s/.*\\.${field} = \"\\([^\"]*\\)\".*/\\1/p" \
+    "$ROOT_DIR/vendor/ghostty/build.zig.zon" |
+    head -1
+}
+
+copy_vendored_ghostty_themes() {
+  command -v curl >/dev/null || {
+    echo "curl is required to package Ghostty themes" >&2
+    exit 1
+  }
+  command -v tar >/dev/null || {
+    echo "tar is required to package Ghostty themes" >&2
+    exit 1
+  }
+  command -v zig >/dev/null || {
+    echo "zig is required to verify Ghostty themes" >&2
+    exit 1
+  }
+
+  local url hash actual tmp_dir
+  url="$(ghostty_iterm2_themes_field "url")"
+  hash="$(ghostty_iterm2_themes_field "hash")"
+  if [[ -z "$url" || -z "$hash" ]]; then
+    echo "Could not read pinned Ghostty theme URL/hash from vendor/ghostty/build.zig.zon" >&2
+    exit 1
+  fi
+
+  tmp_dir="$(mktemp -d)"
+  curl -fsSL "$url" -o "$tmp_dir/themes.tgz"
+  actual="$(zig fetch "$tmp_dir/themes.tgz")"
+  if [[ "$actual" != "$hash" ]]; then
+    echo "Ghostty theme archive hash mismatch: expected $hash, got $actual" >&2
+    rm -rf "$tmp_dir"
+    exit 1
+  fi
+
+  mkdir -p "$PKG_ROOT/usr/share/ghostty"
+  rm -rf "$PKG_ROOT/usr/share/ghostty/themes"
+  mkdir -p "$PKG_ROOT/usr/share/ghostty/themes"
+  tar -xzf "$tmp_dir/themes.tgz" -C "$PKG_ROOT/usr/share/ghostty/themes" --strip-components=1
+  rm -rf "$tmp_dir"
+  test -f "$PKG_ROOT/usr/share/ghostty/themes/Catppuccin Mocha"
+}
+
 copy_vendored_ghostty_terminfo() {
   command -v tic >/dev/null || {
     echo "tic is required to package Ghostty terminfo" >&2
@@ -150,6 +196,7 @@ GHOSTTY_GTK_LIB="$(find_required_ghostty_gtk_lib)"
 install -Dm755 "$GHOSTTY_GTK_LIB" "$PKG_ROOT/usr/lib/ghostty-gtk-embed.so"
 test -f "$PKG_ROOT/usr/lib/ghostty-gtk-embed.so"
 copy_vendored_ghostty_shell_integration
+copy_vendored_ghostty_themes
 copy_vendored_ghostty_terminfo
 install -Dm644 "$DESKTOP_FILE" "$PKG_ROOT/usr/share/applications/$DESKTOP_ID.desktop"
 install -Dm644 "$ROOT_DIR/packaging/linux/icons/forktty.png" \
