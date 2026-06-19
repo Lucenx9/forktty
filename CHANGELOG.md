@@ -14,6 +14,9 @@ All notable changes to ForkTTY are documented here.
   update checks, and packaged source/license availability.
 
 ### Fixed
+- First-launch onboarding now describes the default workspace as the user's
+  home directory instead of the process current directory, matching the actual
+  startup behavior.
 - AppImages now bundle `libgtk4-layer-shell.so` beside the embedded Ghostty
   GTK library, and Debian packages now declare `libgtk4-layer-shell0`, so
   terminal panes can start on systems such as Fedora that do not have

@@ -3036,6 +3036,40 @@ fn startup_workspace_prefers_home_over_launch_directory() {
 }
 
 #[test]
+fn first_launch_bootstrap_opens_main_workspace_in_startup_home() {
+    let home_dir = tempfile::tempdir().unwrap();
+    let launch_dir = tempfile::tempdir().unwrap();
+    let startup_dir = default_startup_workspace_dir_from(
+        Some(home_dir.path().to_path_buf()),
+        Some(launch_dir.path().to_path_buf()),
+    );
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(SecondSpawnFailsBackend::default());
+    let state = SocketAppState::new(
+        model.clone(),
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+
+    bootstrap_default_workspace(&state, startup_dir).unwrap();
+
+    let model = model.lock().unwrap();
+    let workspaces = model.list_workspaces();
+    assert_eq!(workspaces.len(), 1);
+    assert_eq!(workspaces[0].name, "main");
+    assert_eq!(workspaces[0].working_dir, home_dir.path());
+    let surfaces = model.list_surfaces(Some(&workspaces[0].id));
+    assert_eq!(surfaces.len(), 1);
+    assert_eq!(surfaces[0].cwd, home_dir.path());
+
+    let backend_surfaces = backend.surfaces().unwrap();
+    assert_eq!(backend_surfaces.len(), 1);
+    assert_eq!(backend_surfaces[0].cwd, home_dir.path());
+}
+
+#[test]
 fn terminal_font_description_uses_system_monospace_defaults() {
     let mut config = config::AppConfig::default();
     config.appearance.font_family = "JetBrains Mono".to_string();

@@ -957,7 +957,7 @@ pub(super) fn restore_or_bootstrap_workspaces(
             create_global_notification(
                 state,
                 "Welcome to ForkTTY",
-                "Opened the current directory as the main workspace. Use Ctrl+Shift+P for commands, F9 to toggle the sidebar, and New Worktree for isolated git work.",
+                "Opened your home directory as the main workspace. Use Ctrl+Shift+P for commands, F9 to toggle the sidebar, and New Worktree for isolated git work.",
                 NotificationKind::Info,
             );
             bootstrap_default_workspace(state, cwd)
