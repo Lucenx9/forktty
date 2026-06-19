@@ -3179,6 +3179,11 @@ fn ghostty_scrollback_limit_overrides_legacy_scrollback_lines() {
 }
 
 #[test]
+fn embedded_ghostty_disables_retained_scrollback_for_agent_stability() {
+    assert_eq!(EMBEDDED_GHOSTTY_SCROLLBACK_LIMIT_BYTES, 0);
+}
+
+#[test]
 fn ghostty_config_loader_resolves_theme_and_recursive_config_files() {
     let dir = tempfile::tempdir().unwrap();
     let themes = dir.path().join("themes");
@@ -3440,7 +3445,19 @@ fn settings_dialog_does_not_expose_shell_editor() {
 }
 
 #[test]
+fn settings_dialog_does_not_expose_runtime_scrollback_limit() {
+    let source = include_str!("settings_dialog.rs");
+
+    assert!(!source.contains("Scrollback lines"));
+    assert!(!source.contains("Scrollback saved."));
+    assert!(!source.contains("Audible bell"));
+    assert!(!source.contains("Terminal bell updated."));
+    assert!(!source.contains("\"Terminal\""));
+}
+
+#[test]
 fn settings_agents_initial_page_targets_agents_stack() {
+    assert_eq!(SettingsInitialPage::Interface.stack_name(), "interface");
     assert_eq!(SettingsInitialPage::Agents.stack_name(), "agents");
 }
 

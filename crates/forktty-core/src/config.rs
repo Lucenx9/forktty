@@ -64,17 +64,17 @@ pub struct AppearanceConfig {
     pub font_family: String,
     #[serde(default = "default_font_size", skip_serializing)]
     pub font_size: u16,
-    #[serde(default = "default_scrollback_lines")]
+    #[serde(default = "default_scrollback_lines", skip_serializing)]
     pub scrollback_lines: u32,
     #[serde(default)]
     pub persistent_scrollback_lines: u32,
-    #[serde(default = "default_terminal_audible_bell")]
+    #[serde(default = "default_terminal_audible_bell", skip_serializing)]
     pub terminal_audible_bell: bool,
     #[serde(default = "default_sidebar_position")]
     pub sidebar_position: String,
     #[serde(default = "default_sidebar_visible")]
     pub sidebar_visible: bool,
-    #[serde(default = "default_terminal_renderer")]
+    #[serde(default = "default_terminal_renderer", skip_serializing)]
     pub terminal_renderer: String,
     #[serde(default = "default_terminal_theme", skip_serializing)]
     pub terminal_theme: String,
@@ -1270,6 +1270,9 @@ mod tests {
         config.general.shell = "/bin/sh".to_string();
         config.appearance.font_family = "Hack".to_string();
         config.appearance.font_size = 99;
+        config.appearance.scrollback_lines = 42_000;
+        config.appearance.terminal_audible_bell = false;
+        config.appearance.terminal_renderer = "ghostty".to_string();
         config.appearance.terminal_theme = "solarized".to_string();
 
         save_config_to_path(&path, &config).unwrap();
@@ -1277,6 +1280,11 @@ mod tests {
 
         assert!(!saved.contains("font_family"));
         assert!(!saved.contains("font_size"));
+        assert!(!saved
+            .lines()
+            .any(|line| line.trim_start().starts_with("scrollback_lines =")));
+        assert!(!saved.contains("terminal_audible_bell"));
+        assert!(!saved.contains("terminal_renderer"));
         assert!(!saved.contains("terminal_theme"));
     }
 

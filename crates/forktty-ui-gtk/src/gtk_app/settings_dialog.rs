@@ -4,14 +4,14 @@ const SETTINGS_SETUP_POLL_INTERVAL: Duration = Duration::from_millis(150);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SettingsInitialPage {
-    Terminal,
+    Interface,
     Agents,
 }
 
 impl SettingsInitialPage {
     pub(super) fn stack_name(self) -> &'static str {
         match self {
-            Self::Terminal => "terminal",
+            Self::Interface => "interface",
             Self::Agents => "agents",
         }
     }
@@ -22,7 +22,7 @@ pub(super) fn show_settings_dialog(
     state: &SocketAppState,
     on_apply: SettingsApplyCallback,
 ) {
-    show_settings_dialog_page(parent, state, on_apply, SettingsInitialPage::Terminal);
+    show_settings_dialog_page(parent, state, on_apply, SettingsInitialPage::Interface);
 }
 
 pub(super) fn show_settings_dialog_page(
@@ -80,11 +80,6 @@ pub(super) fn show_settings_dialog_page(
     stack.add_css_class("settings-stack");
     body.append(&stack);
 
-    let terminal_nav = settings_nav_button(
-        "forktty-terminal-symbolic",
-        "Terminal",
-        "Scrollback and alerts",
-    );
     let interface_nav =
         settings_nav_button("forktty-theme-symbolic", "Interface", "Window and sidebar");
     let worktrees_nav =
@@ -96,13 +91,11 @@ pub(super) fn show_settings_dialog_page(
         "Alerts and commands",
     );
     let advanced_nav = settings_nav_button("forktty-refresh-symbolic", "Privacy", "Telemetry");
-    interface_nav.set_group(Some(&terminal_nav));
-    worktrees_nav.set_group(Some(&terminal_nav));
-    agents_nav.set_group(Some(&terminal_nav));
-    alerts_nav.set_group(Some(&terminal_nav));
-    advanced_nav.set_group(Some(&terminal_nav));
+    worktrees_nav.set_group(Some(&interface_nav));
+    agents_nav.set_group(Some(&interface_nav));
+    alerts_nav.set_group(Some(&interface_nav));
+    advanced_nav.set_group(Some(&interface_nav));
     nav.append(&settings_nav_heading("Essentials"));
-    nav.append(&terminal_nav);
     nav.append(&interface_nav);
     nav.append(&settings_nav_heading("Workflow"));
     nav.append(&agents_nav);
@@ -114,35 +107,13 @@ pub(super) fn show_settings_dialog_page(
             "Browser",
             "Profiles, history, bookmarks",
         );
-        button.set_group(Some(&terminal_nav));
+        button.set_group(Some(&interface_nav));
         nav.append(&button);
         button
     };
     nav.append(&settings_nav_heading("System"));
     nav.append(&alerts_nav);
     nav.append(&advanced_nav);
-
-    let (terminal_page, terminal_content) = settings_page("Terminal", "Terminal behavior.");
-
-    let (behavior_section, behavior_list) = settings_section("Behavior", "");
-    let scrollback_lines = settings_spin_row(
-        "Scrollback lines",
-        "Set to 0 to disable saved scrollback.",
-        0.0,
-        500_000.0,
-        1000.0,
-        f64::from(loaded.appearance.scrollback_lines),
-    );
-    behavior_list.append(&scrollback_lines);
-    let terminal_audible_bell = adw::SwitchRow::builder()
-        .title("Audible bell")
-        .subtitle("Let terminal bell sequences play the system alert sound.")
-        .active(loaded.appearance.terminal_audible_bell)
-        .build();
-    terminal_audible_bell.add_css_class("settings-row");
-    behavior_list.append(&terminal_audible_bell);
-    terminal_content.append(&behavior_section);
-    stack.add_named(&terminal_page, Some("terminal"));
 
     let (interface_page, interface_content) = settings_page("Interface", "Window and sidebar.");
     let (window_section, window_list) = settings_section("Window", "");
@@ -308,7 +279,6 @@ pub(super) fn show_settings_dialog_page(
     advanced_content.append(&advanced_section);
     stack.add_named(&advanced_page, Some("advanced"));
 
-    connect_settings_nav(&terminal_nav, &stack, "terminal");
     connect_settings_nav(&interface_nav, &stack, "interface");
     connect_settings_nav(&agents_nav, &stack, "agents");
     connect_settings_nav(&worktrees_nav, &stack, "worktrees");
@@ -317,7 +287,7 @@ pub(super) fn show_settings_dialog_page(
     connect_settings_nav(&alerts_nav, &stack, "alerts");
     connect_settings_nav(&advanced_nav, &stack, "advanced");
     match initial_page {
-        SettingsInitialPage::Terminal => terminal_nav.set_active(true),
+        SettingsInitialPage::Interface => interface_nav.set_active(true),
         SettingsInitialPage::Agents => agents_nav.set_active(true),
     }
     stack.set_visible_child_name(initial_page.stack_name());
@@ -391,42 +361,6 @@ pub(super) fn show_settings_dialog_page(
         }
     });
 
-    scrollback_lines.connect_notify_local(Some("value"), {
-        let dialog = dialog.clone();
-        let current = current.clone();
-        let on_apply = on_apply.clone();
-        let suppress_updates = suppress_updates.clone();
-        move |row: &adw::SpinRow, _| {
-            if suppress_updates.get() {
-                return;
-            }
-            persist_settings_change(
-                &dialog,
-                &current,
-                &on_apply,
-                |config| config.appearance.scrollback_lines = row.value() as u32,
-                "Scrollback saved. Applies to new panes.",
-            );
-        }
-    });
-    terminal_audible_bell.connect_notify_local(Some("active"), {
-        let dialog = dialog.clone();
-        let current = current.clone();
-        let on_apply = on_apply.clone();
-        let suppress_updates = suppress_updates.clone();
-        move |row: &adw::SwitchRow, _| {
-            if suppress_updates.get() {
-                return;
-            }
-            persist_settings_change(
-                &dialog,
-                &current,
-                &on_apply,
-                |config| config.appearance.terminal_audible_bell = row.is_active(),
-                "Terminal bell updated.",
-            );
-        }
-    });
     window_mode.connect_selected_notify({
         let dialog = dialog.clone();
         let current = current.clone();
@@ -612,8 +546,6 @@ pub(super) fn show_settings_dialog_page(
             let current_for_reset = current.clone();
             let on_apply_for_reset = on_apply.clone();
             let suppress_updates_for_reset = suppress_updates.clone();
-            let scrollback_lines_for_reset = scrollback_lines.clone();
-            let terminal_audible_bell_for_reset = terminal_audible_bell.clone();
             let window_mode_for_reset = window_mode.clone();
             let sidebar_position_for_reset = sidebar_position.clone();
             let sidebar_visible_for_reset = sidebar_visible.clone();
@@ -644,10 +576,6 @@ pub(super) fn show_settings_dialog_page(
                         return;
                     }
                     suppress_updates_for_reset.set(true);
-                    scrollback_lines_for_reset
-                        .set_value(f64::from(defaults.appearance.scrollback_lines));
-                    terminal_audible_bell_for_reset
-                        .set_active(defaults.appearance.terminal_audible_bell);
                     window_mode_for_reset.set_selected(settings_choice_index(
                         WINDOW_MODE_ITEMS,
                         &defaults.appearance.window_mode,
@@ -674,7 +602,7 @@ pub(super) fn show_settings_dialog_page(
     });
 
     window.present();
-    terminal_nav.grab_focus();
+    interface_nav.grab_focus();
 }
 
 fn apply_settings_dialog_chrome(window: &gtk::Window) {
@@ -1050,68 +978,6 @@ pub(super) fn settings_combo_row(
     row.add_css_class("settings-row");
     row.set_selected(settings_choice_index(items, active_id));
     row
-}
-
-pub(super) fn settings_spin_row(
-    title: &str,
-    subtitle: &str,
-    min: f64,
-    max: f64,
-    step: f64,
-    value: f64,
-) -> adw::SpinRow {
-    let row = adw::SpinRow::with_range(min, max, step);
-    row.set_title(title);
-    row.set_subtitle(subtitle);
-    row.set_subtitle_lines(0);
-    row.add_css_class("settings-row");
-    row.set_value(value.clamp(min, max));
-    // AdwSpinRow stretches its spin button across all space after the title;
-    // compact it to a fixed-width control at the row end instead.
-    if let Some(spin_button) = descendant_spin_button(row.upcast_ref()) {
-        spin_button.set_hexpand(false);
-        spin_button.set_halign(gtk::Align::End);
-        spin_button.set_valign(gtk::Align::Center);
-        spin_button.set_width_request(176);
-        EditableExt::set_alignment(&spin_button, 1.0);
-        replace_spin_button_icons_with_glyphs(&spin_button);
-    }
-    row
-}
-
-// The +/- buttons use the icon theme's list-add/list-remove symbolics, which
-// some system icon themes ship in a form GTK cannot recolor (invisible on our
-// dark surfaces). ForkTTY otherwise only uses bundled icons; swap the spin
-// glyphs to theme-independent text labels like the rest of the app.
-fn replace_spin_button_icons_with_glyphs(spin_button: &gtk::SpinButton) {
-    let mut child = spin_button.first_child();
-    while let Some(current) = child {
-        child = current.next_sibling();
-        if let Some(button) = current.downcast_ref::<gtk::Button>() {
-            let glyph = if button.has_css_class("down") {
-                "\u{2212}"
-            } else {
-                "+"
-            };
-            let label = gtk::Label::new(Some(glyph));
-            label.add_css_class("ft-spin-glyph");
-            button.set_child(Some(&label));
-        }
-    }
-}
-
-fn descendant_spin_button(widget: &gtk::Widget) -> Option<gtk::SpinButton> {
-    if let Some(spin) = widget.downcast_ref::<gtk::SpinButton>() {
-        return Some(spin.clone());
-    }
-    let mut child = widget.first_child();
-    while let Some(current) = child {
-        if let Some(found) = descendant_spin_button(&current) {
-            return Some(found);
-        }
-        child = current.next_sibling();
-    }
-    None
 }
 
 #[cfg(feature = "browser")]

@@ -83,10 +83,11 @@ const EMBEDDED_GHOSTTY_PID_POLL_MAX_ATTEMPTS: u32 = 300;
 /// classic pump snapshots at most every second when content changes.
 const EMBEDDED_GHOSTTY_SCROLLBACK_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(2);
 /// ForkTTY panes run long-lived agents that can emit very large transcripts.
-/// Keep Ghostty's embedded scrollback bounded independently of the user's
-/// standalone Ghostty config file so a single pane cannot grow the GTK process
-/// into multi-GiB heap usage.
-const EMBEDDED_GHOSTTY_SCROLLBACK_LIMIT_BYTES: usize = 2 * 1024 * 1024;
+/// Disable retained history in embedded Ghostty panes independently of the
+/// user's standalone Ghostty config file: the visible screen still renders
+/// normally, while unbounded agent output cannot accumulate in the GTK host
+/// process and push the machine into swap.
+pub(super) const EMBEDDED_GHOSTTY_SCROLLBACK_LIMIT_BYTES: usize = 0;
 
 pub(super) fn model_focus_still_targets_surface(
     model: &Arc<Mutex<WorkspaceModel>>,

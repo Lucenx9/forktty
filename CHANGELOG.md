@@ -4,29 +4,6 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
-### Changed
-- ForkTTY documentation, package metadata, first-run privacy link, and the
-  anonymous telemetry endpoint now use the canonical `https://forktty.dev`
-  domain.
-- Documented the `.deb` runtime baseline as Debian 13/Trixie+ and Ubuntu
-  24.04 LTS+, and added a repeatable `piuparts` install/purge release check.
-- Clarified privacy/security documentation around the anonymous daily ping,
-  update checks, and packaged source/license availability.
-
-### Fixed
-- First-launch onboarding now describes the default workspace as the user's
-  home directory instead of the process current directory, matching the actual
-  startup behavior.
-- AppImages now bundle `libgtk4-layer-shell.so` beside the embedded Ghostty
-  GTK library, and Debian packages now declare `libgtk4-layer-shell0`, so
-  terminal panes can start on systems such as Fedora that do not have
-  gtk4-layer-shell installed globally.
-- AppRun now always uses the bundled GTK/libadwaita userspace stack, while
-  still leaving glibc, fontconfig/text shaping, display-server libraries, and
-  GPU drivers host-side, so AppImages no longer depend on host GTK packages.
-- Debian and AppImage packaging now include ForkTTY copyright/license text and
-  third-party notices for the vendored Ghostty runtime artifacts.
-
 ## [0.2.0-alpha.14] - 2026-06-19
 
 ### Security
@@ -45,6 +22,19 @@ All notable changes to ForkTTY are documented here.
   per-placement copies on every redraw.
 
 ### Changed
+- Settings and newly saved configs no longer expose Ghostty-owned terminal
+  appearance/runtime controls (`font_family`, `font_size`, `scrollback_lines`,
+  `terminal_audible_bell`, `terminal_renderer`, `terminal_theme`). Those TOML
+  keys still load for compatibility, but ForkTTY now leaves font, theme, bell,
+  and terminal rendering behavior to Ghostty's config and keeps only
+  ForkTTY-owned settings in the visible UI.
+- ForkTTY documentation, package metadata, first-run privacy link, and the
+  anonymous telemetry endpoint now use the canonical `https://forktty.dev`
+  domain.
+- Documented the `.deb` runtime baseline as Debian 13/Trixie+ and Ubuntu
+  24.04 LTS+, and added a repeatable `piuparts` install/purge release check.
+- Clarified privacy/security documentation around the anonymous daily ping,
+  update checks, and packaged source/license availability.
 - App dialogs now use tighter shared spacing, shorter copy, and calmer inline
   actions across the command palette, shortcuts, worktree, and notification
   panels.
@@ -67,6 +57,22 @@ All notable changes to ForkTTY are documented here.
   ForkTTY-owned behavior and appearance.
 
 ### Fixed
+- Embedded Ghostty panes now disable retained scrollback history in the GTK
+  host process instead of keeping a small history cap, preventing very long
+  Codex/Claude transcripts from pushing ForkTTY into multi-GiB RSS/swap usage
+  while leaving the user's standalone Ghostty configuration unchanged.
+- First-launch onboarding now describes the default workspace as the user's
+  home directory instead of the process current directory, matching the actual
+  startup behavior.
+- AppImages now bundle `libgtk4-layer-shell.so` beside the embedded Ghostty
+  GTK library, and Debian packages now declare `libgtk4-layer-shell0`, so
+  terminal panes can start on systems such as Fedora that do not have
+  gtk4-layer-shell installed globally.
+- AppRun now always uses the bundled GTK/libadwaita userspace stack, while
+  still leaving glibc, fontconfig/text shaping, display-server libraries, and
+  GPU drivers host-side, so AppImages no longer depend on host GTK packages.
+- Debian and AppImage packaging now include ForkTTY copyright/license text and
+  third-party notices for the vendored Ghostty runtime artifacts.
 - Embedded Ghostty terminals launched from the AppImage no longer leak the
   AppImage runtime environment (`LD_LIBRARY_PATH`, `APPDIR`/`APPIMAGE`/`OWD`,
   and GTK/GObject module search paths) into spawned children, so a child
@@ -76,10 +82,6 @@ All notable changes to ForkTTY are documented here.
 - AppImage and Debian packages now include Ghostty's bundled themes, so
   embedded Ghostty panes can resolve user configs such as
   `theme = Catppuccin Mocha` instead of falling back to the default colors.
-- Embedded Ghostty panes now create command-spawned surfaces with a ForkTTY
-  scrollback cap, preventing long agent transcripts from growing the host GTK
-  process into multi-GiB memory usage without modifying the user's standalone
-  Ghostty configuration file.
 - Embedded Ghostty panes now keep the cursor blink timer disabled while the
   rendered terminal state uses a steady cursor, preventing idle OpenGL redraws
   from steadily growing RSS for Ghostty configs such as
