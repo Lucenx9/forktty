@@ -2601,6 +2601,55 @@ fn active_tab_index_for_leaf_clamps_or_returns_none() {
 }
 
 #[test]
+fn chrome_refresh_signature_tracks_visual_state_changes() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let first_surface_id = workspace.focused_surface_id.clone();
+    let second_surface_id = model.add_tab(&first_surface_id).unwrap().id;
+    let chrome_surface_ids = vec![first_surface_id.clone(), second_surface_id.clone()];
+    let tab_strips = vec![vec![first_surface_id.clone(), second_surface_id.clone()]];
+    assert!(model.select_tab(&first_surface_id));
+    let base = chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips);
+
+    assert_eq!(
+        base,
+        chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips)
+    );
+
+    assert!(model.set_surface_title(&first_surface_id, "build"));
+    assert_ne!(
+        base,
+        chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips)
+    );
+
+    assert!(model.set_surface_title(&first_surface_id, "shell"));
+    assert!(model.mark_surface_unread(&second_surface_id, true));
+    assert_ne!(
+        base,
+        chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips)
+    );
+
+    assert!(model.mark_surface_unread(&second_surface_id, false));
+    assert!(model.select_tab(&second_surface_id));
+    assert_ne!(
+        base,
+        chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips)
+    );
+}
+
+#[test]
+fn embedded_ghostty_context_tick_fallback_is_not_frame_rate() {
+    assert!(
+        EMBEDDED_GHOSTTY_CONTEXT_TICK_FALLBACK_INTERVAL >= Duration::from_secs(1),
+        "fallback context tick only drains app mailbox; frame-rate polling leaks idle memory"
+    );
+    assert!(
+        EMBEDDED_GHOSTTY_WAKEUP_CHECK_INTERVAL < EMBEDDED_GHOSTTY_CONTEXT_TICK_FALLBACK_INTERVAL,
+        "event-driven wakeup checks may be frequent because they only read an atomic flag"
+    );
+}
+
+#[test]
 fn tab_drop_target_uses_whole_strip_geometry() {
     let targets = vec![
         ("surface-1".to_string(), 10.0),

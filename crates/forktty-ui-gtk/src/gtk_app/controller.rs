@@ -27,6 +27,7 @@ pub(super) struct TerminalController {
     chromes: BTreeMap<String, PaneChrome>,
     pending_spawns: BTreeMap<String, PendingSpawn>,
     last_layout_signature: Option<String>,
+    last_chrome_signature: Option<String>,
     maximized_pane: bool,
     /// Spawned child PID per surface, used to discover listening ports.
     pub(super) surface_pids: Rc<RefCell<BTreeMap<String, SurfacePid>>>,
@@ -82,6 +83,14 @@ const EMBEDDED_GHOSTTY_PID_POLL_MAX_ATTEMPTS: u32 = 300;
 /// loop (unlike classic panes), so this throttled poll plays that role; the
 /// classic pump snapshots at most every second when content changes.
 const EMBEDDED_GHOSTTY_SCROLLBACK_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(2);
+/// How often ForkTTY checks whether the embedded Ghostty library reported
+/// pending app-mailbox work through the wakeup callback. This timer reads one
+/// atomic flag; it does not tick Ghostty unless work is pending.
+pub(super) const EMBEDDED_GHOSTTY_WAKEUP_CHECK_INTERVAL: Duration = Duration::from_millis(16);
+/// Fallback for older embedding libraries that do not expose the wakeup
+/// callback ABI. Keep it slow: polling `ghostty_gtk_context_tick()` while idle
+/// leaks memory in the GTK host.
+pub(super) const EMBEDDED_GHOSTTY_CONTEXT_TICK_FALLBACK_INTERVAL: Duration = Duration::from_secs(1);
 /// ForkTTY panes run long-lived agents that can emit very large transcripts.
 /// Disable retained history in embedded Ghostty panes independently of the
 /// user's standalone Ghostty config file: the visible screen still renders
@@ -255,6 +264,7 @@ impl TerminalController {
             chromes: BTreeMap::new(),
             pending_spawns: BTreeMap::new(),
             last_layout_signature: None,
+            last_chrome_signature: None,
             maximized_pane: false,
             surface_pids: Rc::new(RefCell::new(BTreeMap::new())),
             embedded_spawn_tokens: Rc::new(RefCell::new(BTreeMap::new())),
@@ -737,19 +747,32 @@ impl TerminalController {
             return Ok(Rc::clone(embedder));
         }
         let embedder = Rc::new(unsafe { GhosttyGtkEmbedder::load()? });
-        let embedder_for_tick = Rc::clone(&embedder);
-        glib::timeout_add_local(Duration::from_millis(16), move || {
-            unsafe {
-                embedder_for_tick.tick();
-            }
-            glib::ControlFlow::Continue
-        });
+        if embedder.supports_wakeup_callback() {
+            let embedder_for_wakeup = Rc::clone(&embedder);
+            glib::timeout_add_local(EMBEDDED_GHOSTTY_WAKEUP_CHECK_INTERVAL, move || {
+                if embedder_for_wakeup.take_pending_wakeup() {
+                    unsafe {
+                        embedder_for_wakeup.tick();
+                    }
+                }
+                glib::ControlFlow::Continue
+            });
+        } else {
+            let embedder_for_tick = Rc::clone(&embedder);
+            glib::timeout_add_local(EMBEDDED_GHOSTTY_CONTEXT_TICK_FALLBACK_INTERVAL, move || {
+                unsafe {
+                    embedder_for_tick.tick();
+                }
+                glib::ControlFlow::Continue
+            });
+        }
         self.embedded_ghostty = Some(Rc::clone(&embedder));
         Ok(embedder)
     }
 
     pub(super) fn rebuild_layout(&mut self) {
         self.spawn_active_surfaces_if_needed();
+        self.last_chrome_signature = None;
         // Drop browser panes whose surfaces were removed from the model so the
         // webviews don't linger after a model-driven (e.g. socket) close.
         #[cfg(feature = "browser")]
@@ -1165,7 +1188,7 @@ impl TerminalController {
     /// Pushes the model's focused surface into each terminal widget so the
     /// renderer never dims the logically active pane while GTK focus sits in
     /// a non-terminal widget (the pane's search entry, the command palette,
-    /// dialogs). Runs from `ensure_layout_current` (the 16ms UI timer):
+    /// dialogs). Runs from `ensure_layout_current`:
     /// focus-only changes don't alter the layout signature, so the sibling
     /// flag path alone would miss them.
     fn sync_terminal_model_focus_flags(&self) {
@@ -1312,13 +1335,25 @@ impl TerminalController {
         }
     }
 
-    fn refresh_chromes(&self) {
+    fn refresh_chromes(&mut self) {
         let Ok(model) = self.model.lock() else {
             return;
         };
         let focused_surface_id = model
             .active_workspace()
             .map(|workspace| workspace.focused_surface_id);
+        let chrome_surface_ids = self.chromes.keys().cloned().collect::<Vec<_>>();
+        let tab_strip_tabs = self
+            .pane_tab_strips
+            .borrow()
+            .iter()
+            .map(|strip| strip.tabs.clone())
+            .collect::<Vec<_>>();
+        let signature = chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strip_tabs);
+        if self.last_chrome_signature.as_deref() == Some(signature.as_str()) {
+            return;
+        }
+        self.last_chrome_signature = Some(signature);
         let chrome_updates = self
             .chromes
             .keys()
@@ -1331,12 +1366,6 @@ impl TerminalController {
                     )
                 })
             })
-            .collect::<Vec<_>>();
-        let tab_strip_tabs = self
-            .pane_tab_strips
-            .borrow()
-            .iter()
-            .map(|strip| strip.tabs.clone())
             .collect::<Vec<_>>();
         let tab_updates = tab_strip_refreshes(&model, &tab_strip_tabs);
         // Browser navigation only mutates a surface's url (same layout structure),
@@ -1877,6 +1906,70 @@ fn tab_strip_refreshes(model: &WorkspaceModel, strip_tabs: &[Vec<String>]) -> Ve
             TabStripRefresh { active_id, tabs }
         })
         .collect()
+}
+
+pub(super) fn chrome_refresh_signature(
+    model: &WorkspaceModel,
+    chrome_surface_ids: &[String],
+    strip_tabs: &[Vec<String>],
+) -> String {
+    let focused_surface_id = model
+        .active_workspace()
+        .map(|workspace| workspace.focused_surface_id);
+    let mut signature = String::new();
+    signature.push_str("focus=");
+    if let Some(focused_surface_id) = focused_surface_id.as_deref() {
+        signature.push_str(focused_surface_id);
+    }
+    signature.push('\n');
+
+    for surface_id in chrome_surface_ids {
+        signature.push_str("chrome=");
+        signature.push_str(surface_id);
+        if let Some(surface) = model.surface(surface_id) {
+            signature.push('|');
+            signature.push_str(&surface_title(surface));
+            signature.push('|');
+            signature.push_str(&surface.cwd.to_string_lossy());
+            signature.push('|');
+            signature.push_str(if surface.unread { "u1" } else { "u0" });
+            signature.push('|');
+            signature.push_str(if surface.needs_attention { "a1" } else { "a0" });
+            signature.push('|');
+            signature.push_str(if surface.agent_session.is_some() {
+                "agent1"
+            } else {
+                "agent0"
+            });
+            if let forktty_core::SurfaceKind::Browser { url, .. } = &surface.kind {
+                signature.push_str("|browser=");
+                signature.push_str(url);
+            }
+        }
+        signature.push('\n');
+    }
+
+    let workspace = model.active_workspace();
+    for tabs in strip_tabs {
+        signature.push_str("tabs=");
+        if let Some(active_id) = workspace
+            .as_ref()
+            .and_then(|workspace| active_tab_for_tabs(&workspace.pane_tree, tabs))
+        {
+            signature.push_str(&active_id);
+        }
+        for surface_id in tabs {
+            signature.push('|');
+            signature.push_str(surface_id);
+            signature.push(':');
+            if let Some(surface) = model.surface(surface_id) {
+                signature.push_str(&surface_title(surface));
+            }
+        }
+        signature.push('\n');
+    }
+
+    signature
 }
 
 fn install_tabstrip_drop_target(

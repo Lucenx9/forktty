@@ -1,5 +1,8 @@
 use super::*;
 
+const TERMINAL_FRAME_INTERVAL: Duration = Duration::from_millis(16);
+const TERMINAL_LAYOUT_SYNC_INTERVAL: Duration = Duration::from_millis(500);
+
 pub(super) fn install_gtk_runtime_defaults() {
     if std::env::var_os("GSK_RENDERER").is_none() {
         std::env::set_var("GSK_RENDERER", "cairo");
@@ -492,7 +495,7 @@ pub(super) fn build_ui(app: &adw::Application) {
     };
     let controller_for_timer = controller.clone();
     let alive_for_terminal_timer = ui_alive.clone();
-    glib::timeout_add_local(Duration::from_millis(16), move || {
+    glib::timeout_add_local(TERMINAL_FRAME_INTERVAL, move || {
         if !alive_for_terminal_timer.get() {
             return glib::ControlFlow::Break;
         }
@@ -502,8 +505,22 @@ pub(super) fn build_ui(app: &adw::Application) {
         // incrementally.
         if let Ok(command) = terminal_rx.try_recv() {
             controller_for_timer.borrow_mut().handle(command);
+            controller_for_timer.borrow_mut().ensure_layout_current();
         }
-        controller_for_timer.borrow_mut().ensure_layout_current();
+        glib::ControlFlow::Continue
+    });
+    let controller_for_layout_timer = controller.clone();
+    let alive_for_layout_timer = ui_alive.clone();
+    glib::timeout_add_local(TERMINAL_LAYOUT_SYNC_INTERVAL, move || {
+        if !alive_for_layout_timer.get() {
+            return glib::ControlFlow::Break;
+        }
+        // Keep socket/model-driven focus or title changes visible without
+        // rewriting chrome widgets every frame. The controller skips unchanged
+        // chrome signatures, so idle windows do no GTK label/class churn.
+        controller_for_layout_timer
+            .borrow_mut()
+            .ensure_layout_current();
         glib::ControlFlow::Continue
     });
     refresh_sidebar(&sidebar_ui, &state, &controller, true);

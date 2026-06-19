@@ -9,6 +9,10 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 pub(super) const GHOSTTY_GTK_LIB_ENV: &str = "FORKTTY_GHOSTTY_GTK_LIB";
 #[repr(C)]
@@ -17,6 +21,9 @@ struct GhosttyGtkContext(c_void);
 type ContextNew = unsafe extern "C" fn() -> *mut GhosttyGtkContext;
 type ContextFree = unsafe extern "C" fn(*mut GhosttyGtkContext);
 type ContextRegister = unsafe extern "C" fn(*mut GhosttyGtkContext) -> i32;
+type ContextWakeupCallback = extern "C" fn(*mut c_void);
+type ContextSetWakeupCallback =
+    unsafe extern "C" fn(*mut GhosttyGtkContext, Option<ContextWakeupCallback>, *mut c_void) -> i32;
 type ContextTick = unsafe extern "C" fn(*mut GhosttyGtkContext) -> i32;
 type SurfaceNew = unsafe extern "C" fn(*mut GhosttyGtkContext) -> *mut gtk::ffi::GtkWidget;
 type SurfaceNewWithWorkingDirectory =
@@ -107,7 +114,9 @@ pub(super) struct GhosttyGtkEmbedder {
     _library: Library,
     context: NonNull<GhosttyGtkContext>,
     context_free: ContextFree,
+    context_set_wakeup_callback: Option<ContextSetWakeupCallback>,
     context_tick: ContextTick,
+    wakeup_pending: Option<Arc<AtomicBool>>,
     surface_new: SurfaceNew,
     surface_new_with_working_directory: Option<SurfaceNewWithWorkingDirectory>,
     surface_new_with_working_directory_and_command:
@@ -132,6 +141,9 @@ impl GhosttyGtkEmbedder {
             unsafe { load_symbol(&library, b"ghostty_gtk_context_free")? };
         let context_register: ContextRegister =
             unsafe { load_symbol(&library, b"ghostty_gtk_context_register")? };
+        let context_set_wakeup_callback: Option<ContextSetWakeupCallback> = unsafe {
+            load_optional_symbol(&library, GHOSTTY_GTK_CONTEXT_SET_WAKEUP_CALLBACK_SYMBOL)
+        };
         let context_tick: ContextTick =
             unsafe { load_symbol(&library, b"ghostty_gtk_context_tick")? };
         let surface_new: SurfaceNew = unsafe { load_symbol(&library, b"ghostty_gtk_surface_new")? };
@@ -177,11 +189,36 @@ impl GhosttyGtkEmbedder {
             ));
         }
 
+        let wakeup_pending = if let Some(context_set_wakeup_callback) = context_set_wakeup_callback
+        {
+            let pending = Arc::new(AtomicBool::new(false));
+            let userdata = Arc::as_ptr(&pending) as *mut c_void;
+            if unsafe {
+                context_set_wakeup_callback(
+                    context.as_ptr(),
+                    Some(embedded_ghostty_context_wakeup),
+                    userdata,
+                )
+            } == 0
+            {
+                unsafe { context_free(context.as_ptr()) };
+                return Err(format!(
+                    "{} loaded, but Ghostty failed to register its wakeup callback",
+                    path.display()
+                ));
+            }
+            Some(pending)
+        } else {
+            None
+        };
+
         Ok(Self {
             _library: library,
             context,
             context_free,
+            context_set_wakeup_callback,
             context_tick,
+            wakeup_pending,
             surface_new,
             surface_new_with_working_directory,
             surface_new_with_working_directory_and_command,
@@ -230,6 +267,16 @@ impl GhosttyGtkEmbedder {
             || self
                 .surface_new_with_working_directory_and_command
                 .is_some()
+    }
+
+    pub(super) fn supports_wakeup_callback(&self) -> bool {
+        self.wakeup_pending.is_some()
+    }
+
+    pub(super) fn take_pending_wakeup(&self) -> bool {
+        self.wakeup_pending
+            .as_ref()
+            .is_some_and(|pending| pending.swap(false, Ordering::AcqRel))
     }
 
     pub(super) unsafe fn create_widget_for_cwd_and_command(
@@ -526,9 +573,21 @@ fn embedded_ghostty_truncates_from_end(capture: &TerminalTextCapture) -> bool {
 impl Drop for GhosttyGtkEmbedder {
     fn drop(&mut self) {
         unsafe {
+            if let Some(context_set_wakeup_callback) = self.context_set_wakeup_callback {
+                let _ =
+                    context_set_wakeup_callback(self.context.as_ptr(), None, std::ptr::null_mut());
+            }
             (self.context_free)(self.context.as_ptr());
         }
     }
+}
+
+extern "C" fn embedded_ghostty_context_wakeup(userdata: *mut c_void) {
+    if userdata.is_null() {
+        return;
+    }
+    let pending = unsafe { &*(userdata as *const AtomicBool) };
+    pending.store(true, Ordering::Release);
 }
 
 fn widget_from_raw(raw: *mut gtk::ffi::GtkWidget) -> Result<gtk::Widget, String> {
@@ -651,6 +710,8 @@ pub(super) fn symbol_name(name: &[u8]) -> String {
         .to_string()
 }
 
+pub(super) const GHOSTTY_GTK_CONTEXT_SET_WAKEUP_CALLBACK_SYMBOL: &[u8] =
+    b"ghostty_gtk_context_set_wakeup_callback";
 pub(super) const GHOSTTY_GTK_SURFACE_SEND_TEXT_SYMBOL: &[u8] = b"ghostty_gtk_surface_send_text";
 pub(super) const GHOSTTY_GTK_SURFACE_NEW_WITH_WORKING_DIRECTORY_AND_COMMAND_SYMBOL: &[u8] =
     b"ghostty_gtk_surface_new_with_working_directory_and_command";
@@ -921,6 +982,22 @@ mod tests {
             symbol_name(GHOSTTY_GTK_SURFACE_SEND_TEXT_SYMBOL),
             "ghostty_gtk_surface_send_text"
         );
+    }
+
+    #[test]
+    fn context_wakeup_callback_symbol_is_declared() {
+        assert_eq!(
+            symbol_name(GHOSTTY_GTK_CONTEXT_SET_WAKEUP_CALLBACK_SYMBOL),
+            "ghostty_gtk_context_set_wakeup_callback"
+        );
+    }
+
+    #[test]
+    fn context_wakeup_callback_only_marks_pending() {
+        let pending = Arc::new(AtomicBool::new(false));
+        embedded_ghostty_context_wakeup(Arc::as_ptr(&pending) as *mut c_void);
+        assert!(pending.swap(false, Ordering::AcqRel));
+        assert!(!pending.swap(false, Ordering::AcqRel));
     }
 
     #[test]

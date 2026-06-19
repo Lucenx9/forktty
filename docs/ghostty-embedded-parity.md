@@ -177,7 +177,7 @@ maintainer at a real pointer/keyboard, a working input-injection daemon, or a
 ## Verified — scrollback restore ABI
 
 The Ghostty fork now ships the `ghostty_gtk_surface_restore_scrollback` export
-(pin `470d3174eb10d25e21d17eff69ffcefdd4f4f91c`): an IO-thread `inject_output`
+(pin `0e77c39df35d2cb3a79393c0061b13e5e583e508`): an IO-thread `inject_output`
 mailbox message routed to `Termio.processOutput` injects bytes into the surface's
 VT stream without writing them to the child PTY. A raw GTK-main-thread feed into
 `processOutput` was rejected because it races the IO thread's PTY reader; the

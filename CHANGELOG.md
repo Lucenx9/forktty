@@ -61,6 +61,10 @@ All notable changes to ForkTTY are documented here.
   host process instead of keeping a small history cap, preventing very long
   Codex/Claude transcripts from pushing ForkTTY into multi-GiB RSS/swap usage
   while leaving the user's standalone Ghostty configuration unchanged.
+- Embedded Ghostty panes now disable cursor blinking in the embedded runtime
+  and drain Ghostty's app mailbox from a wakeup callback instead of polling
+  `ghostty_gtk_context_tick()` while idle, preventing background memory growth
+  even when no terminal output is being rendered.
 - First-launch onboarding now describes the default workspace as the user's
   home directory instead of the process current directory, matching the actual
   startup behavior.
@@ -152,7 +156,7 @@ All notable changes to ForkTTY are documented here.
   `capture_tail`. See `docs/ghostty-renderer-embedding-spike.md` for the
   Ghostty-side design.
 - Bumped the vendored Ghostty pin to
-  `470d3174eb10d25e21d17eff69ffcefdd4f4f91c`, which adds the
+  `0e77c39df35d2cb3a79393c0061b13e5e583e508`, which adds the
   `ghostty_gtk_surface_restore_scrollback`,
   `ghostty_gtk_surface_new_with_working_directory_and_command`, and
   `ghostty_gtk_surface_read_text_limited`,
