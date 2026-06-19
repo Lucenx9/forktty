@@ -297,6 +297,10 @@ Code, are spawned with `resume_cwd` as the child process directory. If a legacy
 ForkTTY session has no persisted `resume_cwd` yet, Codex resumes can still infer
 it from Codex's local `session_meta` JSONL when that project directory still
 exists.
+When provider hooks record the exact `bypassPermissions` mode, ForkTTY preserves
+that elevated mode on `agent-health`, explicit resume, and restore-time
+auto-resume by emitting the documented Codex and Claude Code bypass flags; other
+permission mode strings remain metadata and never become argv.
 `forktty agent-reclaim-plan` is read-only: it identifies old idle sessions that
 are locally resumable and explains why other sessions are protected, but it does
 not suspend or close panes.

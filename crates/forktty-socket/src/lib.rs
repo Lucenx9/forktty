@@ -2316,6 +2316,7 @@ pub async fn dispatch(
             let hook_session_cwd = optional_hook_session_cwd(&params)?;
             let surface_id = optional_surface_id_param(&params)?;
             let agent = agent_kind_from_status_key(key);
+            let permission_agent = agent_kind_from_permission_status_key(key);
             let last_activity_ms = current_unix_epoch_ms();
             let status = {
                 let mut model = state
@@ -2342,6 +2343,18 @@ pub async fn dispatch(
                             surface_id,
                             last_activity_ms,
                         );
+                    }
+                }
+                if let (Some(agent), Some(surface_id), Some(hook_session_id)) =
+                    (permission_agent, surface_id, hook_session_id)
+                {
+                    if model.surface(surface_id).is_some_and(|surface| {
+                        surface.workspace_id == workspace_id
+                            && surface.agent_session.as_ref().is_some_and(|session| {
+                                session.agent == agent && session.session_id == hook_session_id
+                            })
+                    }) {
+                        model.set_surface_agent_session_permission_mode(surface_id, value);
                     }
                 }
                 model
@@ -5932,6 +5945,29 @@ fn agent_kind_from_status_key(key: &str) -> Option<AgentKind> {
     }
 }
 
+fn agent_kind_from_permission_status_key(key: &str) -> Option<AgentKind> {
+    let mut parts = key.split(':');
+    if parts.next()? != "agent" {
+        return None;
+    }
+    let provider = parts.next()?;
+    if parts.next()? != "permission" {
+        return None;
+    }
+    if parts.next().is_some() {
+        return None;
+    }
+    match provider {
+        "claude" | "claude-code" | "claude_code" => Some(AgentKind::ClaudeCode),
+        "codex" => Some(AgentKind::Codex),
+        "antigravity" | "agy" => Some(AgentKind::Antigravity),
+        "opencode" | "open-code" | "open_code" => Some(AgentKind::OpenCode),
+        "gemini" => Some(AgentKind::Gemini),
+        "custom" => Some(AgentKind::Custom),
+        _ => None,
+    }
+}
+
 fn is_supported_status_color(color: &str) -> bool {
     matches!(color, "green" | "yellow" | "red" | "blue" | "muted") || is_hex_status_color(color)
 }
@@ -7074,7 +7110,7 @@ mod tests {
     }
 
     #[test]
-    fn spawn_request_ignores_persisted_bypass_permission_mode() {
+    fn spawn_request_reapplies_persisted_bypass_permission_mode() {
         let surface = forktty_core::Surface {
             id: "surface-agent".to_string(),
             workspace_id: "workspace-1".to_string(),
@@ -7103,7 +7139,11 @@ mod tests {
         assert_eq!(request.shell, "claude");
         assert_eq!(
             request.args,
-            vec!["--resume".to_string(), "claude-session-1".to_string()]
+            vec![
+                "--dangerously-skip-permissions".to_string(),
+                "--resume".to_string(),
+                "claude-session-1".to_string()
+            ]
         );
         assert_eq!(request.cwd, PathBuf::from("/tmp/forktty-project"));
     }
@@ -11352,7 +11392,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hook_permission_mode_does_not_change_claude_resume_argv() {
+    async fn hook_permission_mode_reapplies_claude_bypass_resume_argv() {
         let (state, backend) = test_state();
         let (workspace_id, source_surface_id) = {
             let model = state.model.lock().unwrap();
@@ -11397,7 +11437,12 @@ mod tests {
         let health = dispatch(&state, "agent.health", json!({})).await.unwrap();
         assert_eq!(
             health[0]["argv"],
-            json!(["claude", "--resume", "claude-session-1"])
+            json!([
+                "claude",
+                "--dangerously-skip-permissions",
+                "--resume",
+                "claude-session-1"
+            ])
         );
 
         let resumed = dispatch(
@@ -11411,16 +11456,25 @@ mod tests {
         let resumed_surface_id = resumed["surface"]["id"].as_str().unwrap();
         assert_eq!(
             resumed["argv"],
-            json!(["claude", "--resume", "claude-session-1"])
+            json!([
+                "claude",
+                "--dangerously-skip-permissions",
+                "--resume",
+                "claude-session-1"
+            ])
         );
         assert_eq!(
             backend.spawn_args(resumed_surface_id).unwrap(),
-            vec!["--resume", "claude-session-1"]
+            vec![
+                "--dangerously-skip-permissions",
+                "--resume",
+                "claude-session-1"
+            ]
         );
     }
 
     #[tokio::test]
-    async fn hook_permission_mode_does_not_change_codex_resume_argv() {
+    async fn hook_permission_mode_reapplies_codex_bypass_resume_argv() {
         let (state, _backend) = test_state();
         let (workspace_id, source_surface_id) = {
             let model = state.model.lock().unwrap();
@@ -11472,7 +11526,14 @@ mod tests {
 
         assert_eq!(
             resumed["argv"],
-            json!(["codex", "resume", "-C", "/tmp", "codex-session-1"])
+            json!([
+                "codex",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "resume",
+                "-C",
+                "/tmp",
+                "codex-session-1"
+            ])
         );
     }
 

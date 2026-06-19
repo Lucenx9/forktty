@@ -26,6 +26,12 @@ All notable changes to ForkTTY are documented here.
   back to Ghostty's bounded default budget (10 MB per surface) instead of
   disabling retained history, so mouse-wheel scrollback works in freshly opened
   terminal panes.
+- Agent health, explicit resume, and restore-time auto-resume now preserve
+  hook-reported `bypassPermissions` sessions for Codex and Claude Code by
+  rebuilding argv with the providers' documented dangerous-mode flags
+  (`codex --dangerously-bypass-approvals-and-sandbox resume ...` and
+  `claude --dangerously-skip-permissions --resume ...`) instead of silently
+  resuming those panes back in prompted mode.
 
 ### Security
 - Rejected control characters in restored session identifiers and embedded
