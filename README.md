@@ -40,7 +40,7 @@ Each release ships:
 
 - `forktty-0.2.0-alpha.14-x86_64.AppImage` — recommended portable Linux package.
 - `forktty-0.2.0-alpha.14-x86_64.AppImage.zsync` — AppImage delta-update metadata for external AppImage managers.
-- `forktty_0.2.0~alpha.14_amd64.deb` — Debian/Ubuntu package.
+- `forktty_0.2.0.alpha.14_amd64.deb` — Debian/Ubuntu package.
 - `SHA256SUMS` — checksums for release artifacts.
 
 After downloading, verify checksums:
@@ -87,9 +87,9 @@ GSK_RENDERER=ngl ./forktty-0.2.0-alpha.14-x86_64.AppImage
 ### Debian / Ubuntu (.deb)
 
 ```bash
-sudo apt install ./forktty_0.2.0~alpha.14_amd64.deb
+sudo apt install ./forktty_0.2.0.alpha.14_amd64.deb
 # or, if apt cannot read the file path directly:
-sudo dpkg -i forktty_0.2.0~alpha.14_amd64.deb
+sudo dpkg -i forktty_0.2.0.alpha.14_amd64.deb
 sudo apt -f install
 ```
 
