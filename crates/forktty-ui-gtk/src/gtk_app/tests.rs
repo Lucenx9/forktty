@@ -2601,6 +2601,28 @@ fn active_tab_index_for_leaf_clamps_or_returns_none() {
 }
 
 #[test]
+fn chrome_refresh_signature_tracks_untabbed_browser_url_changes() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let browser_id = model
+        .open_browser(
+            &workspace.id,
+            "https://example.com/one",
+            forktty_core::ProfileId::default(),
+            SplitAxis::Horizontal,
+        )
+        .unwrap()
+        .id;
+    assert!(model.close_surface(&workspace.focused_surface_id));
+    assert!(model.focus_surface(&browser_id));
+    let base = chrome_refresh_signature(&model, &[], &[]);
+
+    assert!(model.set_surface_url(&browser_id, "https://example.com/two"));
+
+    assert_ne!(base, chrome_refresh_signature(&model, &[], &[]));
+}
+
+#[test]
 fn chrome_refresh_signature_tracks_visual_state_changes() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");
