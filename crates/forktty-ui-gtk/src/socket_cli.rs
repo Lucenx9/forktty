@@ -71,6 +71,10 @@ Usage:
   forktty team-inbox <team-id> [--worker-id <id>] [--include-delivered] [--limit <n>] [--json]
   forktty team-summary <team-id> [--json]
   forktty team-events [--team-id <id>] [--since-seq <n>] [--limit <n>] [--json]
+  forktty team ask <team-id> <worker-id> --agent <agent> --task-id <id> --prompt <text>
+  forktty team review <team-id> <worker-id> --agent <agent> --task-id <id> [--commit <rev>]
+  forktty team watch <team-id> [--stale-after-ms <ms>] [--limit <n>] [--json]
+  forktty team finish <team-id> [--json]
   forktty split-surface [--surface-id <id>] [--axis horizontal|vertical]
   forktty focus-surface <surface-id>
   forktty close-surface <surface-id>
@@ -98,6 +102,9 @@ Usage:
   forktty list-progress [--workspace-id <id>]
   forktty clear-progress [--key <key>]
   forktty statusline [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
+  forktty status explain [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>|--surface-id <id>]
+  forktty status watch [--count <n>] [--interval-ms <ms>] [workspace selectors]
+  forktty context-snapshot [workspace selectors] [--surface-id <id>] [--tail-lines <n>]
   forktty feed [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--limit <n>] [--json]
   forktty feed respond <approval-id> --decision approve|deny [--json]
   forktty workflows [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--surface-id <id>] [--session-id <id>] [--query <text>] [--limit <n>] [--json]
@@ -129,9 +136,123 @@ Usage:
   forktty ping
   forktty capabilities [--json]
   forktty events [--no-replay]
+  forktty examples
+  forktty completions bash|zsh|fish
   forktty ssh <user@host>                          Open a new workspace running ssh <user@host>
   forktty ssh <user@host> [--name <name>] [--cwd <path>]
 ";
+
+const TEAM_HELP_TEXT: &str = "\
+ForkTTY team commands
+
+High-level wrappers:
+  forktty team ask <team-id> <worker-id> --agent <agent> --task-id <id> --prompt <text>
+      Create/update the team, launch a fresh worker surface, upsert the task, queue the prompt, and dispatch it.
+      Re-running ask/review launches another worker; use team-message-send + team-message-dispatch for follow-ups.
+      Options: --role <role>, --title <title>, --goal <text>, --worktree-name <name>,
+               --args <comma-list>, --submit[=true|false] (default: true; pass --submit=false to stage only).
+
+  forktty team review <team-id> <worker-id> --agent <agent> --task-id <id> [--commit <rev>]
+      Same flow as ask, with a read-only commit review prompt.
+      Options: --role <role>, --worktree-name <name>, --args <comma-list>,
+               --prompt-extra <text>, --submit[=true|false] (default: true; pass --submit=false to stage only).
+
+  forktty team watch <team-id> [--stale-after-ms <ms>] [--limit <n>] [--include-delivered]
+      Read team.summary, team.worker.health, team.inbox, and team.events together.
+
+  forktty team finish <team-id>
+      Mark the team done via team.upsert.
+
+Low-level aliases still exist:
+  forktty teams | team-list | team:list | team.list
+  forktty team-get | team:get | team.get
+  forktty team-worker-launch | team.worker.launch
+  forktty team-message-send | team.message.send
+  forktty team-message-dispatch | team.message.dispatch
+";
+
+const STATUS_HELP_TEXT: &str = "\
+ForkTTY status commands
+
+  forktty status summary [workspace selectors]
+      Alias for statusline/status.summary.
+
+  forktty status explain [workspace selectors] [--surface-id <id>] [--tail-lines <n>] [--tail-max-bytes <n>]
+      Read context.snapshot and explain running, needs_input, stale-looking, and risk flags.
+
+  forktty status watch [workspace selectors] [--surface-id <id>] [--count <n>] [--interval-ms <ms>]
+      Re-run status explain output. Omit --count to watch until interrupted; interval must be greater than 0.
+
+  forktty context-snapshot [workspace selectors] [--surface-id <id>] [--tail-lines <n>] [--tail-max-bytes <n>]
+      Direct CLI alias for the context.snapshot socket/MCP method.
+";
+
+const AGENT_HELP_TEXT: &str = "\
+ForkTTY agent commands
+
+  forktty agents [workspace selectors]
+  forktty agent-health [workspace selectors]
+  forktty agent-reclaim-plan [workspace selectors] [--min-idle-ms <ms>]
+  forktty hibernate-agent [--surface-id <id>] [--min-idle-ms <ms>]
+  forktty reclaim-agents [workspace selectors] [--min-idle-ms <ms>] [--limit <n>]
+  forktty resume-agent [--surface-id <id>]
+";
+
+const WORKFLOW_HELP_TEXT: &str = "\
+ForkTTY workflow commands
+
+  forktty workflows [workspace selectors] [--surface-id <id>] [--session-id <id>] [--query <text>]
+  forktty workflow-get <workflow-id>
+  forktty workflow-upsert [--workflow-id <id>] [workspace selectors] [--goal <text>] [--memory <text>]
+  forktty workflow-plan-set <workflow-id> --steps-json <json-array>
+  forktty workflow-evidence-add <workflow-id> --kind <kind> --title <title> [--text <text>|--text-file <path>|--text-file -]
+  forktty workflow-replay [--workflow-id <id>] [--query <text>] [--since-seq <n>]
+";
+
+const EXAMPLES_TEXT: &str = "\
+ForkTTY examples
+
+  forktty status explain --tail-lines 20
+  forktty context-snapshot --workspace-name main --tail-lines 0 --json
+  forktty team ask review-team claude-review --agent claude --task-id review-head --prompt \"Review HEAD read-only\" --submit
+  forktty team review review-team claude-review --agent claude --task-id review-head --commit HEAD --submit
+  forktty team watch review-team --stale-after-ms 120000 --limit 10
+  forktty team finish review-team
+  forktty workflows --query release --limit 5
+";
+
+// Curated ergonomic command set, not every low-level socket alias.
+const COMPLETION_COMMANDS: &[&str] = &[
+    "list",
+    "surfaces",
+    "agents",
+    "agent-health",
+    "teams",
+    "team",
+    "team-get",
+    "team-worker-launch",
+    "team-worker-health",
+    "team-message-send",
+    "team-message-dispatch",
+    "team-summary",
+    "status",
+    "statusline",
+    "context-snapshot",
+    "feed",
+    "workflows",
+    "workflow-get",
+    "workflow-upsert",
+    "tree",
+    "top",
+    "events",
+    "capabilities",
+    "examples",
+    "completions",
+    "help",
+];
+
+const TEAM_SUBCOMMANDS: &[&str] = &["ask", "review", "watch", "finish", "list", "get", "summary"];
+const STATUS_SUBCOMMANDS: &[&str] = &["summary", "explain", "watch"];
 
 #[cfg(feature = "browser")]
 const BROWSER_HELP_TEXT: &str = "\
@@ -806,6 +927,7 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
             handle_reclaim_agents(&context, args)
         }
         "resume-agent" | "agent-resume" | "agent:resume" => handle_resume_agent(&context, args),
+        "team" => handle_team(&context, args),
         "teams" | "team-list" | "team:list" | "team.list" => handle_team_list(&context, args),
         "team-get" | "team:get" | "team.get" => handle_team_get(&context, args),
         "team-upsert" | "team:upsert" | "team.upsert" => handle_team_upsert(&context, args),
@@ -880,7 +1002,11 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "set-progress" => handle_set_progress(&context, args),
         "list-progress" => handle_list_progress(&context, args),
         "clear-progress" => handle_clear_progress(&context, args),
+        "status" => handle_status(&context, args),
         "statusline" | "status-line" | "status:summary" => handle_statusline(&context, args),
+        "context-snapshot" | "context_snapshot" | "context:snapshot" | "context.snapshot" => {
+            handle_context_snapshot(&context, args)
+        }
         "feed" | "feed-list" | "feed:list" => handle_feed(&context, args),
         "workflows" | "workflow-list" | "workflow:list" | "workflow.list" => {
             handle_workflows(&context, args)
@@ -912,6 +1038,8 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "ping" => handle_ping(&context, args),
         "capabilities" => handle_capabilities(&context, args),
         "events" => handle_events(&context, args),
+        "examples" => handle_examples(&context, args),
+        "completion" | "completions" => handle_completions(&context, args),
         #[cfg(feature = "browser")]
         "browser" => handle_browser(&context, args),
         #[cfg(not(feature = "browser"))]
@@ -919,10 +1047,7 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
             "browser commands require building ForkTTY from source with --features browser",
         )),
         "ssh" => handle_ssh(&context, args),
-        "help" => {
-            print_help();
-            Ok(())
-        }
+        "help" => handle_help(&context, args),
         other => Err(CliError::new(format!("Unknown command: {other}"))),
     }
 }
@@ -1580,6 +1705,102 @@ fn print_result_or_json(
     } else {
         write_stdout_line(text.as_ref())
     }
+}
+
+fn handle_help(_context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    if args.is_empty() {
+        print_help();
+        return Ok(());
+    }
+    if args.len() > 1 {
+        return Err(CliError::new(format!(
+            "help: unexpected argument {}",
+            args[1]
+        )));
+    }
+    match args[0].as_str() {
+        "team" | "teams" => write_stdout_text(TEAM_HELP_TEXT),
+        "status" | "context" | "context-snapshot" => write_stdout_text(STATUS_HELP_TEXT),
+        "agent" | "agents" => write_stdout_text(AGENT_HELP_TEXT),
+        "workflow" | "workflows" => write_stdout_text(WORKFLOW_HELP_TEXT),
+        "examples" => write_stdout_text(EXAMPLES_TEXT),
+        other => Err(CliError::new(format!("help: unknown topic {other}"))),
+    }
+}
+
+fn handle_examples(_context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    require_no_args(&args, "examples")?;
+    write_stdout_text(EXAMPLES_TEXT)
+}
+
+fn handle_completions(_context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    if args.len() != 1 {
+        return Err(CliError::new("completions requires bash, zsh, or fish"));
+    }
+    let script = completion_script(&args[0])?;
+    write_stdout_text(&script)
+}
+
+fn completion_script(shell: &str) -> CliResult<String> {
+    let commands = COMPLETION_COMMANDS.join(" ");
+    let team_subcommands = TEAM_SUBCOMMANDS.join(" ");
+    let status_subcommands = STATUS_SUBCOMMANDS.join(" ");
+    Ok(match shell {
+        "bash" => format!(
+            r#"_forktty()
+{{
+    local cur prev
+    COMPREPLY=()
+    cur="${{COMP_WORDS[COMP_CWORD]}}"
+    prev="${{COMP_WORDS[COMP_CWORD-1]}}"
+    case "$prev" in
+        team) COMPREPLY=( $(compgen -W "{team_subcommands}" -- "$cur") ); return 0 ;;
+        status) COMPREPLY=( $(compgen -W "{status_subcommands}" -- "$cur") ); return 0 ;;
+        completions) COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") ); return 0 ;;
+    esac
+    COMPREPLY=( $(compgen -W "{commands}" -- "$cur") )
+    return 0
+}}
+complete -F _forktty forktty
+"#
+        ),
+        "zsh" => format!(
+            r#"#compdef forktty
+# Source this file directly, or install it as an fpath/autoloaded _forktty completion.
+_forktty() {{
+  local -a commands team_subcommands status_subcommands
+  commands=({commands})
+  team_subcommands=({team_subcommands})
+  status_subcommands=({status_subcommands})
+  if [[ $CURRENT -eq 2 ]]; then
+    _describe 'forktty command' commands
+  elif [[ $words[2] == team ]]; then
+    _describe 'team subcommand' team_subcommands
+  elif [[ $words[2] == status ]]; then
+    _describe 'status subcommand' status_subcommands
+  fi
+}}
+_forktty "$@"
+"#
+        ),
+        "fish" => format!(
+            r#"complete -c forktty -f -a "{commands}"
+complete -c forktty -n "__fish_seen_subcommand_from team" -f -a "{team_subcommands}"
+complete -c forktty -n "__fish_seen_subcommand_from status" -f -a "{status_subcommands}"
+complete -c forktty -n "__fish_seen_subcommand_from completions" -f -a "bash zsh fish"
+"#
+        ),
+        other => {
+            return Err(CliError::new(format!(
+                "unsupported completion shell {other}; expected bash, zsh, or fish"
+            )));
+        }
+    })
+}
+
+#[cfg(test)]
+fn completion_script_for_test(shell: &str) -> CliResult<String> {
+    completion_script(shell)
 }
 
 fn handle_ping(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -2531,6 +2752,423 @@ fn format_agent_resume_line(result: &Value) -> String {
     format!("Resumed {agent} session {session_id} in {surface_id}")
 }
 
+fn handle_team(context: &CliContext, mut args: Vec<String>) -> CliResult<()> {
+    if args.is_empty() {
+        return handle_help(context, strings_vec(&["team"]));
+    }
+    let subcommand = args.remove(0);
+    match subcommand.as_str() {
+        "ask" => handle_team_ask(context, args),
+        "review" => handle_team_review(context, args),
+        "watch" => handle_team_watch(context, args),
+        "finish" => handle_team_finish(context, args),
+        "list" => handle_team_list(context, args),
+        "get" => handle_team_get(context, args),
+        "summary" => handle_team_summary(context, args),
+        other => Err(CliError::new(format!("team: unknown subcommand {other}"))),
+    }
+}
+
+struct TeamAskOptions {
+    command_name: &'static str,
+    team_id: String,
+    worker_id: String,
+    agent: String,
+    task_id: String,
+    prompt: String,
+    role: Option<String>,
+    title: Option<String>,
+    goal: Option<String>,
+    worktree_name: Option<String>,
+    args: Option<Vec<String>>,
+    submit: bool,
+}
+
+fn handle_team_ask(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &["submit"]);
+    reject_unknown_options(
+        &parsed.options,
+        &[
+            "agent",
+            "task-id",
+            "prompt",
+            "role",
+            "title",
+            "goal",
+            "worktree-name",
+            "args",
+            "submit",
+        ],
+        "team ask",
+    )?;
+    let positionals =
+        required_positionals(&parsed.positionals, "team ask", &["team-id", "worker-id"])?;
+    let agent = non_blank_string_option(&parsed.options, "agent", "--agent")?
+        .ok_or_else(|| CliError::new("team ask requires --agent"))?
+        .trim()
+        .to_string();
+    let task_id = non_blank_string_option(&parsed.options, "task-id", "--task-id")?
+        .ok_or_else(|| CliError::new("team ask requires --task-id"))?
+        .trim()
+        .to_string();
+    let prompt = string_option(&parsed.options, "prompt", "--prompt")?
+        .ok_or_else(|| CliError::new("team ask requires --prompt"))?
+        .to_string();
+    if prompt.trim().is_empty() {
+        return Err(CliError::new("team ask requires --prompt"));
+    }
+    let options = TeamAskOptions {
+        command_name: "team ask",
+        team_id: positionals[0].clone(),
+        worker_id: positionals[1].clone(),
+        agent,
+        task_id,
+        prompt,
+        role: trimmed_option_string(&parsed.options, "role", "--role")?,
+        title: trimmed_option_string(&parsed.options, "title", "--title")?,
+        goal: string_option(&parsed.options, "goal", "--goal")?.map(str::to_string),
+        worktree_name: trimmed_option_string(&parsed.options, "worktree-name", "--worktree-name")?,
+        args: comma_list_option(&parsed.options, "args", "--args")?,
+        submit: submit_option(&parsed.options, "team ask", true)?,
+    };
+    run_team_ask_flow(context, options)
+}
+
+fn handle_team_review(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &["submit"]);
+    reject_unknown_options(
+        &parsed.options,
+        &[
+            "agent",
+            "task-id",
+            "commit",
+            "role",
+            "worktree-name",
+            "args",
+            "prompt-extra",
+            "submit",
+        ],
+        "team review",
+    )?;
+    let positionals = required_positionals(
+        &parsed.positionals,
+        "team review",
+        &["team-id", "worker-id"],
+    )?;
+    let agent = non_blank_string_option(&parsed.options, "agent", "--agent")?
+        .ok_or_else(|| CliError::new("team review requires --agent"))?
+        .trim()
+        .to_string();
+    let task_id = non_blank_string_option(&parsed.options, "task-id", "--task-id")?
+        .ok_or_else(|| CliError::new("team review requires --task-id"))?
+        .trim()
+        .to_string();
+    let commit = non_blank_string_option(&parsed.options, "commit", "--commit")?
+        .map(str::trim)
+        .unwrap_or("HEAD");
+    let mut prompt = format!(
+        "Review commit {commit} in the current repository. Use read-only inspection. Prioritize bugs, regressions, and missing tests. Report findings with file/line references, then verdict."
+    );
+    if let Some(extra) = string_option(&parsed.options, "prompt-extra", "--prompt-extra")? {
+        if !extra.trim().is_empty() {
+            prompt.push_str("\n\nAdditional context:\n");
+            prompt.push_str(extra);
+        }
+    }
+    let options = TeamAskOptions {
+        command_name: "team review",
+        team_id: positionals[0].clone(),
+        worker_id: positionals[1].clone(),
+        agent,
+        task_id,
+        prompt,
+        role: trimmed_option_string(&parsed.options, "role", "--role")?
+            .or_else(|| Some("reviewer".to_string())),
+        title: Some(format!("Review {commit}")),
+        goal: Some(format!("Review commit {commit}")),
+        worktree_name: trimmed_option_string(&parsed.options, "worktree-name", "--worktree-name")?,
+        args: comma_list_option(&parsed.options, "args", "--args")?,
+        submit: submit_option(&parsed.options, "team review", true)?,
+    };
+    run_team_ask_flow(context, options)
+}
+
+fn handle_team_watch(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &["include-delivered"]);
+    reject_unknown_options(
+        &parsed.options,
+        &["stale-after-ms", "limit", "include-delivered"],
+        "team watch",
+    )?;
+    let positionals = required_positionals(&parsed.positionals, "team watch", &["team-id"])?;
+    let team_id = positionals[0].clone();
+
+    let summary = send_socket_request(
+        &context.socket_path,
+        "team.summary",
+        json!({"team_id": team_id}),
+    )?;
+
+    let mut health_params = Map::new();
+    health_params.insert("team_id".to_string(), Value::String(team_id.clone()));
+    insert_optional_cli_u64_param(
+        &mut health_params,
+        &parsed.options,
+        "stale-after-ms",
+        "stale_after_ms",
+    )?;
+    let health = send_socket_request(
+        &context.socket_path,
+        "team.worker.health",
+        Value::Object(health_params),
+    )?;
+
+    let mut inbox_params = Map::new();
+    inbox_params.insert("team_id".to_string(), Value::String(team_id.clone()));
+    insert_optional_cli_u64_param(&mut inbox_params, &parsed.options, "limit", "limit")?;
+    match bool_option(&parsed.options, "include-delivered") {
+        Some(true) => {
+            inbox_params.insert("include_delivered".to_string(), Value::Bool(true));
+        }
+        Some(false) => {}
+        None => {
+            return Err(CliError::new(
+                "team watch: --include-delivered expects true or false",
+            ));
+        }
+    }
+    let inbox = send_socket_request(
+        &context.socket_path,
+        "team.inbox",
+        Value::Object(inbox_params),
+    )?;
+
+    let mut event_params = Map::new();
+    event_params.insert("team_id".to_string(), Value::String(team_id));
+    insert_optional_cli_u64_param(&mut event_params, &parsed.options, "limit", "limit")?;
+    let events = send_socket_request(
+        &context.socket_path,
+        "team.events",
+        Value::Object(event_params),
+    )?;
+
+    let result = json!({
+        "summary": summary,
+        "health": health,
+        "inbox": inbox,
+        "events": events,
+    });
+    if context.json {
+        return print_json(&result);
+    }
+    write_stdout_line(&format_team_summary_line(&result["summary"]))?;
+    for worker in result["health"]
+        .get("workers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        write_stdout_line(&format_team_worker_health_line(worker))?;
+    }
+    for message in result["inbox"].as_array().into_iter().flatten() {
+        write_stdout_line(&format_team_message_line(message))?;
+    }
+    for event in result["events"].as_array().into_iter().flatten() {
+        write_stdout_line(&format_team_event_line(event))?;
+    }
+    Ok(())
+}
+
+fn handle_team_finish(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(&parsed.options, &[], "team finish")?;
+    let positionals = required_positionals(&parsed.positionals, "team finish", &["team-id"])?;
+    let result = send_socket_request(
+        &context.socket_path,
+        "team.upsert",
+        json!({"team_id": positionals[0], "status": "done"}),
+    )?;
+    print_result_or_json(context, format_team_line(&result), result)
+}
+
+fn run_team_ask_flow(context: &CliContext, options: TeamAskOptions) -> CliResult<()> {
+    let team_id = options.team_id.clone();
+    let worker_id = options.worker_id.clone();
+    let task_id = options.task_id.clone();
+    let prompt = options.prompt.clone();
+
+    let mut team_params = Map::new();
+    team_params.insert("team_id".to_string(), Value::String(team_id.clone()));
+    team_params.insert("status".to_string(), Value::String("active".to_string()));
+    if let Some(goal) = &options.goal {
+        team_params.insert("goal".to_string(), Value::String(goal.clone()));
+    }
+    let team = send_team_flow_request(
+        context,
+        options.command_name,
+        "creating/updating team",
+        "team.upsert",
+        Value::Object(team_params),
+    )?;
+
+    let mut worker_params = Map::new();
+    worker_params.insert("team_id".to_string(), Value::String(team_id.clone()));
+    worker_params.insert("worker_id".to_string(), Value::String(worker_id.clone()));
+    worker_params.insert("agent".to_string(), Value::String(options.agent.clone()));
+    worker_params.insert(
+        "assigned_task_id".to_string(),
+        Value::String(task_id.clone()),
+    );
+    if let Some(role) = &options.role {
+        worker_params.insert("role".to_string(), Value::String(role.clone()));
+    }
+    if let Some(worktree_name) = &options.worktree_name {
+        worker_params.insert(
+            "worktree_name".to_string(),
+            Value::String(worktree_name.clone()),
+        );
+    }
+    if let Some(args) = &options.args {
+        worker_params.insert(
+            "args".to_string(),
+            Value::Array(args.iter().cloned().map(Value::String).collect()),
+        );
+    }
+    let worker = send_team_flow_request(
+        context,
+        options.command_name,
+        "launching worker",
+        "team.worker.launch",
+        Value::Object(worker_params),
+    )?;
+
+    let mut task_params = Map::new();
+    task_params.insert("team_id".to_string(), Value::String(team_id.clone()));
+    task_params.insert("task_id".to_string(), Value::String(task_id.clone()));
+    task_params.insert(
+        "assigned_worker_id".to_string(),
+        Value::String(worker_id.clone()),
+    );
+    task_params.insert("status".to_string(), Value::String("running".to_string()));
+    task_params.insert(
+        "title".to_string(),
+        Value::String(
+            options
+                .title
+                .clone()
+                .unwrap_or_else(|| prompt_title(&prompt)),
+        ),
+    );
+    task_params.insert("detail".to_string(), Value::String(prompt.clone()));
+    let task = send_team_flow_request(
+        context,
+        options.command_name,
+        "upserting task after worker launch",
+        "team.task.upsert",
+        Value::Object(task_params),
+    )?;
+
+    let message = send_team_flow_request(
+        context,
+        options.command_name,
+        "queueing prompt after worker launch",
+        "team.message.send",
+        json!({
+            "team_id": team_id,
+            "from": "leader",
+            "to_worker_id": worker_id,
+            "task_id": task_id,
+            "body": prompt,
+        }),
+    )?;
+    let message_id = safe_string_field(&message, "id").ok_or_else(|| {
+        team_flow_error(
+            options.command_name,
+            "reading queued prompt id after worker launch",
+            CliError::new("team.message.send did not return message id"),
+        )
+    })?;
+    let mut dispatch_params = Map::new();
+    dispatch_params.insert("team_id".to_string(), Value::String(team_id));
+    dispatch_params.insert("worker_id".to_string(), Value::String(worker_id));
+    dispatch_params.insert("message_id".to_string(), Value::String(message_id));
+    if options.submit {
+        dispatch_params.insert("submit".to_string(), Value::Bool(true));
+    }
+    let dispatch = send_team_flow_request(
+        context,
+        options.command_name,
+        "dispatching prompt after message queued",
+        "team.message.dispatch",
+        Value::Object(dispatch_params),
+    )?;
+
+    let result = json!({
+        "team": team,
+        "worker": worker,
+        "task": task,
+        "message": message,
+        "dispatch": dispatch,
+    });
+    print_result_or_json(context, "Team worker prompt dispatched", result)
+}
+
+fn send_team_flow_request(
+    context: &CliContext,
+    command_name: &str,
+    step: &str,
+    method: &str,
+    params: Value,
+) -> CliResult<Value> {
+    send_socket_request(&context.socket_path, method, params)
+        .map_err(|err| team_flow_error(command_name, step, err))
+}
+
+fn team_flow_error(command_name: &str, step: &str, err: CliError) -> CliError {
+    CliError {
+        message: format!("{command_name} failed while {step}: {}", err.message),
+        code: err.code,
+        exit: err.exit,
+    }
+}
+
+fn prompt_title(prompt: &str) -> String {
+    prompt
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| line.chars().take(80).collect::<String>())
+        .unwrap_or_else(|| "Team task".to_string())
+}
+
+fn submit_option(
+    options: &BTreeMap<String, FlagValue>,
+    command: &str,
+    default: bool,
+) -> CliResult<bool> {
+    match options.get("submit") {
+        Some(FlagValue::Bool) => Ok(true),
+        Some(FlagValue::String(value)) if value == "true" => Ok(true),
+        Some(FlagValue::String(value)) if value == "false" => Ok(false),
+        Some(_) => Err(CliError::new(format!(
+            "{command}: --submit expects true or false"
+        ))),
+        None => Ok(default),
+    }
+}
+
+fn trimmed_option_string(
+    options: &BTreeMap<String, FlagValue>,
+    key: &str,
+    option_name: &str,
+) -> CliResult<Option<String>> {
+    Ok(non_blank_string_option(options, key, option_name)?.map(|value| value.trim().to_string()))
+}
+
+fn strings_vec(values: &[&str]) -> Vec<String> {
+    values.iter().map(|value| (*value).to_string()).collect()
+}
+
 fn handle_team_list(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
     reject_unknown_options(
@@ -3374,6 +4012,218 @@ fn handle_statusline(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         return print_json(&result);
     }
     write_stdout_line(&format_status_summary_line(&result))
+}
+
+fn handle_status(context: &CliContext, mut args: Vec<String>) -> CliResult<()> {
+    if args.is_empty() {
+        return handle_statusline(context, args);
+    }
+    let subcommand = args.remove(0);
+    match subcommand.as_str() {
+        "summary" | "line" => handle_statusline(context, args),
+        "explain" => handle_status_explain(context, args),
+        "watch" => handle_status_watch(context, args),
+        other => Err(CliError::new(format!("status: unknown subcommand {other}"))),
+    }
+}
+
+fn handle_status_explain(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let result = send_socket_request(
+        &context.socket_path,
+        "context.snapshot",
+        Value::Object(context_snapshot_params(args, "status explain")?),
+    )?;
+    if context.json {
+        return print_json(&result);
+    }
+    write_stdout_line(&format_context_snapshot_explain_line(&result))
+}
+
+fn handle_status_watch(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(
+        &parsed.options,
+        &[
+            "workspace-id",
+            "workspace-name",
+            "worktree-name",
+            "surface-id",
+            "tail-lines",
+            "tail-max-bytes",
+            "count",
+            "interval-ms",
+        ],
+        "status watch",
+    )?;
+    require_no_args(&parsed.positionals, "status watch")?;
+    let count = parse_u64_option(&parsed.options, "count", "--count")?.unwrap_or(0);
+    let interval_ms =
+        parse_u64_option(&parsed.options, "interval-ms", "--interval-ms")?.unwrap_or(2000);
+    if interval_ms == 0 {
+        return Err(CliError::new(
+            "status watch: --interval-ms must be greater than 0",
+        ));
+    }
+    let params = context_snapshot_params_from_options(&parsed.options, "status watch")?;
+    let mut iteration = 0;
+    loop {
+        let result = send_socket_request(
+            &context.socket_path,
+            "context.snapshot",
+            Value::Object(params.clone()),
+        )?;
+        if context.json {
+            print_json(&result)?;
+        } else {
+            write_stdout_line(&format_context_snapshot_explain_line(&result))?;
+        }
+        iteration += 1;
+        if count > 0 && iteration >= count {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(interval_ms));
+    }
+    Ok(())
+}
+
+fn handle_context_snapshot(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let result = send_socket_request(
+        &context.socket_path,
+        "context.snapshot",
+        Value::Object(context_snapshot_params(args, "context-snapshot")?),
+    )?;
+    if context.json {
+        return print_json(&result);
+    }
+    write_stdout_line(&format_context_snapshot_explain_line(&result))
+}
+
+fn context_snapshot_params(args: Vec<String>, command: &str) -> CliResult<Map<String, Value>> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(
+        &parsed.options,
+        &[
+            "workspace-id",
+            "workspace-name",
+            "worktree-name",
+            "surface-id",
+            "tail-lines",
+            "tail-max-bytes",
+        ],
+        command,
+    )?;
+    require_no_args(&parsed.positionals, command)?;
+    context_snapshot_params_from_options(&parsed.options, command)
+}
+
+fn context_snapshot_params_from_options(
+    options: &BTreeMap<String, FlagValue>,
+    command: &str,
+) -> CliResult<Map<String, Value>> {
+    let selectors = target_selector_values(options)?;
+    if selectors.len() > 1 {
+        return Err(CliError::new(format!(
+            "{command}: cannot combine {}",
+            format_option_names(selectors.iter().map(|(option, _)| option.as_str()))
+        )));
+    }
+    let mut params = Map::new();
+    if let Some((_, (field, value))) = selectors.first() {
+        let field = if *field == "worktreeName" {
+            "worktree_name"
+        } else {
+            *field
+        };
+        params.insert(field.to_string(), Value::String(value.clone()));
+    } else if !options.contains_key("surface-id") {
+        if let Some(workspace_id) = trimmed_env("FORKTTY_WORKSPACE_ID") {
+            params.insert("workspace_id".to_string(), Value::String(workspace_id));
+        }
+    }
+    insert_optional_cli_string_param(&mut params, options, "surface-id", "surface_id")?;
+    insert_optional_cli_u64_param(&mut params, options, "tail-lines", "tail_lines")?;
+    insert_optional_cli_u64_param(&mut params, options, "tail-max-bytes", "tail_max_bytes")?;
+    Ok(params)
+}
+
+fn format_context_snapshot_explain_line(snapshot: &Value) -> String {
+    let workspace = snapshot.get("workspace").unwrap_or(&Value::Null);
+    let name = safe_string_field(workspace, "name").unwrap_or_else(|| "(workspace)".to_string());
+    let id = safe_string_field(workspace, "id").unwrap_or_default();
+    let mut parts = vec![format!("{name} [{id}]")];
+
+    let agents = snapshot
+        .get("agents")
+        .and_then(Value::as_array)
+        .or_else(|| snapshot.get("agent_health").and_then(Value::as_array))
+        .map(|items| {
+            items
+                .iter()
+                .map(format_context_snapshot_agent)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !agents.is_empty() {
+        parts.push(format!("agents {}", agents.join(", ")));
+    }
+
+    let status_entries = snapshot
+        .get("status")
+        .and_then(|status| status.get("status"))
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(format_status_summary_status)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !status_entries.is_empty() {
+        parts.push(format!("status {}", status_entries.join(", ")));
+    }
+
+    let risks = snapshot
+        .get("risk_flags")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(sanitize_for_terminal)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !risks.is_empty() {
+        parts.push(format!("risk {}", risks.join(",")));
+    }
+
+    let tail_count = snapshot
+        .get("terminal_tails")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    if tail_count > 0 {
+        parts.push(format!("terminal_tails {tail_count} untrusted"));
+    }
+
+    parts.join(" | ")
+}
+
+fn format_context_snapshot_agent(agent: &Value) -> String {
+    let provider = safe_string_field(agent, "agent").unwrap_or_else(|| "(agent)".to_string());
+    let surface = safe_string_field(agent, "surface_id")
+        .map(|surface| format!("@{surface}"))
+        .unwrap_or_default();
+    let lifecycle = safe_string_field(agent, "lifecycle").unwrap_or_else(|| "unknown".to_string());
+    let permission = safe_string_field(agent, "permission_mode")
+        .map(|permission| format!(" mode {permission}"))
+        .unwrap_or_default();
+    let hint = match lifecycle.as_str() {
+        "needs_input" => " inspect_tail",
+        "running" => " monitor",
+        _ => "",
+    };
+    format!("{provider}{surface}#{lifecycle}{permission}{hint}")
 }
 
 fn format_status_summary_line(summary: &Value) -> String {
@@ -13671,6 +14521,274 @@ mod tests {
     }
 
     #[test]
+    fn team_ask_runs_high_level_worker_flow() {
+        let requests = with_socket_server(
+            5,
+            |req| {
+                let result = match req["method"].as_str().unwrap_or("") {
+                    "team.upsert" => json!({"id": "team-1", "status": "active"}),
+                    "team.worker.launch" => json!({
+                        "surface": {"id": "surface-2"},
+                        "worker": {"id": "worker-1"},
+                    }),
+                    "team.task.upsert" => json!({"id": "task-1", "status": "running"}),
+                    "team.message.send" => json!({"id": "msg-1", "delivered": false}),
+                    "team.message.dispatch" => {
+                        json!({"sent": true, "message": {"id": "msg-1"}})
+                    }
+                    other => panic!("unexpected method {other}"),
+                };
+                json!({"id": req["id"], "ok": true, "result": result}).to_string()
+            },
+            |socket_path| {
+                handle_team(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "ask",
+                        "team-1",
+                        "worker-1",
+                        "--agent",
+                        "claude",
+                        "--task-id",
+                        "task-1",
+                        "--prompt",
+                        "Review this",
+                        "--role",
+                        "reviewer",
+                        "--title",
+                        "Review",
+                        "--goal",
+                        "Check command ergonomics",
+                        "--submit=false",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| request["method"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "team.upsert",
+                "team.worker.launch",
+                "team.task.upsert",
+                "team.message.send",
+                "team.message.dispatch",
+            ]
+        );
+        assert_eq!(requests[0]["params"]["team_id"], "team-1");
+        assert_eq!(requests[0]["params"]["status"], "active");
+        assert_eq!(requests[0]["params"]["goal"], "Check command ergonomics");
+        assert_eq!(requests[1]["params"]["agent"], "claude");
+        assert_eq!(requests[1]["params"]["role"], "reviewer");
+        assert_eq!(requests[1]["params"]["assigned_task_id"], "task-1");
+        assert_eq!(requests[2]["params"]["assigned_worker_id"], "worker-1");
+        assert_eq!(requests[2]["params"]["title"], "Review");
+        assert_eq!(requests[2]["params"]["detail"], "Review this");
+        assert_eq!(requests[3]["params"]["from"], "leader");
+        assert_eq!(requests[3]["params"]["to_worker_id"], "worker-1");
+        assert_eq!(requests[3]["params"]["body"], "Review this");
+        assert_eq!(requests[4]["params"]["message_id"], "msg-1");
+        assert_eq!(requests[4]["params"]["worker_id"], "worker-1");
+        assert!(requests[4]["params"].get("submit").is_none());
+    }
+
+    #[test]
+    fn team_review_builds_read_only_commit_prompt() {
+        let requests = with_socket_server(
+            5,
+            |req| {
+                let result = match req["method"].as_str().unwrap_or("") {
+                    "team.upsert" => json!({"id": "team-1", "status": "active"}),
+                    "team.worker.launch" => json!({
+                        "surface": {"id": "surface-2"},
+                        "worker": {"id": "worker-1"},
+                    }),
+                    "team.task.upsert" => json!({"id": "task-1", "status": "running"}),
+                    "team.message.send" => json!({"id": "msg-1", "delivered": false}),
+                    "team.message.dispatch" => {
+                        json!({"sent": true, "message": {"id": "msg-1"}})
+                    }
+                    other => panic!("unexpected method {other}"),
+                };
+                json!({"id": req["id"], "ok": true, "result": result}).to_string()
+            },
+            |socket_path| {
+                handle_team(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "review",
+                        "team-1",
+                        "worker-1",
+                        "--agent",
+                        "claude",
+                        "--task-id",
+                        "task-1",
+                        "--commit",
+                        "HEAD",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+
+        let body = requests[3]["params"]["body"].as_str().unwrap();
+        assert!(body.contains("Review commit HEAD"));
+        assert!(body.contains("read-only inspection"));
+        assert!(body.contains("file/line references"));
+        assert_eq!(requests[2]["params"]["status"], "running");
+        assert_eq!(requests[4]["params"]["submit"], true);
+    }
+
+    #[test]
+    fn team_ask_labels_mid_flow_socket_failures() {
+        let requests = with_socket_server(
+            4,
+            |req| {
+                let response = match req["method"].as_str().unwrap_or("") {
+                    "team.upsert" => json!({"id": "team-1", "status": "active"}),
+                    "team.worker.launch" => json!({
+                        "surface": {"id": "surface-2"},
+                        "worker": {"id": "worker-1"},
+                    }),
+                    "team.task.upsert" => json!({"id": "task-1", "status": "running"}),
+                    "team.message.send" => {
+                        return json!({
+                            "id": req["id"],
+                            "ok": false,
+                            "error": {"code": "error", "message": "queue failed"},
+                        })
+                        .to_string();
+                    }
+                    other => panic!("unexpected method {other}"),
+                };
+                json!({"id": req["id"], "ok": true, "result": response}).to_string()
+            },
+            |socket_path| {
+                assert_err_contains(
+                    handle_team(
+                        &ctx_for(socket_path),
+                        strings(&[
+                            "ask",
+                            "team-1",
+                            "worker-1",
+                            "--agent",
+                            "claude",
+                            "--task-id",
+                            "task-1",
+                            "--prompt",
+                            "Review this",
+                        ]),
+                    ),
+                    "team ask failed while queueing prompt after worker launch",
+                );
+            },
+        );
+
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| request["method"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "team.upsert",
+                "team.worker.launch",
+                "team.task.upsert",
+                "team.message.send",
+            ]
+        );
+    }
+
+    #[test]
+    fn team_watch_reads_summary_health_inbox_and_events() {
+        let requests = with_socket_server(
+            4,
+            |req| {
+                let result = match req["method"].as_str().unwrap_or("") {
+                    "team.summary" => json!({
+                        "team_id": "team-1",
+                        "status": "active",
+                        "workers_total": 1,
+                        "workers_active": 1,
+                        "tasks_total": 2,
+                        "tasks_open": 1,
+                        "messages_pending": 0,
+                        "last_event_seq": 7,
+                    }),
+                    "team.worker.health" => json!({"team_id": "team-1", "workers": []}),
+                    "team.inbox" => json!([]),
+                    "team.events" => json!([]),
+                    other => panic!("unexpected method {other}"),
+                };
+                json!({"id": req["id"], "ok": true, "result": result}).to_string()
+            },
+            |socket_path| {
+                handle_team(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "watch",
+                        "team-1",
+                        "--stale-after-ms",
+                        "5000",
+                        "--limit",
+                        "3",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+
+        assert_eq!(requests[0]["method"], "team.summary");
+        assert_eq!(requests[0]["params"]["team_id"], "team-1");
+        assert_eq!(requests[1]["method"], "team.worker.health");
+        assert_eq!(requests[1]["params"]["stale_after_ms"], 5000);
+        assert_eq!(requests[2]["method"], "team.inbox");
+        assert_eq!(requests[2]["params"]["limit"], 3);
+        assert_eq!(requests[3]["method"], "team.events");
+        assert_eq!(requests[3]["params"]["limit"], 3);
+    }
+
+    #[test]
+    fn team_summary_formatter_uses_server_field_names() {
+        assert_eq!(
+            format_team_summary_line(&json!({
+                "team_id": "team-1",
+                "status": "active",
+                "workers_total": 3,
+                "workers_active": 2,
+                "tasks_total": 5,
+                "tasks_open": 4,
+                "messages_pending": 1,
+                "last_event_seq": 9,
+            })),
+            "team-1 active workers 2/3 tasks 4/5 pending 1 last_event 9"
+        );
+    }
+
+    #[test]
+    fn team_finish_marks_team_done() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"id": "team-1", "status": "done"},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_team(&ctx_for(socket_path), strings(&["finish", "team-1"])).unwrap();
+            },
+        );
+        assert_eq!(request["method"], "team.upsert");
+        assert_eq!(request["params"]["team_id"], "team-1");
+        assert_eq!(request["params"]["status"], "done");
+    }
+
+    #[test]
     fn team_inbox_requests_team_inbox_with_include_delivered() {
         let request = with_socket_response(
             |req| json!({"id": req["id"], "ok": true, "result": []}).to_string(),
@@ -13764,6 +14882,267 @@ mod tests {
         );
         assert_eq!(request["method"], "status.summary");
         assert_eq!(request["params"]["workspace_name"], "main");
+    }
+
+    #[test]
+    fn status_explain_requests_context_snapshot() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "workspace": {"id": "w1", "name": "main"},
+                        "agents": [{
+                            "agent": "claude",
+                            "surface_id": "s1",
+                            "lifecycle": "needs_input",
+                        }],
+                        "risk_flags": ["pending_approval"],
+                        "terminal_tails": [{
+                            "surface_id": "s1",
+                            "text": "Do you want to proceed?",
+                        }],
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_status(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "explain",
+                        "--workspace-name",
+                        "main",
+                        "--tail-lines",
+                        "12",
+                        "--tail-max-bytes",
+                        "2048",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "context.snapshot");
+        assert_eq!(request["params"]["workspace_name"], "main");
+        assert_eq!(request["params"]["tail_lines"], 12);
+        assert_eq!(request["params"]["tail_max_bytes"], 2048);
+    }
+
+    #[test]
+    fn status_watch_can_run_one_iteration() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "workspace": {"id": "w1", "name": "main"},
+                        "agents": [],
+                        "risk_flags": [],
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_status(
+                    &ctx_for(socket_path),
+                    strings(&["watch", "--count", "1", "--interval-ms", "1"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "context.snapshot");
+    }
+
+    #[test]
+    fn status_watch_runs_requested_iteration_count() {
+        let requests = with_socket_server(
+            2,
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "workspace": {"id": "w1", "name": "main"},
+                        "agents": [],
+                        "risk_flags": [],
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_status(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "watch",
+                        "--count",
+                        "2",
+                        "--interval-ms",
+                        "1",
+                        "--tail-lines",
+                        "0",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+
+        assert_eq!(requests.len(), 2);
+        for request in requests {
+            assert_eq!(request["method"], "context.snapshot");
+            assert_eq!(request["params"]["tail_lines"], 0);
+        }
+    }
+
+    #[test]
+    fn status_watch_rejects_zero_interval_before_socket() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_status(&ctx, strings(&["watch", "--interval-ms", "0"])),
+            "greater than 0",
+        );
+    }
+
+    #[test]
+    fn context_snapshot_alias_requests_context_snapshot() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"workspace": {"id": "w1", "name": "main"}},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_context_snapshot(
+                    &ctx_for(socket_path),
+                    strings(&["--surface-id", "s1", "--tail-lines", "3"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "context.snapshot");
+        assert_eq!(request["params"]["surface_id"], "s1");
+        assert_eq!(request["params"]["tail_lines"], 3);
+    }
+
+    #[test]
+    fn context_snapshot_surface_id_does_not_add_env_workspace_selector() {
+        let request = with_env(&[("FORKTTY_WORKSPACE_ID", Some("workspace-env"))], || {
+            with_socket_response(
+                |req| {
+                    json!({
+                        "id": req["id"],
+                        "ok": true,
+                        "result": {"workspace": {"id": "w1", "name": "main"}},
+                    })
+                    .to_string()
+                },
+                |socket_path| {
+                    handle_context_snapshot(
+                        &ctx_for(socket_path),
+                        strings(&["--surface-id", "s1"]),
+                    )
+                    .unwrap();
+                },
+            )
+        });
+        assert_eq!(request["method"], "context.snapshot");
+        assert_eq!(request["params"]["surface_id"], "s1");
+        assert!(request["params"].get("workspace_id").is_none());
+    }
+
+    #[test]
+    fn context_snapshot_uses_env_workspace_without_surface_selector() {
+        let request = with_env(&[("FORKTTY_WORKSPACE_ID", Some("workspace-env"))], || {
+            with_socket_response(
+                |req| {
+                    json!({
+                        "id": req["id"],
+                        "ok": true,
+                        "result": {"workspace": {"id": "workspace-env", "name": "main"}},
+                    })
+                    .to_string()
+                },
+                |socket_path| {
+                    handle_context_snapshot(&ctx_for(socket_path), vec![]).unwrap();
+                },
+            )
+        });
+        assert_eq!(request["method"], "context.snapshot");
+        assert_eq!(request["params"]["workspace_id"], "workspace-env");
+    }
+
+    #[test]
+    fn help_examples_and_completions_do_not_require_socket() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        handle_help(&ctx, strings(&["team"])).unwrap();
+        handle_examples(&ctx, vec![]).unwrap();
+        handle_completions(&ctx, strings(&["zsh"])).unwrap();
+    }
+
+    #[test]
+    fn help_and_completions_reject_unknown_or_extra_args_before_socket() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(handle_help(&ctx, strings(&["unknown"])), "unknown topic");
+        assert_err_contains(
+            handle_help(&ctx, strings(&["team", "status"])),
+            "help: unexpected argument status",
+        );
+        assert_err_contains(
+            handle_completions(&ctx, strings(&["powershell"])),
+            "unsupported completion shell powershell",
+        );
+        assert_err_contains(
+            handle_completions(&ctx, strings(&["bash", "zsh"])),
+            "completions requires bash, zsh, or fish",
+        );
+    }
+
+    #[test]
+    fn completions_include_grouped_commands_and_subcommands() {
+        let bash = completion_script_for_test("bash").unwrap();
+        assert!(bash.contains("team"));
+        assert!(bash.contains("ask review watch finish"));
+        assert!(bash.contains("summary explain watch"));
+        assert!(bash.contains("bash zsh fish"));
+
+        let fish = completion_script_for_test("fish").unwrap();
+        assert!(fish.contains("__fish_seen_subcommand_from team"));
+        assert!(fish.contains("ask review watch finish"));
+    }
+
+    #[test]
+    fn team_ask_rejects_required_options_before_socket() {
+        let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+        assert_err_contains(
+            handle_team(&ctx, strings(&["ask", "team-1", "worker-1"])),
+            "team ask requires --agent",
+        );
+        assert_err_contains(
+            handle_team(
+                &ctx,
+                strings(&["ask", "team-1", "worker-1", "--agent", "claude"]),
+            ),
+            "team ask requires --task-id",
+        );
+        assert_err_contains(
+            handle_team(
+                &ctx,
+                strings(&[
+                    "ask",
+                    "team-1",
+                    "worker-1",
+                    "--agent",
+                    "claude",
+                    "--task-id",
+                    "task-1",
+                ]),
+            ),
+            "team ask requires --prompt",
+        );
     }
 
     #[test]

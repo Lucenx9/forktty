@@ -5,6 +5,9 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- CLI automation now includes high-level `forktty team ask/watch/finish/review`
+  wrappers, `forktty status explain/watch`, a `context-snapshot` alias, grouped
+  help/examples, and generated bash/zsh/fish completions.
 - `forktty skills setup` now installs a ForkTTY agent orchestration skill for
   Agent Skills-compatible tools (`~/.agents/skills`) and Claude Code
   (`~/.claude/skills`) so agents have an explicit policy for proactively using
@@ -36,6 +39,9 @@ All notable changes to ForkTTY are documented here.
   when the pane has no terminal chrome or tab-strip entry.
 
 ### Changed
+- Team wrapper help now documents that `forktty team ask/review` launch a fresh
+  worker on each run, documents the `--submit` default, and reports the failed
+  step when a multi-request prompt dispatch flow stops part-way through.
 - The managed ForkTTY agent orchestration skill now points agents to
   `forktty.dev/llms.txt` and `llms-full.txt` as optional public-docs fallback
   context when local repository docs are unavailable or stale.

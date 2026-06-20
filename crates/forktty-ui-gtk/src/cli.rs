@@ -25,6 +25,10 @@ USAGE:
     forktty hooks remove    Remove ForkTTY-managed agent hooks.
     forktty mcp             Run the ForkTTY MCP stdio server.
     forktty skills setup    Install ForkTTY's agent orchestration skill.
+    forktty team ...        High-level team ask/watch/finish/review wrappers.
+    forktty status ...      Explain/watch agent status from context snapshots.
+    forktty examples        Show common automation examples.
+    forktty completions     Print bash, zsh, or fish shell completions.
     forktty remote-helper hello
                            Print a remote-helper stdio handshake JSON object.
     forktty remote-helper pty -- <program> [args...]
@@ -85,6 +89,7 @@ where
     };
     let action = match arg.to_str() {
         Some("--version") | Some("-V") => CliAction::PrintVersion,
+        Some("help") if rest.len() > 1 => return CliAction::SocketCli(rest),
         Some("--help") | Some("-h") | Some("help") => CliAction::PrintHelp,
         Some("ghostty-gtk-probe") => CliAction::GhosttyGtkProbe,
         Some("doctor") => match parse_doctor_options(&rest[1..]) {
@@ -269,6 +274,9 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "ping"
             | "capabilities"
             | "events"
+            | "examples"
+            | "completion"
+            | "completions"
             | "agents"
             | "agent-list"
             | "agent:list"
@@ -289,6 +297,7 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "agent-resume"
             | "agent:resume"
             | "teams"
+            | "team"
             | "team-list"
             | "team:list"
             | "team.list"
@@ -337,9 +346,14 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "team-events"
             | "team:events"
             | "team.events"
+            | "status"
             | "statusline"
             | "status-line"
             | "status:summary"
+            | "context-snapshot"
+            | "context_snapshot"
+            | "context:snapshot"
+            | "context.snapshot"
             | "top"
             | "tree"
             | "topology-tree"
@@ -1691,6 +1705,35 @@ mod tests {
                 OsString::from("user@example.com")
             ])
         );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "team", "ask", "team-1", "worker-1"]),
+            CliAction::SocketCli(vec![
+                OsString::from("team"),
+                OsString::from("ask"),
+                OsString::from("team-1"),
+                OsString::from("worker-1")
+            ])
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "status", "explain"]),
+            CliAction::SocketCli(vec![OsString::from("status"), OsString::from("explain")])
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "context-snapshot"]),
+            CliAction::SocketCli(vec![OsString::from("context-snapshot")])
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "examples"]),
+            CliAction::SocketCli(vec![OsString::from("examples")])
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "completions", "zsh"]),
+            CliAction::SocketCli(vec![OsString::from("completions"), OsString::from("zsh")])
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "help", "team"]),
+            CliAction::SocketCli(vec![OsString::from("help"), OsString::from("team")])
+        );
     }
 
     #[test]
@@ -1702,6 +1745,13 @@ mod tests {
         assert!(is_socket_cli_command("capabilities"));
         assert!(is_socket_cli_command("events"));
         assert!(is_socket_cli_command("ssh"));
+        assert!(is_socket_cli_command("team"));
+        assert!(is_socket_cli_command("status"));
+        assert!(is_socket_cli_command("context-snapshot"));
+        assert!(is_socket_cli_command("context:snapshot"));
+        assert!(is_socket_cli_command("context.snapshot"));
+        assert!(is_socket_cli_command("examples"));
+        assert!(is_socket_cli_command("completions"));
         assert!(!is_socket_cli_command("explode"));
     }
 

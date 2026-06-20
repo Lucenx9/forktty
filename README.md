@@ -282,11 +282,26 @@ forktty notify --title "Input needed" --kind prompt "Blocked on test fixture"
 forktty set-status --key agent:codex --label Codex --value Running --color blue
 forktty set-progress --key build --label Build --value 42 --total 100
 forktty statusline
+forktty status explain --tail-lines 20
+forktty status watch --count 3 --interval-ms 2000
+forktty context-snapshot --workspace-name main --tail-lines 0 --json
+forktty team ask review-team claude-review --agent claude --task-id review-head --prompt "Review HEAD read-only" --submit
+forktty team review review-team claude-review --agent claude --task-id review-head --commit HEAD --submit
+forktty team watch review-team --stale-after-ms 120000 --limit 10
+forktty team finish review-team
+forktty examples
+forktty completions bash
 forktty log --level warn "Waiting for reviewer input"
 forktty notifications
 forktty capabilities
 forktty events
 ```
+
+`forktty team ask` and `forktty team review` compose the existing team socket
+methods for common coordination flows: create/update the team, launch a fresh
+worker surface, upsert the task, queue the prompt, and dispatch it. Re-run them
+to launch a new worker; use `team-message-send` plus `team-message-dispatch`
+for follow-up prompts to an existing worker.
 
 The titlebar Agent HUD shows persisted agent sessions across workspaces, highlights
 sessions that need input, and can focus or resume a tracked agent. `forktty agents`,
