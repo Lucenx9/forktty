@@ -4,6 +4,11 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- AppImage packaging now preserves the `libgtk4-layer-shell` runtime SONAME
+  alongside the unversioned development name, so embedded Ghostty panes can
+  load on hosts without a system gtk4-layer-shell installation.
+
 ### Changed
 - README now points GitHub readers to the canonical `forktty.dev` docs and
   agent retrieval files, and corrects stale alpha/session-path references.
