@@ -34,6 +34,8 @@ const MAX_SEND_TEXT_BYTES: usize = 262_144;
 const MAX_TERMINAL_TEXT_BYTES: usize = 512 * 1024;
 const DEFAULT_CAPTURE_TAIL_LINES: usize = 80;
 const MAX_CAPTURE_TAIL_LINES: usize = 5_000;
+const DEFAULT_CONTEXT_SNAPSHOT_TAIL_LINES: usize = 40;
+const DEFAULT_CONTEXT_SNAPSHOT_TAIL_MAX_BYTES: usize = 16 * 1024;
 const MAX_METADATA_TEXT_BYTES: usize = 16_384;
 const BROWSER_CMD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const MAX_SOCKET_CONNECTIONS: usize = 64;
@@ -95,6 +97,7 @@ pub const METHODS: &[&str] = &[
     "browser.profile.list",
     "browser.reload",
     "browser.snapshot",
+    "context.snapshot",
     "events.subscribe",
     "feed.approval.respond",
     "feed.list",
@@ -171,6 +174,7 @@ pub const METHODS: &[&str] = &[
 
 #[cfg(not(feature = "browser"))]
 pub const METHODS: &[&str] = &[
+    "context.snapshot",
     "events.subscribe",
     "feed.approval.respond",
     "feed.list",
@@ -952,6 +956,7 @@ pub async fn dispatch(
             "version": env!("CARGO_PKG_VERSION"),
             "methods": METHODS,
         })),
+        "context.snapshot" => context_snapshot(state, &params),
         "feed.approval.respond" => {
             let id = required_trimmed_string(&params, "id")?;
             ensure_max_text_size("id", id)?;
@@ -2528,6 +2533,242 @@ pub async fn dispatch(
 
 fn method_allowed_from_socket(method: &str) -> bool {
     !method.starts_with("browser.import.")
+}
+
+fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let workspace_id = resolve_workspace_id_for_metadata(state, params)?;
+    let tail_lines = context_snapshot_tail_lines_from_params(params)?;
+    let tail_max_bytes = context_snapshot_tail_max_bytes_from_params(params)?;
+    let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
+
+    let (
+        workspace,
+        pane_tree,
+        surfaces,
+        status,
+        agents,
+        agent_health,
+        feed,
+        remotes,
+        terminal_surface_ids,
+    ) = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        let workspace = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .ok_or(DispatchError::NotFound("workspace".to_string()))?;
+        let pane_tree = workspace.pane_tree.clone();
+        let model_surfaces = model.list_surfaces(Some(&workspace_id));
+        let terminal_surface_ids = model_surfaces
+            .iter()
+            .filter(|surface| {
+                matches!(
+                    surface.kind,
+                    SurfaceKind::Terminal | SurfaceKind::Ssh { .. }
+                )
+            })
+            .map(|surface| surface.id.clone())
+            .collect::<Vec<_>>();
+        let terminal_by_id = terminal_surfaces
+            .iter()
+            .map(|surface| (surface.surface_id.as_str(), surface))
+            .collect::<HashMap<_, _>>();
+        let remotes = model_surfaces
+            .iter()
+            .filter_map(|surface| remote_row(surface, &model, &terminal_by_id))
+            .collect::<Vec<_>>();
+        let feed = if let Ok(store) = state.feed_store.lock() {
+            if let Some(store) = store.as_ref() {
+                store
+                    .list(Some(&workspace_id), 20)
+                    .into_iter()
+                    .map(|entry| json!(entry))
+                    .collect::<Vec<_>>()
+            } else {
+                feed_list(&model, Some(&workspace_id), 20)
+            }
+        } else {
+            feed_list(&model, Some(&workspace_id), 20)
+        };
+        (
+            json!({
+                "id": workspace.id,
+                "name": workspace.name,
+                "active": workspace.active,
+                "working_dir": workspace.working_dir,
+                "git_branch": workspace.git_branch,
+                "worktree_name": workspace.worktree_name,
+                "focused_surface_id": workspace.focused_surface_id,
+                "needs_attention": workspace.needs_attention,
+            }),
+            pane_tree,
+            surface_list_rows(&model, Some(&workspace_id), terminal_surfaces.clone()),
+            status_summary(&model, &workspace_id).unwrap_or(Value::Null),
+            agent_session_rows(&model, Some(&workspace_id)),
+            agent_health_rows(&model, Some(&workspace_id)),
+            feed,
+            remotes,
+            terminal_surface_ids,
+        )
+    };
+
+    let (terminal_tails, terminal_tail_errors) =
+        context_snapshot_terminal_tails(state, &terminal_surface_ids, tail_lines, tail_max_bytes);
+    let workflows = context_snapshot_workflows(state, &workspace_id)?;
+    let teams = context_snapshot_teams(state, &workspace_id)?;
+    let risk_flags = context_snapshot_risk_flags(
+        &status,
+        &agent_health,
+        &feed,
+        &remotes,
+        &terminal_tails,
+        &terminal_tail_errors,
+    );
+
+    Ok(json!({
+        "workspace": workspace,
+        "pane_tree": pane_tree,
+        "surfaces": surfaces,
+        "status": status,
+        "agents": agents,
+        "agent_health": agent_health,
+        "workflows": workflows,
+        "teams": teams,
+        "feed": feed,
+        "remotes": remotes,
+        "terminal_tails": terminal_tails,
+        "terminal_tail_errors": terminal_tail_errors,
+        "risk_flags": risk_flags,
+    }))
+}
+
+fn context_snapshot_terminal_tails(
+    state: &SocketAppState,
+    surface_ids: &[String],
+    lines: usize,
+    max_bytes: usize,
+) -> (Vec<Value>, Vec<Value>) {
+    if lines == 0 {
+        return (Vec::new(), Vec::new());
+    }
+    let mut tails = Vec::new();
+    let mut errors = Vec::new();
+    for surface_id in surface_ids {
+        match state
+            .terminal
+            .read_text(surface_id, TerminalTextCapture::Tail { lines }, max_bytes)
+        {
+            Ok(snapshot) => {
+                let mut value = serde_json::to_value(snapshot).unwrap_or_else(|_| json!({}));
+                if let Some(object) = value.as_object_mut() {
+                    object.insert("untrusted".to_string(), Value::Bool(true));
+                }
+                tails.push(value);
+            }
+            Err(err) => errors.push(json!({
+                "surface_id": surface_id,
+                "error": err.to_string(),
+            })),
+        }
+    }
+    (tails, errors)
+}
+
+fn context_snapshot_workflows(
+    state: &SocketAppState,
+    workspace_id: &str,
+) -> Result<Value, DispatchError> {
+    let Some(path) = state.workflow_store_path.as_deref() else {
+        return Ok(json!([]));
+    };
+    let store = forktty_core::load_workflows_from_path(path).map_err(workflow_error)?;
+    Ok(json!(store.list(&WorkflowQuery {
+        workspace_id: Some(workspace_id.to_string()),
+        surface_id: None,
+        session_id: None,
+        query: None,
+        limit: Some(20),
+    })))
+}
+
+fn context_snapshot_teams(
+    state: &SocketAppState,
+    workspace_id: &str,
+) -> Result<Value, DispatchError> {
+    let Some(path) = state.team_store_path.as_deref() else {
+        return Ok(json!([]));
+    };
+    let store = forktty_core::load_teams_from_path(path).map_err(DispatchError::from)?;
+    Ok(json!(store.list(&forktty_core::TeamQuery {
+        workspace_id: Some(workspace_id.to_string()),
+        status: None,
+        query: None,
+        limit: Some(20),
+    })))
+}
+
+fn context_snapshot_risk_flags(
+    status: &Value,
+    agent_health: &[Value],
+    feed: &[Value],
+    remotes: &[Value],
+    terminal_tails: &[Value],
+    terminal_tail_errors: &[Value],
+) -> Vec<&'static str> {
+    let mut flags = Vec::new();
+    if !terminal_tails.is_empty() {
+        flags.push("terminal_text_untrusted");
+    }
+    if terminal_tails
+        .iter()
+        .any(|tail| tail.get("truncated").and_then(Value::as_bool) == Some(true))
+    {
+        flags.push("terminal_tail_truncated");
+    }
+    if !terminal_tail_errors.is_empty() {
+        flags.push("terminal_tail_unavailable");
+    }
+    if !remotes.is_empty() {
+        flags.push("remote_surface");
+    }
+    if feed.iter().any(|entry| {
+        entry
+            .get("type")
+            .or_else(|| entry.get("entry_type"))
+            .and_then(Value::as_str)
+            == Some("approval")
+    }) {
+        flags.push("pending_approval");
+    }
+    let permission_status_bypass = status
+        .get("status")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|entry| {
+            entry
+                .get("key")
+                .and_then(Value::as_str)
+                .is_some_and(|key| key.ends_with(":permission"))
+                && entry
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| value == "bypassPermissions")
+        });
+    let agent_health_bypass = agent_health.iter().any(|entry| {
+        entry
+            .get("permission_mode")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value == "bypassPermissions")
+    });
+    if permission_status_bypass || agent_health_bypass {
+        flags.push("permission_bypass");
+    }
+    flags
 }
 
 fn agent_session_rows(model: &WorkspaceModel, workspace_id: Option<&str>) -> Vec<Value> {
@@ -5857,6 +6098,28 @@ fn terminal_tail_lines_from_params(params: &Value) -> Result<usize, DispatchErro
     Ok(lines as usize)
 }
 
+fn context_snapshot_tail_lines_from_params(params: &Value) -> Result<usize, DispatchError> {
+    let lines = optional_u64_param(params, "tail_lines")?
+        .unwrap_or(DEFAULT_CONTEXT_SNAPSHOT_TAIL_LINES as u64);
+    if lines > MAX_CAPTURE_TAIL_LINES as u64 {
+        return Err(DispatchError::InvalidParam(format!(
+            "Invalid parameter tail_lines: expected 0..={MAX_CAPTURE_TAIL_LINES}"
+        )));
+    }
+    Ok(lines as usize)
+}
+
+fn context_snapshot_tail_max_bytes_from_params(params: &Value) -> Result<usize, DispatchError> {
+    let bytes = optional_u64_param(params, "tail_max_bytes")?
+        .unwrap_or(DEFAULT_CONTEXT_SNAPSHOT_TAIL_MAX_BYTES as u64);
+    if bytes == 0 || bytes > MAX_TERMINAL_TEXT_BYTES as u64 {
+        return Err(DispatchError::InvalidParam(format!(
+            "Invalid parameter tail_max_bytes: expected 1..={MAX_TERMINAL_TEXT_BYTES}"
+        )));
+    }
+    Ok(bytes as usize)
+}
+
 fn optional_bookmark_title(params: &Value) -> Result<String, DispatchError> {
     match params.get("title") {
         None | Some(Value::Null) => Ok(String::new()),
@@ -7963,6 +8226,60 @@ mod tests {
             "idle"
         );
         assert_eq!(result["workspaces"][0]["status"][0]["key"], "agent:codex");
+    }
+
+    #[tokio::test]
+    async fn dispatches_context_snapshot_with_bounded_terminal_tails() {
+        let (state, backend) = test_state();
+        let (workspace_id, surface_id) = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &surface_id,
+                AgentKind::Codex,
+                "codex-session-1",
+            ));
+            assert!(model
+                .set_surface_agent_session_lifecycle(&surface_id, AgentSessionLifecycle::Running,));
+            assert!(model.set_surface_agent_session_last_activity_ms(&surface_id, 42_000));
+            model
+                .set_status(
+                    &workspace.id,
+                    "agent:codex",
+                    "Codex",
+                    "Running",
+                    Some("blue".into()),
+                )
+                .unwrap();
+            (workspace.id, surface_id)
+        };
+        backend
+            .send_text(&surface_id, "one\ntwo\nthree\n")
+            .expect("write terminal text");
+
+        let result = dispatch(
+            &state,
+            "context.snapshot",
+            json!({"tail_lines": 2, "tail_max_bytes": 1024}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["workspace"]["id"], workspace_id);
+        assert_eq!(result["workspace"]["focused_surface_id"], surface_id);
+        assert_eq!(result["surfaces"][0]["id"], surface_id);
+        assert_eq!(result["status"]["status"][0]["key"], "agent:codex");
+        assert_eq!(result["agents"][0]["surface_id"], surface_id);
+        assert_eq!(result["agents"][0]["lifecycle"], "running");
+        assert_eq!(result["terminal_tails"][0]["surface_id"], surface_id);
+        assert_eq!(result["terminal_tails"][0]["text"], "two\nthree\n");
+        assert_eq!(result["terminal_tails"][0]["untrusted"], true);
+        assert_eq!(result["terminal_tails"][0]["truncated"], false);
+        assert!(result["risk_flags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("terminal_text_untrusted")));
     }
 
     #[tokio::test]

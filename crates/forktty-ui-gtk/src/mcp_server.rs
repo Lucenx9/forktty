@@ -437,6 +437,28 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 params: workspace_target_params(args, true)?,
             }
         }
+        "context_snapshot" => {
+            reject_unexpected(
+                args,
+                &[
+                    "workspace_id",
+                    "workspace_name",
+                    "worktree_name",
+                    "surface_id",
+                    "tail_lines",
+                    "tail_max_bytes",
+                ],
+                name,
+            )?;
+            let mut params = workspace_target_params(args, true)?;
+            insert_optional_non_blank_param(args, &mut params, "surface_id")?;
+            insert_optional_u64_param(args, &mut params, "tail_lines")?;
+            insert_optional_u64_param(args, &mut params, "tail_max_bytes")?;
+            SocketCall {
+                method: "context.snapshot",
+                params,
+            }
+        }
         "topology_tree" => {
             reject_unexpected(
                 args,
@@ -1543,6 +1565,7 @@ fn success_text(name: &str, result: &Value) -> String {
     match name {
         "workspace_list" => "Listed ForkTTY workspaces.".to_string(),
         "surface_list" => "Listed ForkTTY surfaces.".to_string(),
+        "context_snapshot" => "Built ForkTTY context snapshot.".to_string(),
         "topology_tree" => "Built ForkTTY topology tree.".to_string(),
         "remote_list" => "Listed ForkTTY SSH remotes.".to_string(),
         "remote_status" => "Read ForkTTY SSH remote status.".to_string(),
@@ -1679,6 +1702,22 @@ fn tool_specs() -> Vec<ToolSpec> {
                     "workspace_id": string_prop("Workspace id to inspect."),
                     "workspace_name": string_prop("Workspace name to inspect."),
                     "worktree_name": string_prop("Worktree name to inspect."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "context_snapshot",
+            annotations: read_only_annotations(),
+            description: "Return a compact read-only situational snapshot for one ForkTTY workspace: workspace, pane tree, surfaces, status, agent health, workflow/team/feed/remote summaries, and bounded untrusted terminal tails.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "workspace_id": string_prop("Workspace id to inspect."),
+                    "workspace_name": string_prop("Workspace name to inspect."),
+                    "worktree_name": string_prop("Worktree name to inspect."),
+                    "surface_id": string_prop("Surface id whose workspace should be inspected."),
+                    "tail_lines": integer_prop("Terminal tail lines per terminal surface; 0 disables terminal text. Defaults to a compact bounded tail."),
+                    "tail_max_bytes": integer_prop("Maximum UTF-8 bytes per terminal tail; socket enforces its upper bound."),
                 }),
             ),
         },
@@ -2391,6 +2430,7 @@ mod tests {
             .filter_map(|tool| tool.get("name").and_then(Value::as_str))
             .collect::<Vec<_>>();
         assert!(names.contains(&"workspace_list"));
+        assert!(names.contains(&"context_snapshot"));
         assert!(names.contains(&"topology_tree"));
         assert!(names.contains(&"surface_read_text"));
         assert!(names.contains(&"surface_capture_tail"));
@@ -2415,6 +2455,7 @@ mod tests {
         };
         assert!(tools.iter().all(|tool| tool["annotations"].is_object()));
         assert_eq!(annotation("workspace_list")["readOnlyHint"], true);
+        assert_eq!(annotation("context_snapshot")["readOnlyHint"], true);
         assert_eq!(annotation("surface_read_text")["readOnlyHint"], true);
         assert_eq!(annotation("surface_capture_tail")["readOnlyHint"], true);
         assert_eq!(annotation("worktree_remove")["destructiveHint"], true);
@@ -2795,6 +2836,20 @@ mod tests {
 
         assert_eq!(method, "status.summary");
         assert_eq!(params["workspace_id"], "w1");
+    }
+
+    #[test]
+    fn context_snapshot_tool_maps_to_socket_context_snapshot() {
+        let (method, params) = build_socket_call_for_test(
+            "context_snapshot",
+            json!({"workspace_id": "w1", "tail_lines": 20, "tail_max_bytes": 4096}),
+        )
+        .unwrap();
+
+        assert_eq!(method, "context.snapshot");
+        assert_eq!(params["workspace_id"], "w1");
+        assert_eq!(params["tail_lines"], 20);
+        assert_eq!(params["tail_max_bytes"], 4096);
     }
 
     #[test]

@@ -8967,7 +8967,7 @@ fn build_hook_response(
                 trimmed_env("FORKTTY_SOCKET_PATH").unwrap_or_else(|| "(default)".to_string()),
             ),
             workspace_line,
-            "MCP tools: workspace_list, surface_list, topology_tree, surface_read_text, and surface_capture_tail inspect panes; surface_focus and surface_send_text drive them.".to_string(),
+            "MCP tools: context_snapshot gives a compact read-only view; workspace_list, surface_list, topology_tree, surface_read_text, and surface_capture_tail inspect panes; surface_focus and surface_send_text drive them.".to_string(),
             "Worktrees: worktree_create creates an isolated git worktree + workspace; worktree_attach, worktree_remove, and worktree_merge manage branches.".to_string(),
             "Status: status_set and notification_create publish progress; CLI fallback is forktty list/surfaces/send-text/worktree-*.".to_string(),
         ];
@@ -10526,6 +10526,7 @@ mod tests {
         assert!(context.contains("surface-9"));
         assert!(context.contains("forktty.sock"));
         assert!(context.contains("Feature Shell on branch feature/mcp"));
+        assert!(context.contains("context_snapshot gives a compact read-only view"));
         assert!(context.contains("workspace_list, surface_list, topology_tree"));
         assert!(context.contains("surface_read_text"));
         assert!(context.contains("worktree_create creates an isolated git worktree"));

@@ -4,6 +4,11 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Added
+- Socket `context.snapshot` and MCP `context_snapshot` now provide a compact
+  read-only workspace snapshot with pane/surface state, status, agent health,
+  workflow/team/feed/remote summaries, and bounded untrusted terminal tails.
+
 ### Fixed
 - AppImage packaging now preserves the `libgtk4-layer-shell` runtime SONAME
   alongside the unversioned development name, so embedded Ghostty panes can

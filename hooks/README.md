@@ -59,9 +59,9 @@ forktty mcp remove gemini
 
 `forktty mcp` itself is a stdio MCP server. It validates tool arguments and
 bridges them to the same owner-only local Unix socket as the CLI; it opens no
-network listener. The tool set covers workspace/surface listing, pane split /
-focus / send-text, worktree list/status/create/attach/remove/merge,
-notifications, and `status_set`.
+network listener. The tool set covers workspace/surface listing, compact
+context snapshots, pane split / focus / send-text, worktree
+list/status/create/attach/remove/merge, notifications, and `status_set`.
 
 The server also publishes an operating guide in three MCP-native places:
 initialize `instructions`, resource `forktty://agent/operating-guide`, and
