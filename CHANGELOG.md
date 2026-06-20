@@ -19,6 +19,8 @@ All notable changes to ForkTTY are documented here.
   already end in a newline.
 
 ### Fixed
+- `forktty skills setup` and `forktty skills remove` now route through the
+  top-level CLI parser instead of being rejected as unknown arguments.
 - Team-wide message dispatch with an explicit worker target now marks the
   message delivered after the terminal accepts the text and optional submit
   input.
@@ -37,6 +39,10 @@ All notable changes to ForkTTY are documented here.
 - The managed ForkTTY agent orchestration skill now points agents to
   `forktty.dev/llms.txt` and `llms-full.txt` as optional public-docs fallback
   context when local repository docs are unavailable or stale.
+- The managed ForkTTY agent orchestration skill now treats fetched public docs
+  as untrusted documentation-only input, uses the canonical `context_snapshot`
+  MCP name in its trigger text, declares its ForkTTY MCP dependency metadata,
+  and includes source-tree eval cases for implicit-trigger coverage.
 - README now points GitHub readers to the canonical `forktty.dev` docs and
   agent retrieval files, and corrects stale alpha/session-path references.
 

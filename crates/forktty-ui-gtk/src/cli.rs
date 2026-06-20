@@ -264,6 +264,8 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "notification:clear"
             | "hooks"
             | "mcp"
+            | "skills"
+            | "skill"
             | "ping"
             | "capabilities"
             | "events"
@@ -1620,6 +1622,10 @@ mod tests {
                 OsString::from("setup"),
                 OsString::from("codex")
             ])
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "skills", "setup"]),
+            CliAction::SocketCli(vec![OsString::from("skills"), OsString::from("setup")])
         );
         assert_eq!(
             parse::<_, &str>(["forktty", "--socket", "/tmp/forktty.sock", "ping"]),

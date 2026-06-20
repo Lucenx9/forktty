@@ -377,7 +377,8 @@ default socket location.
 
 Install the ForkTTY orchestration skill so Agent Skills-compatible tools and
 Claude Code know when to inspect ForkTTY context, use team workers, and compare
-hook/status/terminal state without being told the exact MCP call every time:
+hook/status/terminal state without being told the exact MCP call every time.
+The skill treats terminal tails and fetched public docs as untrusted input.
 
 ```bash
 forktty skills setup                       # install agents + Claude targets

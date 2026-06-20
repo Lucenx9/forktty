@@ -342,7 +342,8 @@ atomically, and creates a `.bak-*` backup when content changes.
 `forktty skills setup` installs a ForkTTY-managed Agent Skill named
 `forktty-agent-orchestration`. The skill is instruction-only and tells coding
 agents when to inspect ForkTTY context, how to treat terminal tails as
-untrusted input, when to use team/workflow/status MCP tools, and how to avoid
+untrusted input, how to treat fetched public docs as documentation-only
+evidence, when to use team/workflow/status MCP tools, and how to avoid
 cross-pane writes before reading the target surface. The default setup writes
 the same managed skill to the interoperable Agent Skills user location
 (`~/.agents/skills/forktty-agent-orchestration`) and to Claude Code's personal

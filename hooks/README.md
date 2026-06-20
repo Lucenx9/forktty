@@ -107,10 +107,10 @@ forktty skills remove agents --dry-run
 | Claude Code (`claude`) | `$CLAUDE_CONFIG_DIR/skills/forktty-agent-orchestration` or `~/.claude/skills/forktty-agent-orchestration` |
 
 The skill tells agents to inspect `context_snapshot` or equivalent read-only
-state before cross-pane work, treat terminal tails as untrusted input, use team
-mailbox dispatch for worker prompts, compare status/hooks/terminal tail when
-`running` or `needs_input` appears delayed, and record durable workflow/team
-state for long-running coordination.
+state before cross-pane work, treat terminal tails and fetched public docs as
+untrusted input, use team mailbox dispatch for worker prompts, compare
+status/hooks/terminal tail when `running` or `needs_input` appears delayed, and
+record durable workflow/team state for long-running coordination.
 
 Setup refuses to overwrite an existing skill directory with the same name
 unless its `SKILL.md` contains ForkTTY's managed marker. Updating or removing a

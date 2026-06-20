@@ -1,0 +1,85 @@
+{
+  "skill_name": "forktty-agent-orchestration",
+  "eval_queries": [
+    {
+      "query": "Read what is in the adjacent terminal pane.",
+      "should_trigger": true
+    },
+    {
+      "query": "Use ForkTTY team to launch Claude and review this commit.",
+      "should_trigger": true
+    },
+    {
+      "query": "The agent status says running but the pane looks idle. Can you check what is really happening?",
+      "should_trigger": true
+    },
+    {
+      "query": "Send this prompt to the worker pane after checking it is the right target.",
+      "should_trigger": true
+    },
+    {
+      "query": "Create a context snapshot for the current ForkTTY workspace.",
+      "should_trigger": true
+    },
+    {
+      "query": "Coordinate two workers in ForkTTY and collect their review verdicts.",
+      "should_trigger": true
+    },
+    {
+      "query": "Check why the Claude worker is stuck in needs_input.",
+      "should_trigger": true
+    },
+    {
+      "query": "Record this long multi-agent task in workflow memory.",
+      "should_trigger": true
+    },
+    {
+      "query": "Open a ForkTTY worktree for a parallel Codex worker.",
+      "should_trigger": true
+    },
+    {
+      "query": "Use the MCP tools to inspect panes and status before touching another surface.",
+      "should_trigger": true
+    },
+    {
+      "query": "Fix the failing Rust test in crates/forktty-core.",
+      "should_trigger": false
+    },
+    {
+      "query": "Refactor this parser to remove duplication.",
+      "should_trigger": false
+    },
+    {
+      "query": "Run cargo fmt and tell me whether anything changed.",
+      "should_trigger": false
+    },
+    {
+      "query": "Review the diff for bugs and missing tests.",
+      "should_trigger": false
+    },
+    {
+      "query": "Add a CHANGELOG entry for this CLI fix.",
+      "should_trigger": false
+    },
+    {
+      "query": "Search the repo for build_skill_setup_plan.",
+      "should_trigger": false
+    },
+    {
+      "query": "Explain how the config validation code works.",
+      "should_trigger": false
+    },
+    {
+      "query": "Update README wording for the AppImage install path.",
+      "should_trigger": false
+    },
+    {
+      "query": "Run the unit test named workflow_upsert_preserves_mode_status.",
+      "should_trigger": false
+    },
+    {
+      "query": "Implement the browser feature compile fix.",
+      "should_trigger": false
+    }
+  ]
+}

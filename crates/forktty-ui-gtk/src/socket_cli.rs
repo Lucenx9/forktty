@@ -11920,6 +11920,7 @@ mod tests {
                     assert!(skill.contains("team_message_dispatch"));
                     let metadata =
                         fs::read_to_string(path.join("agents").join("openai.yaml")).unwrap();
+                    assert!(metadata.contains("value: \"forktty\""));
                     assert!(metadata.contains("allow_implicit_invocation: true"));
                 }
 
