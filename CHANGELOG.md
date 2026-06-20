@@ -42,6 +42,8 @@ All notable changes to ForkTTY are documented here.
   resuming those panes back in prompted mode.
 
 ### Security
+- Ordered embedded Ghostty AppImage environment unsets before assignments so
+  `/usr/bin/env` cannot treat a cleanup flag as the terminal child command.
 - Rejected control characters in restored session identifiers and embedded
   Ghostty command-spawn values so tampered session state cannot influence
   terminal child argv or environment setup.
