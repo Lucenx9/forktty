@@ -8,8 +8,18 @@ All notable changes to ForkTTY are documented here.
 - Socket `context.snapshot` and MCP `context_snapshot` now provide a compact
   read-only workspace snapshot with pane/surface state, status, agent health,
   workflow/team/feed/remote summaries, and bounded untrusted terminal tails.
+- Team message dispatch now supports an explicit submit mode through socket
+  `team.message.dispatch` (`submit: true`), MCP `team_message_dispatch`, and
+  CLI `forktty team-message-dispatch --submit`, sending Enter as a separate
+  terminal input after the queued text is delivered when the message does not
+  already end in a newline.
 
 ### Fixed
+- Team-wide message dispatch with an explicit worker target now marks the
+  message delivered after the terminal accepts the text and optional submit
+  input.
+- MCP `team_message_dispatch` is now annotated as destructive and open-world,
+  matching that it can type into an agent pane and optionally submit input.
 - Agent lifecycle summaries now ignore stale hook events consistently with the
   visible status row, preventing delayed `running`/`needs input` updates from
   overriding newer agent state.

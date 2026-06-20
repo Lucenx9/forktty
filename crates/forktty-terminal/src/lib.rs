@@ -257,6 +257,9 @@ fn truncate_text(text: String, max_bytes: usize, from_end: bool) -> (String, boo
 pub trait TerminalBackend: Send + Sync {
     fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError>;
     fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError>;
+    fn send_enter(&self, surface_id: &str) -> Result<(), TerminalError> {
+        self.send_text(surface_id, "\r")
+    }
     fn read_text(
         &self,
         surface_id: &str,

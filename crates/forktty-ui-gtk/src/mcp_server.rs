@@ -825,12 +825,17 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             }
         }
         "team_message_dispatch" => {
-            reject_unexpected(args, &["team_id", "message_id", "worker_id"], name)?;
+            reject_unexpected(
+                args,
+                &["team_id", "message_id", "worker_id", "submit"],
+                name,
+            )?;
             let mut params = map_from_pairs([
                 ("team_id", required_non_blank(args, "team_id")?),
                 ("message_id", required_non_blank(args, "message_id")?),
             ]);
             insert_optional_non_blank_param(args, &mut params, "worker_id")?;
+            insert_optional_bool_param(args, &mut params, "submit")?;
             SocketCall {
                 method: "team.message.dispatch",
                 params,
@@ -1586,7 +1591,10 @@ fn success_text(name: &str, result: &Value) -> String {
         "team_worker_shutdown" => "Requested ForkTTY team worker shutdown.".to_string(),
         "team_task_upsert" => "Updated ForkTTY team task state.".to_string(),
         "team_message_send" => "Queued ForkTTY team message.".to_string(),
-        "team_message_dispatch" => "Dispatched ForkTTY team message to a worker pane.".to_string(),
+        "team_message_dispatch" => {
+            "Dispatched ForkTTY team message to a worker pane, optionally submitting it."
+                .to_string()
+        }
         "team_message_ack" => "Acknowledged ForkTTY team message.".to_string(),
         "team_inbox" => "Read ForkTTY team inbox.".to_string(),
         "team_summary" => "Summarized ForkTTY team state.".to_string(),
@@ -2006,7 +2014,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "team_message_dispatch",
-            annotations: mutating_annotations(false, false),
+            annotations: mutating_annotations_with_open_world(true, false, true),
             description: "Send a queued ForkTTY team message to a worker terminal pane and acknowledge it only after the terminal accepts the text.",
             input_schema: object_schema(
                 &["team_id", "message_id"],
@@ -2014,6 +2022,7 @@ fn tool_specs() -> Vec<ToolSpec> {
                     "team_id": string_prop("Team id."),
                     "message_id": string_prop("Message id."),
                     "worker_id": string_prop("Required when dispatching a team-wide message."),
+                    "submit": boolean_prop("Also send Enter after the message text. Defaults to false."),
                 }),
             ),
         },
@@ -2462,6 +2471,8 @@ mod tests {
         assert_eq!(annotation("status_set")["idempotentHint"], true);
         assert_eq!(annotation("surface_send_text")["destructiveHint"], true);
         assert_eq!(annotation("surface_send_text")["openWorldHint"], true);
+        assert_eq!(annotation("team_message_dispatch")["destructiveHint"], true);
+        assert_eq!(annotation("team_message_dispatch")["openWorldHint"], true);
     }
 
     #[test]
@@ -2814,11 +2825,17 @@ mod tests {
 
         let (method, params) = build_socket_call_for_test(
             "team_message_dispatch",
-            json!({"team_id": "team-1", "message_id": "msg-1", "worker_id": "worker-1"}),
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-1",
+                "worker_id": "worker-1",
+                "submit": true
+            }),
         )
         .unwrap();
         assert_eq!(method, "team.message.dispatch");
         assert_eq!(params["message_id"], "msg-1");
+        assert_eq!(params["submit"], true);
 
         let (method, params) = build_socket_call_for_test(
             "team_inbox",

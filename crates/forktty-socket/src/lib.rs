@@ -45,6 +45,8 @@ const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 /// only fires on idle or slow-loris connections that would otherwise hold one
 /// of the [`MAX_SOCKET_CONNECTIONS`] permits indefinitely.
 const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// Give bracketed-paste-aware agent TUIs a short handoff window before Enter.
+const TEAM_MESSAGE_SUBMIT_ENTER_DELAY: Duration = Duration::from_millis(75);
 /// Buffered events per subscriber before a slow client gets a `Lagged` notice.
 const EVENTS_CHANNEL_CAPACITY: usize = 256;
 /// How often the background task snapshots the model and emits diffs.
@@ -1220,24 +1222,28 @@ pub async fn dispatch(
             let message_id = required_trimmed_string(&params, "message_id")?.to_string();
             let worker_id =
                 optional_non_blank_string_param(&params, "worker_id")?.map(str::to_string);
-            let (surface_id, text) =
+            let submit = optional_bool_param(&params, "submit")?.unwrap_or(false);
+            let (surface_id, resolved_worker_id, text) =
                 team_message_dispatch_target(state, &team_id, &message_id, worker_id.as_deref())?;
-            state
-                .terminal
-                .send_text(&surface_id, &text)
-                .map_err(DispatchError::from)?;
+            dispatch_team_message_text(state, &surface_id, &text, submit).await?;
             let message = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
                 store.ack_message(
                     forktty_core::TeamMessageAck {
                         team_id,
                         message_id,
-                        worker_id,
+                        worker_id: Some(resolved_worker_id.clone()),
                     },
                     forktty_core::team_now_ms(),
                 )
             })
             .map_err(DispatchError::from)?;
-            Ok(json!({"sent": true, "surface_id": surface_id, "message": message}))
+            Ok(json!({
+                "sent": true,
+                "submitted": submit,
+                "surface_id": surface_id,
+                "worker_id": resolved_worker_id,
+                "message": message
+            }))
         }
         "team.message.ack" => {
             let input = forktty_core::TeamMessageAck {
@@ -4946,6 +4952,26 @@ fn team_worker_action_text(
     Ok(text.to_string())
 }
 
+async fn dispatch_team_message_text(
+    state: &SocketAppState,
+    surface_id: &str,
+    body: &str,
+    submit: bool,
+) -> Result<(), DispatchError> {
+    state
+        .terminal
+        .send_text(surface_id, body)
+        .map_err(DispatchError::from)?;
+    if submit && !body.ends_with('\r') && !body.ends_with('\n') {
+        tokio::time::sleep(TEAM_MESSAGE_SUBMIT_ENTER_DELAY).await;
+        state
+            .terminal
+            .send_enter(surface_id)
+            .map_err(DispatchError::from)?;
+    }
+    Ok(())
+}
+
 fn team_store_path(state: &SocketAppState) -> Result<&Path, DispatchError> {
     state
         .team_store_path
@@ -5110,7 +5136,7 @@ fn team_message_dispatch_target(
     team_id: &str,
     message_id: &str,
     worker_id: Option<&str>,
-) -> Result<(String, String), DispatchError> {
+) -> Result<(String, String, String), DispatchError> {
     let store =
         forktty_core::load_teams_from_path(team_store_path(state)?).map_err(DispatchError::from)?;
     let team = store
@@ -5151,7 +5177,7 @@ fn team_message_dispatch_target(
         DispatchError::PreconditionFailed("team worker has no surface_id".to_string())
     })?;
     ensure_model_surface_exists(state, &surface_id)?;
-    Ok((surface_id, message.body.clone()))
+    Ok((surface_id, worker_id.to_string(), message.body.clone()))
 }
 
 fn team_worker_health_rows(
@@ -7125,6 +7151,7 @@ mod tests {
     use super::*;
     use forktty_terminal::{
         HeadlessTerminalBackend, TerminalBackend, TerminalError, TerminalSurfaceState,
+        TerminalTextCapture, TerminalTextSnapshot,
     };
     use git2::Repository;
     use std::collections::{BTreeMap, BTreeSet};
@@ -7559,6 +7586,52 @@ mod tests {
                 .values()
                 .cloned()
                 .collect())
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct FailingEnterBackend {
+        inner: HeadlessTerminalBackend,
+    }
+
+    impl FailingEnterBackend {
+        fn sent_text(&self, surface_id: &str) -> Result<Vec<String>, TerminalError> {
+            self.inner.sent_text(surface_id)
+        }
+    }
+
+    impl TerminalBackend for FailingEnterBackend {
+        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+            self.inner.spawn(request)
+        }
+
+        fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
+            self.inner.send_text(surface_id, text)
+        }
+
+        fn send_enter(&self, _surface_id: &str) -> Result<(), TerminalError> {
+            Err(TerminalError::Backend("enter failed".to_string()))
+        }
+
+        fn read_text(
+            &self,
+            surface_id: &str,
+            capture: TerminalTextCapture,
+            max_bytes: usize,
+        ) -> Result<TerminalTextSnapshot, TerminalError> {
+            self.inner.read_text(surface_id, capture, max_bytes)
+        }
+
+        fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
+            self.inner.resize(surface_id, cols, rows)
+        }
+
+        fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+            self.inner.close(surface_id)
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            self.inner.surfaces()
         }
     }
 
@@ -8788,6 +8861,272 @@ mod tests {
             .await
             .unwrap();
         assert!(events.as_array().unwrap().len() >= 10);
+    }
+
+    #[tokio::test]
+    async fn team_message_dispatch_submit_sends_enter_and_marks_team_wide_delivered() {
+        let (mut state, backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "leader_surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+                "surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+
+        dispatch(
+            &state,
+            "team.message.send",
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-default",
+                "from": "leader",
+                "to_worker_id": "worker-1",
+                "body": "paste only"
+            }),
+        )
+        .await
+        .unwrap();
+        let default_dispatch = dispatch(
+            &state,
+            "team.message.dispatch",
+            json!({"team_id": "team-1", "message_id": "msg-default"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(default_dispatch["submitted"], false);
+
+        dispatch(
+            &state,
+            "team.message.send",
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-submit",
+                "from": "leader",
+                "to_worker_id": "worker-1",
+                "body": "run status"
+            }),
+        )
+        .await
+        .unwrap();
+        let submitted = dispatch(
+            &state,
+            "team.message.dispatch",
+            json!({"team_id": "team-1", "message_id": "msg-submit", "submit": true}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(submitted["submitted"], true);
+        assert_eq!(submitted["message"]["delivered"], true);
+
+        dispatch(
+            &state,
+            "team.message.send",
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-already-entered",
+                "from": "leader",
+                "to_worker_id": "worker-1",
+                "body": "already entered\r"
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.message.dispatch",
+            json!({"team_id": "team-1", "message_id": "msg-already-entered", "submit": true}),
+        )
+        .await
+        .unwrap();
+
+        dispatch(
+            &state,
+            "team.message.send",
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-team-wide",
+                "from": "leader",
+                "body": "broadcast"
+            }),
+        )
+        .await
+        .unwrap();
+        let team_wide = dispatch(
+            &state,
+            "team.message.dispatch",
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-team-wide",
+                "worker_id": "worker-1",
+                "submit": true
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(team_wide["submitted"], true);
+        assert_eq!(team_wide["message"]["delivered"], true);
+
+        assert_eq!(
+            backend.sent_text(surface_id).unwrap(),
+            vec![
+                "paste only".to_string(),
+                "run status".to_string(),
+                "\r".to_string(),
+                "already entered\r".to_string(),
+                "broadcast".to_string(),
+                "\r".to_string()
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn team_message_dispatch_rejects_non_boolean_submit() {
+        let (mut state, backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "leader_surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+                "surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.message.send",
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-1",
+                "from": "leader",
+                "to_worker_id": "worker-1",
+                "body": "run"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let err = dispatch(
+            &state,
+            "team.message.dispatch",
+            json!({"team_id": "team-1", "message_id": "msg-1", "submit": "yes"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "invalid_param");
+        assert!(backend.sent_text(surface_id).unwrap_or_default().is_empty());
+    }
+
+    #[tokio::test]
+    async fn team_message_dispatch_submit_does_not_ack_when_enter_fails() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(FailingEnterBackend::default());
+        let mut state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        state.workflow_store_path = None;
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "leader_surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+                "surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.message.send",
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-submit",
+                "from": "leader",
+                "to_worker_id": "worker-1",
+                "body": "run status"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let err = dispatch(
+            &state,
+            "team.message.dispatch",
+            json!({"team_id": "team-1", "message_id": "msg-submit", "submit": true}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "error");
+        assert_eq!(
+            backend.sent_text(surface_id).unwrap(),
+            vec!["run status".to_string()]
+        );
+
+        let team = dispatch(&state, "team.get", json!({"team_id": "team-1"}))
+            .await
+            .unwrap();
+        assert_eq!(team["messages"][0]["delivered"], false);
+        assert_eq!(team["messages"][0]["acknowledged_at_ms"], 0);
     }
 
     #[tokio::test]

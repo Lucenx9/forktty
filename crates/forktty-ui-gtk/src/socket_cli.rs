@@ -60,7 +60,7 @@ Usage:
   forktty team-worker-shutdown <team-id> <worker-id> [--text <text>] [--json]
   forktty team-task-upsert <team-id> <task-id> [--title <title>] [--status <status>] [--detail <text>] [--depends-on <comma-list>] [--assigned-worker-id <id>] [--json]
   forktty team-message-send <team-id> --from <id> --body <text> [--message-id <id>] [--to-worker-id <id>] [--task-id <id>] [--json]
-  forktty team-message-dispatch <team-id> <message-id> [--worker-id <id>] [--json]
+  forktty team-message-dispatch <team-id> <message-id> [--worker-id <id>] [--submit] [--json]
   forktty team-message-ack <team-id> <message-id> [--worker-id <id>] [--json]
   forktty team-inbox <team-id> [--worker-id <id>] [--include-delivered] [--limit <n>] [--json]
   forktty team-summary <team-id> [--json]
@@ -2895,8 +2895,12 @@ fn handle_team_message_send(context: &CliContext, args: Vec<String>) -> CliResul
 }
 
 fn handle_team_message_dispatch(context: &CliContext, args: Vec<String>) -> CliResult<()> {
-    let parsed = parse_flags(args, &[]);
-    reject_unknown_options(&parsed.options, &["worker-id"], "team-message-dispatch")?;
+    let parsed = parse_flags(args, &["submit"]);
+    reject_unknown_options(
+        &parsed.options,
+        &["worker-id", "submit"],
+        "team-message-dispatch",
+    )?;
     let positionals = required_positionals(
         &parsed.positionals,
         "team-message-dispatch",
@@ -2909,6 +2913,17 @@ fn handle_team_message_dispatch(context: &CliContext, args: Vec<String>) -> CliR
         Value::String(positionals[1].clone()),
     );
     insert_optional_cli_string_param(&mut params, &parsed.options, "worker-id", "worker_id")?;
+    match bool_option(&parsed.options, "submit") {
+        Some(true) => {
+            params.insert("submit".to_string(), Value::Bool(true));
+        }
+        Some(false) => {}
+        None => {
+            return Err(CliError::new(
+                "team-message-dispatch: --submit expects true or false",
+            ));
+        }
+    }
     let result = send_socket_request(
         &context.socket_path,
         "team.message.dispatch",
@@ -3259,7 +3274,15 @@ fn format_team_message_dispatch_line(result: &Value) -> String {
         safe_string_field(result, "surface_id").unwrap_or_else(|| "(surface)".to_string());
     let message = result.get("message").unwrap_or(&Value::Null);
     let message_id = safe_string_field(message, "id").unwrap_or_else(|| "(message)".to_string());
-    format!("Dispatched message {message_id} to {surface_id}")
+    if result
+        .get("submitted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        format!("Dispatched message {message_id} to {surface_id} and submitted")
+    } else {
+        format!("Dispatched message {message_id} to {surface_id}")
+    }
 }
 
 fn format_team_summary_line(summary: &Value) -> String {
@@ -13159,6 +13182,29 @@ mod tests {
         assert_eq!(request["params"]["team_id"], "team-1");
         assert_eq!(request["params"]["message_id"], "msg-1");
         assert_eq!(request["params"]["worker_id"], "worker-1");
+    }
+
+    #[test]
+    fn team_message_dispatch_submit_sends_submit_param() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"sent": true, "submitted": true, "message": {"id": "msg-1"}},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_team_message_dispatch(
+                    &ctx_for(socket_path),
+                    strings(&["team-1", "msg-1", "--worker-id", "worker-1", "--submit"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "team.message.dispatch");
+        assert_eq!(request["params"]["submit"], true);
     }
 
     #[test]

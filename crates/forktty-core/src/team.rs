@@ -737,9 +737,12 @@ impl TeamStoreData {
             .iter_mut()
             .find(|message| {
                 message.id == message_id
-                    && worker_id
-                        .as_deref()
-                        .is_none_or(|worker_id| message.to_worker_id.as_deref() == Some(worker_id))
+                    && worker_id.as_deref().is_none_or(|worker_id| {
+                        message
+                            .to_worker_id
+                            .as_deref()
+                            .is_none_or(|target| target == worker_id)
+                    })
             })
             .ok_or_else(|| TeamError::MessageNotFound(message_id.clone()))?;
         message.delivered = true;
