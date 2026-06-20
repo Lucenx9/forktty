@@ -1513,6 +1513,19 @@ impl WorkspaceModel {
         color: Option<String>,
         hook: Option<StatusHookMetadata>,
     ) -> Option<StatusEntry> {
+        self.set_status_with_hook_metadata_applied(workspace_id, key, label, value, color, hook)
+            .map(|(entry, _applied)| entry)
+    }
+
+    pub fn set_status_with_hook_metadata_applied(
+        &mut self,
+        workspace_id: &str,
+        key: impl Into<String>,
+        label: impl Into<String>,
+        value: impl Into<String>,
+        color: Option<String>,
+        hook: Option<StatusHookMetadata>,
+    ) -> Option<(StatusEntry, bool)> {
         if !self.workspaces.contains_key(workspace_id) {
             return None;
         }
@@ -1537,7 +1550,8 @@ impl WorkspaceModel {
                             .find(|existing| existing.key == entry.key)
                             .cloned()
                     })
-                    .or(Some(entry));
+                    .or(Some(entry))
+                    .map(|entry| (entry, false));
             }
             let next_hook = merge_hook_metadata(current_hook, hook);
             self.status_hooks
@@ -1574,7 +1588,7 @@ impl WorkspaceModel {
                 }
             }
         }
-        Some(entry)
+        Some((entry, true))
     }
 
     pub fn list_status(&self, workspace_id: &str) -> Vec<StatusEntry> {

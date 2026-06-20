@@ -10,6 +10,9 @@ All notable changes to ForkTTY are documented here.
   workflow/team/feed/remote summaries, and bounded untrusted terminal tails.
 
 ### Fixed
+- Agent lifecycle summaries now ignore stale hook events consistently with the
+  visible status row, preventing delayed `running`/`needs input` updates from
+  overriding newer agent state.
 - AppImage packaging now preserves the `libgtk4-layer-shell` runtime SONAME
   alongside the unversioned development name, so embedded Ghostty panes can
   load on hosts without a system gtk4-layer-shell installation.

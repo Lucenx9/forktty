@@ -2328,43 +2328,55 @@ pub async fn dispatch(
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
-                if let (Some(agent), Some(surface_id), Some(hook_session_id)) =
-                    (agent, surface_id, hook_session_id)
-                {
-                    if model
-                        .surface(surface_id)
-                        .is_some_and(|surface| surface.workspace_id == workspace_id)
+                let (status, status_applied) = model
+                    .set_status_with_hook_metadata_applied(
+                        &workspace_id,
+                        key,
+                        label,
+                        value,
+                        color,
+                        hook,
+                    )
+                    .ok_or(DispatchError::NotFound("workspace".to_string()))?;
+                if status_applied {
+                    if let (Some(agent), Some(surface_id), Some(hook_session_id)) =
+                        (agent, surface_id, hook_session_id)
                     {
-                        model.set_surface_agent_session(surface_id, agent, hook_session_id);
-                        if let Some(hook_session_cwd) = hook_session_cwd {
-                            model
-                                .set_surface_agent_session_resume_cwd(surface_id, hook_session_cwd);
+                        if model
+                            .surface(surface_id)
+                            .is_some_and(|surface| surface.workspace_id == workspace_id)
+                        {
+                            model.set_surface_agent_session(surface_id, agent, hook_session_id);
+                            if let Some(hook_session_cwd) = hook_session_cwd {
+                                model.set_surface_agent_session_resume_cwd(
+                                    surface_id,
+                                    hook_session_cwd,
+                                );
+                            }
+                            model.set_surface_agent_session_lifecycle(
+                                surface_id,
+                                agent_session_lifecycle,
+                            );
+                            model.set_surface_agent_session_last_activity_ms(
+                                surface_id,
+                                last_activity_ms,
+                            );
                         }
-                        model.set_surface_agent_session_lifecycle(
-                            surface_id,
-                            agent_session_lifecycle,
-                        );
-                        model.set_surface_agent_session_last_activity_ms(
-                            surface_id,
-                            last_activity_ms,
-                        );
+                    }
+                    if let (Some(agent), Some(surface_id), Some(hook_session_id)) =
+                        (permission_agent, surface_id, hook_session_id)
+                    {
+                        if model.surface(surface_id).is_some_and(|surface| {
+                            surface.workspace_id == workspace_id
+                                && surface.agent_session.as_ref().is_some_and(|session| {
+                                    session.agent == agent && session.session_id == hook_session_id
+                                })
+                        }) {
+                            model.set_surface_agent_session_permission_mode(surface_id, value);
+                        }
                     }
                 }
-                if let (Some(agent), Some(surface_id), Some(hook_session_id)) =
-                    (permission_agent, surface_id, hook_session_id)
-                {
-                    if model.surface(surface_id).is_some_and(|surface| {
-                        surface.workspace_id == workspace_id
-                            && surface.agent_session.as_ref().is_some_and(|session| {
-                                session.agent == agent && session.session_id == hook_session_id
-                            })
-                    }) {
-                        model.set_surface_agent_session_permission_mode(surface_id, value);
-                    }
-                }
-                model
-                    .set_status_with_hook_metadata(&workspace_id, key, label, value, color, hook)
-                    .ok_or(DispatchError::NotFound("workspace".to_string()))?
+                status
             };
             Ok(json!(status))
         }
@@ -9687,6 +9699,115 @@ mod tests {
         let health = dispatch(&state, "agent.health", json!({})).await.unwrap();
         assert_eq!(health[0]["lifecycle"], "ended");
         assert!(health[0]["last_activity_ms"].as_u64().unwrap() > 0);
+    }
+
+    #[tokio::test]
+    async fn stale_hook_status_does_not_update_persisted_agent_session_lifecycle() {
+        let (state, _backend) = test_state();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Running",
+                "hook_session_id": "codex-session-9",
+                "hook_event_name": "prompt-submit",
+                "hook_event_order": 100,
+                "hook_event_clock": "boottime-ns",
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Ready",
+                "hook_session_id": "codex-session-9",
+                "hook_event_name": "stop",
+                "hook_event_order": 200,
+                "hook_event_clock": "boottime-ns",
+            }),
+        )
+        .await
+        .unwrap();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Running",
+                "hook_session_id": "codex-session-9",
+                "hook_event_name": "prompt-submit",
+                "hook_event_order": 150,
+                "hook_event_clock": "boottime-ns",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let summary = dispatch(&state, "status.summary", json!({})).await.unwrap();
+        assert_eq!(summary["status"][0]["value"], "Ready");
+        assert_eq!(summary["agents"][0]["lifecycle"], "idle");
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Running",
+                "hook_session_id": "codex-session-10",
+                "hook_event_name": "prompt-submit",
+                "hook_event_order": 3_000_000_000u64,
+                "hook_event_clock": "boottime-ns",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let summary = dispatch(&state, "status.summary", json!({})).await.unwrap();
+        assert_eq!(summary["status"][0]["value"], "Running");
+        assert_eq!(summary["agents"][0]["lifecycle"], "running");
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Needs input",
+                "hook_session_id": "codex-session-10",
+                "hook_event_name": "permission-request",
+                "hook_event_order": 2_500_000_000u64,
+                "hook_event_clock": "boottime-ns",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let summary = dispatch(&state, "status.summary", json!({})).await.unwrap();
+        assert_eq!(summary["status"][0]["value"], "Running");
+        assert_eq!(summary["agents"][0]["lifecycle"], "running");
     }
 
     #[tokio::test]
