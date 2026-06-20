@@ -172,6 +172,7 @@ fn embedded_ghostty_appimage_env_atoms() -> Vec<String> {
         .collect::<BTreeMap<_, _>>();
     let original = env.clone();
     sanitize_appimage_child_environment(&mut env, &appimage_dirs);
+    let mut assignments = Vec::new();
     for key in SEARCH_PATH_KEYS {
         match (original.contains_key(key), env.get(key)) {
             // Cleaning removed the var (it pointed only inside the AppImage).
@@ -181,11 +182,15 @@ fn embedded_ghostty_appimage_env_atoms() -> Vec<String> {
             }
             // Cleaning changed the value: re-set the AppImage-free version.
             (_, Some(cleaned)) if original.get(key) != Some(cleaned) => {
-                atoms.push(format!("{key}={cleaned}"));
+                assignments.push(format!("{key}={cleaned}"));
             }
             _ => {}
         }
     }
+    // GNU env parses `-u VAR` only before the first KEY=value assignment; after
+    // that point, a later `-u` is the command name. Keep all unset option pairs
+    // before any assignment so the intended child argv remains the command.
+    atoms.extend(assignments);
     atoms
 }
 
@@ -852,6 +857,17 @@ mod tests {
         assert!(argv.contains(&"LD_LIBRARY_PATH=/usr/lib".to_string()));
         // A module-file var pointing into the AppImage is dropped entirely.
         assert!(has_unset("GDK_PIXBUF_MODULE_FILE"));
+        let first_assignment = argv
+            .iter()
+            .position(|atom| atom.contains('='))
+            .expect("at least one env assignment");
+        let command_index = argv.len() - 1;
+        assert!(
+            !argv[first_assignment..command_index]
+                .iter()
+                .any(|atom| atom == "-u"),
+            "`/usr/bin/env` unset options must stay before assignments"
+        );
         // XDG_DATA_DIRS is left to Ghostty (its shell-integration dir lives
         // inside the AppImage mount), so it is neither unset nor re-set here.
         assert!(!has_unset("XDG_DATA_DIRS"));
