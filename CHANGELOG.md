@@ -4,6 +4,9 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Security
+- Agent resume now treats hook-reported permission modes as display-only metadata, so forged or stale `bypassPermissions` hook/status updates cannot add dangerous Claude Code or Codex resume flags.
+
 ## [0.2.0-alpha.14] - 2026-06-19
 
 ### Fixed

@@ -85,15 +85,12 @@ pub fn agent_resume_command_with_cwd_and_permission_mode(
     agent: AgentKind,
     session_id: &str,
     resume_cwd: Option<&Path>,
-    permission_mode: Option<&str>,
+    _permission_mode: Option<&str>,
 ) -> Result<AgentResumeCommand, AgentResumeError> {
     let session_id = safe_resume_session_id(session_id)?;
     let (program, args): (&str, Vec<String>) = match agent {
         AgentKind::Codex => {
             let mut args = Vec::new();
-            if agent_permission_mode_is_bypass(permission_mode) {
-                args.push("--dangerously-bypass-approvals-and-sandbox".to_string());
-            }
             args.push("resume".to_string());
             if let Some(resume_cwd) = resume_cwd {
                 args.push("-C".to_string());
@@ -104,9 +101,6 @@ pub fn agent_resume_command_with_cwd_and_permission_mode(
         }
         AgentKind::ClaudeCode => {
             let mut args = Vec::new();
-            if agent_permission_mode_is_bypass(permission_mode) {
-                args.push("--dangerously-skip-permissions".to_string());
-            }
             args.push("--resume".to_string());
             args.push(session_id);
             ("claude", args)
@@ -120,10 +114,6 @@ pub fn agent_resume_command_with_cwd_and_permission_mode(
         program: program.to_string(),
         args,
     })
-}
-
-fn agent_permission_mode_is_bypass(permission_mode: Option<&str>) -> bool {
-    permission_mode.is_some_and(|mode| mode.trim() == "bypassPermissions")
 }
 
 pub fn codex_session_cwd(session_id: &str) -> Option<PathBuf> {
@@ -374,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn resume_command_reapplies_hook_reported_bypass_permission_mode() {
+    fn resume_command_treats_hook_reported_permission_mode_as_display_only() {
         let claude = super::agent_resume_command_with_cwd_and_permission_mode(
             AgentKind::ClaudeCode,
             "claude-session-1",
@@ -383,14 +373,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(claude.program, "claude");
-        assert_eq!(
-            claude.args,
-            [
-                "--dangerously-skip-permissions",
-                "--resume",
-                "claude-session-1"
-            ]
-        );
+        assert_eq!(claude.args, ["--resume", "claude-session-1"]);
 
         let codex = super::agent_resume_command_with_cwd_and_permission_mode(
             AgentKind::Codex,
@@ -402,13 +385,7 @@ mod tests {
         assert_eq!(codex.program, "codex");
         assert_eq!(
             codex.args,
-            [
-                "--dangerously-bypass-approvals-and-sandbox",
-                "resume",
-                "-C",
-                "/tmp/project",
-                "codex-session-1"
-            ]
+            ["resume", "-C", "/tmp/project", "codex-session-1"]
         );
     }
 

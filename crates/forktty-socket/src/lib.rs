@@ -7110,7 +7110,7 @@ mod tests {
     }
 
     #[test]
-    fn spawn_request_reapplies_persisted_bypass_permission_mode() {
+    fn spawn_request_treats_persisted_permission_mode_as_display_only() {
         let surface = forktty_core::Surface {
             id: "surface-agent".to_string(),
             workspace_id: "workspace-1".to_string(),
@@ -7139,11 +7139,7 @@ mod tests {
         assert_eq!(request.shell, "claude");
         assert_eq!(
             request.args,
-            vec![
-                "--dangerously-skip-permissions".to_string(),
-                "--resume".to_string(),
-                "claude-session-1".to_string()
-            ]
+            vec!["--resume".to_string(), "claude-session-1".to_string()]
         );
         assert_eq!(request.cwd, PathBuf::from("/tmp/forktty-project"));
     }
@@ -11392,7 +11388,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hook_permission_mode_reapplies_claude_bypass_resume_argv() {
+    async fn hook_permission_mode_does_not_reapply_claude_bypass_resume_argv() {
         let (state, backend) = test_state();
         let (workspace_id, source_surface_id) = {
             let model = state.model.lock().unwrap();
@@ -11437,12 +11433,7 @@ mod tests {
         let health = dispatch(&state, "agent.health", json!({})).await.unwrap();
         assert_eq!(
             health[0]["argv"],
-            json!([
-                "claude",
-                "--dangerously-skip-permissions",
-                "--resume",
-                "claude-session-1"
-            ])
+            json!(["claude", "--resume", "claude-session-1"])
         );
 
         let resumed = dispatch(
@@ -11456,25 +11447,16 @@ mod tests {
         let resumed_surface_id = resumed["surface"]["id"].as_str().unwrap();
         assert_eq!(
             resumed["argv"],
-            json!([
-                "claude",
-                "--dangerously-skip-permissions",
-                "--resume",
-                "claude-session-1"
-            ])
+            json!(["claude", "--resume", "claude-session-1"])
         );
         assert_eq!(
             backend.spawn_args(resumed_surface_id).unwrap(),
-            vec![
-                "--dangerously-skip-permissions",
-                "--resume",
-                "claude-session-1"
-            ]
+            vec!["--resume", "claude-session-1"]
         );
     }
 
     #[tokio::test]
-    async fn hook_permission_mode_reapplies_codex_bypass_resume_argv() {
+    async fn hook_permission_mode_does_not_reapply_codex_bypass_resume_argv() {
         let (state, _backend) = test_state();
         let (workspace_id, source_surface_id) = {
             let model = state.model.lock().unwrap();
@@ -11526,14 +11508,7 @@ mod tests {
 
         assert_eq!(
             resumed["argv"],
-            json!([
-                "codex",
-                "--dangerously-bypass-approvals-and-sandbox",
-                "resume",
-                "-C",
-                "/tmp",
-                "codex-session-1"
-            ])
+            json!(["codex", "resume", "-C", "/tmp", "codex-session-1"])
         );
     }
 
