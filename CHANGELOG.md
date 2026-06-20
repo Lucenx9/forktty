@@ -8,6 +8,10 @@ All notable changes to ForkTTY are documented here.
 - Browser panes now refresh immediately after model-driven URL changes even
   when the pane has no terminal chrome or tab-strip entry.
 
+### Changed
+- README now points GitHub readers to the canonical `forktty.dev` docs and
+  agent retrieval files, and corrects stale alpha/session-path references.
+
 ## [0.2.0-alpha.14] - 2026-06-19
 
 ### Fixed

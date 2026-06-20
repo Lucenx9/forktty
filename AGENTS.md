@@ -87,6 +87,7 @@ Useful CLI for inspecting a running instance: `forktty doctor`, `forktty list`, 
 - Before applying a bug fix, check current, reliable web sources for the external behavior involved: prefer official docs, upstream source/issues, standards, or maintainer notes over blog posts and forum guesses. State which source informed the fix. If the issue is purely internal to ForkTTY and no external behavior is relevant, say that explicitly and ground the fix in local code/tests instead.
 - Every user-visible change gets a `CHANGELOG.md` entry under `## [Unreleased]` (`Added`/`Changed`/`Fixed`/`Security` headings).
 - Update `SPEC.md` when changing behavior it describes (config fields, socket methods, security boundaries).
+- Keep the public website in sync. The separate site repo is usually checked out in the user's home directory as `forktty-site`; when a change affects install instructions, release assets, screenshots, public docs, README-facing behavior, privacy/security wording, hooks/MCP setup, Ghostty integration, settings/config, or visible UI flows, update the relevant site files in the same task (`app/docs/page.tsx`, `public/llms.txt`, `public/llms-full.txt`, home components, tests) and run `npm test` plus `npm run build` there. If the site workspace is unavailable, explicitly report the exact site update still needed instead of silently skipping it.
 - Prefer tests that pin observable behavior (socket responses, validation rejections) over mocking internals. Tests that read env vars must guard with the existing `with_env` helper — tests run in parallel.
 - Do not weaken enforced security boundaries to make a task easier: keep argv validation, owner-only socket checks, request size bounds, and local-first/privacy guarantees in code.
 - Release process is in `RELEASING.md`; after a release publishes, download the actual assets and verify them end-to-end (run the AppImage, check theming/icons) — green CI alone has not been sufficient in the past.
@@ -95,6 +96,7 @@ Useful CLI for inspecting a running instance: `forktty doctor`, `forktty list`, 
 
 - User-visible behavior, UI text, CLI output, or packaging changed → update `CHANGELOG.md`.
 - Config fields, socket methods, session format, or security boundaries changed → update `SPEC.md`.
+- Public docs, install/release behavior, screenshots, hooks/MCP setup, Ghostty integration, settings/config, privacy/security wording, or visible UI changed → update the `forktty-site` checkout docs/agent context/home content and run its `npm test` + `npm run build`.
 - Hook templates or release automation changed → run `cargo run -p xtask -- check`.
 - Browser-gated code changed → run browser feature test, clippy, and build.
 - Packaging/AppImage/runtime loader changed → build artifacts and smoke-test them.

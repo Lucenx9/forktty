@@ -2613,7 +2613,7 @@ fn chrome_refresh_signature_tracks_untabbed_browser_url_changes() {
         )
         .unwrap()
         .id;
-    assert!(model.close_surface(&workspace.focused_surface_id));
+    assert!(model.close_surface(&workspace.focused_surface_id).is_some());
     assert!(model.focus_surface(&browser_id));
     let base = chrome_refresh_signature(&model, &[], &[]);
 
