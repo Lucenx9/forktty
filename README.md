@@ -298,16 +298,18 @@ forktty events
 ```
 
 `forktty team ask` and `forktty team review` compose the existing team socket
-methods for common coordination flows: create/update the team, launch a fresh
-worker surface, upsert the task, queue the prompt, and dispatch it. Re-run them
-to launch a new worker; use `team-message-send` plus `team-message-dispatch`
-for follow-up prompts to an existing worker.
+methods for common coordination flows: create/update the team, create the task,
+launch a fresh worker surface, assign the task after launch, queue the prompt,
+and dispatch it. Re-run them to launch a new worker; use
+`team-message-send` plus `team-message-dispatch` for follow-up prompts to an
+existing worker.
 
 The titlebar Agent HUD shows persisted agent sessions across workspaces, highlights
 sessions that need input, and can focus or resume a tracked agent. `forktty agents`,
 `forktty agent-health`, and `forktty statusline` include the
-hook-derived agent lifecycle (`running`, `idle`, `needs_input`, `ended`, or
-`unknown`) when a provider session id has been persisted. `forktty agents` and
+agent lifecycle (`running`, `idle`, `needs_input`, `ended`, or `unknown`) when
+a provider session id has been persisted; hook events drive the live state, and
+terminal child exit marks attached sessions `ended`. `forktty agents` and
 `forktty agent-health` also expose hook-derived `resume_cwd` and
 `last_activity_ms`. For Antigravity CLI, `resume_cwd` comes from the hook
 payload's `workspacePaths`, because `agy` executes the generated wrapper scripts

@@ -29,8 +29,10 @@ All notable changes to ForkTTY are documented here.
   invoking ForkTTY surface or workspace from `FORKTTY_SURFACE_ID`/
   `FORKTTY_WORKSPACE_ID`, so launched workers open next to the orchestrator pane
   and inherit its working directory.
-- `forktty team ask/review` now create the assigned task before launching the
-  worker, matching the socket server's task assignment validation.
+- `forktty team ask/review` now create the task before launching the worker and
+  assign it after launch, matching the socket server's task and worker
+  validation order and avoiding a `running` unassigned task if worker launch
+  fails.
 - Embedded Ghostty title updates now ignore launcher-wrapper titles such as
   `/usr/bin/env`, preventing new team or terminal panes from replacing useful
   pane titles with the wrapper executable path.
@@ -44,6 +46,9 @@ All notable changes to ForkTTY are documented here.
 - Agent lifecycle summaries now ignore stale hook events consistently with the
   visible status row, preventing delayed `running`/`needs input` updates from
   overriding newer agent state.
+- Agent sessions attached to terminal panes are now marked `ended` when the
+  terminal child exits, preventing stale `running`/`needs input` state after an
+  agent process has already stopped.
 - AppImage packaging now preserves the `libgtk4-layer-shell` runtime SONAME
   alongside the unversioned development name, so embedded Ghostty panes can
   load on hosts without a system gtk4-layer-shell installation.

@@ -582,6 +582,30 @@ fn embedded_child_exit_sets_closed_status_without_notification_for_clean_exit() 
 }
 
 #[test]
+fn embedded_child_exit_marks_agent_session_ended() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let workspace_id = workspace.id.clone();
+    let surface_id = workspace.focused_surface_id.clone();
+    assert!(model.set_surface_agent_session(
+        &surface_id,
+        forktty_core::AgentKind::Codex,
+        "codex-session-1",
+    ));
+
+    let notification = apply_embedded_child_exit(&mut model, &workspace_id, &surface_id, Some(0));
+
+    assert!(notification.is_none());
+    assert_eq!(
+        model
+            .surface(&surface_id)
+            .and_then(|surface| surface.agent_session.as_ref())
+            .map(|session| session.lifecycle),
+        Some(forktty_core::AgentSessionLifecycle::Ended)
+    );
+}
+
+#[test]
 fn embedded_child_exit_flags_abnormal_exit_with_notification() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");

@@ -371,6 +371,10 @@ fn apply_ghostty_events_to_model_with_config(
                     if model.surface(surface_id).is_none() {
                         continue;
                     }
+                    let _ = model.set_surface_agent_session_lifecycle(
+                        surface_id,
+                        forktty_core::AgentSessionLifecycle::Ended,
+                    );
                     if *status == 0 {
                         let _ = model.set_status(
                             workspace_id,
@@ -1555,6 +1559,38 @@ mod ghostty_tests {
             2
         ));
         assert!(!pids.contains_key("surface-1"));
+    }
+
+    #[test]
+    fn child_exit_marks_agent_session_ended() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            let surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &surface_id,
+                forktty_core::AgentKind::Codex,
+                "codex-session-1",
+            ));
+            (workspace.id, surface_id)
+        };
+
+        apply_events(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::ChildExit { status: 0 }],
+        );
+
+        let model = model.lock().unwrap();
+        assert_eq!(
+            model
+                .surface(&surface_id)
+                .and_then(|surface| surface.agent_session.as_ref())
+                .map(|session| session.lifecycle),
+            Some(forktty_core::AgentSessionLifecycle::Ended)
+        );
     }
 
     #[test]

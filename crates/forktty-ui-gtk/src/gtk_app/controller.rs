@@ -219,6 +219,10 @@ pub(super) fn apply_embedded_child_exit(
     exit_code: Option<i32>,
 ) -> Option<NotificationItem> {
     model.surface(surface_id)?;
+    let _ = model.set_surface_agent_session_lifecycle(
+        surface_id,
+        forktty_core::AgentSessionLifecycle::Ended,
+    );
     let status = embedded_child_exit_status(exit_code);
     let _ = model.set_status(
         workspace_id,

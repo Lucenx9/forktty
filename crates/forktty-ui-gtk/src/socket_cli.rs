@@ -3019,11 +3019,7 @@ fn run_team_ask_flow(context: &CliContext, options: TeamAskOptions) -> CliResult
     let mut task_params = Map::new();
     task_params.insert("team_id".to_string(), Value::String(team_id.clone()));
     task_params.insert("task_id".to_string(), Value::String(task_id.clone()));
-    task_params.insert(
-        "assigned_worker_id".to_string(),
-        Value::String(worker_id.clone()),
-    );
-    task_params.insert("status".to_string(), Value::String("running".to_string()));
+    task_params.insert("status".to_string(), Value::String("open".to_string()));
     task_params.insert(
         "title".to_string(),
         Value::String(
@@ -3034,10 +3030,10 @@ fn run_team_ask_flow(context: &CliContext, options: TeamAskOptions) -> CliResult
         ),
     );
     task_params.insert("detail".to_string(), Value::String(prompt.clone()));
-    let task = send_team_flow_request(
+    let _task = send_team_flow_request(
         context,
         options.command_name,
-        "upserting task before worker launch",
+        "creating task before worker launch",
         "team.task.upsert",
         Value::Object(task_params),
     )?;
@@ -3071,6 +3067,19 @@ fn run_team_ask_flow(context: &CliContext, options: TeamAskOptions) -> CliResult
         "launching worker",
         "team.worker.launch",
         Value::Object(worker_params),
+    )?;
+
+    let task = send_team_flow_request(
+        context,
+        options.command_name,
+        "assigning task to launched worker",
+        "team.task.upsert",
+        json!({
+            "team_id": team_id,
+            "task_id": task_id,
+            "assigned_worker_id": worker_id,
+            "status": "running",
+        }),
     )?;
 
     let message = send_team_flow_request(
@@ -10771,6 +10780,51 @@ mod tests {
         handle.join().unwrap()
     }
 
+    fn with_socket_server_until_done(
+        responder: impl FnMut(&Value) -> String + Send + 'static,
+        test: impl FnOnce(&Path),
+    ) -> Vec<Value> {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("forktty.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done_thread = done.clone();
+        let handle = thread::spawn(move || {
+            let mut responder = responder;
+            let mut requests = Vec::new();
+            loop {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut line = String::new();
+                        let mut reader = BufReader::new(stream.try_clone().unwrap());
+                        reader.read_line(&mut line).unwrap();
+                        let request: Value = serde_json::from_str(line.trim()).unwrap();
+                        stream.write_all(responder(&request).as_bytes()).unwrap();
+                        requests.push(request);
+                    }
+                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                        if done_thread.load(std::sync::atomic::Ordering::SeqCst) {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(err) => panic!("socket test server failed: {err}"),
+                }
+            }
+            requests
+        });
+        let test_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            test(&socket_path);
+        }));
+        done.store(true, std::sync::atomic::Ordering::SeqCst);
+        let requests = handle.join().unwrap();
+        if let Err(payload) = test_result {
+            std::panic::resume_unwind(payload);
+        }
+        requests
+    }
+
     fn test_context() -> CliContext {
         CliContext {
             json: true,
@@ -14487,7 +14541,7 @@ mod tests {
 
     fn with_team_ask_flow_server(test: impl FnOnce(&Path)) -> Vec<Value> {
         with_socket_server(
-            5,
+            6,
             |req| {
                 let result = match req["method"].as_str().unwrap_or("") {
                     "team.upsert" => json!({"id": "team-1", "status": "active"}),
@@ -14544,6 +14598,7 @@ mod tests {
                 "team.upsert",
                 "team.task.upsert",
                 "team.worker.launch",
+                "team.task.upsert",
                 "team.message.send",
                 "team.message.dispatch",
             ]
@@ -14551,18 +14606,104 @@ mod tests {
         assert_eq!(requests[0]["params"]["team_id"], "team-1");
         assert_eq!(requests[0]["params"]["status"], "active");
         assert_eq!(requests[0]["params"]["goal"], "Check command ergonomics");
-        assert_eq!(requests[1]["params"]["assigned_worker_id"], "worker-1");
+        assert!(!requests[1]["params"]
+            .as_object()
+            .unwrap()
+            .contains_key("assigned_worker_id"));
+        assert_eq!(requests[1]["params"]["status"], "open");
         assert_eq!(requests[1]["params"]["title"], "Review");
         assert_eq!(requests[1]["params"]["detail"], "Review this");
         assert_eq!(requests[2]["params"]["agent"], "claude");
         assert_eq!(requests[2]["params"]["role"], "reviewer");
         assert_eq!(requests[2]["params"]["assigned_task_id"], "task-1");
-        assert_eq!(requests[3]["params"]["from"], "leader");
-        assert_eq!(requests[3]["params"]["to_worker_id"], "worker-1");
-        assert_eq!(requests[3]["params"]["body"], "Review this");
-        assert_eq!(requests[4]["params"]["message_id"], "msg-1");
-        assert_eq!(requests[4]["params"]["worker_id"], "worker-1");
-        assert!(requests[4]["params"].get("submit").is_none());
+        assert_eq!(requests[3]["params"]["assigned_worker_id"], "worker-1");
+        assert_eq!(requests[3]["params"]["status"], "running");
+        assert_eq!(requests[4]["params"]["from"], "leader");
+        assert_eq!(requests[4]["params"]["to_worker_id"], "worker-1");
+        assert_eq!(requests[4]["params"]["body"], "Review this");
+        assert_eq!(requests[5]["params"]["message_id"], "msg-1");
+        assert_eq!(requests[5]["params"]["worker_id"], "worker-1");
+        assert!(requests[5]["params"].get("submit").is_none());
+    }
+
+    #[test]
+    fn team_ask_creates_task_before_assigning_fresh_worker() {
+        let mut worker_exists = false;
+        let requests = with_socket_server_until_done(
+            move |req| {
+                let result = match req["method"].as_str().unwrap_or("") {
+                    "team.upsert" => json!({"id": "team-1", "status": "active"}),
+                    "team.task.upsert" => {
+                        if req["params"].get("assigned_worker_id").is_some() && !worker_exists {
+                            return json!({
+                                "id": req["id"],
+                                "ok": false,
+                                "error": {
+                                    "code": "not_found",
+                                    "message": "worker not found",
+                                },
+                            })
+                            .to_string();
+                        }
+                        json!({"id": "task-1", "status": "running"})
+                    }
+                    "team.worker.launch" => {
+                        assert_eq!(req["params"]["assigned_task_id"], "task-1");
+                        worker_exists = true;
+                        json!({
+                            "surface": {"id": "surface-2"},
+                            "worker": {"id": "worker-1"},
+                        })
+                    }
+                    "team.message.send" => json!({"id": "msg-1", "delivered": false}),
+                    "team.message.dispatch" => {
+                        json!({"sent": true, "message": {"id": "msg-1"}})
+                    }
+                    other => panic!("unexpected method {other}"),
+                };
+                json!({"id": req["id"], "ok": true, "result": result}).to_string()
+            },
+            |socket_path| {
+                handle_team(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "ask",
+                        "team-1",
+                        "worker-1",
+                        "--agent",
+                        "claude",
+                        "--task-id",
+                        "task-1",
+                        "--prompt",
+                        "Review this",
+                        "--submit=false",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| request["method"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "team.upsert",
+                "team.task.upsert",
+                "team.worker.launch",
+                "team.task.upsert",
+                "team.message.send",
+                "team.message.dispatch",
+            ]
+        );
+        assert!(!requests[1]["params"]
+            .as_object()
+            .unwrap()
+            .contains_key("assigned_worker_id"));
+        assert_eq!(requests[1]["params"]["status"], "open");
+        assert_eq!(requests[3]["params"]["assigned_worker_id"], "worker-1");
+        assert_eq!(requests[3]["params"]["status"], "running");
     }
 
     #[test]
@@ -14636,7 +14777,7 @@ mod tests {
     #[test]
     fn team_review_builds_read_only_commit_prompt() {
         let requests = with_socket_server(
-            5,
+            6,
             |req| {
                 let result = match req["method"].as_str().unwrap_or("") {
                     "team.upsert" => json!({"id": "team-1", "status": "active"}),
@@ -14672,18 +14813,24 @@ mod tests {
             },
         );
 
-        let body = requests[3]["params"]["body"].as_str().unwrap();
+        let body = requests[4]["params"]["body"].as_str().unwrap();
         assert!(body.contains("Review commit HEAD"));
         assert!(body.contains("read-only inspection"));
         assert!(body.contains("file/line references"));
-        assert_eq!(requests[1]["params"]["status"], "running");
-        assert_eq!(requests[4]["params"]["submit"], true);
+        assert_eq!(requests[1]["params"]["status"], "open");
+        assert!(!requests[1]["params"]
+            .as_object()
+            .unwrap()
+            .contains_key("assigned_worker_id"));
+        assert_eq!(requests[3]["params"]["assigned_worker_id"], "worker-1");
+        assert_eq!(requests[3]["params"]["status"], "running");
+        assert_eq!(requests[5]["params"]["submit"], true);
     }
 
     #[test]
     fn team_ask_labels_mid_flow_socket_failures() {
         let requests = with_socket_server(
-            4,
+            5,
             |req| {
                 let response = match req["method"].as_str().unwrap_or("") {
                     "team.upsert" => json!({"id": "team-1", "status": "active"}),
@@ -14734,6 +14881,7 @@ mod tests {
                 "team.upsert",
                 "team.task.upsert",
                 "team.worker.launch",
+                "team.task.upsert",
                 "team.message.send",
             ]
         );
