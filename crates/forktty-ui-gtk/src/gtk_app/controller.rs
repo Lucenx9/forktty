@@ -2005,6 +2005,22 @@ pub(super) fn chrome_refresh_signature(
         signature.push('\n');
     }
 
+    let browser_surfaces =
+        model
+            .list_surfaces(None)
+            .into_iter()
+            .filter_map(|surface| match surface.kind {
+                forktty_core::SurfaceKind::Browser { url, .. } => Some((surface.id, url)),
+                _ => None,
+            });
+    for (surface_id, url) in browser_surfaces {
+        signature.push_str("browser=");
+        signature.push_str(&surface_id);
+        signature.push('|');
+        signature.push_str(&url);
+        signature.push('\n');
+    }
+
     let workspace = model.active_workspace();
     for tabs in strip_tabs {
         signature.push_str("tabs=");

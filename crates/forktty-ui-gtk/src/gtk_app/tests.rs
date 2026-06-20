@@ -2604,6 +2604,7 @@ fn active_tab_index_for_leaf_clamps_or_returns_none() {
 fn chrome_refresh_signature_tracks_visual_state_changes() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");
+    let workspace_id = workspace.id.clone();
     let first_surface_id = workspace.focused_surface_id.clone();
     let second_surface_id = model.add_tab(&first_surface_id).unwrap().id;
     let chrome_surface_ids = vec![first_surface_id.clone(), second_surface_id.clone()];
@@ -2633,6 +2634,23 @@ fn chrome_refresh_signature_tracks_visual_state_changes() {
     assert!(model.select_tab(&second_surface_id));
     assert_ne!(
         base,
+        chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips)
+    );
+
+    let browser_id = model
+        .open_browser(
+            &workspace_id,
+            "https://example.com/one",
+            forktty_core::ProfileId::default(),
+            SplitAxis::Horizontal,
+        )
+        .unwrap()
+        .id;
+    let browser_base = chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips);
+
+    assert!(model.set_surface_url(&browser_id, "https://example.com/two"));
+    assert_ne!(
+        browser_base,
         chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips)
     );
 }
