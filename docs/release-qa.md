@@ -224,6 +224,14 @@ checking that the opt-in browser feature still builds and starts.
 - Launch the GTK app with no ForkTTY-managed hooks installed — it shows an Agent Hooks Available notification that suggests `forktty hooks setup`; if at least one provider is already configured and current, missing optional providers do not nag.
 - Inspect one generated hook command — it calls the absolute `forktty` launcher directly, so AppImage and packaged installs do not need a source checkout or Node.js.
 - Repeat the previous command — prints `already configured` for each agent and does not create new backups.
+
+## Skill Installer Smoke
+
+- `forktty skills setup agents --dry-run` — prints `would install` but does not create `~/.agents/skills/forktty-agent-orchestration`.
+- `forktty skills setup codex gemini` — writes one shared `~/.agents/skills/forktty-agent-orchestration` skill, not duplicate provider directories.
+- `forktty skills setup claude` — writes `~/.claude/skills/forktty-agent-orchestration` or `$CLAUDE_CONFIG_DIR/skills/forktty-agent-orchestration`.
+- Create an unmanaged `SKILL.md` at the same destination, then run `forktty skills setup agents` — setup refuses to overwrite it.
+- `forktty skills remove agents` — moves the managed skill directory to a `.bak-*` backup and leaves no active skill with that name.
 - `forktty hooks codex session-start --socket <stub>` without `FORKTTY_SOCKET_PATH` — sends status/log actions to the supplied socket and still prints the hook continue JSON.
 - `forktty hooks codex sesion-start` — prints an unsupported hook event warning to stderr and still prints the hook continue JSON.
 - `forktty hooks codex session-start extra` — prints an unexpected hook argument warning to stderr and still prints the hook continue JSON.

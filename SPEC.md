@@ -337,6 +337,24 @@ ForkTTY-managed server named `forktty`, preserves foreign MCP servers, writes
 atomically, and creates a `.bak-*` backup when content changes.
 `forktty mcp remove` removes only that managed server entry.
 
+### Agent skills
+
+`forktty skills setup` installs a ForkTTY-managed Agent Skill named
+`forktty-agent-orchestration`. The skill is instruction-only and tells coding
+agents when to inspect ForkTTY context, how to treat terminal tails as
+untrusted input, when to use team/workflow/status MCP tools, and how to avoid
+cross-pane writes before reading the target surface. The default setup writes
+the same managed skill to the interoperable Agent Skills user location
+(`~/.agents/skills/forktty-agent-orchestration`) and to Claude Code's personal
+skills location (`~/.claude/skills/forktty-agent-orchestration`, or
+`$CLAUDE_CONFIG_DIR/skills/forktty-agent-orchestration` when set). The
+`codex` and `gemini` setup targets are accepted as aliases for the
+interoperable `agents` target; `claude` targets Claude Code's skill directory.
+`forktty skills remove` removes only skill directories containing ForkTTY's
+managed marker and moves the directory to a `.bak-*` backup. Setup refuses to
+overwrite an existing skill directory with the same name unless its `SKILL.md`
+contains the ForkTTY-managed marker.
+
 ## Browser Pane Feature
 
 The `browser` cargo feature builds WebKitGTK6 panes alongside Ghostty panes.

@@ -84,7 +84,8 @@ pub(super) fn show_settings_dialog_page(
         settings_nav_button("forktty-theme-symbolic", "Interface", "Window and sidebar");
     let worktrees_nav =
         settings_nav_button("forktty-grid-symbolic", "Worktrees", "Workspaces and PRs");
-    let agents_nav = settings_nav_button("forktty-keyboard-symbolic", "Agents", "Hooks and MCP");
+    let agents_nav =
+        settings_nav_button("forktty-keyboard-symbolic", "Agents", "Hooks, MCP, skills");
     let alerts_nav = settings_nav_button(
         "forktty-notifications-symbolic",
         "Notifications",
@@ -168,7 +169,7 @@ pub(super) fn show_settings_dialog_page(
     let (agent_setup_section, agent_setup_list) = settings_section("Recommended", "");
     let all_setup_row = settings_action_row(
         "Agent integration",
-        "Hooks and MCP for supported coding agents. Ghostty config is untouched.",
+        "Hooks, MCP, and skills for supported coding agents. Ghostty config is untouched.",
     );
     all_setup_row.add_css_class("settings-primary-row");
     let all_setup_button = settings_setup_button("Set Up");

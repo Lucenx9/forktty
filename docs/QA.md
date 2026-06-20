@@ -63,6 +63,7 @@ should be one of:
 | Quake mode toggle                     |                           |                       |                  |                          |
 | Socket: `forktty ping`                |                           |                       |                  |                          |
 | Socket: hooks setup/remove (codex/claude/gemini/opencode) |        |                       |                  |                          |
+| Socket: skills setup/remove (agents/claude) |                  |                       |                  |                          |
 | Worktree: create / attach / status    |                           |                       |                  |                          |
 | Worktree: merge / remove              |                           |                       |                  |                          |
 | Session restore after restart         |                           |                       |                  |                          |

@@ -41,15 +41,17 @@ struct SetupSummary {
 pub(super) struct AgentSetupAutoRefresh {
     pub(super) hooks_updated: Vec<String>,
     pub(super) mcp_updated: Vec<String>,
+    pub(super) skills_updated: Vec<String>,
     pub(super) errors: Vec<String>,
 }
 
-/// Run `forktty hooks setup` and `forktty mcp setup` against this same binary.
-/// Both subcommands are dispatched by the CLI layer before any GUI launch, so
-/// they write provider config files and exit without touching the socket server.
+/// Run setup subcommands against this same binary. These commands are
+/// dispatched by the CLI layer before any GUI launch, so they write provider
+/// config files and skill directories without touching the socket server.
 pub(super) fn run_agent_integrations_setup() -> Result<(), String> {
     run_agent_hooks_setup()?;
     run_mcp_bridge_setup()?;
+    run_agent_skills_setup()?;
     Ok(())
 }
 
@@ -63,8 +65,17 @@ pub(super) fn run_mcp_bridge_setup() -> Result<(), String> {
     run_setup_subcommand(&exe, &["mcp", "setup"])
 }
 
+pub(super) fn run_agent_skills_setup() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|err| err.to_string())?;
+    run_setup_subcommand(&exe, &["skills", "setup"])
+}
+
 pub(super) fn inspect_agent_integrations_setup() -> AgentSetupStatus {
-    combine_setup_statuses(inspect_agent_hooks_setup(), inspect_mcp_bridge_setup())
+    combine_setup_statuses(
+        inspect_agent_hooks_setup(),
+        inspect_mcp_bridge_setup(),
+        inspect_agent_skills_setup(),
+    )
 }
 
 pub(super) fn inspect_agent_hooks_setup() -> AgentSetupStatus {
@@ -80,6 +91,14 @@ pub(super) fn inspect_mcp_bridge_setup() -> AgentSetupStatus {
         "MCP",
         "MCP bridge",
         &["--json", "mcp", "setup", "--dry-run"],
+    )
+}
+
+pub(super) fn inspect_agent_skills_setup() -> AgentSetupStatus {
+    inspect_setup_subcommand(
+        "Skills",
+        "Agent skills",
+        &["--json", "skills", "setup", "--dry-run"],
     )
 }
 
@@ -125,6 +144,27 @@ pub(super) fn auto_refresh_managed_agent_integrations() -> AgentSetupAutoRefresh
                 outcome.errors.push(err);
             } else {
                 outcome.mcp_updated = agents;
+            }
+        }
+        Ok(_) => {}
+        Err(err) => outcome.errors.push(err),
+    }
+    match managed_changed_agents(
+        &["--json", "skills", "setup", "--dry-run"],
+        &[
+            "--json",
+            "skills",
+            "remove",
+            "--dry-run",
+            "agents",
+            "claude",
+        ],
+    ) {
+        Ok(targets) if !targets.is_empty() => {
+            if let Err(err) = run_setup_subcommand_dynamic("skills setup", &targets) {
+                outcome.errors.push(err);
+            } else {
+                outcome.skills_updated = targets;
             }
         }
         Ok(_) => {}
@@ -270,37 +310,46 @@ fn classify_setup_summaries(
     }
 }
 
-fn combine_setup_statuses(hooks: AgentSetupStatus, mcp: AgentSetupStatus) -> AgentSetupStatus {
+fn combine_setup_statuses(
+    hooks: AgentSetupStatus,
+    mcp: AgentSetupStatus,
+    skills: AgentSetupStatus,
+) -> AgentSetupStatus {
     if hooks.kind == AgentSetupStatusKind::CheckFailed
         || mcp.kind == AgentSetupStatusKind::CheckFailed
+        || skills.kind == AgentSetupStatusKind::CheckFailed
     {
         return AgentSetupStatus {
             kind: AgentSetupStatusKind::CheckFailed,
             label: "Check failed".to_string(),
-            detail: format!("{} {}", hooks.detail, mcp.detail),
+            detail: format!("{} {} {}", hooks.detail, mcp.detail, skills.detail),
         };
     }
-    if hooks.kind == AgentSetupStatusKind::UpToDate && mcp.kind == AgentSetupStatusKind::UpToDate {
+    if hooks.kind == AgentSetupStatusKind::UpToDate
+        && mcp.kind == AgentSetupStatusKind::UpToDate
+        && skills.kind == AgentSetupStatusKind::UpToDate
+    {
         return AgentSetupStatus {
             kind: AgentSetupStatusKind::UpToDate,
             label: "Up to date".to_string(),
-            detail: "Hooks and MCP are installed for this ForkTTY build.".to_string(),
+            detail: "Hooks, MCP, and skills are installed for this ForkTTY build.".to_string(),
         };
     }
     if hooks.kind == AgentSetupStatusKind::UpdateAvailable
         || mcp.kind == AgentSetupStatusKind::UpdateAvailable
+        || skills.kind == AgentSetupStatusKind::UpdateAvailable
     {
         return AgentSetupStatus {
             kind: AgentSetupStatusKind::UpdateAvailable,
             label: "Update available".to_string(),
-            detail: "Refresh managed hooks and MCP registrations for this ForkTTY build."
+            detail: "Refresh managed hooks, MCP registrations, and skills for this ForkTTY build."
                 .to_string(),
         };
     }
     AgentSetupStatus {
         kind: AgentSetupStatusKind::NotInstalled,
         label: "Not installed".to_string(),
-        detail: "Hooks and MCP are not installed yet.".to_string(),
+        detail: "One or more ForkTTY agent integrations are not installed yet.".to_string(),
     }
 }
 

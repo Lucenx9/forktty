@@ -373,6 +373,26 @@ Manual socket overrides must be absolute paths; blank or relative
 `FORKTTY_SOCKET_PATH` values are ignored so the app and CLI fall back to the
 default socket location.
 
+### Agent skills
+
+Install the ForkTTY orchestration skill so Agent Skills-compatible tools and
+Claude Code know when to inspect ForkTTY context, use team workers, and compare
+hook/status/terminal state without being told the exact MCP call every time:
+
+```bash
+forktty skills setup                       # install agents + Claude targets
+forktty skills setup agents --dry-run      # interoperable ~/.agents/skills target
+forktty skills setup claude
+forktty skills remove agents
+```
+
+`agents`, `codex`, and `gemini` target the interoperable
+`~/.agents/skills/forktty-agent-orchestration` location. `claude` targets
+`$CLAUDE_CONFIG_DIR/skills/forktty-agent-orchestration` or
+`~/.claude/skills/forktty-agent-orchestration`. Setup refuses to overwrite an
+unmanaged skill with the same name; managed updates/removals first move the old
+directory to a `.bak-*` backup.
+
 ## Agent Hooks
 
 Install hook templates for Codex, Claude Code, Antigravity CLI, and OpenCode:

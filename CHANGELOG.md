@@ -5,6 +5,10 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- `forktty skills setup` now installs a ForkTTY agent orchestration skill for
+  Agent Skills-compatible tools (`~/.agents/skills`) and Claude Code
+  (`~/.claude/skills`) so agents have an explicit policy for proactively using
+  ForkTTY MCP, hooks, context snapshots, and team workers.
 - Socket `context.snapshot` and MCP `context_snapshot` now provide a compact
   read-only workspace snapshot with pane/surface state, status, agent health,
   workflow/team/feed/remote summaries, and bounded untrusted terminal tails.

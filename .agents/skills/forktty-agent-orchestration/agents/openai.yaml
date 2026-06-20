@@ -1,0 +1,6 @@
+interface:
+  display_name: "ForkTTY Agent Orchestration"
+  short_description: "Use ForkTTY MCP, hooks, and team state"
+  default_prompt: "Use $forktty-agent-orchestration to inspect ForkTTY context and coordinate agent workers."
+policy:
+  allow_implicit_invocation: true

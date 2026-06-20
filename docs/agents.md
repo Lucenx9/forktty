@@ -24,13 +24,13 @@ This is a baseline taxonomy for safe future integration. It does not change how 
 
 ## Capability matrix (documented-only)
 
-| Provider | Install command (doc) | Launch command (doc) | Context files | Hooks/events | Permission controls | MCP | Headless/JSON |
+| Provider | Install command (doc) | Launch command (doc) | Context files / skills | Hooks/events | Permission controls | MCP | Headless/JSON |
 |---|---|---|---|---|---|---|---|
-| Claude Code | See Claude install docs | `claude` | `CLAUDE.md` / project settings | ForkTTY installs the documented local settings hooks in the lifecycle profile by default; `--full` adds high-frequency per-tool hooks | Documented permission settings; ForkTTY colors risky modes and preserves exact `bypassPermissions` resumes with the documented bypass flag | Registered in `~/.claude.json` as `mcpServers.forktty` | Not fully standardized publicly |
-| Codex CLI | See Codex install docs | `codex` | `AGENTS.md`, user/project `config.toml` layers | ForkTTY installs documented `hooks.json` lifecycle hooks; Codex requires per-hook trust approval via `/hooks` before non-managed hooks run | Approval/sandbox modes documented; ForkTTY colors risky modes and preserves exact `bypassPermissions` resumes with the documented yolo/dangerous flag | Registered in `$CODEX_HOME/config.toml` / `~/.codex/config.toml` as `[mcp_servers.forktty]` | JSON/headless flows documented in Codex docs |
+| Claude Code | See Claude install docs | `claude` | `CLAUDE.md` / project settings; `forktty skills setup claude` installs `~/.claude/skills/forktty-agent-orchestration` | ForkTTY installs the documented local settings hooks in the lifecycle profile by default; `--full` adds high-frequency per-tool hooks | Documented permission settings; ForkTTY colors risky modes and preserves exact `bypassPermissions` resumes with the documented bypass flag | Registered in `~/.claude.json` as `mcpServers.forktty` | Not fully standardized publicly |
+| Codex CLI | See Codex install docs | `codex` | `AGENTS.md`, user/project `config.toml` layers; `forktty skills setup agents` installs `~/.agents/skills/forktty-agent-orchestration` | ForkTTY installs documented `hooks.json` lifecycle hooks; Codex requires per-hook trust approval via `/hooks` before non-managed hooks run | Approval/sandbox modes documented; ForkTTY colors risky modes and preserves exact `bypassPermissions` resumes with the documented yolo/dangerous flag | Registered in `$CODEX_HOME/config.toml` / `~/.codex/config.toml` as `[mcp_servers.forktty]` | JSON/headless flows documented in Codex docs |
 | Antigravity CLI | See Antigravity CLI docs | `agy` | Antigravity workspace customization and user config | ForkTTY installs the verified `PreInvocation`, `PreToolUse`, and `PostToolUse` hooks via a ForkTTY-owned group plus generated wrapper scripts | Hook responses are conservative: `PreToolUse` explicitly approves; other events return `{}` | Registered in `~/.gemini/config/mcp_config.json` as `mcpServers.forktty` | CLI behavior documented by Antigravity docs |
 | OpenCode | See OpenCode install docs | `opencode` | `AGENTS.md`, OpenCode config, plugins | ForkTTY installs a generated local plugin under the OpenCode plugins directory instead of mutating `opencode.json` | OpenCode permission/event payloads are observed and bounded before forwarding | OpenCode supports MCP, but ForkTTY does not yet manage an OpenCode MCP registration path | CLI/server flows documented by provider |
-| Gemini CLI | Legacy explicit target only | `gemini` | `GEMINI.md` (hierarchical) | ForkTTY can still install documented settings hooks when explicitly requested (`forktty hooks setup gemini`) | Safety/confirmation behavior in settings/docs; no automatic ForkTTY policy mapping | Explicit legacy registration only (`forktty mcp setup gemini`) | Yes (`output.format = "json"`) |
+| Gemini CLI | Legacy explicit target only | `gemini` | `GEMINI.md` (hierarchical); the `agents` skill target also covers Gemini's documented `.agents/skills` alias | ForkTTY can still install documented settings hooks when explicitly requested (`forktty hooks setup gemini`) | Safety/confirmation behavior in settings/docs; no automatic ForkTTY policy mapping | Explicit legacy registration only (`forktty mcp setup gemini`) | Yes (`output.format = "json"`) |
 | Custom | User-defined | User-defined | User-defined | Unknown | Unknown | Unknown | Unknown |
 
 ## Safe integration points for ForkTTY
@@ -56,6 +56,9 @@ This is a baseline taxonomy for safe future integration. It does not change how 
 - Default MCP setup currently targets Codex, Claude Code, and Antigravity CLI.
   Gemini CLI remains available only as an explicit legacy target; OpenCode MCP
   registration is not managed yet.
+- Default skill setup installs the shared `forktty-agent-orchestration` skill
+  to `~/.agents/skills` and `~/.claude/skills`; `codex` and `gemini` are
+  aliases for the interoperable `agents` target.
 - `forktty hooks doctor <agent>` reports hook config path state, launcher
   freshness, supported events, Claude profile, and Codex trust-record state.
 - Status normalization is now centralized in `forktty-core` for reuse by UI/socket/script layers.

@@ -21,9 +21,10 @@ USAGE:
                            Options: --json, --strict, --hooks, --socket, --packaging.
     forktty ghostty-gtk-probe
                            Launch the experimental upstream Ghostty GTK widget probe.
-    forktty hooks setup     Install Codex, Claude Code, Gemini, Antigravity, and OpenCode hooks.
+    forktty hooks setup     Install Codex, Claude Code, Antigravity, and OpenCode hooks.
     forktty hooks remove    Remove ForkTTY-managed agent hooks.
     forktty mcp             Run the ForkTTY MCP stdio server.
+    forktty skills setup    Install ForkTTY's agent orchestration skill.
     forktty remote-helper hello
                            Print a remote-helper stdio handshake JSON object.
     forktty remote-helper pty -- <program> [args...]
@@ -32,8 +33,8 @@ USAGE:
     forktty --version, -V   Print version and exit.
     forktty --help, -h      Print this help and exit.
 
-Socket automation and agent hooks are built into this binary.
-Run `forktty hooks setup --dry-run` to inspect hook changes before writing.
+Socket automation, agent hooks, MCP, and skills are built into this binary.
+Run `forktty hooks setup --dry-run` or `forktty skills setup --dry-run` to inspect changes before writing.
 ";
 
 #[derive(Debug, PartialEq, Eq)]

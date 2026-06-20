@@ -92,7 +92,7 @@ pub(super) fn show_welcome_dialog(
         .build();
     integration_title.add_css_class("welcome-integration-title");
     let integration_subtitle = gtk::Label::builder()
-        .label("Hooks and local MCP bridge.")
+        .label("Hooks, local MCP bridge, and agent skills.")
         .xalign(0.0)
         .build();
     integration_subtitle.add_css_class("welcome-integration-subtitle");

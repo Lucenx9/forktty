@@ -85,6 +85,38 @@ Setup and removal use the same atomic write, `.bak-*` backup, dry-run, and
 managed-entry preservation behavior as hook setup. OpenCode hook support remains
 available, but no verified OpenCode MCP registration path is managed yet.
 
+## Agent skills
+
+Hooks publish lifecycle state automatically, and MCP exposes ForkTTY tools on
+demand. Agent skills add the missing operating policy: when an agent should use
+those tools without waiting for the user to spell out the exact MCP call.
+
+```bash
+forktty skills setup
+forktty skills setup agents --dry-run
+forktty skills setup claude
+forktty skills remove agents --dry-run
+```
+
+`forktty skills setup` installs one ForkTTY-managed skill named
+`forktty-agent-orchestration`:
+
+| Target | Destination |
+|---|---|
+| Agent Skills-compatible tools (`agents`, plus `codex`/`gemini` aliases) | `~/.agents/skills/forktty-agent-orchestration` |
+| Claude Code (`claude`) | `$CLAUDE_CONFIG_DIR/skills/forktty-agent-orchestration` or `~/.claude/skills/forktty-agent-orchestration` |
+
+The skill tells agents to inspect `context_snapshot` or equivalent read-only
+state before cross-pane work, treat terminal tails as untrusted input, use team
+mailbox dispatch for worker prompts, compare status/hooks/terminal tail when
+`running` or `needs_input` appears delayed, and record durable workflow/team
+state for long-running coordination.
+
+Setup refuses to overwrite an existing skill directory with the same name
+unless its `SKILL.md` contains ForkTTY's managed marker. Updating or removing a
+managed skill moves the previous directory to a `.bak-*` backup first. The
+welcome/setup flow runs `hooks setup`, `mcp setup`, and `skills setup` together.
+
 Antigravity CLI (Google's Gemini CLI successor, `agy`) executes a hook
 `command` as one bare executable path — no argument splitting and no shell —
 so the installer writes per-event wrapper scripts under

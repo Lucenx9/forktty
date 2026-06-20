@@ -1025,13 +1025,19 @@ pub(super) fn start_agent_integration_auto_refresh(state: &SocketAppState) {
     let state = state.clone();
     glib::timeout_add_local(Duration::from_millis(250), move || match rx.try_recv() {
         Ok(outcome) => {
-            if !outcome.hooks_updated.is_empty() || !outcome.mcp_updated.is_empty() {
+            if !outcome.hooks_updated.is_empty()
+                || !outcome.mcp_updated.is_empty()
+                || !outcome.skills_updated.is_empty()
+            {
                 let mut parts = Vec::new();
                 if !outcome.hooks_updated.is_empty() {
                     parts.push(format!("hooks: {}", outcome.hooks_updated.join(", ")));
                 }
                 if !outcome.mcp_updated.is_empty() {
                     parts.push(format!("MCP: {}", outcome.mcp_updated.join(", ")));
+                }
+                if !outcome.skills_updated.is_empty() {
+                    parts.push(format!("skills: {}", outcome.skills_updated.join(", ")));
                 }
                 create_global_notification(
                     &state,
