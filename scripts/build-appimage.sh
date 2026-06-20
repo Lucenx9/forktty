@@ -195,7 +195,7 @@ copy_required_ghostty_layer_shell_lib() {
   source="$(
     ldd "$ghostty_gtk_lib" |
       awk '
-        $1 == "libgtk4-layer-shell.so" && $2 == "=>" && $3 ~ /^\// && found == "" { found = $3 }
+        $1 ~ /^libgtk4-layer-shell\.so(\..*)?$/ && $2 == "=>" && $3 ~ /^\// && found == "" { found = $3 }
         END { if (found != "") print found }
       '
   )"
@@ -216,8 +216,30 @@ ERROR
     exit 1
   fi
 
-  install -Dm755 "$source" "$lib_dir/libgtk4-layer-shell.so"
-  test -f "$lib_dir/libgtk4-layer-shell.so"
+  local soname
+  local install_name
+  soname="$(
+    readelf -d "$source" 2>/dev/null |
+      awk '/\(SONAME\)/ { gsub(/[][]/, "", $NF); print $NF; exit }'
+  )"
+  install_name="${soname:-$(basename "$source")}"
+  if [[ "$install_name" != libgtk4-layer-shell.so* ]]; then
+    install_name="libgtk4-layer-shell.so"
+  fi
+
+  rm -f "$lib_dir"/libgtk4-layer-shell.so*
+  install -Dm755 "$source" "$lib_dir/$install_name"
+  if [[ "$install_name" != "libgtk4-layer-shell.so" ]]; then
+    ln -s "$install_name" "$lib_dir/libgtk4-layer-shell.so"
+  fi
+  if [[ -n "$soname" && "$soname" != "$install_name" ]]; then
+    ln -s "$install_name" "$lib_dir/$soname"
+  fi
+  test -e "$lib_dir/libgtk4-layer-shell.so"
+  test -e "$lib_dir/$install_name"
+  if [[ -n "$soname" ]]; then
+    test -e "$lib_dir/$soname"
+  fi
 }
 
 copy_vendored_ghostty_shell_integration() {

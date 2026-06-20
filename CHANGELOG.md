@@ -5,6 +5,9 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Fixed
+- AppImage packaging now preserves the `libgtk4-layer-shell` runtime SONAME
+  alongside the unversioned development name, so embedded Ghostty panes can
+  load on hosts without a system gtk4-layer-shell installation.
 - Browser panes now refresh immediately after model-driven URL changes even
   when the pane has no terminal chrome or tab-strip entry.
 
@@ -46,6 +49,8 @@ All notable changes to ForkTTY are documented here.
   resuming those panes back in prompted mode.
 
 ### Security
+- Ordered embedded Ghostty AppImage environment unsets before assignments so
+  `/usr/bin/env` cannot treat a cleanup flag as the terminal child command.
 - Rejected control characters in restored session identifiers and embedded
   Ghostty command-spawn values so tampered session state cannot influence
   terminal child argv or environment setup.
