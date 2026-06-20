@@ -8283,6 +8283,137 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn context_snapshot_review_gap_rejects_invalid_tail_bounds() {
+        let (state, _) = test_state();
+        for (params, expected_message) in [
+            (
+                json!({"tail_lines": MAX_CAPTURE_TAIL_LINES + 1}),
+                "Invalid parameter tail_lines",
+            ),
+            (
+                json!({"tail_max_bytes": 0}),
+                "Invalid parameter tail_max_bytes",
+            ),
+            (
+                json!({"tail_max_bytes": MAX_TERMINAL_TEXT_BYTES + 1}),
+                "Invalid parameter tail_max_bytes",
+            ),
+        ] {
+            let error = dispatch(&state, "context.snapshot", params)
+                .await
+                .unwrap_err();
+            assert_eq!(error.code(), "invalid_param");
+            assert!(
+                error.to_string().contains(expected_message),
+                "expected {expected_message:?}, got {error}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn context_snapshot_review_gap_tail_lines_zero_skips_terminal_tails() {
+        let (state, backend) = test_state();
+        let surface_id = {
+            let model = state.model.lock().unwrap();
+            model.active_workspace().unwrap().focused_surface_id.clone()
+        };
+        backend
+            .send_text(&surface_id, "one\ntwo\nthree\n")
+            .expect("write terminal text");
+
+        let result = dispatch(&state, "context.snapshot", json!({"tail_lines": 0}))
+            .await
+            .unwrap();
+
+        assert!(result["terminal_tails"].as_array().unwrap().is_empty());
+        assert!(result["terminal_tail_errors"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(!result["risk_flags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("terminal_text_untrusted")));
+    }
+
+    #[test]
+    fn context_snapshot_review_gap_risk_flags_pin_field_shapes() {
+        let approval = FeedEntry {
+            id: "approval-1".to_string(),
+            entry_type: FeedEntryType::Approval,
+            kind: None,
+            read: false,
+            key: None,
+            value: None,
+            total: None,
+            title: "Approval".to_string(),
+            body: "Run command?".to_string(),
+            workspace_id: Some("workspace-1".to_string()),
+            surface_id: Some("surface-1".to_string()),
+            created_at_ms: 123,
+            approval_state: Some(FeedApprovalState::Pending),
+        };
+        let approval_json = json!(approval);
+        assert_eq!(approval_json["type"], "approval");
+        assert!(approval_json.get("entry_type").is_none());
+
+        let truncated_tail = json!(forktty_terminal::TerminalTextSnapshot::from_text(
+            "surface-1",
+            "alpha\nbeta\n",
+            80,
+            24,
+            TerminalTextCapture::Tail { lines: 2 },
+            4,
+        ));
+        assert_eq!(truncated_tail["truncated"], true);
+
+        let flags = context_snapshot_risk_flags(
+            &json!({
+                "status": [{
+                    "key": "agent:codex:permission",
+                    "value": "bypassPermissions",
+                }],
+            }),
+            &[json!({
+                "surface_id": "surface-1",
+                "permission_mode": "bypassPermissions",
+            })],
+            &[approval_json],
+            &[json!({"surface_id": "surface-ssh", "kind": "ssh"})],
+            &[truncated_tail],
+            &[json!({"surface_id": "surface-missing", "error": "not ready"})],
+        );
+
+        for expected in [
+            "terminal_text_untrusted",
+            "terminal_tail_truncated",
+            "terminal_tail_unavailable",
+            "remote_surface",
+            "pending_approval",
+            "permission_bypass",
+        ] {
+            assert!(
+                flags.contains(&expected),
+                "expected risk flag {expected:?} in {flags:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn context_snapshot_review_gap_permission_bypass_reads_agent_health() {
+        let flags = context_snapshot_risk_flags(
+            &json!({"status": []}),
+            &[json!({"permission_mode": "bypassPermissions"})],
+            &[],
+            &[],
+            &[],
+            &[],
+        );
+
+        assert_eq!(flags, vec!["permission_bypass"]);
+    }
+
+    #[tokio::test]
     async fn dispatches_notification_methods() {
         let (state, _) = test_state();
         let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
