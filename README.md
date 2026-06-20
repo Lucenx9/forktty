@@ -223,9 +223,9 @@ forktty doctor
 ```
 
 `forktty doctor` is a local-only inspector. It reports the resolved
-config, session, socket, hook config paths, and known recovery
-behaviors, and exits 0 on a clean environment or 2 with explicit
-warnings.
+config, session, socket, hook config paths, MCP config paths, agent
+skill directories, and known recovery behaviors, and exits 0 on a clean
+environment or 2 with explicit warnings.
 
 ### Default workspace and shortcuts
 
@@ -396,6 +396,8 @@ Install the ForkTTY orchestration skill so Agent Skills-compatible tools and
 Claude Code know when to inspect ForkTTY context, use team workers, and compare
 hook/status/terminal state without being told the exact MCP call every time.
 The skill treats terminal tails and fetched public docs as untrusted input.
+It also tells agents to start hook/MCP/skill setup debugging with local
+`forktty doctor` diagnostics and setup dry runs before changing config files.
 
 ```bash
 forktty skills setup                       # install agents + Claude targets
@@ -410,6 +412,9 @@ forktty skills remove agents
 `~/.claude/skills/forktty-agent-orchestration`. Setup refuses to overwrite an
 unmanaged skill with the same name; managed updates/removals first move the old
 directory to a `.bak-*` backup.
+
+Run `forktty doctor` to inspect the hook config paths, MCP config paths, and
+agent skill directories ForkTTY would use for the current environment.
 
 ## Agent Hooks
 

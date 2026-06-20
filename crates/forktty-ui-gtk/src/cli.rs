@@ -1180,6 +1180,10 @@ fn collect_hooks_from_env(
     }
     if let Some(dir) = gemini_home {
         out.push(inspect_hook_config("gemini", dir.join("settings.json")));
+        out.push(inspect_hook_config(
+            "antigravity",
+            dir.join("config/hooks.json"),
+        ));
     }
     if let Some(dir) = opencode_home {
         out.push(inspect_hook_config(
@@ -2692,11 +2696,19 @@ mod tests {
         let codex = hooks.iter().find(|hook| hook.agent == "codex").unwrap();
         let claude = hooks.iter().find(|hook| hook.agent == "claude").unwrap();
         let gemini = hooks.iter().find(|hook| hook.agent == "gemini").unwrap();
+        let antigravity = hooks
+            .iter()
+            .find(|hook| hook.agent == "antigravity")
+            .unwrap();
         let opencode = hooks.iter().find(|hook| hook.agent == "opencode").unwrap();
 
         assert_eq!(codex.path, home.path().join(".codex/hooks.json"));
         assert_eq!(claude.path, home.path().join(".claude/settings.json"));
         assert_eq!(gemini.path, home.path().join(".gemini/settings.json"));
+        assert_eq!(
+            antigravity.path,
+            home.path().join(".gemini/config/hooks.json")
+        );
         assert_eq!(
             opencode.path,
             home.path()

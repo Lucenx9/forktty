@@ -132,6 +132,19 @@ wrong:
    monitoring. If the terminal is waiting for input, surface the exact prompt
    or route a targeted nudge.
 
+## Integration Diagnostics
+
+When debugging ForkTTY hook, MCP, or skill setup, start with local diagnostics
+before changing files:
+
+- Use `forktty doctor --hooks` for local hook config path/status checks.
+- Use `forktty --json doctor` when socket, launcher, environment, hook config,
+  MCP config, and skill directory paths all matter.
+- Use `forktty hooks doctor <agent>` or setup `--dry-run` commands for
+  provider-specific repair decisions.
+- Treat missing optional provider configs as neutral until the task says that
+  provider should be installed or active.
+
 ## Workflow Memory
 
 For long tasks, multi-agent work, or work that may survive context compaction:

@@ -6343,33 +6343,7 @@ fn format_notification_line(notification: &Value) -> String {
 
 fn handle_socket_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     require_no_args(&args, "doctor")?;
-    let socket = inspect_path(&context.socket_path);
-    let launcher = stable_hook_launcher_path();
-    let launcher_info = launcher.as_ref().map(|path| inspect_path(path));
-    let mut hook_configs = Map::new();
-    for spec in AGENTS {
-        hook_configs.insert(spec.key.to_string(), inspect_path(&(spec.config_path)()));
-    }
-    let report = json!({
-        "socket": {
-            "path": context.socket_path,
-            "source": if context.socket_explicit { "argument" } else if socket_path_from_env().is_some() { "FORKTTY_SOCKET_PATH" } else { "default" },
-            "inspect": socket,
-        },
-        "env": {
-            "FORKTTY_SOCKET_PATH": trimmed_env("FORKTTY_SOCKET_PATH"),
-            "FORKTTY_WORKSPACE_ID": trimmed_env("FORKTTY_WORKSPACE_ID"),
-            "FORKTTY_SURFACE_ID": trimmed_env("FORKTTY_SURFACE_ID"),
-            "CODEX_HOME": trimmed_env("CODEX_HOME"),
-            "CLAUDE_CONFIG_DIR": trimmed_env("CLAUDE_CONFIG_DIR"),
-            "OPENCODE_CONFIG_DIR": trimmed_env("OPENCODE_CONFIG_DIR"),
-            "HOME": trimmed_env("HOME"),
-        },
-        "executable": {
-            "forktty": launcher_info,
-        },
-        "hookConfigs": hook_configs,
-    });
+    let report = build_socket_doctor_report(context);
     if context.json {
         return print_json(&report);
     }
@@ -6394,7 +6368,59 @@ fn handle_socket_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()
             write_stdout_line(&format!("  {}", format_doctor_path(agent, info)))?;
         }
     }
+    write_stdout_line("mcp configs:")?;
+    if let Some(configs) = report["mcpConfigs"].as_object() {
+        for (agent, info) in configs {
+            write_stdout_line(&format!("  {}", format_doctor_path(agent, info)))?;
+        }
+    }
+    write_stdout_line("skill dirs:")?;
+    if let Some(dirs) = report["skillDirs"].as_object() {
+        for (target, info) in dirs {
+            write_stdout_line(&format!("  {}", format_doctor_path(target, info)))?;
+        }
+    }
     Ok(())
+}
+
+fn build_socket_doctor_report(context: &CliContext) -> Value {
+    let socket = inspect_path(&context.socket_path);
+    let launcher = stable_hook_launcher_path();
+    let launcher_info = launcher.as_ref().map(|path| inspect_path(path));
+    let mut hook_configs = Map::new();
+    for spec in AGENTS {
+        hook_configs.insert(spec.key.to_string(), inspect_path(&(spec.config_path)()));
+    }
+    let mut mcp_configs = Map::new();
+    for spec in MCP_AGENTS {
+        mcp_configs.insert(spec.key.to_string(), inspect_path(&(spec.config_path)()));
+    }
+    let mut skill_dirs = Map::new();
+    for spec in SKILL_TARGETS {
+        skill_dirs.insert(spec.key.to_string(), inspect_path(&(spec.skill_dir)()));
+    }
+    json!({
+        "socket": {
+            "path": context.socket_path,
+            "source": if context.socket_explicit { "argument" } else if socket_path_from_env().is_some() { "FORKTTY_SOCKET_PATH" } else { "default" },
+            "inspect": socket,
+        },
+        "env": {
+            "FORKTTY_SOCKET_PATH": trimmed_env("FORKTTY_SOCKET_PATH"),
+            "FORKTTY_WORKSPACE_ID": trimmed_env("FORKTTY_WORKSPACE_ID"),
+            "FORKTTY_SURFACE_ID": trimmed_env("FORKTTY_SURFACE_ID"),
+            "CODEX_HOME": trimmed_env("CODEX_HOME"),
+            "CLAUDE_CONFIG_DIR": trimmed_env("CLAUDE_CONFIG_DIR"),
+            "OPENCODE_CONFIG_DIR": trimmed_env("OPENCODE_CONFIG_DIR"),
+            "HOME": trimmed_env("HOME"),
+        },
+        "executable": {
+            "forktty": launcher_info,
+        },
+        "hookConfigs": hook_configs,
+        "mcpConfigs": mcp_configs,
+        "skillDirs": skill_dirs,
+    })
 }
 
 fn parse_finite_number(raw: &str, option: &str) -> CliResult<f64> {
@@ -10849,6 +10875,61 @@ mod tests {
                     .is_some_and(|name| name.starts_with(prefix))
             })
             .count()
+    }
+
+    #[test]
+    fn doctor_report_includes_agent_integration_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let codex_home = dir.path().join("codex");
+        let claude_dir = dir.path().join("claude");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&codex_home).unwrap();
+        fs::create_dir_all(&claude_dir).unwrap();
+
+        let home_s = home.display().to_string();
+        let codex_home_s = codex_home.display().to_string();
+        let claude_dir_s = claude_dir.display().to_string();
+        with_env(
+            &[
+                ("HOME", Some(home_s.as_str())),
+                ("CODEX_HOME", Some(codex_home_s.as_str())),
+                ("CLAUDE_CONFIG_DIR", Some(claude_dir_s.as_str())),
+            ],
+            || {
+                let report = build_socket_doctor_report(&test_context());
+
+                assert_eq!(
+                    report["mcpConfigs"]["codex"]["path"],
+                    json!(codex_home.join("config.toml").display().to_string())
+                );
+                assert_eq!(
+                    report["mcpConfigs"]["claude"]["path"],
+                    json!(home.join(".claude.json").display().to_string())
+                );
+                assert_eq!(
+                    report["mcpConfigs"]["antigravity"]["path"],
+                    json!(home
+                        .join(".gemini/config/mcp_config.json")
+                        .display()
+                        .to_string())
+                );
+                assert_eq!(
+                    report["skillDirs"]["agents"]["path"],
+                    json!(home
+                        .join(".agents/skills/forktty-agent-orchestration")
+                        .display()
+                        .to_string())
+                );
+                assert_eq!(
+                    report["skillDirs"]["claude"]["path"],
+                    json!(claude_dir
+                        .join("skills/forktty-agent-orchestration")
+                        .display()
+                        .to_string())
+                );
+            },
+        );
     }
 
     #[test]

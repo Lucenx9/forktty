@@ -42,6 +42,10 @@
       "should_trigger": true
     },
     {
+      "query": "Check whether ForkTTY hooks, MCP, and agent skills are installed correctly.",
+      "should_trigger": true
+    },
+    {
       "query": "Fix the failing Rust test in crates/forktty-core.",
       "should_trigger": false
     },

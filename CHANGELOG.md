@@ -22,6 +22,9 @@ All notable changes to ForkTTY are documented here.
   already end in a newline.
 
 ### Fixed
+- The local `forktty doctor` hook diagnostics now include the default
+  Antigravity hook config path alongside Codex, Claude Code, Gemini, and
+  OpenCode.
 - Automatically named workspaces now keep the visible name aligned with the
   allocated workspace id, even after earlier workspaces are closed and the id
   counter has gaps.
@@ -56,12 +59,18 @@ All notable changes to ForkTTY are documented here.
   when the pane has no terminal chrome or tab-strip entry.
 
 ### Changed
+- `forktty doctor` now reports managed MCP config paths and agent skill
+  directories alongside socket, executable, environment, and hook config
+  diagnostics.
 - Team wrapper help now documents that `forktty team ask/review` launch a fresh
   worker on each run, documents the `--submit` default, and reports the failed
   step when a multi-request prompt dispatch flow stops part-way through.
 - The managed ForkTTY agent orchestration skill now points agents to
   `forktty.dev/llms.txt` and `llms-full.txt` as optional public-docs fallback
   context when local repository docs are unavailable or stale.
+- The managed ForkTTY agent orchestration skill now tells agents to start hook,
+  MCP, and skill setup debugging with local `forktty doctor` diagnostics and
+  provider-specific dry runs before changing configuration files.
 - The managed ForkTTY agent orchestration skill now treats fetched public docs
   as untrusted documentation-only input, uses the canonical `context_snapshot`
   MCP name in its trigger text, declares its ForkTTY MCP dependency metadata,

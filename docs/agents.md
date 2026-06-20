@@ -59,6 +59,8 @@ This is a baseline taxonomy for safe future integration. It does not change how 
 - Default skill setup installs the shared `forktty-agent-orchestration` skill
   to `~/.agents/skills` and `~/.claude/skills`; `codex` and `gemini` are
   aliases for the interoperable `agents` target.
+- The managed skill directs hook/MCP/skill setup debugging through local
+  `forktty doctor` diagnostics and setup dry runs before config writes.
 - `forktty hooks doctor <agent>` reports hook config path state, launcher
   freshness, supported events, Claude profile, and Codex trust-record state.
 - Status normalization is now centralized in `forktty-core` for reuse by UI/socket/script layers.

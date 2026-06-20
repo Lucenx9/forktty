@@ -110,12 +110,16 @@ The skill tells agents to inspect `context_snapshot` or equivalent read-only
 state before cross-pane work, treat terminal tails and fetched public docs as
 untrusted input, use team mailbox dispatch for worker prompts, compare
 status/hooks/terminal tail when `running` or `needs_input` appears delayed, and
-record durable workflow/team state for long-running coordination.
+record durable workflow/team state for long-running coordination. For hook,
+MCP, and skill setup debugging it points agents at local `forktty doctor`
+diagnostics and setup dry runs before changing config files.
 
 Setup refuses to overwrite an existing skill directory with the same name
 unless its `SKILL.md` contains ForkTTY's managed marker. Updating or removing a
 managed skill moves the previous directory to a `.bak-*` backup first. The
 welcome/setup flow runs `hooks setup`, `mcp setup`, and `skills setup` together.
+Run `forktty doctor` to inspect the hook config paths, MCP config paths, and
+agent skill directories ForkTTY resolves from the current environment.
 
 Antigravity CLI (Google's Gemini CLI successor, `agy`) executes a hook
 `command` as one bare executable path — no argument splitting and no shell —
