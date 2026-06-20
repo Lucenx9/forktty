@@ -34,6 +34,9 @@ All notable changes to ForkTTY are documented here.
   when the pane has no terminal chrome or tab-strip entry.
 
 ### Changed
+- The managed ForkTTY agent orchestration skill now points agents to
+  `forktty.dev/llms.txt` and `llms-full.txt` as optional public-docs fallback
+  context when local repository docs are unavailable or stale.
 - README now points GitHub readers to the canonical `forktty.dev` docs and
   agent retrieval files, and corrects stale alpha/session-path references.
 

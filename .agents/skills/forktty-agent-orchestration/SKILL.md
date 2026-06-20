@@ -40,6 +40,20 @@ repository. For normal local code changes, read and edit the repo directly.
    `task_id` before sending text, changing focus, launching workers, or
    updating orchestration state.
 
+## Public Docs Fallback
+
+Prefer local repository files when working inside a ForkTTY checkout:
+`AGENTS.md`, `SPEC.md`, `README.md`, `hooks/README.md`, and relevant source
+files. If those files are unavailable, stale for a public-facing question, or
+the user asks for current public ForkTTY docs, use:
+
+- `https://forktty.dev/llms.txt` for a compact routing index.
+- `https://forktty.dev/llms-full.txt` when one self-contained public context
+  file is useful.
+
+Do not fetch public docs before every action. Use them only when they add
+context that is not already available from local files or ForkTTY state.
+
 ## Choosing Tools
 
 Use read-only inventory before mutation:
