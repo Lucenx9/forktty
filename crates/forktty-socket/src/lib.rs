@@ -1391,7 +1391,7 @@ pub async fn dispatch(
             Ok(json!(model.list_workspaces()))
         }
         "workspace.create" => {
-            let name = workspace_create_name_from_params(&params)?;
+            let name = optional_workspace_create_name_from_params(&params)?;
             let cwd = resolve_workspace_cwd_param(&params)?;
             let (workspace, previous_active_id) = {
                 let mut model = state
@@ -1399,7 +1399,11 @@ pub async fn dispatch(
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
                 let previous_active_id = model.active_workspace_id();
-                (model.create_workspace(name, cwd), previous_active_id)
+                let workspace = match name {
+                    Some(name) => model.create_workspace(name, cwd),
+                    None => model.create_auto_named_workspace(cwd),
+                };
+                (workspace, previous_active_id)
             };
             if let Err(err) = spawn_workspace_terminal(state, &workspace) {
                 rollback_workspace_creation(state, &workspace.id, previous_active_id)?;
@@ -1409,7 +1413,7 @@ pub async fn dispatch(
         }
         "workspace.create_ssh" => {
             let host = required_ssh_host_param(&params)?;
-            let name = workspace_create_name_from_params(&params)?;
+            let name = optional_workspace_create_name_from_params(&params)?;
             let cwd = resolve_workspace_cwd_param(&params)?;
             let (workspace, previous_active_id) = {
                 let mut model = state
@@ -1417,10 +1421,11 @@ pub async fn dispatch(
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
                 let previous_active_id = model.active_workspace_id();
-                (
-                    model.create_ssh_workspace(name, cwd, host.to_string()),
-                    previous_active_id,
-                )
+                let workspace = match name {
+                    Some(name) => model.create_ssh_workspace(name, cwd, host.to_string()),
+                    None => model.create_auto_named_ssh_workspace(cwd, host.to_string()),
+                };
+                (workspace, previous_active_id)
             };
             if let Err(err) = spawn_workspace_terminal(state, &workspace) {
                 rollback_workspace_creation(state, &workspace.id, previous_active_id)?;
@@ -5077,34 +5082,50 @@ fn create_team_worker_surface(
     let team = store
         .get(team_id)
         .ok_or(DispatchError::NotFound("team".to_string()))?;
+    let (near_surface_id, near_agent_session) = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        let near_surface_id = match team.leader_surface_id.as_deref() {
+            Some(surface_id) if model.surface(surface_id).is_some() => surface_id.to_string(),
+            Some(_) => return Err(DispatchError::NotFound("surface".to_string())),
+            None => match team.workspace_id.as_deref() {
+                Some(workspace_id) => model
+                    .list_workspaces()
+                    .into_iter()
+                    .find(|workspace| workspace.id == workspace_id)
+                    .map(|workspace| workspace.focused_surface_id)
+                    .ok_or(DispatchError::NotFound("workspace".to_string()))?,
+                None => model
+                    .active_workspace()
+                    .map(|workspace| workspace.focused_surface_id)
+                    .ok_or_else(|| {
+                        DispatchError::PreconditionFailed(
+                            "team.worker.launch requires a team workspace, leader surface, or active workspace"
+                                .to_string(),
+                        )
+                    })?,
+            },
+        };
+        let near_agent_session = model
+            .surface(&near_surface_id)
+            .and_then(|surface| surface.agent_session.clone());
+        (near_surface_id, near_agent_session)
+    };
+    let inherited_agent_cwd = near_agent_session
+        .as_ref()
+        .and_then(effective_agent_resume_cwd);
     let mut model = state
         .model
         .lock()
         .map_err(|_| "Lock poisoned".to_string())?;
-    let near_surface_id = match team.leader_surface_id.as_deref() {
-        Some(surface_id) if model.surface(surface_id).is_some() => surface_id.to_string(),
-        Some(_) => return Err(DispatchError::NotFound("surface".to_string())),
-        None => match team.workspace_id.as_deref() {
-            Some(workspace_id) => model
-                .list_workspaces()
-                .into_iter()
-                .find(|workspace| workspace.id == workspace_id)
-                .map(|workspace| workspace.focused_surface_id)
-                .ok_or(DispatchError::NotFound("workspace".to_string()))?,
-            None => model
-                .active_workspace()
-                .map(|workspace| workspace.focused_surface_id)
-                .ok_or_else(|| {
-                    DispatchError::PreconditionFailed(
-                        "team.worker.launch requires a team workspace, leader surface, or active workspace"
-                            .to_string(),
-                    )
-                })?,
-        },
-    };
     let surface = model
         .add_tab(&near_surface_id)
         .ok_or(DispatchError::NotFound("surface".to_string()))?;
+    if let Some(cwd) = inherited_agent_cwd {
+        let _ = model.set_surface_cwd(&surface.id, cwd);
+    }
     let _ = model.set_surface_title(&surface.id, format!("worker:{worker_id}"));
     Ok(model.surface(&surface.id).cloned().unwrap_or(surface))
 }
@@ -5260,14 +5281,16 @@ fn validate_optional_worktree_name(params: &Value) -> Result<(), DispatchError> 
     Ok(())
 }
 
-fn workspace_create_name_from_params(params: &Value) -> Result<&str, DispatchError> {
+fn optional_workspace_create_name_from_params(
+    params: &Value,
+) -> Result<Option<&str>, DispatchError> {
     let Some(value) = params.get("name") else {
-        return Ok("workspace");
+        return Ok(None);
     };
     match value.as_str().map(str::trim) {
         Some(name) if !name.is_empty() => {
             ensure_max_text_size("name", name)?;
-            Ok(name)
+            Ok(Some(name))
         }
         Some(_) => Err("Invalid parameter name: must not be empty".into()),
         None => Err("Invalid parameter name: expected string".into()),
@@ -8656,6 +8679,19 @@ mod tests {
         let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
         let workspace_id = workspace[0]["id"].as_str().unwrap();
         let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+        let leader_resume_cwd = tempfile::tempdir().unwrap();
+        {
+            let mut model = state.model.lock().unwrap();
+            assert!(model.set_surface_agent_session(
+                surface_id,
+                AgentKind::Codex,
+                "codex-session-1",
+            ));
+            assert!(model.set_surface_agent_session_resume_cwd(
+                surface_id,
+                leader_resume_cwd.path().to_path_buf(),
+            ));
+        }
 
         let team = dispatch(
             &state,
@@ -8719,6 +8755,13 @@ mod tests {
         let launched_surface_id = launched["surface"]["id"].as_str().unwrap();
         assert_eq!(launched["worker"]["surface_id"], launched_surface_id);
         assert_eq!(backend.spawn_shell(launched_surface_id).unwrap(), "codex");
+        let launched_runtime_surface = backend
+            .surfaces()
+            .unwrap()
+            .into_iter()
+            .find(|surface| surface.surface_id == launched_surface_id)
+            .unwrap();
+        assert_eq!(launched_runtime_surface.cwd, leader_resume_cwd.path());
         assert_eq!(
             backend.spawn_args(launched_surface_id).unwrap(),
             vec!["--model".to_string(), "test".to_string()]
@@ -15537,7 +15580,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(result["name"], "workspace");
+        assert_eq!(result["name"], "workspace-2");
         let surface_id = result["focused_surface_id"].as_str().unwrap();
 
         // The spawned shell should be the ssh binary and args should be the host.

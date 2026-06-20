@@ -22,6 +22,18 @@ All notable changes to ForkTTY are documented here.
   already end in a newline.
 
 ### Fixed
+- Automatically named workspaces now keep the visible name aligned with the
+  allocated workspace id, even after earlier workspaces are closed and the id
+  counter has gaps.
+- `forktty team ask/review` and MCP `team_upsert` now bind the team to the
+  invoking ForkTTY surface or workspace from `FORKTTY_SURFACE_ID`/
+  `FORKTTY_WORKSPACE_ID`, so launched workers open next to the orchestrator pane
+  and inherit its working directory.
+- `forktty team ask/review` now create the assigned task before launching the
+  worker, matching the socket server's task assignment validation.
+- Embedded Ghostty title updates now ignore launcher-wrapper titles such as
+  `/usr/bin/env`, preventing new team or terminal panes from replacing useful
+  pane titles with the wrapper executable path.
 - `forktty skills setup` and `forktty skills remove` now route through the
   top-level CLI parser instead of being rejected as unknown arguments.
 - Team-wide message dispatch with an explicit worker target now marks the

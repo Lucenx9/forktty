@@ -5,6 +5,9 @@ mod panic_log;
 mod socket_cli;
 mod telemetry;
 
+#[cfg(test)]
+mod test_env;
+
 #[cfg(feature = "gtk-ghostty")]
 mod gtk_app;
 

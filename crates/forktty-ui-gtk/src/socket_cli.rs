@@ -3003,12 +3003,43 @@ fn run_team_ask_flow(context: &CliContext, options: TeamAskOptions) -> CliResult
     if let Some(goal) = &options.goal {
         team_params.insert("goal".to_string(), Value::String(goal.clone()));
     }
+    if let Some(surface_id) = trimmed_env("FORKTTY_SURFACE_ID") {
+        team_params.insert("leader_surface_id".to_string(), Value::String(surface_id));
+    } else if let Some(workspace_id) = trimmed_env("FORKTTY_WORKSPACE_ID") {
+        team_params.insert("workspace_id".to_string(), Value::String(workspace_id));
+    }
     let team = send_team_flow_request(
         context,
         options.command_name,
         "creating/updating team",
         "team.upsert",
         Value::Object(team_params),
+    )?;
+
+    let mut task_params = Map::new();
+    task_params.insert("team_id".to_string(), Value::String(team_id.clone()));
+    task_params.insert("task_id".to_string(), Value::String(task_id.clone()));
+    task_params.insert(
+        "assigned_worker_id".to_string(),
+        Value::String(worker_id.clone()),
+    );
+    task_params.insert("status".to_string(), Value::String("running".to_string()));
+    task_params.insert(
+        "title".to_string(),
+        Value::String(
+            options
+                .title
+                .clone()
+                .unwrap_or_else(|| prompt_title(&prompt)),
+        ),
+    );
+    task_params.insert("detail".to_string(), Value::String(prompt.clone()));
+    let task = send_team_flow_request(
+        context,
+        options.command_name,
+        "upserting task before worker launch",
+        "team.task.upsert",
+        Value::Object(task_params),
     )?;
 
     let mut worker_params = Map::new();
@@ -3040,32 +3071,6 @@ fn run_team_ask_flow(context: &CliContext, options: TeamAskOptions) -> CliResult
         "launching worker",
         "team.worker.launch",
         Value::Object(worker_params),
-    )?;
-
-    let mut task_params = Map::new();
-    task_params.insert("team_id".to_string(), Value::String(team_id.clone()));
-    task_params.insert("task_id".to_string(), Value::String(task_id.clone()));
-    task_params.insert(
-        "assigned_worker_id".to_string(),
-        Value::String(worker_id.clone()),
-    );
-    task_params.insert("status".to_string(), Value::String("running".to_string()));
-    task_params.insert(
-        "title".to_string(),
-        Value::String(
-            options
-                .title
-                .clone()
-                .unwrap_or_else(|| prompt_title(&prompt)),
-        ),
-    );
-    task_params.insert("detail".to_string(), Value::String(prompt.clone()));
-    let task = send_team_flow_request(
-        context,
-        options.command_name,
-        "upserting task after worker launch",
-        "team.task.upsert",
-        Value::Object(task_params),
     )?;
 
     let message = send_team_flow_request(
@@ -10662,8 +10667,7 @@ fn format_doctor_path(label: &str, info: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
-    use std::sync::Mutex;
+    use crate::test_env::{with_current_dir, with_env};
     use std::thread;
 
     #[test]
@@ -10697,45 +10701,6 @@ mod tests {
             None
         );
         assert_eq!(lagged_dropped_count(r#"{"event":"subscribed"}"#), None);
-    }
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    fn with_env<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let saved = vars
-            .iter()
-            .map(|(key, _)| ((*key).to_string(), std::env::var_os(key)))
-            .collect::<Vec<_>>();
-        for (key, value) in vars {
-            match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
-            }
-        }
-        let result = catch_unwind(AssertUnwindSafe(f));
-        for (key, value) in saved {
-            match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
-            }
-        }
-        match result {
-            Ok(value) => value,
-            Err(payload) => resume_unwind(payload),
-        }
-    }
-
-    fn with_current_dir<T>(dir: &Path, f: impl FnOnce() -> T) -> T {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let saved = std::env::current_dir().unwrap();
-        std::env::set_current_dir(dir).unwrap();
-        let result = catch_unwind(AssertUnwindSafe(f));
-        std::env::set_current_dir(saved).unwrap();
-        match result {
-            Ok(value) => value,
-            Err(payload) => resume_unwind(payload),
-        }
     }
 
     fn strings(args: &[&str]) -> Vec<String> {
@@ -14520,9 +14485,8 @@ mod tests {
         assert_eq!(request["params"]["submit"], true);
     }
 
-    #[test]
-    fn team_ask_runs_high_level_worker_flow() {
-        let requests = with_socket_server(
+    fn with_team_ask_flow_server(test: impl FnOnce(&Path)) -> Vec<Value> {
+        with_socket_server(
             5,
             |req| {
                 let result = match req["method"].as_str().unwrap_or("") {
@@ -14540,31 +14504,36 @@ mod tests {
                 };
                 json!({"id": req["id"], "ok": true, "result": result}).to_string()
             },
-            |socket_path| {
-                handle_team(
-                    &ctx_for(socket_path),
-                    strings(&[
-                        "ask",
-                        "team-1",
-                        "worker-1",
-                        "--agent",
-                        "claude",
-                        "--task-id",
-                        "task-1",
-                        "--prompt",
-                        "Review this",
-                        "--role",
-                        "reviewer",
-                        "--title",
-                        "Review",
-                        "--goal",
-                        "Check command ergonomics",
-                        "--submit=false",
-                    ]),
-                )
-                .unwrap();
-            },
-        );
+            test,
+        )
+    }
+
+    #[test]
+    fn team_ask_runs_high_level_worker_flow() {
+        let requests = with_team_ask_flow_server(|socket_path| {
+            handle_team(
+                &ctx_for(socket_path),
+                strings(&[
+                    "ask",
+                    "team-1",
+                    "worker-1",
+                    "--agent",
+                    "claude",
+                    "--task-id",
+                    "task-1",
+                    "--prompt",
+                    "Review this",
+                    "--role",
+                    "reviewer",
+                    "--title",
+                    "Review",
+                    "--goal",
+                    "Check command ergonomics",
+                    "--submit=false",
+                ]),
+            )
+            .unwrap();
+        });
 
         assert_eq!(
             requests
@@ -14573,8 +14542,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "team.upsert",
-                "team.worker.launch",
                 "team.task.upsert",
+                "team.worker.launch",
                 "team.message.send",
                 "team.message.dispatch",
             ]
@@ -14582,12 +14551,12 @@ mod tests {
         assert_eq!(requests[0]["params"]["team_id"], "team-1");
         assert_eq!(requests[0]["params"]["status"], "active");
         assert_eq!(requests[0]["params"]["goal"], "Check command ergonomics");
-        assert_eq!(requests[1]["params"]["agent"], "claude");
-        assert_eq!(requests[1]["params"]["role"], "reviewer");
-        assert_eq!(requests[1]["params"]["assigned_task_id"], "task-1");
-        assert_eq!(requests[2]["params"]["assigned_worker_id"], "worker-1");
-        assert_eq!(requests[2]["params"]["title"], "Review");
-        assert_eq!(requests[2]["params"]["detail"], "Review this");
+        assert_eq!(requests[1]["params"]["assigned_worker_id"], "worker-1");
+        assert_eq!(requests[1]["params"]["title"], "Review");
+        assert_eq!(requests[1]["params"]["detail"], "Review this");
+        assert_eq!(requests[2]["params"]["agent"], "claude");
+        assert_eq!(requests[2]["params"]["role"], "reviewer");
+        assert_eq!(requests[2]["params"]["assigned_task_id"], "task-1");
         assert_eq!(requests[3]["params"]["from"], "leader");
         assert_eq!(requests[3]["params"]["to_worker_id"], "worker-1");
         assert_eq!(requests[3]["params"]["body"], "Review this");
@@ -14597,17 +14566,85 @@ mod tests {
     }
 
     #[test]
+    fn team_ask_binds_team_to_current_surface_env() {
+        let requests = with_env(
+            &[
+                ("FORKTTY_SURFACE_ID", Some(" surface-orchestrator ")),
+                ("FORKTTY_WORKSPACE_ID", Some(" workspace-orchestrator ")),
+            ],
+            || {
+                with_team_ask_flow_server(|socket_path| {
+                    handle_team(
+                        &ctx_for(socket_path),
+                        strings(&[
+                            "ask",
+                            "team-1",
+                            "worker-1",
+                            "--agent",
+                            "claude",
+                            "--task-id",
+                            "task-1",
+                            "--prompt",
+                            "Review this",
+                            "--submit=false",
+                        ]),
+                    )
+                    .unwrap();
+                })
+            },
+        );
+
+        let params = requests[0]["params"].as_object().unwrap();
+        assert_eq!(params["leader_surface_id"], "surface-orchestrator");
+        assert!(!params.contains_key("workspace_id"));
+    }
+
+    #[test]
+    fn team_ask_binds_team_to_current_workspace_env_without_surface() {
+        let requests = with_env(
+            &[
+                ("FORKTTY_SURFACE_ID", None),
+                ("FORKTTY_WORKSPACE_ID", Some(" workspace-orchestrator ")),
+            ],
+            || {
+                with_team_ask_flow_server(|socket_path| {
+                    handle_team(
+                        &ctx_for(socket_path),
+                        strings(&[
+                            "ask",
+                            "team-1",
+                            "worker-1",
+                            "--agent",
+                            "claude",
+                            "--task-id",
+                            "task-1",
+                            "--prompt",
+                            "Review this",
+                            "--submit=false",
+                        ]),
+                    )
+                    .unwrap();
+                })
+            },
+        );
+
+        let params = requests[0]["params"].as_object().unwrap();
+        assert_eq!(params["workspace_id"], "workspace-orchestrator");
+        assert!(!params.contains_key("leader_surface_id"));
+    }
+
+    #[test]
     fn team_review_builds_read_only_commit_prompt() {
         let requests = with_socket_server(
             5,
             |req| {
                 let result = match req["method"].as_str().unwrap_or("") {
                     "team.upsert" => json!({"id": "team-1", "status": "active"}),
+                    "team.task.upsert" => json!({"id": "task-1", "status": "running"}),
                     "team.worker.launch" => json!({
                         "surface": {"id": "surface-2"},
                         "worker": {"id": "worker-1"},
                     }),
-                    "team.task.upsert" => json!({"id": "task-1", "status": "running"}),
                     "team.message.send" => json!({"id": "msg-1", "delivered": false}),
                     "team.message.dispatch" => {
                         json!({"sent": true, "message": {"id": "msg-1"}})
@@ -14639,7 +14676,7 @@ mod tests {
         assert!(body.contains("Review commit HEAD"));
         assert!(body.contains("read-only inspection"));
         assert!(body.contains("file/line references"));
-        assert_eq!(requests[2]["params"]["status"], "running");
+        assert_eq!(requests[1]["params"]["status"], "running");
         assert_eq!(requests[4]["params"]["submit"], true);
     }
 
@@ -14650,11 +14687,11 @@ mod tests {
             |req| {
                 let response = match req["method"].as_str().unwrap_or("") {
                     "team.upsert" => json!({"id": "team-1", "status": "active"}),
+                    "team.task.upsert" => json!({"id": "task-1", "status": "running"}),
                     "team.worker.launch" => json!({
                         "surface": {"id": "surface-2"},
                         "worker": {"id": "worker-1"},
                     }),
-                    "team.task.upsert" => json!({"id": "task-1", "status": "running"}),
                     "team.message.send" => {
                         return json!({
                             "id": req["id"],
@@ -14695,8 +14732,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "team.upsert",
-                "team.worker.launch",
                 "team.task.upsert",
+                "team.worker.launch",
                 "team.message.send",
             ]
         );

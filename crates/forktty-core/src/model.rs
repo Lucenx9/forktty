@@ -366,6 +366,24 @@ impl WorkspaceModel {
         workspace
     }
 
+    pub fn create_auto_named_workspace(&mut self, working_dir: impl Into<PathBuf>) -> Workspace {
+        let workspace = self.create_workspace("workspace", working_dir);
+        let id = workspace.id.clone();
+        self.rename_workspace(WorkspaceSelector::Id(&id), id.clone())
+            .expect("workspace was just created")
+    }
+
+    pub fn create_auto_named_ssh_workspace(
+        &mut self,
+        working_dir: impl Into<PathBuf>,
+        host: String,
+    ) -> Workspace {
+        let workspace = self.create_ssh_workspace("workspace", working_dir, host);
+        let id = workspace.id.clone();
+        self.rename_workspace(WorkspaceSelector::Id(&id), id.clone())
+            .expect("workspace was just created")
+    }
+
     pub fn create_worktree_workspace(
         &mut self,
         name: impl Into<String>,
@@ -4338,6 +4356,29 @@ mod tests {
             model.workspace_id_for(WorkspaceSelector::Name("dup")),
             Some(second_dup.id),
         );
+    }
+
+    #[test]
+    fn auto_named_workspace_name_matches_allocated_id_after_closed_gaps() {
+        let mut model = WorkspaceModel::new();
+        let first = model.create_auto_named_workspace("/tmp/one");
+        let second = model.create_auto_named_workspace("/tmp/two");
+        let third = model.create_auto_named_workspace("/tmp/three");
+
+        assert_eq!(first.name, first.id);
+        assert_eq!(second.name, second.id);
+        assert_eq!(third.name, third.id);
+
+        model.close_workspace(WorkspaceSelector::Id(&first.id));
+        model.close_workspace(WorkspaceSelector::Id(&second.id));
+
+        let fourth = model.create_auto_named_workspace("/tmp/four");
+        assert_eq!(fourth.id, "workspace-4");
+        assert_eq!(fourth.name, "workspace-4");
+
+        let ssh = model.create_auto_named_ssh_workspace("/tmp/ssh", "server.local".to_string());
+        assert_eq!(ssh.id, "workspace-5");
+        assert_eq!(ssh.name, "workspace-5");
     }
 
     #[test]

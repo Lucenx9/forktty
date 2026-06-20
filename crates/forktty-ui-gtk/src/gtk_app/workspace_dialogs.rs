@@ -76,12 +76,8 @@ pub(super) fn create_plain_workspace(state: &SocketAppState) {
             Ok(model) => model,
             Err(_) => return,
         };
-        let count = model.list_workspaces().len() + 1;
         let previous_active_id = model.active_workspace_id();
-        (
-            model.create_workspace(format!("workspace-{count}"), cwd),
-            previous_active_id,
-        )
+        (model.create_auto_named_workspace(cwd), previous_active_id)
     };
     if let Err(err) = state.terminal.spawn(SpawnRequest::for_workspace(
         &workspace,

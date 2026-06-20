@@ -246,8 +246,10 @@ fn apply_ghostty_events_to_model_with_config(
     for event in events {
         match event {
             GhosttyEvent::TitleChanged(title) => {
-                if let Ok(mut model) = model.lock() {
-                    let _ = model.set_surface_title(surface_id, title.clone());
+                if !terminal_title_is_launcher_wrapper(title) {
+                    if let Ok(mut model) = model.lock() {
+                        let _ = model.set_surface_title(surface_id, title.clone());
+                    }
                 }
             }
             GhosttyEvent::Bell => {
@@ -401,6 +403,10 @@ fn apply_ghostty_events_to_model_with_config(
         }
     }
     replies
+}
+
+fn terminal_title_is_launcher_wrapper(title: &str) -> bool {
+    matches!(title.trim(), "/usr/bin/env" | "/bin/env" | "env")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1576,6 +1582,28 @@ mod ghostty_tests {
             .list_notifications()
             .iter()
             .any(|notification| notification.title == "Terminal bell"));
+    }
+
+    #[test]
+    fn ghostty_events_do_not_overwrite_useful_title_with_env_launcher_title() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", "/tmp");
+            let surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_title(&surface_id, "worker:review"));
+            (workspace.id, surface_id)
+        };
+
+        apply_events(
+            &model,
+            &workspace_id,
+            &surface_id,
+            &[GhosttyEvent::TitleChanged("/usr/bin/env".to_string())],
+        );
+
+        let model = model.lock().unwrap();
+        assert_eq!(model.surface(&surface_id).unwrap().title, "worker:review");
     }
 
     #[test]

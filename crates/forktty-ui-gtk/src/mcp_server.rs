@@ -638,12 +638,21 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 ],
                 name,
             )?;
-            let mut params = workspace_target_params(args, true)?;
+            let mut params = workspace_target_params(args, false)?;
+            let leader_surface_id = optional_non_blank(args, "leader_surface_id")?;
+            if let Some(surface_id) = leader_surface_id {
+                params.insert("leader_surface_id".to_string(), Value::String(surface_id));
+            } else if params.is_empty() {
+                if let Some(surface_id) = trimmed_env("FORKTTY_SURFACE_ID") {
+                    params.insert("leader_surface_id".to_string(), Value::String(surface_id));
+                } else if let Some(workspace_id) = trimmed_env("FORKTTY_WORKSPACE_ID") {
+                    params.insert("workspace_id".to_string(), Value::String(workspace_id));
+                }
+            }
             params.insert(
                 "team_id".to_string(),
                 Value::String(required_non_blank(args, "team_id")?),
             );
-            insert_optional_non_blank_param(args, &mut params, "leader_surface_id")?;
             insert_optional_non_blank_param(args, &mut params, "name")?;
             insert_optional_non_blank_param(args, &mut params, "status")?;
             insert_optional_string_param(args, &mut params, "goal")?;
@@ -1882,10 +1891,10 @@ fn tool_specs() -> Vec<ToolSpec> {
                 &["team_id"],
                 json!({
                     "team_id": string_prop("Stable team id."),
-                    "workspace_id": string_prop("Workspace id to associate with the team; defaults from FORKTTY_WORKSPACE_ID when present."),
+                    "workspace_id": string_prop("Workspace id to associate with the team; defaults from FORKTTY_WORKSPACE_ID only when no leader surface is available."),
                     "workspace_name": string_prop("Workspace name to associate with the team."),
                     "worktree_name": string_prop("Worktree name to associate with the team."),
-                    "leader_surface_id": string_prop("Surface id for the leader pane."),
+                    "leader_surface_id": string_prop("Surface id for the leader pane; defaults from FORKTTY_SURFACE_ID when present."),
                     "name": string_prop("Human team name."),
                     "status": string_prop("Team status, for example active, paused, or done."),
                     "goal": string_prop("Team goal or brief."),
@@ -2403,6 +2412,7 @@ pub(crate) fn build_socket_call_for_test(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_env::with_env;
     use forktty_core::JsonRpcResponse;
     use std::fs;
     use std::io::BufReader;
@@ -2746,6 +2756,18 @@ mod tests {
         assert_eq!(params["workspace_id"], "w1");
         assert_eq!(params["leader_surface_id"], "s1");
         assert_eq!(params["goal"], "ship runtime");
+
+        let (method, params) = with_env(
+            &[
+                ("FORKTTY_SURFACE_ID", Some(" surface-env ")),
+                ("FORKTTY_WORKSPACE_ID", Some(" workspace-env ")),
+            ],
+            || build_socket_call_for_test("team_upsert", json!({"team_id": "team-env"})).unwrap(),
+        );
+        assert_eq!(method, "team.upsert");
+        assert_eq!(params["team_id"], "team-env");
+        assert_eq!(params["leader_surface_id"], "surface-env");
+        assert!(params.get("workspace_id").is_none());
 
         let (method, params) = build_socket_call_for_test(
             "team_worker_heartbeat",
