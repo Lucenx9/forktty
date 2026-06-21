@@ -4191,6 +4191,36 @@ fn notification_panel_css_only_styles_real_kind_classes() {
 }
 
 #[test]
+fn notification_panel_css_matches_quiet_agent_hud_tone() {
+    let source = include_str!("../style.css");
+    let block = |selector: &str| {
+        source
+            .split(selector)
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .unwrap_or_else(|| panic!("missing CSS block {selector}"))
+    };
+
+    assert!(block("\n.notification-row {").contains("border: 1px solid transparent;"));
+    assert!(block("\n.notification-row {").contains("background: #1b1b1b;"));
+    assert!(block(".notification-actions {").contains("border-top: 1px solid transparent;"));
+
+    let kind = block(".notification-kind {");
+    assert!(!kind.contains("text-transform: uppercase;"));
+    assert!(!kind.contains("font-weight: 700;"));
+
+    assert!(
+        block(".notification-list row:hover .notification-row.actionable {")
+            .contains("background: #1e1a17;")
+    );
+    assert!(
+        block(".notification-list row:focus-visible .notification-row.unread {")
+            .contains("inset 3px 0 0 alpha(#e88745, 0.82)")
+    );
+    assert!(block(".notification-kind.prompt {").contains("color: #e6ad87;"));
+}
+
+#[test]
 fn pane_status_uses_readable_muted_contrast() {
     let source = include_str!("../style.css");
     let pane_status = source

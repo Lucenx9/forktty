@@ -44,10 +44,10 @@ All notable changes to ForkTTY are documented here.
   maintenance flow, including final-binary skill checksum verification.
 - Notification panel and Agent HUD polish now make attention states easier to
   scan: notifications group prompt/current-workspace history, avoid a duplicate
-  global open action, and style terminal notification actions; agent rows show
-  the current pane, group lifecycles, surface risky permission modes, and
-  compact ended sessions, quieter tonal cards, calmer status chips, compact
-  risky permission labels, and inline terminal previews.
+  global open action, and use quieter tonal cards/chips/action areas; agent
+  rows show the current pane, group lifecycles, surface risky permission modes,
+  compact ended sessions, calmer status chips, compact risky permission labels,
+  and inline terminal previews.
 
 ### Fixed
 - `team.worker.health` now reports `surface_present`,

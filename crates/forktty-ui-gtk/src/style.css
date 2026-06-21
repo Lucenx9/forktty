@@ -2442,6 +2442,48 @@ entry.search.command-search:focus-within,
   padding: 0;
 }
 
+.notification-list row:hover .notification-row {
+  border-color: #303030;
+  background: #1f1f1f;
+}
+
+.notification-list row:hover .notification-row.actionable {
+  border-color: transparent;
+  background: #1e1a17;
+}
+
+.notification-list row:hover .notification-row.current {
+  background: #1c1b18;
+}
+
+.notification-list row:hover .notification-row.actionable.current,
+.notification-list row:hover .notification-row.actionable.unread,
+.notification-list row:hover .notification-row.current.actionable.unread {
+  background: #1e1a17;
+}
+
+.notification-list row:focus-visible {
+  outline: none;
+}
+
+.notification-list row:focus-visible .notification-row {
+  border-color: alpha(#e88745, 0.62);
+  box-shadow: inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(#e88745, 0.18);
+}
+
+.notification-list row:focus-visible .notification-row.current {
+  box-shadow: inset 3px 0 0 alpha(#c8a75d, 0.58), inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(#e88745, 0.18);
+}
+
+.notification-list row:focus-visible .notification-row.unread {
+  box-shadow: inset 3px 0 0 alpha(#e88745, 0.82), inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(#e88745, 0.18);
+}
+
+.notification-list row:focus-visible .notification-row.current.unread,
+.notification-list row:focus-visible .notification-row.current.actionable.unread {
+  box-shadow: inset 3px 0 0 alpha(#e88745, 0.82), inset 5px 0 0 #c8a75d, inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(#e88745, 0.18);
+}
+
 .notification-section {
   color: #777777;
   font-size: 0.72em;
@@ -2453,40 +2495,40 @@ entry.search.command-search:focus-within,
 
 .notification-row {
   padding: 8px 9px;
-  border: 1px solid #292929;
+  border: 1px solid transparent;
   border-radius: 7px;
   background: #1b1b1b;
+  box-shadow: inset 0 1px 0 alpha(white, 0.025);
 }
 
 .notification-row.actionable {
-  border-color: #4a3525;
-  background: #1d1916;
+  border-color: transparent;
+  background: #1e1a17;
 }
 
 .notification-row.current {
-  border-color: #3a3a3a;
-  box-shadow: inset 2px 0 0 #c8a75d;
+  background: #1c1b18;
+  box-shadow: inset 3px 0 0 alpha(#c8a75d, 0.58);
 }
 
 .notification-row.unread {
-  border-color: #292929;
-  background: #1b1b1b;
-  box-shadow: inset 3px 0 0 #e88745;
+  border-color: transparent;
+  box-shadow: inset 3px 0 0 alpha(#e88745, 0.76);
 }
 
 .notification-row.actionable.unread {
-  border-color: #4a3525;
-  background: #1d1916;
+  border-color: transparent;
+  background: #1e1a17;
 }
 
 .notification-row.current.unread {
-  border-color: #3a3a3a;
-  box-shadow: inset 3px 0 0 #e88745, inset 5px 0 0 #c8a75d;
+  border-color: transparent;
+  box-shadow: inset 3px 0 0 alpha(#e88745, 0.76), inset 5px 0 0 #c8a75d;
 }
 
 .notification-row.current.actionable.unread {
-  border-color: #4a3525;
-  background: #1d1916;
+  border-color: transparent;
+  background: #1e1a17;
 }
 
 .notification-title {
@@ -2513,7 +2555,7 @@ entry.search.command-search:focus-within,
 .notification-actions {
   margin-top: 2px;
   padding-top: 5px;
-  border-top: 1px solid #252525;
+  border-top: 1px solid transparent;
 }
 
 .notification-badge {
@@ -2552,11 +2594,10 @@ entry.search.command-search:focus-within,
 }
 
 .notification-kind {
-  padding: 1px 8px;
+  padding: 1px 8px 2px 8px;
   border-radius: 999px;
   font-size: 0.72em;
-  font-weight: 700;
-  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .notification-kind.info {
@@ -2570,8 +2611,8 @@ entry.search.command-search:focus-within,
 }
 
 .notification-kind.prompt {
-  color: #e88745;
-  background: #30251d;
+  color: #e6ad87;
+  background: #302118;
 }
 
 .notification-kind.custom {
