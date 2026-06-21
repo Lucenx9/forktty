@@ -1781,7 +1781,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "agent_list",
             annotations: read_only_annotations(),
-            description: "List ForkTTY surfaces with persisted agent session ids. Use before planning manual resume or status/HUD work.",
+            description: "List ForkTTY surfaces with persisted agent session ids, freshness fields, and lifecycle evidence. Use before planning manual resume or status/HUD work.",
             input_schema: object_schema(
                 &[],
                 json!({
@@ -1794,7 +1794,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "agent_health",
             annotations: read_only_annotations(),
-            description: "Check whether persisted ForkTTY agent sessions have a safe provider resume command and provider executable on PATH.",
+            description: "Check whether persisted ForkTTY agent sessions have a safe provider resume command and provider executable on PATH, with lifecycle_evidence correlating persisted lifecycle freshness, the workspace/provider status row, permission mode, and readiness reason.",
             input_schema: object_schema(
                 &[],
                 json!({
@@ -2089,7 +2089,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "status_summary",
             annotations: read_only_annotations(),
-            description: "Return a compact workspace summary with persisted agent sessions carrying source/age metadata and status/progress entries carrying source annotations for statusline/HUD integrations.",
+            description: "Return a compact workspace summary with persisted agent sessions carrying source/age/lifecycle-evidence metadata and status/progress entries carrying source annotations for statusline/HUD integrations.",
             input_schema: object_schema(
                 &[],
                 json!({

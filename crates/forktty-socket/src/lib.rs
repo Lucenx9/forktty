@@ -2919,6 +2919,10 @@ fn agent_session_rows(
                 .map(|workspace| workspace.name.clone())
                 .unwrap_or_default();
             let age_ms = agent_session_age_ms(agent_session.last_activity_ms, observed_at_ms);
+            let statuses = model.list_status(&surface.workspace_id);
+            let status = agent_primary_status(&statuses, agent_session.agent);
+            let lifecycle_evidence =
+                agent_lifecycle_evidence(&agent_session, status, observed_at_ms, None);
             Some(json!({
                 "workspace_id": surface.workspace_id,
                 "workspace_name": workspace_name,
@@ -2934,6 +2938,7 @@ fn agent_session_rows(
                 "observed_at_ms": observed_at_ms,
                 "age_ms": age_ms,
                 "source": "persisted_agent_session",
+                "lifecycle_evidence": lifecycle_evidence,
             }))
         })
         .collect()
@@ -2978,6 +2983,14 @@ fn agent_health_rows_with_path(
                 path,
             );
             let age_ms = agent_session_age_ms(agent_session.last_activity_ms, observed_at_ms);
+            let statuses = model.list_status(&surface.workspace_id);
+            let status = agent_primary_status(&statuses, agent_session.agent);
+            let lifecycle_evidence = agent_lifecycle_evidence(
+                &agent_session,
+                status,
+                observed_at_ms,
+                Some((ready, reason)),
+            );
             Some(json!({
                 "workspace_id": surface.workspace_id,
                 "workspace_name": workspace_name,
@@ -2998,9 +3011,74 @@ fn agent_health_rows_with_path(
                 "program": program,
                 "executable": executable,
                 "argv": argv,
+                "lifecycle_evidence": lifecycle_evidence,
             }))
         })
         .collect()
+}
+
+fn agent_primary_status(statuses: &[StatusEntry], agent: AgentKind) -> Option<&StatusEntry> {
+    statuses
+        .iter()
+        .find(|status| agent_kind_from_status_key(&status.key) == Some(agent))
+}
+
+fn agent_lifecycle_evidence(
+    agent_session: &AgentSession,
+    status: Option<&StatusEntry>,
+    observed_at_ms: u64,
+    readiness: Option<(bool, &str)>,
+) -> Value {
+    let age_ms = agent_session_age_ms(agent_session.last_activity_ms, observed_at_ms);
+    let mut evidence = json!({
+        "source": "persisted_agent_session",
+        "lifecycle": agent_session.lifecycle,
+        "last_activity_ms": agent_session.last_activity_ms,
+        "observed_at_ms": observed_at_ms,
+        "age_ms": age_ms,
+    });
+    if let Some(object) = evidence.as_object_mut() {
+        object.insert(
+            "status_key".to_string(),
+            status
+                .map(|status| Value::String(status.key.clone()))
+                .unwrap_or(Value::Null),
+        );
+        object.insert(
+            "status_value".to_string(),
+            status
+                .map(|status| Value::String(status.value.clone()))
+                .unwrap_or(Value::Null),
+        );
+        object.insert(
+            "status_source".to_string(),
+            status
+                .map(|_| Value::String("model".to_string()))
+                .unwrap_or(Value::Null),
+        );
+        object.insert(
+            "status_scope".to_string(),
+            status
+                .map(|_| Value::String("workspace_provider".to_string()))
+                .unwrap_or(Value::Null),
+        );
+        object.insert(
+            "permission_mode".to_string(),
+            agent_session
+                .permission_mode
+                .clone()
+                .map(Value::String)
+                .unwrap_or(Value::Null),
+        );
+        if let Some((ready, reason)) = readiness {
+            object.insert("ready".to_string(), Value::Bool(ready));
+            object.insert(
+                "readiness_reason".to_string(),
+                Value::String(reason.to_string()),
+            );
+        }
+    }
+    evidence
 }
 
 fn agent_session_age_ms(last_activity_ms: u64, observed_at_ms: u64) -> Value {
@@ -8926,6 +9004,18 @@ mod tests {
         assert_eq!(result["agents"][0]["surface_id"], surface_id);
         assert_eq!(result["agents"][0]["lifecycle"], "running");
         assert_eq!(
+            result["agents"][0]["lifecycle_evidence"]["status_key"],
+            "agent:codex"
+        );
+        assert_eq!(
+            result["agents"][0]["lifecycle_evidence"]["status_value"],
+            "Running"
+        );
+        assert_eq!(
+            result["agent_health"][0]["lifecycle_evidence"]["readiness_reason"],
+            result["agent_health"][0]["reason"]
+        );
+        assert_eq!(
             result["agents"][0]["observed_at_ms"],
             result["status"]["agents"][0]["observed_at_ms"]
         );
@@ -12751,6 +12841,21 @@ mod tests {
         let observed_at_ms = agents[0]["observed_at_ms"].as_u64().unwrap();
         assert!(observed_at_ms >= 1_000);
         assert_eq!(agents[0]["age_ms"], observed_at_ms - 1_000);
+        assert_eq!(
+            agents[0]["lifecycle_evidence"],
+            json!({
+                "source": "persisted_agent_session",
+                "lifecycle": "running",
+                "last_activity_ms": 1_000,
+                "observed_at_ms": observed_at_ms,
+                "age_ms": observed_at_ms - 1_000,
+                "status_key": Value::Null,
+                "status_value": Value::Null,
+                "status_source": Value::Null,
+                "status_scope": Value::Null,
+                "permission_mode": Value::Null,
+            })
+        );
 
         let scoped = dispatch(&state, "agent.list", json!({"workspace_id": workspace_id}))
             .await
@@ -12791,6 +12896,11 @@ mod tests {
         assert_eq!(health[0]["ready"], false);
         assert_eq!(health[0]["reason"], "unsupported_agent");
         assert_eq!(health[0]["argv"], json!([]));
+        assert_eq!(
+            health[0]["lifecycle_evidence"]["readiness_reason"],
+            "unsupported_agent"
+        );
+        assert_eq!(health[0]["lifecycle_evidence"]["ready"], false);
     }
 
     #[test]
@@ -13291,6 +13401,22 @@ mod tests {
         assert_eq!(summary["agents"][0]["session_id"], "codex-session-1");
         assert_eq!(summary["agents"][0]["source"], "persisted_agent_session");
         assert!(summary["agents"][0]["age_ms"].as_u64().is_some());
+        assert_eq!(
+            summary["agents"][0]["lifecycle_evidence"]["status_key"],
+            "agent:codex"
+        );
+        assert_eq!(
+            summary["agents"][0]["lifecycle_evidence"]["status_value"],
+            "Running"
+        );
+        assert_eq!(
+            summary["agents"][0]["lifecycle_evidence"]["status_source"],
+            "model"
+        );
+        assert_eq!(
+            summary["agents"][0]["lifecycle_evidence"]["status_scope"],
+            "workspace_provider"
+        );
         assert_eq!(summary["status"][0]["key"], "agent:codex");
         assert_eq!(summary["status"][0]["value"], "Running");
         assert_eq!(summary["status"][0]["source"], "model");

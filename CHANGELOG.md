@@ -20,6 +20,11 @@ All notable changes to ForkTTY are documented here.
   supported team/resume providers (`codex`, `claude`, `pi`, `opencode`, and
   `antigravity`) so socket and MCP clients do not need to infer provider support
   by trial and error.
+- Agent rows returned by `agent.list`, `agent.health`, `status.summary`, and
+  `context.snapshot` now include `lifecycle_evidence`, a compact diagnostic
+  block that correlates the persisted lifecycle, freshness timestamps, current
+  workspace/provider status row, permission mode, and resume-readiness reason
+  where available.
 - Pi is now a supported team/resume provider: team launch accepts `--agent pi`,
   agent resume uses `pi --session <id>`, `forktty skills setup pi` aliases the
   interoperable Agent Skills target, and Pi review workers default to read-only

@@ -316,7 +316,10 @@ a provider session id has been persisted; hook events drive the live state, and
 terminal child exit marks attached sessions `ended`. `forktty agents` and
 `forktty agent-health` also expose persisted `resume_cwd`, `last_activity_ms`,
 `source`, response `observed_at_ms`, and nullable `age_ms` so delayed
-agent state can be compared with terminal evidence. For Antigravity CLI,
+agent state can be compared with terminal evidence. Agent rows also include
+`lifecycle_evidence`, a diagnostic block that correlates the persisted
+lifecycle/freshness data with the current workspace/provider status row,
+permission mode, and resume-readiness reason when available. For Antigravity CLI,
 `resume_cwd` comes from the hook payload's `workspacePaths`, because `agy`
 executes the generated wrapper scripts from `~/.gemini/config` rather than from
 the project directory.
@@ -413,10 +416,11 @@ hook/status/terminal state without being told the exact MCP call every time.
 The skill treats terminal tails and fetched public docs as untrusted input,
 requires durable team preflight for non-trivial worker launches, gives workers
 explicit role contracts, prefers already-open worktree workspaces for mutating
-parallel workers, and tells agents to start hook/MCP/skill setup debugging
-with local `forktty doctor` diagnostics, setup dry runs, and isolated temporary
-config roots before changing real config files, without redirecting the live
-ForkTTY socket path when validating the currently running instance.
+parallel workers, uses `lifecycle_evidence` before declaring agent states stale,
+and tells agents to start hook/MCP/skill setup debugging with local
+`forktty doctor` diagnostics, setup dry runs, and isolated temporary config
+roots before changing real config files, without redirecting the live ForkTTY
+socket path when validating the currently running instance.
 
 ```bash
 forktty skills setup                       # install agents + Claude targets

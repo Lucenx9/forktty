@@ -13042,6 +13042,7 @@ mod tests {
             "workflow_plan_set",
             "team_task_upsert",
             "agent_health",
+            "lifecycle_evidence",
             "forktty hooks test codex",
             "FORKTTY_SOCKET_PATH",
             "separate temporary instance",
