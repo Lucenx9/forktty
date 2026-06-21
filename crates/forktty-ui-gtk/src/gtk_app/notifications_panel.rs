@@ -39,6 +39,128 @@ pub(super) fn latest_openable_notification(state: &SocketAppState) -> Option<Not
         .find(|notification| notification_target_exists(state, notification))
 }
 
+pub(super) fn notification_count_label(count: usize) -> String {
+    match count {
+        0 => "All clear".to_string(),
+        1 => "1 notification".to_string(),
+        count => format!("{count} notifications"),
+    }
+}
+
+fn notification_openable_count(state: &SocketAppState) -> usize {
+    let notifications = state
+        .model
+        .lock()
+        .ok()
+        .map(|model| model.list_notifications())
+        .unwrap_or_default();
+    notifications
+        .iter()
+        .filter(|notification| notification_target_exists(state, notification))
+        .count()
+}
+
+pub(super) fn open_latest_button_visible(state: &SocketAppState) -> bool {
+    notification_openable_count(state) > 1
+}
+
+fn notification_workspace_id(
+    model: &WorkspaceModel,
+    notification: &NotificationItem,
+) -> Option<String> {
+    if let Some(surface_id) = notification.surface_id.as_deref() {
+        return model
+            .surface(surface_id)
+            .map(|surface| surface.workspace_id.clone());
+    }
+    notification
+        .workspace_id
+        .as_deref()
+        .and_then(|workspace_id| model.workspace_id_for(WorkspaceSelector::Id(workspace_id)))
+}
+
+fn notification_targets_active_workspace(
+    state: &SocketAppState,
+    notification: &NotificationItem,
+) -> bool {
+    let Ok(model) = state.model.lock() else {
+        return false;
+    };
+    let Some(active_workspace_id) = model.active_workspace_id() else {
+        return false;
+    };
+    notification_workspace_id(&model, notification).as_deref() == Some(active_workspace_id.as_str())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct NotificationPanelRow {
+    pub(super) notification: NotificationItem,
+    pub(super) section_label: &'static str,
+    pub(super) current_workspace: bool,
+    pub(super) openable: bool,
+}
+
+pub(super) fn notification_panel_rows(
+    state: &SocketAppState,
+    notifications: &[NotificationItem],
+) -> Vec<NotificationPanelRow> {
+    let mut rows = notifications
+        .iter()
+        .enumerate()
+        .map(|(index, notification)| {
+            let openable = notification_target_exists(state, notification);
+            let current_workspace = notification_targets_active_workspace(state, notification);
+            let (priority, section_label) =
+                if notification.kind == NotificationKind::Prompt && openable {
+                    (0, "Needs action")
+                } else if current_workspace {
+                    (1, "This workspace")
+                } else {
+                    (2, "History")
+                };
+            (
+                priority,
+                index,
+                NotificationPanelRow {
+                    notification: notification.clone(),
+                    section_label,
+                    current_workspace,
+                    openable,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)));
+    rows.into_iter().map(|(_, _, row)| row).collect()
+}
+
+pub(super) fn notification_panel_section_counts(
+    rows: &[NotificationPanelRow],
+) -> BTreeMap<&'static str, usize> {
+    let mut counts = BTreeMap::new();
+    for row in rows {
+        *counts.entry(row.section_label).or_insert(0) += 1;
+    }
+    counts
+}
+
+pub(super) fn notification_panel_section_should_hide_after_dismiss(
+    counts: &mut BTreeMap<&'static str, usize>,
+    section_label: &'static str,
+) -> bool {
+    match counts.get_mut(section_label) {
+        Some(count) if *count > 1 => {
+            *count -= 1;
+            false
+        }
+        Some(count) if *count == 1 => {
+            *count = 0;
+            true
+        }
+        _ => false,
+    }
+}
+
 pub(super) fn notification_target_label(
     state: &SocketAppState,
     notification: &NotificationItem,
@@ -46,17 +168,20 @@ pub(super) fn notification_target_label(
     let model = state.model.lock().ok()?;
     if let Some(surface_id) = notification.surface_id.as_deref() {
         if let Some(surface) = model.surface(surface_id) {
-            let workspace_name = model
+            let workspace = model
                 .list_workspaces()
                 .into_iter()
                 .find(|workspace| workspace.id == surface.workspace_id)
-                .map(|workspace| workspace.name)
-                .unwrap_or_else(|| surface.workspace_id.clone());
-            return Some(format!(
-                "{} · {}",
-                workspace_name,
-                compact_path(&surface.cwd)
-            ));
+                .map(|workspace| (workspace.id, workspace.name));
+            let (workspace_id, workspace_name) = workspace
+                .unwrap_or_else(|| (surface.workspace_id.clone(), surface.workspace_id.clone()));
+            let target_name =
+                if model.active_workspace_id().as_deref() == Some(workspace_id.as_str()) {
+                    "This workspace"
+                } else {
+                    workspace_name.as_str()
+                };
+            return Some(format!("{} · {}", target_name, compact_path(&surface.cwd)));
         }
     }
     notification
@@ -68,11 +193,13 @@ pub(super) fn notification_target_label(
                 .into_iter()
                 .find(|workspace| workspace.id == workspace_id)
                 .map(|workspace| {
-                    format!(
-                        "{} · {}",
-                        workspace.name,
-                        compact_path(&workspace.working_dir)
-                    )
+                    let target_name =
+                        if model.active_workspace_id().as_deref() == Some(workspace.id.as_str()) {
+                            "This workspace"
+                        } else {
+                            workspace.name.as_str()
+                        };
+                    format!("{} · {}", target_name, compact_path(&workspace.working_dir))
                 })
         })
 }
@@ -341,19 +468,7 @@ pub(super) fn show_notification_panel(
     header_box.append(&title);
 
     let subtitle = gtk::Label::builder()
-        .label(if has_notifications {
-            format!(
-                "{} {}",
-                notifications.len(),
-                if notifications.len() == 1 {
-                    "notification"
-                } else {
-                    "notifications"
-                }
-            )
-        } else {
-            "All clear".to_string()
-        })
+        .label(notification_count_label(notifications.len()))
         .xalign(0.0)
         .build();
     subtitle.add_css_class("ft-dialog-subtitle");
@@ -369,10 +484,10 @@ pub(super) fn show_notification_panel(
     list.add_css_class("notification-list");
     list.update_property(&[gtk::accessible::Property::Label("Notifications list")]);
 
-    let jump = gtk::Button::with_label("Open");
+    let jump = gtk::Button::with_label("Open Latest");
     jump.add_css_class("settings-inline-action");
     jump.add_css_class("subtle");
-    let has_openable_notification = latest_openable_notification(state).is_some();
+    let has_openable_notification = open_latest_button_visible(state);
     jump.set_sensitive(has_openable_notification);
     jump.set_visible(has_openable_notification);
     jump.set_tooltip_text(Some("Open the latest notification with a workspace target"));
@@ -420,7 +535,7 @@ pub(super) fn show_notification_panel(
         let state = state.clone();
         let jump = jump.clone();
         Rc::new(move || {
-            let openable = latest_openable_notification(&state).is_some();
+            let openable = open_latest_button_visible(&state);
             jump.set_sensitive(openable);
             jump.set_visible(openable);
         })
@@ -434,7 +549,30 @@ pub(super) fn show_notification_panel(
             .vexpand(true)
             .child(&list)
             .build();
-        for notification in notifications.iter().rev() {
+        let rows = notification_panel_rows(state, &notifications);
+        let section_counts = Rc::new(RefCell::new(notification_panel_section_counts(&rows)));
+        let section_headers = Rc::new(RefCell::new(
+            BTreeMap::<&'static str, gtk::ListBoxRow>::new(),
+        ));
+        let mut previous_section = None;
+        for panel_row in rows {
+            if previous_section != Some(panel_row.section_label) {
+                let section_row = gtk::ListBoxRow::new();
+                section_row.set_selectable(false);
+                section_row.set_activatable(false);
+                let section = gtk::Label::builder()
+                    .label(panel_row.section_label)
+                    .xalign(0.0)
+                    .build();
+                section.add_css_class("notification-section");
+                section_row.set_child(Some(&section));
+                list.append(&section_row);
+                section_headers
+                    .borrow_mut()
+                    .insert(panel_row.section_label, section_row);
+                previous_section = Some(panel_row.section_label);
+            }
+            let notification = &panel_row.notification;
             let row = gtk::ListBoxRow::new();
             row.set_selectable(false);
             row.set_activatable(false);
@@ -446,6 +584,12 @@ pub(super) fn show_notification_panel(
             card.add_css_class("notification-row");
             if !notification.read {
                 card.add_css_class("unread");
+            }
+            if panel_row.current_workspace {
+                card.add_css_class("current");
+            }
+            if panel_row.section_label == "Needs action" {
+                card.add_css_class("actionable");
             }
 
             let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -477,7 +621,7 @@ pub(super) fn show_notification_panel(
             top.append(&badge);
             top.append(&title);
             top.append(&age);
-            if notification_target_exists(state, notification) {
+            if panel_row.openable {
                 let open = gtk::Button::with_label("Open");
                 open.add_css_class("flat");
                 open.add_css_class("notification-open");
@@ -508,6 +652,9 @@ pub(super) fn show_notification_panel(
             let controller_for_dismiss = controller.clone();
             let notification_for_dismiss = notification.clone();
             let notification_id = notification.id.clone();
+            let section_for_dismiss = panel_row.section_label;
+            let section_counts_for_dismiss = section_counts.clone();
+            let section_headers_for_dismiss = section_headers.clone();
             let row_for_dismiss = row.clone();
             let subtitle_for_dismiss = subtitle.clone();
             let show_empty_for_dismiss = show_empty_state.clone();
@@ -529,17 +676,27 @@ pub(super) fn show_notification_panel(
                         controller_for_dismiss.as_ref(),
                         &notification_for_dismiss,
                     );
+                    let hide_section = {
+                        let mut counts = section_counts_for_dismiss.borrow_mut();
+                        notification_panel_section_should_hide_after_dismiss(
+                            &mut counts,
+                            section_for_dismiss,
+                        )
+                    };
+                    if hide_section {
+                        if let Some(section) = section_headers_for_dismiss
+                            .borrow()
+                            .get(section_for_dismiss)
+                        {
+                            section.set_visible(false);
+                        }
+                    }
                 }
                 row_for_dismiss.set_visible(false);
                 if remaining == 0 {
                     show_empty_for_dismiss();
                 } else {
-                    let label = if remaining == 1 {
-                        "1 notification".to_string()
-                    } else {
-                        format!("{remaining} notifications")
-                    };
-                    subtitle_for_dismiss.set_label(&label);
+                    subtitle_for_dismiss.set_label(&notification_count_label(remaining));
                     refresh_jump_for_dismiss();
                 }
             });

@@ -2441,6 +2441,15 @@ entry.search.command-search:focus-within,
   padding: 0;
 }
 
+.notification-section {
+  color: #777777;
+  font-size: 0.72em;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 5px 2px 4px 2px;
+  letter-spacing: 0;
+}
+
 .notification-row {
   padding: 8px 9px;
   border: 1px solid #292929;
@@ -2448,10 +2457,35 @@ entry.search.command-search:focus-within,
   background: #1b1b1b;
 }
 
+.notification-row.actionable {
+  border-color: #4a3525;
+  background: #1d1916;
+}
+
+.notification-row.current {
+  border-color: #3a3a3a;
+  box-shadow: inset 2px 0 0 #c8a75d;
+}
+
 .notification-row.unread {
   border-color: #292929;
   background: #1b1b1b;
   box-shadow: inset 3px 0 0 #e88745;
+}
+
+.notification-row.actionable.unread {
+  border-color: #4a3525;
+  background: #1d1916;
+}
+
+.notification-row.current.unread {
+  border-color: #3a3a3a;
+  box-shadow: inset 3px 0 0 #e88745, inset 5px 0 0 #c8a75d;
+}
+
+.notification-row.current.actionable.unread {
+  border-color: #4a3525;
+  background: #1d1916;
 }
 
 .notification-title {
@@ -2473,6 +2507,12 @@ entry.search.command-search:focus-within,
 .notification-target {
   color: #626262;
   font-size: 0.78em;
+}
+
+.notification-actions {
+  margin-top: 2px;
+  padding-top: 5px;
+  border-top: 1px solid #252525;
 }
 
 .notification-badge {
@@ -2523,16 +2563,6 @@ entry.search.command-search:focus-within,
   background: #252525;
 }
 
-.notification-kind.success {
-  color: #7ca982;
-  background: #1f2a22;
-}
-
-.notification-kind.warning {
-  color: #c8a75d;
-  background: #2c2619;
-}
-
 .notification-kind.error {
   color: #d36b6b;
   background: #2f1f1f;
@@ -2579,6 +2609,15 @@ entry.search.command-search:focus-within,
   outline: none;
 }
 
+.agent-section {
+  color: #777777;
+  font-size: 0.72em;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 4px 2px 2px 2px;
+  letter-spacing: 0;
+}
+
 .agent-row {
   padding: 12px 12px 12px 14px;
   border: 1px solid #292929;
@@ -2601,6 +2640,21 @@ entry.search.command-search:focus-within,
   border-color: alpha(#e88745, 0.48);
   background: #1d1916;
   box-shadow: inset 2px 0 0 alpha(#e88745, 0.82);
+}
+
+.agent-row.current {
+  border-color: #4a3b30;
+  box-shadow: inset 2px 0 0 #c8a75d;
+}
+
+.agent-row.needs-input.current {
+  border-color: alpha(#e88745, 0.62);
+  box-shadow: inset 2px 0 0 alpha(#e88745, 0.88);
+}
+
+.agent-row.compact {
+  padding-top: 9px;
+  padding-bottom: 9px;
 }
 
 .agent-row-text {
@@ -2627,6 +2681,11 @@ entry.search.command-search:focus-within,
 .agent-title {
   color: #adadad;
   font-size: 0.88em;
+}
+
+.agent-title.compact {
+  color: #8a8a8a;
+  margin-left: 2px;
 }
 
 .agent-meta {
@@ -2693,6 +2752,30 @@ entry.agent-reply {
 .agent-lifecycle.ended {
   color: #8a8a8a;
   background: #232323;
+}
+
+.agent-current,
+.agent-permission {
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.68em;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.agent-current {
+  color: #c8a75d;
+  background: #2c2619;
+}
+
+.agent-permission {
+  color: #9a9a9a;
+  background: #252525;
+}
+
+.agent-permission.risky {
+  color: #d36b6b;
+  background: #2f1f1f;
 }
 
 button.agent-primary-action,

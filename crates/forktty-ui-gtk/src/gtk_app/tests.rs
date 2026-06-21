@@ -833,6 +833,190 @@ fn open_notification_target_keeps_previous_workspace_when_spawn_fails() {
 }
 
 #[test]
+fn notification_count_label_formats_empty_singular_and_plural() {
+    assert_eq!(notification_count_label(0), "All clear");
+    assert_eq!(notification_count_label(1), "1 notification");
+    assert_eq!(notification_count_label(2), "2 notifications");
+}
+
+#[test]
+fn notification_open_latest_requires_multiple_openable_notifications() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let surface_id = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", "/tmp/project");
+        let surface_id = workspace.focused_surface_id.clone();
+        model.create_notification(
+            "Needs input",
+            "First prompt",
+            NotificationKind::Prompt,
+            Some(workspace.id.clone()),
+            Some(surface_id.clone()),
+        );
+        surface_id
+    };
+
+    assert!(!open_latest_button_visible(&state));
+
+    {
+        let mut model = model.lock().unwrap();
+        let workspace_id = model.active_workspace_id().unwrap();
+        model.create_notification(
+            "Needs input again",
+            "Second prompt",
+            NotificationKind::Prompt,
+            Some(workspace_id),
+            Some(surface_id),
+        );
+    }
+
+    assert!(open_latest_button_visible(&state));
+}
+
+#[test]
+fn notification_panel_rows_prioritize_prompts_and_current_workspace() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (current_info, other_prompt, stale_prompt) = {
+        let mut model = model.lock().unwrap();
+        let other = model.create_workspace("other", "/tmp/other");
+        let other_surface = other.focused_surface_id.clone();
+        let stale_surface = model
+            .split_surface(&other_surface, SplitAxis::Horizontal)
+            .unwrap()
+            .id;
+        let current = model.create_workspace("current", "/tmp/current");
+        let current_info = model.create_notification(
+            "Current info",
+            "Current workspace update",
+            NotificationKind::Info,
+            Some(current.id.clone()),
+            None,
+        );
+        let other_prompt = model.create_notification(
+            "Other prompt",
+            "Needs input elsewhere",
+            NotificationKind::Prompt,
+            Some(other.id.clone()),
+            Some(other_surface.clone()),
+        );
+        let stale_prompt = model.create_notification(
+            "Stale prompt",
+            "Closed pane",
+            NotificationKind::Prompt,
+            Some(other.id.clone()),
+            Some(stale_surface.clone()),
+        );
+        model.close_surface(&stale_surface).unwrap();
+        (current_info, other_prompt, stale_prompt)
+    };
+    let notifications = model.lock().unwrap().list_notifications();
+
+    let rows = notification_panel_rows(&state, &notifications);
+
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.notification.id.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            other_prompt.id.as_str(),
+            current_info.id.as_str(),
+            stale_prompt.id.as_str()
+        ]
+    );
+    assert_eq!(rows[0].section_label, "Needs action");
+    assert_eq!(rows[1].section_label, "This workspace");
+    assert_eq!(rows[2].section_label, "History");
+    let counts = notification_panel_section_counts(&rows);
+    assert_eq!(counts.get("Needs action"), Some(&1));
+    assert_eq!(counts.get("This workspace"), Some(&1));
+    assert_eq!(counts.get("History"), Some(&1));
+}
+
+#[test]
+fn notification_panel_section_hides_only_after_last_dismiss() {
+    let mut counts = BTreeMap::from([("Needs action", 2), ("History", 1)]);
+
+    assert!(!notification_panel_section_should_hide_after_dismiss(
+        &mut counts,
+        "Needs action"
+    ));
+    assert_eq!(counts.get("Needs action"), Some(&1));
+    assert!(notification_panel_section_should_hide_after_dismiss(
+        &mut counts,
+        "Needs action"
+    ));
+    assert_eq!(counts.get("Needs action"), Some(&0));
+    assert!(!notification_panel_section_should_hide_after_dismiss(
+        &mut counts,
+        "Needs action"
+    ));
+    assert!(notification_panel_section_should_hide_after_dismiss(
+        &mut counts,
+        "History"
+    ));
+    assert!(!notification_panel_section_should_hide_after_dismiss(
+        &mut counts,
+        "Missing"
+    ));
+}
+
+#[test]
+fn notification_target_label_marks_current_workspace() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (current_notification, other_notification) = {
+        let mut model = model.lock().unwrap();
+        let other = model.create_workspace("other", "/tmp/other");
+        let current = model.create_workspace("current", "/tmp/current");
+        let current_notification = model.create_notification(
+            "Current",
+            "Current workspace",
+            NotificationKind::Info,
+            Some(current.id.clone()),
+            None,
+        );
+        let other_notification = model.create_notification(
+            "Other",
+            "Other workspace",
+            NotificationKind::Info,
+            Some(other.id.clone()),
+            None,
+        );
+        (current_notification, other_notification)
+    };
+
+    assert!(notification_target_label(&state, &current_notification)
+        .unwrap()
+        .starts_with("This workspace · "));
+    assert!(notification_target_label(&state, &other_notification)
+        .unwrap()
+        .starts_with("other · "));
+}
+
+#[test]
 fn close_active_workspace_keeps_a_terminal_when_closing_last_workspace() {
     let project_dir = tempfile::tempdir().unwrap();
     let project_cwd = project_dir.path().to_path_buf();
@@ -1153,12 +1337,15 @@ fn agent_hud_snapshot_prioritizes_attention_and_formats_rows() {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].agent_label, "Claude");
     assert_eq!(rows[0].workspace_name, "review");
+    assert!(rows[0].current);
+    assert_eq!(rows[0].section_label, "Needs you");
     assert_eq!(rows[0].lifecycle_label, "Needs input");
     assert!(rows[0].needs_input);
     assert_eq!(
         rows[0].permission_mode.as_deref(),
         Some("bypassPermissions")
     );
+    assert!(rows[0].permission_mode_risky);
     assert_eq!(rows[0].session_short, "a5643754");
     assert_eq!(rows[0].last_activity_label, "3m ago");
     assert!(rows[0].can_resume);
@@ -1168,6 +1355,8 @@ fn agent_hud_snapshot_prioritizes_attention_and_formats_rows() {
     );
 
     assert_eq!(rows[1].agent_label, "Codex");
+    assert!(!rows[1].current);
+    assert_eq!(rows[1].section_label, "Idle");
     assert_eq!(rows[1].surface_title, "Codex session");
     assert_eq!(rows[1].lifecycle_label, "Idle");
     assert_eq!(rows[1].last_activity_label, "5m ago");
@@ -1175,6 +1364,104 @@ fn agent_hud_snapshot_prioritizes_attention_and_formats_rows() {
     assert_eq!(rows[1].attention_hint, None);
     // The unread output flag rides through to the row.
     assert!(rows[1].unread);
+}
+
+#[test]
+fn agent_hud_ended_rows_are_compact_done_rows() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp/project");
+    let surface_id = workspace.focused_surface_id.clone();
+    assert!(model.set_surface_agent_session(
+        &surface_id,
+        forktty_core::AgentKind::Codex,
+        "019ebd1f-870e-7053-9765-11facbd295d2",
+    ));
+    assert!(model.set_surface_agent_session_lifecycle(
+        &surface_id,
+        forktty_core::AgentSessionLifecycle::Ended,
+    ));
+
+    let rows = agent_hud_rows(&model, 1_700_000_300_000);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].section_label, "Done");
+    assert!(rows[0].compact);
+    assert!(rows[0].can_resume);
+}
+
+#[test]
+fn agent_hud_risky_permission_modes_use_pills_outside_needs_input() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp/project");
+    let surface_id = workspace.focused_surface_id.clone();
+    assert!(model.set_surface_agent_session(
+        &surface_id,
+        forktty_core::AgentKind::ClaudeCode,
+        "a5643754-0a80-45bd-b591-c402dfdf16e1",
+    ));
+    assert!(model.set_surface_agent_session_lifecycle(
+        &surface_id,
+        forktty_core::AgentSessionLifecycle::Running,
+    ));
+    assert!(model.set_surface_agent_session_permission_mode(&surface_id, "bypassPermissions"));
+
+    let rows = agent_hud_rows(&model, 1_700_000_300_000);
+
+    assert_eq!(rows.len(), 1);
+    assert!(!rows[0].needs_input);
+    assert!(rows[0].permission_mode_risky);
+    assert_eq!(
+        agent_permission_pill_mode(&rows[0]),
+        Some("bypassPermissions")
+    );
+    assert!(!agent_meta_line(&rows[0]).contains("mode bypassPermissions"));
+}
+
+#[test]
+fn agent_hud_safe_permission_modes_remain_meta_outside_needs_input() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp/project");
+    let surface_id = workspace.focused_surface_id.clone();
+    assert!(model.set_surface_agent_session(
+        &surface_id,
+        forktty_core::AgentKind::ClaudeCode,
+        "a5643754-0a80-45bd-b591-c402dfdf16e1",
+    ));
+    assert!(model.set_surface_agent_session_lifecycle(
+        &surface_id,
+        forktty_core::AgentSessionLifecycle::Running,
+    ));
+    assert!(model.set_surface_agent_session_permission_mode(&surface_id, "dontAsk"));
+
+    let rows = agent_hud_rows(&model, 1_700_000_300_000);
+
+    assert_eq!(rows.len(), 1);
+    assert!(!rows[0].permission_mode_risky);
+    assert_eq!(agent_permission_pill_mode(&rows[0]), None);
+    assert!(agent_meta_line(&rows[0]).contains("mode dontAsk"));
+}
+
+#[test]
+fn agent_surface_for_row_index_ignores_section_headers() {
+    let row_targets = vec![
+        None,
+        Some("surface-1".to_string()),
+        None,
+        Some("surface-2".to_string()),
+    ];
+
+    assert_eq!(agent_surface_for_row_index(0, &row_targets), None);
+    assert_eq!(
+        agent_surface_for_row_index(1, &row_targets),
+        Some("surface-1")
+    );
+    assert_eq!(agent_surface_for_row_index(2, &row_targets), None);
+    assert_eq!(
+        agent_surface_for_row_index(3, &row_targets),
+        Some("surface-2")
+    );
+    assert_eq!(agent_surface_for_row_index(-1, &row_targets), None);
+    assert_eq!(agent_surface_for_row_index(4, &row_targets), None);
 }
 
 #[test]
@@ -3847,6 +4134,17 @@ fn notification_panel_truncated_labels_keep_full_tooltips() {
 
     assert!(source.contains(".tooltip_text(&notification.title)"));
     assert!(source.contains(".tooltip_text(&target)"));
+}
+
+#[test]
+fn notification_panel_css_only_styles_real_kind_classes() {
+    let source = include_str!("../style.css");
+
+    assert!(source.contains(".notification-actions"));
+    assert!(source.contains(".notification-row.actionable.unread"));
+    assert!(source.contains(".notification-row.current.unread"));
+    assert!(!source.contains(".notification-kind.success"));
+    assert!(!source.contains(".notification-kind.warning"));
 }
 
 #[test]

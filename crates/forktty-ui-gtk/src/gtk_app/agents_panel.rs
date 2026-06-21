@@ -9,13 +9,17 @@ pub(super) struct AgentHudRow {
     pub(super) workspace_id: String,
     pub(super) workspace_name: String,
     pub(super) agent_label: &'static str,
+    pub(super) section_label: &'static str,
     pub(super) lifecycle_label: &'static str,
     pub(super) lifecycle_class: &'static str,
+    pub(super) current: bool,
+    pub(super) compact: bool,
     pub(super) needs_input: bool,
     pub(super) surface_title: String,
     pub(super) cwd_label: String,
     pub(super) session_short: String,
     pub(super) permission_mode: Option<String>,
+    pub(super) permission_mode_risky: bool,
     pub(super) last_activity_label: String,
     pub(super) can_resume: bool,
     /// The surface has produced output the user has not looked at since last
@@ -36,6 +40,9 @@ pub(super) fn agent_hud_rows(model: &WorkspaceModel, now_ms: u64) -> Vec<AgentHu
         .into_iter()
         .map(|workspace| (workspace.id.clone(), workspace))
         .collect::<BTreeMap<_, _>>();
+    let current_surface_id = model
+        .active_workspace()
+        .map(|workspace| workspace.focused_surface_id.clone());
     let notifications = model.list_notifications();
     let mut rows = model
         .list_surfaces(None)
@@ -43,6 +50,7 @@ pub(super) fn agent_hud_rows(model: &WorkspaceModel, now_ms: u64) -> Vec<AgentHu
         .filter_map(|surface| {
             let agent_session = surface.agent_session.clone()?;
             let workspace = workspaces.get(&surface.workspace_id)?;
+            let compact = agent_session.lifecycle == forktty_core::AgentSessionLifecycle::Ended;
             // Only the persisted cwd, never the disk-walking Codex fallback:
             // this runs for every row on the panel's one-second refresh, and
             // `codex_session_cwd` scans `~/.codex/sessions` from disk — too
@@ -60,6 +68,10 @@ pub(super) fn agent_hud_rows(model: &WorkspaceModel, now_ms: u64) -> Vec<AgentHu
                 lifecycle_presentation(agent_session.lifecycle);
             let needs_input =
                 agent_session.lifecycle == forktty_core::AgentSessionLifecycle::NeedsInput;
+            let permission_mode_risky = agent_session
+                .permission_mode
+                .as_deref()
+                .is_some_and(permission_mode_is_risky);
             let attention_hint = needs_input
                 .then(|| {
                     notifications
@@ -79,13 +91,17 @@ pub(super) fn agent_hud_rows(model: &WorkspaceModel, now_ms: u64) -> Vec<AgentHu
                     workspace_id: surface.workspace_id.clone(),
                     workspace_name: workspace.name.clone(),
                     agent_label: agent_kind_label(agent_session.agent),
+                    section_label: lifecycle_section_label(agent_session.lifecycle),
                     lifecycle_label,
                     lifecycle_class,
+                    current: current_surface_id.as_deref() == Some(surface.id.as_str()),
+                    compact,
                     needs_input,
                     surface_title: surface_title(&surface),
                     cwd_label: compact_path(&surface.cwd),
                     session_short: short_session_id(&agent_session.session_id),
                     permission_mode: agent_session.permission_mode.clone(),
+                    permission_mode_risky,
                     last_activity_label: last_activity_label(
                         agent_session.last_activity_ms,
                         now_ms,
@@ -136,12 +152,14 @@ pub(super) fn refresh_agent_indicator(
 ) {
     let count = agent_attention_count(state);
     if count == 0 {
+        button.remove_css_class("needs-attention");
         badge.set_visible(false);
         badge.set_label("");
         button.set_tooltip_text(Some("Agents"));
         set_accessible_button_text(button, "Agents", None);
         return;
     }
+    button.add_css_class("needs-attention");
     badge.set_label(&count.to_string());
     badge.set_visible(true);
     let label = if count == 1 {
@@ -280,19 +298,23 @@ impl AgentPanelUi {
             .build();
         list.add_css_class("agent-list");
         list.update_property(&[gtk::accessible::Property::Label("Agents list")]);
+        let mut row_targets = Vec::new();
+        let mut previous_section = None;
         for row in rows {
+            if previous_section != Some(row.section_label) {
+                append_agent_section_header(&list, row.section_label);
+                row_targets.push(None);
+                previous_section = Some(row.section_label);
+            }
             append_agent_row(&list, self, row, tail_labels);
+            row_targets.push(Some(row.surface_id.clone()));
         }
         // Enter (or a click outside the buttons) on a row focuses that agent.
-        let surface_ids: Vec<String> = rows.iter().map(|row| row.surface_id.clone()).collect();
         let state = self.state.clone();
         let controller = self.controller.clone();
         let dialog = self.dialog.clone();
         list.connect_row_activated(move |_, row| {
-            let Ok(index) = usize::try_from(row.index()) else {
-                return;
-            };
-            let Some(surface_id) = surface_ids.get(index) else {
+            let Some(surface_id) = agent_surface_for_row_index(row.index(), &row_targets) else {
                 return;
             };
             if open_agent_surface(&state, surface_id, controller.as_ref()) {
@@ -305,6 +327,24 @@ impl AgentPanelUi {
             .child(&list)
             .build()
     }
+}
+
+fn append_agent_section_header(list: &gtk::ListBox, label: &'static str) {
+    let row = gtk::ListBoxRow::new();
+    row.set_selectable(false);
+    row.set_activatable(false);
+    let header = gtk::Label::builder().label(label).xalign(0.0).build();
+    header.add_css_class("agent-section");
+    row.set_child(Some(&header));
+    list.append(&row);
+}
+
+pub(super) fn agent_surface_for_row_index(
+    row_index: i32,
+    row_targets: &[Option<String>],
+) -> Option<&str> {
+    let index = usize::try_from(row_index).ok()?;
+    row_targets.get(index)?.as_deref()
 }
 
 pub(super) fn show_agent_panel(
@@ -467,6 +507,12 @@ fn append_agent_row(
     list_row.set_activatable(true);
     let container = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     container.add_css_class("agent-row");
+    if row.current {
+        container.add_css_class("current");
+    }
+    if row.compact {
+        container.add_css_class("compact");
+    }
     if row.needs_input {
         container.add_css_class("needs-input");
     }
@@ -489,6 +535,24 @@ fn append_agent_row(
     lifecycle.add_css_class(row.lifecycle_class);
     top.append(&agent);
     top.append(&lifecycle);
+    if row.current {
+        let current = gtk::Label::builder().label("Current").build();
+        current.add_css_class("agent-current");
+        current.set_tooltip_text(Some("This agent is in the focused pane"));
+        top.append(&current);
+    }
+    if let Some(permission_mode) = agent_permission_pill_mode(row) {
+        let permission = gtk::Label::builder().label(permission_mode).build();
+        permission.add_css_class("agent-permission");
+        if row.permission_mode_risky {
+            permission.add_css_class("risky");
+            permission
+                .set_tooltip_text(Some(&format!("Permission mode: {permission_mode} (risky)")));
+        } else {
+            permission.set_tooltip_text(Some(&format!("Permission mode: {permission_mode}")));
+        }
+        top.append(&permission);
+    }
     if row.unread {
         let unread = gtk::Label::builder().label("●").build();
         unread.add_css_class("agent-unread");
@@ -519,17 +583,23 @@ fn append_agent_row(
         .visible(false)
         .build();
     tail.add_css_class("agent-tail");
-    tail_labels.insert(row.surface_id.clone(), tail.clone());
 
-    text.append(&top);
-    text.append(&title);
-    text.append(&meta);
-    text.append(&tail);
+    if row.compact {
+        title.add_css_class("compact");
+        top.append(&title);
+        text.append(&top);
+    } else {
+        tail_labels.insert(row.surface_id.clone(), tail.clone());
+        text.append(&top);
+        text.append(&title);
+        text.append(&meta);
+        text.append(&tail);
+    }
 
     // A waiting agent can be answered without leaving the HUD: the entry
     // types the reply (plus Enter) straight into the agent's terminal. The
     // hook-driven lifecycle flip back to Running then removes the entry.
-    if row.needs_input && ui.controller.is_some() {
+    if row.needs_input && !row.compact && ui.controller.is_some() {
         let reply = gtk::Entry::builder()
             .placeholder_text("Reply and press Enter...")
             .build();
@@ -720,16 +790,42 @@ fn agent_panel_subtitle(total: usize, needs_input: usize) -> String {
     )
 }
 
-fn agent_meta_line(row: &AgentHudRow) -> String {
+pub(super) fn agent_meta_line(row: &AgentHudRow) -> String {
     let mut parts = vec![
         row.cwd_label.clone(),
         format!("session {}", row.session_short),
         row.last_activity_label.clone(),
     ];
-    if let Some(permission_mode) = row.permission_mode.as_deref() {
-        parts.push(format!("mode {permission_mode}"));
+    if agent_permission_pill_mode(row).is_none() {
+        if let Some(permission_mode) = row.permission_mode.as_deref() {
+            parts.push(format!("mode {permission_mode}"));
+        }
     }
     parts.join(" · ")
+}
+
+pub(super) fn agent_permission_pill_mode(row: &AgentHudRow) -> Option<&str> {
+    row.permission_mode
+        .as_deref()
+        .filter(|_| row.needs_input || row.permission_mode_risky)
+}
+
+fn permission_mode_is_risky(permission_mode: &str) -> bool {
+    matches!(
+        permission_mode,
+        "acceptEdits" | "bypassPermissions" | "dangerously-skip-permissions"
+    )
+}
+
+fn lifecycle_section_label(lifecycle: forktty_core::AgentSessionLifecycle) -> &'static str {
+    match lifecycle {
+        forktty_core::AgentSessionLifecycle::NeedsInput => "Needs you",
+        forktty_core::AgentSessionLifecycle::Running => "Working",
+        forktty_core::AgentSessionLifecycle::Idle
+        | forktty_core::AgentSessionLifecycle::Suspended
+        | forktty_core::AgentSessionLifecycle::Unknown => "Idle",
+        forktty_core::AgentSessionLifecycle::Ended => "Done",
+    }
 }
 
 fn agent_kind_label(agent: forktty_core::AgentKind) -> &'static str {
