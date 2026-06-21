@@ -7234,7 +7234,8 @@ fn build_skill_remove_plan(spec: &'static SkillTargetSpec) -> CliResult<SkillRem
 // with toml_edit to preserve comments, ordering, and formatting; a serde
 // round-trip would silently destroy them.
 fn merge_codex_mcp_config(path: &Path, launcher: &Path) -> CliResult<(bool, String)> {
-    let existing = read_text_config(path, "codex mcp config")?;
+    let existing =
+        read_text_config_with_limit(path, "codex mcp config", MAX_MCP_CONFIG_SIZE_BYTES)?;
     let mut doc = parse_toml_document(existing.as_deref().unwrap_or(""), path)?;
     if doc
         .get("mcp_servers")
@@ -7263,7 +7264,9 @@ fn merge_codex_mcp_config(path: &Path, launcher: &Path) -> CliResult<(bool, Stri
 }
 
 fn remove_codex_mcp_config(path: &Path) -> CliResult<McpRemoveAction> {
-    let Some(text) = read_text_config(path, "codex mcp config")? else {
+    let Some(text) =
+        read_text_config_with_limit(path, "codex mcp config", MAX_MCP_CONFIG_SIZE_BYTES)?
+    else {
         return Ok(McpRemoveAction::None);
     };
     let mut doc = parse_toml_document(&text, path)?;
@@ -8099,6 +8102,14 @@ fn read_json_file_with_limit(path: &Path, max_bytes: u64, label: &str) -> CliRes
 }
 
 fn read_text_config(path: &Path, label: &str) -> CliResult<Option<String>> {
+    read_text_config_with_limit(path, label, MAX_HOOK_CONFIG_SIZE_BYTES)
+}
+
+fn read_text_config_with_limit(
+    path: &Path,
+    label: &str,
+    max_bytes: u64,
+) -> CliResult<Option<String>> {
     let link_meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -8131,21 +8142,21 @@ fn read_text_config(path: &Path, label: &str) -> CliResult<Option<String>> {
             "{label} exists but is not a regular file"
         )));
     }
-    if stat.len() > MAX_HOOK_CONFIG_SIZE_BYTES {
+    if stat.len() > max_bytes {
         return Err(CliError::new(format!(
             "{label} is too large ({} bytes; max {} bytes)",
             stat.len(),
-            MAX_HOOK_CONFIG_SIZE_BYTES
+            max_bytes
         )));
     }
     let mut text = String::new();
-    let mut limited = file.take(MAX_HOOK_CONFIG_SIZE_BYTES + 1);
+    let mut limited = file.take(max_bytes + 1);
     limited.read_to_string(&mut text)?;
-    if text.len() as u64 > MAX_HOOK_CONFIG_SIZE_BYTES {
+    if text.len() as u64 > max_bytes {
         return Err(CliError::new(format!(
             "{label} is too large ({} bytes; max {} bytes)",
             text.len(),
-            MAX_HOOK_CONFIG_SIZE_BYTES
+            max_bytes
         )));
     }
     Ok(Some(text))
@@ -13163,6 +13174,28 @@ mod tests {
                 panic!("codex remove should rewrite config");
             };
             assert_eq!(content, original);
+        });
+    }
+
+    #[test]
+    fn mcp_codex_setup_allows_config_above_hook_config_limit() {
+        let codex_home = tempfile::tempdir().unwrap();
+        let codex_home_s = codex_home.path().to_string_lossy().to_string();
+        with_env(&[("CODEX_HOME", Some(codex_home_s.as_str()))], || {
+            let path = codex_mcp_config_path();
+            ensure_parent_dir(&path).unwrap();
+            let original = format!(
+                "# {}\nmodel = \"gpt-5.2-codex\"\n",
+                "x".repeat(MAX_HOOK_CONFIG_SIZE_BYTES as usize + 1)
+            );
+            fs::write(&path, &original).unwrap();
+
+            let spec = mcp_agent_spec("codex").unwrap();
+            let plan = build_mcp_setup_plan(spec, Path::new("/usr/bin/forktty")).unwrap();
+
+            assert!(plan.changed);
+            assert!(plan.content.contains("model = \"gpt-5.2-codex\""));
+            assert!(plan.content.contains("[mcp_servers.forktty]"));
         });
     }
 

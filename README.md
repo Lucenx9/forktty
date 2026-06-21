@@ -383,6 +383,9 @@ inspection, topology tree, terminal read/capture, persisted agent-session
 inspection and explicit resume into a new tab, compact status summaries, pane
 split/focus/send-text, worktree create/attach/remove/merge, notifications, and
 `status_set`.
+Codex MCP setup preserves hand-edited TOML comments/formatting and uses the
+larger MCP config size budget for `$CODEX_HOME/config.toml` or
+`~/.codex/config.toml`.
 `FORKTTY_SOCKET_PATH`,
 `FORKTTY_WORKSPACE_ID`, and `FORKTTY_SURFACE_ID` are honored as defaults when
 the MCP host launches from a ForkTTY pane.

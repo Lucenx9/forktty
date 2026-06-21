@@ -21,7 +21,8 @@ use std::os::unix::fs::PermissionsExt;
 /// skipped before scanning continues. Scanning stops at the first non-flag
 /// argument or at `--`. A leading `env` (with its flags and `VAR=val`
 /// assignments) is unwrapped so `env bash -c <something>` is caught too.
-/// PowerShell (`pwsh`) uses its own command grammar and is handled by
+/// BusyBox applets are unwrapped so `busybox sh -c <something>` is caught
+/// too. PowerShell (`pwsh`) uses its own command grammar and is handled by
 /// `powershell_invokes_command`.
 pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
     let basename = Path::new(program)
@@ -30,6 +31,11 @@ pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
         .unwrap_or_default();
     if basename == "env" {
         return env_invokes_shell_trampoline(args);
+    }
+    if basename == "busybox" {
+        return args
+            .split_first()
+            .is_some_and(|(applet, rest)| is_shell_trampoline(applet.as_ref(), rest));
     }
     // PowerShell uses a different flag grammar than POSIX shells (case-
     // insensitive, prefix-abbreviated `-Command`/`-EncodedCommand`), so the
@@ -349,6 +355,22 @@ mod tests {
             &["notify-send", "-c", "x"]
         ));
         assert!(!is_shell_trampoline("/usr/bin/env", &["FOO=bar"]));
+    }
+
+    #[test]
+    fn shell_trampoline_unwraps_busybox_applets() {
+        assert!(is_shell_trampoline(
+            "/bin/busybox",
+            &["sh", "-c", "echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/bin/busybox",
+            &["ash", "-lc", "echo hi"]
+        ));
+        assert!(!is_shell_trampoline(
+            "/bin/busybox",
+            &["echo", "-c", "not a shell flag"]
+        ));
     }
 
     #[test]

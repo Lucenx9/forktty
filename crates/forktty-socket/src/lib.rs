@@ -1135,6 +1135,7 @@ pub async fn dispatch(
             Ok(json!(worker))
         }
         "team.worker.launch" => {
+            validate_optional_worktree_name(&params)?;
             let team_id = required_trimmed_string(&params, "team_id")?.to_string();
             let worker_id = required_trimmed_string(&params, "worker_id")?.to_string();
             let agent = required_trimmed_string(&params, "agent")?.to_string();
@@ -1145,7 +1146,8 @@ pub async fn dispatch(
                 optional_non_blank_string_param(&params, "worktree_name")?.map(str::to_string);
             let extra_args = optional_string_array_param(&params, "args")?.unwrap_or_default();
             let (program, args) = team_worker_launch_command(&agent, role.as_deref(), extra_args)?;
-            let surface = create_team_worker_surface(state, &team_id, &worker_id)?;
+            let surface =
+                create_team_worker_surface(state, &team_id, &worker_id, worktree_name.as_deref())?;
             let request =
                 SpawnRequest::for_surface(&surface, program.clone(), state.socket_path.clone())
                     .with_args(args.clone());
@@ -5319,6 +5321,7 @@ fn create_team_worker_surface(
     state: &SocketAppState,
     team_id: &str,
     worker_id: &str,
+    worktree_name: Option<&str>,
 ) -> Result<forktty_core::Surface, DispatchError> {
     let store =
         forktty_core::load_teams_from_path(team_store_path(state)?).map_err(DispatchError::from)?;
@@ -5330,26 +5333,35 @@ fn create_team_worker_surface(
             .model
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
-        let near_surface_id = match team.leader_surface_id.as_deref() {
-            Some(surface_id) if model.surface(surface_id).is_some() => surface_id.to_string(),
-            Some(_) => return Err(DispatchError::NotFound("surface".to_string())),
-            None => match team.workspace_id.as_deref() {
-                Some(workspace_id) => model
-                    .list_workspaces()
-                    .into_iter()
-                    .find(|workspace| workspace.id == workspace_id)
-                    .map(|workspace| workspace.focused_surface_id)
-                    .ok_or(DispatchError::NotFound("workspace".to_string()))?,
-                None => model
-                    .active_workspace()
-                    .map(|workspace| workspace.focused_surface_id)
-                    .ok_or_else(|| {
-                        DispatchError::PreconditionFailed(
-                            "team.worker.launch requires a team workspace, leader surface, or active workspace"
-                                .to_string(),
-                        )
-                    })?,
-            },
+        let near_surface_id = if let Some(worktree_name) = worktree_name {
+            model
+                .list_workspaces()
+                .into_iter()
+                .find(|workspace| workspace.worktree_name.as_deref() == Some(worktree_name))
+                .map(|workspace| workspace.focused_surface_id)
+                .ok_or(DispatchError::NotFound("workspace".to_string()))?
+        } else {
+            match team.leader_surface_id.as_deref() {
+                Some(surface_id) if model.surface(surface_id).is_some() => surface_id.to_string(),
+                Some(_) => return Err(DispatchError::NotFound("surface".to_string())),
+                None => match team.workspace_id.as_deref() {
+                    Some(workspace_id) => model
+                        .list_workspaces()
+                        .into_iter()
+                        .find(|workspace| workspace.id == workspace_id)
+                        .map(|workspace| workspace.focused_surface_id)
+                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
+                    None => model
+                        .active_workspace()
+                        .map(|workspace| workspace.focused_surface_id)
+                        .ok_or_else(|| {
+                            DispatchError::PreconditionFailed(
+                                "team.worker.launch requires a team workspace, leader surface, or active workspace"
+                                    .to_string(),
+                            )
+                        })?,
+                },
+            }
         };
         let near_agent_session = model
             .surface(&near_surface_id)
@@ -13160,6 +13172,99 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(scoped["workspace"]["id"], summary["workspace"]["id"]);
+    }
+
+    #[tokio::test]
+    async fn team_worker_launch_uses_requested_worktree_workspace() {
+        let (mut state, backend) = test_state();
+        let team_store = tempfile::tempdir().unwrap();
+        let worktree_dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(team_store.path().join("team-v1.json"));
+        let main = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let main_workspace_id = main[0]["id"].as_str().unwrap().to_string();
+        let (worktree_workspace_id, worktree_surface_id) = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.create_worktree_workspace(
+                "feature",
+                worktree_dir.path(),
+                "feature",
+                "feature-x",
+            );
+            (workspace.id, workspace.focused_surface_id)
+        };
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "workspace_id": main_workspace_id,
+                "name": "Launch",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let launched = dispatch(
+            &state,
+            "team.worker.launch",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+                "worktree_name": "feature-x",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let launched_surface_id = launched["surface"]["id"].as_str().unwrap();
+        assert_eq!(launched["worker"]["worktree_name"], "feature-x");
+        assert_ne!(launched_surface_id, worktree_surface_id);
+        assert_eq!(launched["surface"]["workspace_id"], worktree_workspace_id);
+        let spawned = backend
+            .surfaces()
+            .unwrap()
+            .into_iter()
+            .find(|surface| surface.surface_id == launched_surface_id)
+            .unwrap();
+        assert_eq!(spawned.cwd, worktree_dir.path());
+    }
+
+    #[tokio::test]
+    async fn team_worker_launch_rejects_invalid_worktree_name() {
+        let (mut state, _backend) = test_state();
+        let team_store = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(team_store.path().join("team-v1.json"));
+        let main = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let main_workspace_id = main[0]["id"].as_str().unwrap().to_string();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "workspace_id": main_workspace_id,
+                "name": "Launch",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let err = dispatch(
+            &state,
+            "team.worker.launch",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+                "worktree_name": "../escape",
+            }),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.code(), "invalid_param");
     }
 
     #[tokio::test]

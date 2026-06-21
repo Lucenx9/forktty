@@ -79,10 +79,12 @@ the default Codex, Claude Code, and Antigravity config locations:
 | Antigravity CLI | `~/.gemini/config/mcp_config.json` (`mcpServers.forktty`) |
 
 Setup and removal use the same atomic write, `.bak-*` backup, dry-run, and
-managed-entry preservation behavior as hook setup. `forktty mcp remove gemini`
-is legacy cleanup only for ForkTTY-managed `~/.gemini/settings.json` entries;
-Gemini MCP setup remains unsupported. OpenCode hook support remains available,
-but no verified OpenCode MCP registration path is managed yet.
+managed-entry preservation behavior as hook setup. Codex TOML setup preserves
+comments/formatting and uses the larger MCP config size budget rather than the
+smaller hook-template limit. `forktty mcp remove gemini` is legacy cleanup only
+for ForkTTY-managed `~/.gemini/settings.json` entries; Gemini MCP setup remains
+unsupported. OpenCode hook support remains available, but no verified OpenCode
+MCP registration path is managed yet.
 
 ## Agent skills
 

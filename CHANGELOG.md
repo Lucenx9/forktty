@@ -40,6 +40,9 @@ All notable changes to ForkTTY are documented here.
   invoking ForkTTY surface or workspace from `FORKTTY_SURFACE_ID`/
   `FORKTTY_WORKSPACE_ID`, so launched workers open next to the orchestrator pane
   and inherit its working directory.
+- `team.worker.launch` now honors an explicit `worktree_name` by opening the
+  worker in that worktree workspace, validating the worktree name, and using
+  that workspace directory instead of falling back to the team leader workspace.
 - `forktty team ask/review` now create the task before launching the worker and
   assign it after launch, matching the socket server's task and worker
   validation order and avoiding a `running` unassigned task if worker launch
@@ -61,11 +64,16 @@ All notable changes to ForkTTY are documented here.
 - Team-wide message dispatch with an explicit worker target now marks the
   message delivered after the terminal accepts the text and optional submit
   input.
+- Codex MCP setup/removal now reads `$CODEX_HOME/config.toml` and
+  `~/.codex/config.toml` with the MCP config size limit, not the smaller hook
+  config limit.
 - Team message dispatch submit mode now still sends the separate Enter input
   for LF-terminated prompt text, fixing full-screen agent TUIs where a pasted
   newline is not equivalent to pressing Enter.
 - MCP `team_message_dispatch` is now annotated as destructive and open-world,
   matching that it can type into an agent pane and optionally submit input.
+- Command safety now rejects BusyBox shell applet trampolines such as
+  `busybox sh -c ...` when validating provider launch arguments.
 - Embedded Ghostty panes now synchronize runtime `cols`/`rows` metadata through
   Ghostty's bounded read-text ABI, so `surface.list`, `context.snapshot`,
   `topology.tree`, and `system.top` stop reporting the initial 80x24 size after
