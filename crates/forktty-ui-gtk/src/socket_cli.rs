@@ -10406,17 +10406,13 @@ impl<'a> HookActionBuilder<'a> {
 
     fn handle_pre_tool(&self) -> Vec<(String, Value)> {
         let tool = extract_hook_tool_name(self.payload);
-        let value = tool
-            .as_ref()
-            .map(|tool| format!("Running {tool}"))
-            .unwrap_or_else(|| "Running tool".to_string());
         vec![
             self.log(
                 "info",
                 tool.map(|tool| format!("{} running {tool}", self.spec.label))
                     .unwrap_or_else(|| format!("{} running tool", self.spec.label)),
             ),
-            self.status(&value, "blue", self.event),
+            self.status("Running", "blue", self.event),
         ]
     }
 
@@ -12230,7 +12226,7 @@ mod tests {
                     "77",
                 );
                 assert_eq!(actions[0].1["message"], "Claude running Bash");
-                assert_eq!(actions[1].1["value"], "Running Bash");
+                assert_eq!(actions[1].1["value"], "Running");
                 assert_eq!(actions[1].1["hook_event_order"], "77");
 
                 let actions = build_hook_actions(
@@ -12881,7 +12877,7 @@ mod tests {
         );
         assert_eq!(actions[1].0, "metadata.set_status");
         assert_eq!(actions[1].1["hook_session_id"], "sess-claude-tool");
-        assert_eq!(actions[1].1["value"], "Running Bash");
+        assert_eq!(actions[1].1["value"], "Running");
         assert!(actions[1].1.get("hook_turn_id").is_none());
     }
 

@@ -194,6 +194,9 @@ They render in the ForkTTY UI status row and can be inspected from the CLI:
 
 Unknown provider modes stay `muted`; ForkTTY only colors permission values
 that are documented by the provider.
+Tool-use events keep `agent:<key>` as the compact `Running` lifecycle status;
+the exact tool name is recorded in hook log metadata instead of the primary
+status value so snapshots stay stable for automation.
 
 ## Manual editing
 

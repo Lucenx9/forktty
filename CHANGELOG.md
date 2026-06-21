@@ -44,6 +44,9 @@ All notable changes to ForkTTY are documented here.
   maintenance flow, including final-binary skill checksum verification.
 
 ### Fixed
+- Agent hook `PreToolUse` events now keep the primary agent status value as the
+  compact lifecycle state `Running` while preserving the exact tool name in the
+  hook log metadata, reducing noisy `Running <tool>` snapshots for agents.
 - `team.worker.shutdown`, MCP `team_worker_shutdown`, and CLI
   `forktty team-worker-shutdown` now submit shutdown text by default, so custom
   shutdown messages no longer sit unexecuted in full-screen agent composers.
