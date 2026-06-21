@@ -36,6 +36,8 @@ const DEFAULT_CAPTURE_TAIL_LINES: usize = 80;
 const MAX_CAPTURE_TAIL_LINES: usize = 5_000;
 const DEFAULT_CONTEXT_SNAPSHOT_TAIL_LINES: usize = 40;
 const DEFAULT_CONTEXT_SNAPSHOT_TAIL_MAX_BYTES: usize = 16 * 1024;
+const MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_SURFACES: usize = 16;
+const MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES: usize = 1024 * 1024;
 const MAX_METADATA_TEXT_BYTES: usize = 16_384;
 const BROWSER_CMD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const MAX_SOCKET_CONNECTIONS: usize = 64;
@@ -2742,12 +2744,28 @@ fn context_snapshot_terminal_tails(
     }
     let mut tails = Vec::new();
     let mut errors = Vec::new();
-    for surface_id in surface_ids {
-        match state
-            .terminal
-            .read_text(surface_id, TerminalTextCapture::Tail { lines }, max_bytes)
-        {
+    let mut remaining_tail_bytes = MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES;
+    let mut processed_surfaces = 0usize;
+    let mut skipped_for_byte_limit = 0usize;
+
+    for (index, surface_id) in surface_ids.iter().enumerate() {
+        if index >= MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_SURFACES {
+            break;
+        }
+        if remaining_tail_bytes == 0 {
+            skipped_for_byte_limit = surface_ids.len().saturating_sub(index);
+            break;
+        }
+
+        processed_surfaces = index + 1;
+        let read_max_bytes = max_bytes.min(remaining_tail_bytes);
+        match state.terminal.read_text(
+            surface_id,
+            TerminalTextCapture::Tail { lines },
+            read_max_bytes,
+        ) {
             Ok(snapshot) => {
+                remaining_tail_bytes = remaining_tail_bytes.saturating_sub(snapshot.text.len());
                 let mut value = serde_json::to_value(snapshot).unwrap_or_else(|_| json!({}));
                 if let Some(object) = value.as_object_mut() {
                     object.insert("untrusted".to_string(), Value::Bool(true));
@@ -2760,6 +2778,24 @@ fn context_snapshot_terminal_tails(
             })),
         }
     }
+
+    if skipped_for_byte_limit > 0 {
+        errors.push(json!({
+            "error": "context snapshot terminal tail byte limit exceeded",
+            "limit_bytes": MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES,
+            "skipped_surfaces": skipped_for_byte_limit,
+        }));
+    } else {
+        let skipped_for_surface_limit = surface_ids.len().saturating_sub(processed_surfaces);
+        if skipped_for_surface_limit > 0 {
+            errors.push(json!({
+                "error": "context snapshot terminal tail surface limit exceeded",
+                "limit": MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_SURFACES,
+                "skipped_surfaces": skipped_for_surface_limit,
+            }));
+        }
+    }
+
     (tails, errors)
 }
 
@@ -8905,6 +8941,104 @@ mod tests {
             .as_array()
             .unwrap()
             .contains(&json!("terminal_text_untrusted")));
+    }
+
+    #[tokio::test]
+    async fn context_snapshot_limits_terminal_tail_surface_count() {
+        let surface_limit = MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_SURFACES;
+        let (state, backend) = test_state();
+        let mut surface_ids = Vec::new();
+        let mut focused_surface_id = {
+            let model = state.model.lock().unwrap();
+            model.active_workspace().unwrap().focused_surface_id.clone()
+        };
+        surface_ids.push(focused_surface_id.clone());
+        for _ in 0..surface_limit {
+            let created = dispatch(
+                &state,
+                "pane.new_tab",
+                json!({"surface_id": focused_surface_id}),
+            )
+            .await
+            .unwrap();
+            focused_surface_id = created["id"].as_str().unwrap().to_string();
+            surface_ids.push(focused_surface_id.clone());
+        }
+        for (index, surface_id) in surface_ids.iter().enumerate() {
+            backend
+                .send_text(surface_id, &format!("surface-{index}\n"))
+                .expect("write terminal text");
+        }
+
+        let result = dispatch(
+            &state,
+            "context.snapshot",
+            json!({"tail_lines": 1, "tail_max_bytes": 1024}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result["terminal_tails"].as_array().unwrap().len(),
+            surface_limit
+        );
+        let errors = result["terminal_tail_errors"].as_array().unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0]["skipped_surfaces"], 1);
+        assert!(errors[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("surface limit"));
+    }
+
+    #[tokio::test]
+    async fn context_snapshot_limits_aggregate_terminal_tail_bytes() {
+        let aggregate_byte_limit = MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES;
+        let (state, backend) = test_state();
+        let mut surface_ids = Vec::new();
+        let mut focused_surface_id = {
+            let model = state.model.lock().unwrap();
+            model.active_workspace().unwrap().focused_surface_id.clone()
+        };
+        surface_ids.push(focused_surface_id.clone());
+        for _ in 0..2 {
+            let created = dispatch(
+                &state,
+                "pane.new_tab",
+                json!({"surface_id": focused_surface_id}),
+            )
+            .await
+            .unwrap();
+            focused_surface_id = created["id"].as_str().unwrap().to_string();
+            surface_ids.push(focused_surface_id.clone());
+        }
+        let large_tail = format!("{}\n", "x".repeat(MAX_TERMINAL_TEXT_BYTES));
+        for surface_id in &surface_ids {
+            backend
+                .send_text(surface_id, &large_tail)
+                .expect("write terminal text");
+        }
+
+        let result = dispatch(
+            &state,
+            "context.snapshot",
+            json!({"tail_lines": 1, "tail_max_bytes": MAX_TERMINAL_TEXT_BYTES}),
+        )
+        .await
+        .unwrap();
+
+        let total_tail_bytes: usize = result["terminal_tails"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tail| tail["text"].as_str().unwrap().len())
+            .sum();
+        assert!(total_tail_bytes <= aggregate_byte_limit);
+        assert!(result["terminal_tails"].as_array().unwrap().len() < surface_ids.len());
+        let errors = result["terminal_tail_errors"].as_array().unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0]["skipped_surfaces"], 1);
+        assert!(errors[0]["error"].as_str().unwrap().contains("byte limit"));
     }
 
     #[tokio::test]

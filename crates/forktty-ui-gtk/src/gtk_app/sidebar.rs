@@ -852,7 +852,7 @@ pub(super) fn workspace_status_badge(
     // colored red so the risky mode is visible on its own pill) describe a
     // standing configuration, not an event: they must not keep the whole
     // workspace badged as Error/Exited for as long as the mode is active.
-    let workspace_surface_ids = collect_panes(&workspace.pane_tree);
+    let workspace_surface_ids = collect_leaves(&workspace.pane_tree);
     let event_statuses = || {
         statuses.iter().filter(|status| {
             !status_entry_is_mode_indicator(status)
@@ -909,7 +909,7 @@ pub(super) fn sidebar_visible_metadata(
     statuses: &[StatusEntry],
     progress: &[ProgressEntry],
 ) -> (Vec<StatusEntry>, Vec<ProgressEntry>) {
-    let workspace_surface_ids = collect_panes(&workspace.pane_tree);
+    let workspace_surface_ids = collect_leaves(&workspace.pane_tree);
     let active_agent_aliases = active_agent_metadata_aliases(model, &workspace.id);
     let statuses = statuses
         .iter()

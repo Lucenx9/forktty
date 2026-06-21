@@ -2473,6 +2473,45 @@ fn sidebar_badge_ignores_stale_surface_exit_status() {
 }
 
 #[test]
+fn sidebar_metadata_keeps_inactive_tab_surface_status() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let workspace_id = workspace.id.clone();
+    let inactive_surface_id = workspace.focused_surface_id.clone();
+    let active_surface_id = model.add_tab(&inactive_surface_id).unwrap().id;
+    let status_key = surface_status_key(&inactive_surface_id);
+    let progress_key = format!("surface:{inactive_surface_id}:download");
+    model
+        .set_status(
+            &workspace_id,
+            &status_key,
+            "Terminal",
+            "Exited (0)",
+            Some("yellow".to_string()),
+        )
+        .unwrap();
+    model
+        .set_progress(&workspace_id, &progress_key, "Download", 1.0, Some(2.0))
+        .unwrap();
+    let workspace = model.list_workspaces().remove(0);
+    assert_eq!(workspace.focused_surface_id, active_surface_id);
+
+    let (statuses, progress) = sidebar_visible_metadata(
+        &model,
+        &workspace,
+        &model.list_status(&workspace_id),
+        &model.list_progress(&workspace_id),
+    );
+
+    assert_eq!(statuses.len(), 1);
+    assert_eq!(statuses[0].key, status_key);
+    assert_eq!(progress.len(), 1);
+    assert_eq!(progress[0].key, progress_key);
+    let badge = workspace_status_badge(&workspace, &statuses, &progress, None).unwrap();
+    assert_eq!(badge.label, "Exited");
+}
+
+#[test]
 fn sidebar_activity_summary_ignores_inactive_agent_metadata() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");

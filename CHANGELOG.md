@@ -31,6 +31,13 @@ All notable changes to ForkTTY are documented here.
   already end in carriage return.
 
 ### Fixed
+- Socket `context.snapshot` and MCP `context_snapshot` now cap terminal-tail
+  snapshots by aggregate surface count and text bytes, preventing large
+  workspaces from multiplying the per-surface tail limit into an oversized
+  response.
+- Sidebar workspace metadata now keeps status and progress rows for inactive
+  tabs that are still open, so exited or failed background tabs continue to
+  affect the workspace badge.
 - The local `forktty doctor` hook diagnostics now include the default
   Antigravity hook config path alongside Codex, Claude Code, and OpenCode.
 - Automatically named workspaces now keep the visible name aligned with the
