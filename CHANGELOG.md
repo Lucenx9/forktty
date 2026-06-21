@@ -48,6 +48,9 @@ All notable changes to ForkTTY are documented here.
   rows show the current pane, group lifecycles, surface risky permission modes,
   compact ended sessions, calmer status chips, compact risky permission labels,
   and inline terminal previews.
+- GTK chrome micro-polish now aligns workspace badges, pane action hover/focus
+  states, sidebar actions, status shortcuts, and pane hairlines with the quieter
+  Agent HUD and notification panel treatment.
 
 ### Fixed
 - `team.worker.health` now reports `surface_present`,

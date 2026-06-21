@@ -4221,6 +4221,69 @@ fn notification_panel_css_matches_quiet_agent_hud_tone() {
 }
 
 #[test]
+fn chrome_micro_polish_css_stays_gtk_414_compatible() {
+    let source = include_str!("../style.css");
+
+    assert!(!source.contains("var("));
+    for (line_number, line) in source.lines().enumerate() {
+        let trimmed = line.trim_start();
+        assert!(
+            !(trimmed.starts_with("--") && trimmed.contains(':')),
+            "CSS custom property definition on line {}: {}",
+            line_number + 1,
+            line
+        );
+    }
+}
+
+#[test]
+fn chrome_micro_polish_quiets_sidebar_badges() {
+    let source = include_str!("../style.css");
+    let badge = source
+        .split(".workspace-status-badge {")
+        .nth(1)
+        .and_then(|rest| rest.split('}').next())
+        .expect("workspace-status-badge block");
+
+    assert!(!badge.contains("text-transform: uppercase;"));
+}
+
+#[test]
+fn chrome_micro_polish_keyboard_focus_matches_hover() {
+    let source = include_str!("../style.css");
+    let block = |selector: &str| {
+        source
+            .rsplit(selector)
+            .next()
+            .and_then(|rest| rest.split('}').next())
+            .unwrap_or_else(|| panic!("missing CSS block {selector}"))
+    };
+
+    assert!(block(".pane-tab-close:focus-visible {").contains("opacity: 1;"));
+    assert!(
+        block("button.flat.terminal-pane-action:focus-visible {").contains("background: #202020;")
+    );
+    assert!(block("button.flat.status-shortcut:focus-visible {").contains("background: #202020;"));
+    assert!(block("button.flat.sidebar-add:focus-visible {").contains("background: #202020;"));
+}
+
+#[test]
+fn chrome_micro_polish_unifies_pane_hover_and_hairline_tone() {
+    let source = include_str!("../style.css");
+    let block = |selector: &str| {
+        source
+            .split(selector)
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .unwrap_or_else(|| panic!("missing CSS block {selector}"))
+    };
+
+    assert!(block("button.flat.terminal-pane-action:hover {").contains("background: #202020;"));
+    assert!(block("button.flat.pane-close-action:hover {").contains("background: #2f1f1f;"));
+    assert!(block(".pane-action-separator {").contains("background: #242424;"));
+}
+
+#[test]
 fn pane_status_uses_readable_muted_contrast() {
     let source = include_str!("../style.css");
     let pane_status = source

@@ -415,7 +415,14 @@ popover.ft-context-menu contents {
   transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
-.sidebar-add:hover {
+.sidebar-add:hover,
+button.flat.sidebar-add:hover {
+  background: #202020;
+  color: #d7d7d7;
+}
+
+.sidebar-add:focus-visible,
+button.flat.sidebar-add:focus-visible {
   background: #202020;
   color: #d7d7d7;
 }
@@ -564,7 +571,6 @@ popover.ft-context-menu contents {
   font-size: 0.64em;
   font-weight: 600;
   letter-spacing: 0;
-  text-transform: uppercase;
 }
 
 .workspace-status-badge.running,
@@ -693,7 +699,15 @@ popover.ft-context-menu contents {
   transition: background-color 90ms ease-out, color 90ms ease-out, border-color 90ms ease-out;
 }
 
-.status-shortcut:hover {
+.status-shortcut:hover,
+button.flat.status-shortcut:hover {
+  background: #202020;
+  color: #d7d7d7;
+  border-color: #303030;
+}
+
+.status-shortcut:focus-visible,
+button.flat.status-shortcut:focus-visible {
   background: #202020;
   color: #d7d7d7;
   border-color: #303030;
@@ -1033,6 +1047,7 @@ button.flat.pane-tab-close:active {
   outline-offset: 1px;
   border-color: transparent;
   box-shadow: none;
+  opacity: 1;
 }
 
 .pane-tab.active .pane-tab-select {
@@ -1100,16 +1115,23 @@ button.flat.pane-tab-close:active {
   -gtk-icon-size: 14px;
 }
 
-.terminal-pane-action:hover {
+.terminal-pane-action:hover,
+button.flat.terminal-pane-action:hover {
   color: #d7d7d7;
-  background: #262626;
+  background: #202020;
+}
+
+.terminal-pane-action:focus-visible,
+button.flat.terminal-pane-action:focus-visible {
+  color: #d7d7d7;
+  background: #202020;
 }
 
 .pane-action-separator {
   min-width: 1px;
   min-height: 14px;
   margin: 3px 4px;
-  background: #292929;
+  background: #242424;
   opacity: 0.72;
 }
 
@@ -1122,7 +1144,17 @@ button.flat.pane-tab-close:active {
   background: #2f1f1f;
 }
 
+button.flat.pane-close-action:hover {
+  color: #d36b6b;
+  background: #2f1f1f;
+}
+
 .pane-close-action:active {
+  color: #d36b6b;
+  background: alpha(#d36b6b, 0.22);
+}
+
+button.flat.pane-close-action:active {
   color: #d36b6b;
   background: alpha(#d36b6b, 0.22);
 }
