@@ -320,11 +320,12 @@ are compact by default: approvals and notifications remain, while status and
 progress trace rows are available with `include_feed_trace: true`.
 Workspace, surface, agent, and agent-health rows expose
 `effective_project_cwd`, preferring the tracked agent `resume_cwd` over the
-workspace directory when they differ. `team.worker.health` includes a derived
-`final_state` such as `shutdown_requested`, `closed`, `surface_missing`, or
-`stale` so cleanup decisions do not require interpreting raw worker fields; a
-worker surface is live only when it still exists in the workspace model and the
-terminal backend still reports a ready runtime.
+workspace directory when they differ. `team.worker.health` includes
+`surface_present`, `surface_runtime_present`, `surface_ready`, and a derived
+`final_state` such as `shutdown_requested`, `closed`, `starting`,
+`surface_missing`, or `stale` so cleanup decisions do not require interpreting
+raw worker fields; a worker surface is live only when it still exists in the
+workspace model and the terminal backend still reports a ready runtime.
 `team.worker.shutdown` submits shutdown text by default; its `close_surface`
 option, exposed by CLI `forktty team-worker-shutdown --close`, immediately
 closes only surfaces that ForkTTY created through `team.worker.launch`, not

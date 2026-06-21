@@ -138,9 +138,10 @@ or parallel workers:
    is ready.
 5. Monitor with `team_worker_health`, `team_events`, and bounded terminal tail
    reads. Use each worker's derived `final_state` (`shutdown_requested`,
-   `closed`, `surface_missing`, `stale`, `idle`, `running`, or `needs_input`)
-   for cleanup decisions. Nudge only for stale or blocked workers, not while
-   coherent work is active.
+   `closed`, `starting`, `surface_missing`, `stale`, `idle`, `running`, or
+   `needs_input`) plus `surface_present`/`surface_runtime_present`/
+   `surface_ready` for cleanup decisions. Nudge only for stale or blocked
+   workers, not while coherent work is active.
 6. Mark tasks done/blocked with evidence. Request worker shutdown when the work
    is complete or no longer needed; use the shutdown close option only when the
    worker pane was created for that disposable team worker.

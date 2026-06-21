@@ -2018,7 +2018,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "team_worker_health",
             annotations: read_only_annotations(),
-            description: "Read per-worker team health including stale heartbeat, surface presence, nudge, launch, and shutdown-request timestamps.",
+            description: "Read per-worker team health including final_state, surface_present, surface_runtime_present, surface_ready, stale heartbeat, nudge, launch, and shutdown-request timestamps.",
             input_schema: object_schema(
                 &["team_id"],
                 json!({

@@ -2745,6 +2745,52 @@ fn sidebar_badge_keeps_prompt_ahead_of_error_status() {
 }
 
 #[test]
+fn sidebar_badge_highlights_status_needs_input_without_notification() {
+    let mut model = WorkspaceModel::new();
+    model.create_workspace("main", "/tmp");
+    let workspace = model.list_workspaces().remove(0);
+    let status = StatusEntry {
+        key: "agent:codex".to_string(),
+        label: "Codex".to_string(),
+        value: "needs_input".to_string(),
+        color: Some("yellow".to_string()),
+    };
+
+    let badge = workspace_status_badge(&workspace, &[status], &[], None).unwrap();
+
+    assert_eq!(badge.label, "Input");
+    assert_eq!(badge.class_name, "needs-input");
+}
+
+#[test]
+fn sidebar_badge_distinguishes_starting_and_surface_missing_status() {
+    let mut model = WorkspaceModel::new();
+    model.create_workspace("main", "/tmp");
+    let workspace = model.list_workspaces().remove(0);
+    let starting = StatusEntry {
+        key: surface_status_key(&workspace.focused_surface_id),
+        label: "Terminal".to_string(),
+        value: "Starting".to_string(),
+        color: Some("blue".to_string()),
+    };
+    let missing = StatusEntry {
+        key: surface_status_key(&workspace.focused_surface_id),
+        label: "Terminal".to_string(),
+        value: "surface_missing".to_string(),
+        color: None,
+    };
+
+    let badge =
+        workspace_status_badge(&workspace, std::slice::from_ref(&starting), &[], None).unwrap();
+    assert_eq!(badge.label, "Starting");
+    assert_eq!(badge.class_name, "working");
+
+    let badge = workspace_status_badge(&workspace, &[missing], &[], None).unwrap();
+    assert_eq!(badge.label, "Missing");
+    assert_eq!(badge.class_name, "exited");
+}
+
+#[test]
 fn blocks_auto_spawn_after_terminal_failure_until_restart() {
     let failed = StatusEntry {
         key: surface_status_key("surface-1"),

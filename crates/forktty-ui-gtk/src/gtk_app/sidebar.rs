@@ -860,11 +860,27 @@ pub(super) fn workspace_status_badge(
         })
     };
 
+    if event_statuses().any(status_entry_suggests_needs_input) {
+        return Some(WorkspaceStatusBadge {
+            label: "Input",
+            tooltip: "Needs input",
+            class_name: "needs-input",
+        });
+    }
+
     if event_statuses().any(status_entry_suggests_error) {
         return Some(WorkspaceStatusBadge {
             label: "Error",
             tooltip: "Error reported in this workspace",
             class_name: "error",
+        });
+    }
+
+    if event_statuses().any(status_entry_suggests_surface_missing) {
+        return Some(WorkspaceStatusBadge {
+            label: "Missing",
+            tooltip: "Surface missing",
+            class_name: "exited",
         });
     }
 
@@ -881,6 +897,14 @@ pub(super) fn workspace_status_badge(
             label: "Alert",
             tooltip: "Attention",
             class_name: "attention",
+        });
+    }
+
+    if statuses.iter().any(status_entry_suggests_starting) {
+        return Some(WorkspaceStatusBadge {
+            label: "Starting",
+            tooltip: "Process starting",
+            class_name: "working",
         });
     }
 
@@ -1033,6 +1057,21 @@ pub(super) fn status_entry_suggests_running(status: &StatusEntry) -> bool {
         || value.contains("working")
         || value.contains("busy")
         || color == "blue"
+}
+
+pub(super) fn status_entry_suggests_starting(status: &StatusEntry) -> bool {
+    let value = status.value.to_ascii_lowercase();
+    value == "starting" || value.contains("starting ")
+}
+
+pub(super) fn status_entry_suggests_needs_input(status: &StatusEntry) -> bool {
+    let value = status.value.to_ascii_lowercase();
+    value.contains("needs_input") || value.contains("needs input")
+}
+
+pub(super) fn status_entry_suggests_surface_missing(status: &StatusEntry) -> bool {
+    let value = status.value.to_ascii_lowercase();
+    value == "surface_missing" || value.contains("surface missing")
 }
 
 /// Status entries that describe a standing mode rather than an event — today

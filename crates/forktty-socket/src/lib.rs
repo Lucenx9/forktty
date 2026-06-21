@@ -15,7 +15,7 @@ use forktty_terminal::{
     TerminalSurfaceState, TerminalTextCapture,
 };
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsStr;
 use std::fs::{self, DirBuilder};
 use std::io::{self, Seek, SeekFrom};
@@ -5965,6 +5965,13 @@ fn team_worker_health_rows(
     stale_after_ms: u64,
 ) -> Result<Value, DispatchError> {
     let now = forktty_core::team_now_ms();
+    let terminal_surface_ids = state
+        .terminal
+        .surfaces()
+        .map_err(DispatchError::from)?
+        .into_iter()
+        .map(|surface| surface.surface_id)
+        .collect::<HashSet<_>>();
     let worker_surface_ready = team
         .workers
         .iter()
@@ -5985,28 +5992,47 @@ fn team_worker_health_rows(
         .workers
         .iter()
         .map(|worker| {
-            let surface_alive = worker.surface_id.as_deref().is_some_and(|surface_id| {
-                model.surface(surface_id).is_some()
-                    && worker_surface_ready
-                        .get(surface_id)
-                        .copied()
-                        .unwrap_or(false)
-            });
             let heartbeat_age_ms = (worker.last_heartbeat_ms > 0)
                 .then(|| now.saturating_sub(worker.last_heartbeat_ms));
             let stale = heartbeat_age_ms.is_some_and(|age| age > stale_after_ms);
+            let surface_present = worker
+                .surface_id
+                .as_deref()
+                .is_some_and(|surface_id| model.surface(surface_id).is_some());
+            let surface_runtime_present = worker
+                .surface_id
+                .as_deref()
+                .is_some_and(|surface_id| terminal_surface_ids.contains(surface_id));
+            let surface_ready = worker
+                .surface_id
+                .as_deref()
+                .and_then(|surface_id| worker_surface_ready.get(surface_id).copied())
+                .unwrap_or(false);
+            let surface_missing =
+                worker.surface_id.is_some() && (!surface_present || !surface_runtime_present);
+            let surface_alive = surface_present && surface_ready;
+            let surface_starting =
+                surface_present && surface_runtime_present && !surface_ready && !stale;
             let lifecycle = if worker.shutdown_requested_at_ms > 0 {
                 "shutdown_requested"
             } else if worker.surface_id.is_none() {
                 "unlaunched"
-            } else if !surface_alive {
+            } else if surface_starting {
+                "starting"
+            } else if surface_missing {
                 "surface_missing"
             } else if stale {
                 "stale"
             } else {
                 worker.status.as_str()
             };
-            let final_state = team_worker_final_state(worker, surface_alive, stale);
+            let final_state = team_worker_final_state(
+                worker,
+                surface_alive,
+                surface_missing,
+                surface_starting,
+                stale,
+            );
             json!({
                 "worker_id": worker.id,
                 "agent": worker.agent,
@@ -6014,6 +6040,9 @@ fn team_worker_health_rows(
                 "lifecycle": lifecycle,
                 "final_state": final_state,
                 "surface_id": worker.surface_id,
+                "surface_present": surface_present,
+                "surface_runtime_present": surface_runtime_present,
+                "surface_ready": surface_ready,
                 "surface_alive": surface_alive,
                 "heartbeat_age_ms": heartbeat_age_ms,
                 "launched_at_ms": worker.launched_at_ms,
@@ -6033,6 +6062,8 @@ fn team_worker_health_rows(
 fn team_worker_final_state(
     worker: &forktty_core::TeamWorker,
     surface_alive: bool,
+    surface_missing: bool,
+    surface_starting: bool,
     stale: bool,
 ) -> &'static str {
     if worker.shutdown_requested_at_ms > 0 {
@@ -6042,7 +6073,10 @@ fn team_worker_final_state(
             "closed"
         };
     }
-    if worker.surface_id.is_some() && !surface_alive {
+    if surface_starting {
+        return "starting";
+    }
+    if surface_missing {
         return "surface_missing";
     }
     if stale {
@@ -7984,6 +8018,7 @@ mod tests {
     #[cfg(feature = "browser")]
     use std::sync::Barrier;
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     #[test]
@@ -10628,13 +10663,16 @@ mod tests {
         .await
         .unwrap();
 
+        assert_eq!(health["workers"][0]["surface_present"], true);
+        assert_eq!(health["workers"][0]["surface_runtime_present"], false);
+        assert_eq!(health["workers"][0]["surface_ready"], false);
         assert_eq!(health["workers"][0]["surface_alive"], false);
         assert_eq!(health["workers"][0]["lifecycle"], "surface_missing");
         assert_eq!(health["workers"][0]["final_state"], "surface_missing");
     }
 
     #[tokio::test]
-    async fn team_worker_health_treats_unready_terminal_runtime_as_surface_missing() {
+    async fn team_worker_health_reports_present_unready_runtime_as_starting() {
         let model = Arc::new(Mutex::new(WorkspaceModel::new()));
         let backend = Arc::new(NotReadySendBackend::default());
         let mut state = SocketAppState::new(
@@ -10682,9 +10720,81 @@ mod tests {
         .await
         .unwrap();
 
+        assert_eq!(health["workers"][0]["surface_present"], true);
+        assert_eq!(health["workers"][0]["surface_runtime_present"], true);
+        assert_eq!(health["workers"][0]["surface_ready"], false);
         assert_eq!(health["workers"][0]["surface_alive"], false);
-        assert_eq!(health["workers"][0]["lifecycle"], "surface_missing");
-        assert_eq!(health["workers"][0]["final_state"], "surface_missing");
+        assert_eq!(health["workers"][0]["lifecycle"], "starting");
+        assert_eq!(health["workers"][0]["final_state"], "starting");
+    }
+
+    #[tokio::test]
+    async fn team_worker_health_reports_present_unready_stale_runtime_as_stale() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(NotReadySendBackend::default());
+        let mut state = SocketAppState::new(
+            model,
+            backend,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspace[0]["id"].as_str().unwrap();
+        let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "workspace_id": workspace_id,
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "surface_id": surface_id,
+                "status": "running",
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.heartbeat",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "status": "running",
+            }),
+        )
+        .await
+        .unwrap();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+
+        let health = dispatch(
+            &state,
+            "team.worker.health",
+            json!({"team_id": "team-1", "stale_after_ms": 0}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(health["workers"][0]["surface_present"], true);
+        assert_eq!(health["workers"][0]["surface_runtime_present"], true);
+        assert_eq!(health["workers"][0]["surface_ready"], false);
+        assert_eq!(health["workers"][0]["surface_alive"], false);
+        assert_eq!(health["workers"][0]["lifecycle"], "stale");
+        assert_eq!(health["workers"][0]["final_state"], "stale");
     }
 
     #[tokio::test]

@@ -187,7 +187,7 @@ ForkTTY status commands
       Alias for statusline/status.summary.
 
   forktty status explain [workspace selectors] [--surface-id <id>] [--tail-lines <n>] [--tail-max-bytes <n>]
-      Read context.snapshot and explain running, needs_input, stale-looking, and risk flags.
+      Read context.snapshot and explain agent status with session/source/age/readiness/cwd evidence plus risk flags.
 
   forktty status watch [workspace selectors] [--surface-id <id>] [--count <n>] [--interval-ms <ms>]
       Re-run status explain output. Omit --count to watch until interrupted; interval must be greater than 0.
@@ -4327,16 +4327,31 @@ fn format_team_worker_launch_line(result: &Value) -> String {
 fn format_team_worker_health_line(worker: &Value) -> String {
     let id = safe_string_field(worker, "worker_id").unwrap_or_else(|| "(worker)".to_string());
     let lifecycle = safe_string_field(worker, "lifecycle").unwrap_or_else(|| "unknown".to_string());
+    let final_state = safe_string_field(worker, "final_state").unwrap_or_else(|| lifecycle.clone());
     let status = safe_string_field(worker, "status").unwrap_or_else(|| "unknown".to_string());
     let surface = safe_string_field(worker, "surface_id")
         .map(|surface| format!(" surface {surface}"))
         .unwrap_or_default();
+    let runtime = match (
+        worker.get("surface_present").and_then(Value::as_bool),
+        worker
+            .get("surface_runtime_present")
+            .and_then(Value::as_bool),
+        worker.get("surface_ready").and_then(Value::as_bool),
+    ) {
+        (Some(true), _, Some(true)) => " runtime ready".to_string(),
+        (Some(true), Some(true), Some(false)) => " runtime present/not-ready".to_string(),
+        (Some(true), Some(false), _) | (Some(false), _, _) => " runtime missing".to_string(),
+        _ => String::new(),
+    };
     let heartbeat = worker
         .get("heartbeat_age_ms")
         .and_then(Value::as_u64)
         .map(|age| format!(" heartbeat_age_ms {age}"))
         .unwrap_or_default();
-    format!("worker {id} {lifecycle} status {status}{surface}{heartbeat}")
+    format!(
+        "worker {id} {lifecycle} final_state {final_state} status {status}{surface}{runtime}{heartbeat}"
+    )
 }
 
 fn format_team_task_line(task: &Value) -> String {
@@ -4670,15 +4685,48 @@ fn format_context_snapshot_agent(agent: &Value) -> String {
         .map(|surface| format!("@{surface}"))
         .unwrap_or_default();
     let lifecycle = safe_string_field(agent, "lifecycle").unwrap_or_else(|| "unknown".to_string());
-    let permission = safe_string_field(agent, "permission_mode")
-        .map(|permission| format!(" mode {permission}"))
-        .unwrap_or_default();
+    let mut parts = vec![format!("{provider}{surface}#{lifecycle}")];
+    if let Some(session_id) = safe_string_field(agent, "session_id") {
+        parts.push(format!("session {session_id}"));
+    }
+    if let Some(source) = safe_string_field(agent, "source") {
+        parts.push(format!("source {source}"));
+    }
+    if let Some(age_ms) = agent.get("age_ms").and_then(Value::as_u64) {
+        parts.push(format!("age_ms {age_ms}"));
+    }
+    let evidence = agent.get("lifecycle_evidence").unwrap_or(&Value::Null);
+    if let (Some(key), Some(value)) = (
+        safe_string_field(evidence, "status_key"),
+        safe_string_field(evidence, "status_value"),
+    ) {
+        parts.push(format!("status {key}={value}"));
+    }
+    let ready = evidence
+        .get("ready")
+        .and_then(Value::as_bool)
+        .or_else(|| agent.get("ready").and_then(Value::as_bool));
+    if let Some(ready) = ready {
+        let reason = safe_string_field(evidence, "readiness_reason")
+            .or_else(|| safe_string_field(agent, "reason"));
+        if let Some(reason) = reason {
+            parts.push(format!("ready {ready}:{reason}"));
+        } else {
+            parts.push(format!("ready {ready}"));
+        }
+    }
+    if let Some(permission) = safe_string_field(agent, "permission_mode") {
+        parts.push(format!("mode {permission}"));
+    }
+    if let Some(cwd) = safe_string_field(agent, "effective_project_cwd") {
+        parts.push(format!("cwd {cwd}"));
+    }
     let hint = match lifecycle.as_str() {
         "needs_input" => " inspect_tail",
         "running" => " monitor",
         _ => "",
     };
-    format!("{provider}{surface}#{lifecycle}{permission}{hint}")
+    format!("{}{}", parts.join(" "), hint)
 }
 
 fn format_status_summary_line(summary: &Value) -> String {
@@ -16103,6 +16151,45 @@ mod tests {
     }
 
     #[test]
+    fn team_worker_health_formatter_surfaces_final_state_and_runtime_readiness() {
+        let line = format_team_worker_health_line(&json!({
+            "worker_id": "worker-1",
+            "lifecycle": "starting",
+            "final_state": "starting",
+            "status": "running",
+            "surface_id": "surface-1",
+            "surface_present": true,
+            "surface_runtime_present": true,
+            "surface_ready": false,
+            "heartbeat_age_ms": 42,
+        }));
+
+        assert_eq!(
+            line,
+            "worker worker-1 starting final_state starting status running surface surface-1 runtime present/not-ready heartbeat_age_ms 42"
+        );
+    }
+
+    #[test]
+    fn team_worker_health_formatter_distinguishes_missing_runtime() {
+        let line = format_team_worker_health_line(&json!({
+            "worker_id": "worker-1",
+            "lifecycle": "surface_missing",
+            "final_state": "surface_missing",
+            "status": "running",
+            "surface_id": "surface-1",
+            "surface_present": true,
+            "surface_runtime_present": false,
+            "surface_ready": false,
+        }));
+
+        assert_eq!(
+            line,
+            "worker worker-1 surface_missing final_state surface_missing status running surface surface-1 runtime missing"
+        );
+    }
+
+    #[test]
     fn team_finish_marks_team_done() {
         let request = with_socket_response(
             |req| {
@@ -16261,6 +16348,40 @@ mod tests {
         assert_eq!(request["params"]["workspace_name"], "main");
         assert_eq!(request["params"]["tail_lines"], 12);
         assert_eq!(request["params"]["tail_max_bytes"], 2048);
+    }
+
+    #[test]
+    fn status_explain_formatter_includes_agent_evidence() {
+        let line = format_context_snapshot_explain_line(&json!({
+            "workspace": {"id": "w1", "name": "main"},
+            "agents": [{
+                "agent": "codex",
+                "session_id": "sess-1",
+                "surface_id": "surface-1",
+                "lifecycle": "running",
+                "source": "persisted_agent_session",
+                "age_ms": 1200,
+                "permission_mode": "bypassPermissions",
+                "effective_project_cwd": "/home/simone/forktty",
+                "lifecycle_evidence": {
+                    "status_key": "agent:codex",
+                    "status_value": "Running",
+                    "readiness_reason": "ready",
+                    "ready": true
+                }
+            }],
+            "risk_flags": ["permission_bypass"],
+            "terminal_tails": []
+        }));
+
+        assert!(line.contains("codex@surface-1#running"));
+        assert!(line.contains("session sess-1"));
+        assert!(line.contains("source persisted_agent_session"));
+        assert!(line.contains("age_ms 1200"));
+        assert!(line.contains("status agent:codex=Running"));
+        assert!(line.contains("ready true:ready"));
+        assert!(line.contains("mode bypassPermissions"));
+        assert!(line.contains("cwd /home/simone/forktty"));
     }
 
     #[test]

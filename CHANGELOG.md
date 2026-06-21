@@ -44,10 +44,15 @@ All notable changes to ForkTTY are documented here.
   maintenance flow, including final-binary skill checksum verification.
 
 ### Fixed
-- `team.worker.health` now treats worker surfaces as live only when they still
-  exist in the workspace model and the terminal backend reports a ready runtime,
-  so exited or lost worker panes no longer report a running final
-  state from stale model metadata alone.
+- `team.worker.health` now reports `surface_present`,
+  `surface_runtime_present`, `surface_ready`, and a `starting` final state for
+  present but not-yet-ready worker runtimes, while still treating exited or
+  lost worker panes as not live. `forktty team watch` now prints `final_state`
+  and runtime readiness, and `forktty status explain` includes compact agent
+  evidence such as source, age, session id, status row, readiness, permission
+  mode, and effective project cwd.
+- GTK workspace badges now distinguish status-driven `Input`, `Starting`, and
+  `Missing` states instead of folding them into generic Exited/Running badges.
 - Agent hook `PreToolUse` events now keep the primary agent status value as the
   compact lifecycle state `Running` while preserving the exact tool name in the
   hook log metadata, reducing noisy `Running <tool>` snapshots for agents.
