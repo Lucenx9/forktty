@@ -40,6 +40,10 @@ All notable changes to ForkTTY are documented here.
   assign it after launch, matching the socket server's task and worker
   validation order and avoiding a `running` unassigned task if worker launch
   fails.
+- Claude Code team workers now start with documented permission-mode defaults:
+  review roles use non-interactive `dontAsk` with pre-approved built-in read
+  tools (`Read`, `Grep`, and `Glob`), other Claude workers use `auto`, and
+  explicit provider permission args are left untouched.
 - Embedded Ghostty title updates now ignore launcher-wrapper titles such as
   `/usr/bin/env` from both terminal events and embedded title notifications,
   preventing new team or terminal panes from replacing useful pane titles with

@@ -73,6 +73,7 @@ const HOOK_SESSION_TARGET_CAPACITY: usize = 256;
 const NOTIFICATION_DISPATCH_QUEUE_CAPACITY: usize = 64;
 const DEFAULT_AGENT_RECLAIM_MIN_IDLE_MS: u64 = 10 * 60 * 1_000;
 const DEFAULT_TEAM_WORKER_STALE_MS: u64 = 5 * 60 * 1_000;
+const CLAUDE_TEAM_REVIEW_ALLOWED_TOOLS: &str = "Read,Grep,Glob";
 /// Distinguishes concurrent [`bind_private_socket_path`] staging directories
 /// within one process (tests bind many listeners in parallel).
 static SOCKET_BIND_STAGING_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -1135,7 +1136,7 @@ pub async fn dispatch(
             let worktree_name =
                 optional_non_blank_string_param(&params, "worktree_name")?.map(str::to_string);
             let extra_args = optional_string_array_param(&params, "args")?.unwrap_or_default();
-            let (program, args) = team_worker_launch_command(&agent, extra_args)?;
+            let (program, args) = team_worker_launch_command(&agent, role.as_deref(), extra_args)?;
             let surface = create_team_worker_surface(state, &team_id, &worker_id)?;
             let request =
                 SpawnRequest::for_surface(&surface, program.clone(), state.socket_path.clone())
@@ -5028,6 +5029,7 @@ fn optional_string_array_param(
 
 fn team_worker_launch_command(
     agent: &str,
+    role: Option<&str>,
     extra_args: Vec<String>,
 ) -> Result<(String, Vec<String>), DispatchError> {
     let program = match agent.trim().to_ascii_lowercase().as_str() {
@@ -5054,12 +5056,53 @@ fn team_worker_launch_command(
             ));
         }
     }
-    if forktty_core::command_safety::is_shell_trampoline(program, &extra_args) {
+    let mut args = if program == "claude" && !claude_args_have_permission_override(&extra_args) {
+        claude_team_permission_args(role)
+    } else {
+        Vec::new()
+    };
+    args.extend(extra_args);
+    if forktty_core::command_safety::is_shell_trampoline(program, &args) {
         return Err(DispatchError::InvalidParam(
             "team worker launch rejects shell trampolines".to_string(),
         ));
     }
-    Ok((program.to_string(), extra_args))
+    Ok((program.to_string(), args))
+}
+
+fn claude_args_have_permission_override(args: &[String]) -> bool {
+    args.iter().any(|arg| {
+        let option = arg.split_once('=').map_or(arg.as_str(), |(key, _)| key);
+        matches!(
+            option,
+            "--permission-mode"
+                | "--dangerously-skip-permissions"
+                | "--allow-dangerously-skip-permissions"
+                | "--allowedTools"
+                | "--allowed-tools"
+                | "--disallowedTools"
+                | "--disallowed-tools"
+                | "--settings"
+        )
+    })
+}
+
+fn claude_team_permission_args(role: Option<&str>) -> Vec<String> {
+    if role.is_some_and(claude_role_is_review) {
+        vec![
+            "--permission-mode".to_string(),
+            "dontAsk".to_string(),
+            "--allowedTools".to_string(),
+            CLAUDE_TEAM_REVIEW_ALLOWED_TOOLS.to_string(),
+        ]
+    } else {
+        vec!["--permission-mode".to_string(), "auto".to_string()]
+    }
+}
+
+fn claude_role_is_review(role: &str) -> bool {
+    role.split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| token.to_ascii_lowercase().starts_with("review"))
 }
 
 fn team_worker_action_text(
@@ -7384,7 +7427,7 @@ mod tests {
 
     #[test]
     fn team_worker_launch_rejects_removed_gemini_provider() {
-        let err = team_worker_launch_command("gemini", Vec::new()).unwrap_err();
+        let err = team_worker_launch_command("gemini", None, Vec::new()).unwrap_err();
         assert!(
             err.to_string()
                 .contains("unsupported team worker agent: gemini"),
@@ -7405,10 +7448,103 @@ mod tests {
             ("antigravity", "agy"),
             ("agy", "agy"),
         ] {
-            let (program, args) = team_worker_launch_command(alias, Vec::new()).unwrap();
+            let (program, args) = team_worker_launch_command(alias, None, Vec::new()).unwrap();
             assert_eq!(program, expected_program, "{alias}");
-            assert!(args.is_empty(), "{alias}");
+            if expected_program == "claude" {
+                assert_eq!(
+                    args,
+                    vec!["--permission-mode".to_string(), "auto".to_string()],
+                    "{alias}"
+                );
+            } else {
+                assert!(args.is_empty(), "{alias}");
+            }
         }
+    }
+
+    #[test]
+    fn team_worker_launch_uses_dont_ask_for_claude_review_roles() {
+        let (program, args) =
+            team_worker_launch_command("claude-code", Some("code-reviewer"), Vec::new()).unwrap();
+
+        assert_eq!(program, "claude");
+        assert_eq!(
+            &args[0..2],
+            ["--permission-mode".to_string(), "dontAsk".to_string()]
+        );
+        let tools = args
+            .windows(2)
+            .find(|pair| pair[0] == "--allowedTools")
+            .map(|pair| pair[1].as_str())
+            .expect("review profile should set Claude allowed tools");
+        assert_eq!(tools, CLAUDE_TEAM_REVIEW_ALLOWED_TOOLS);
+        assert!(tools.contains("Read"));
+        assert!(tools.contains("Grep"));
+        assert!(tools.contains("Glob"));
+        assert!(!tools.contains("Bash("));
+        assert!(!tools.contains("cargo test"));
+    }
+
+    #[test]
+    fn team_worker_launch_preserves_explicit_claude_permission_args() {
+        let explicit_args = vec![
+            "--permission-mode".to_string(),
+            "default".to_string(),
+            "--model".to_string(),
+            "opus".to_string(),
+        ];
+
+        let (program, args) =
+            team_worker_launch_command("claude", Some("reviewer"), explicit_args.clone()).unwrap();
+
+        assert_eq!(program, "claude");
+        assert_eq!(args, explicit_args);
+
+        let equals_args = vec!["--permission-mode=default".to_string()];
+        let (_, args) =
+            team_worker_launch_command("claude", Some("reviewer"), equals_args.clone()).unwrap();
+        assert_eq!(args, equals_args);
+    }
+
+    #[test]
+    fn team_worker_launch_preserves_each_claude_permission_override() {
+        for args in [
+            vec!["--allowedTools".to_string(), "Read".to_string()],
+            vec!["--allowed-tools=Read".to_string()],
+            vec!["--disallowedTools".to_string(), "Bash".to_string()],
+            vec!["--disallowed-tools=Bash".to_string()],
+            vec!["--settings".to_string(), "/tmp/settings.json".to_string()],
+            vec!["--settings=/tmp/settings.json".to_string()],
+            vec!["--dangerously-skip-permissions".to_string()],
+            vec!["--allow-dangerously-skip-permissions".to_string()],
+        ] {
+            let (_, actual) =
+                team_worker_launch_command("claude", Some("reviewer"), args.clone()).unwrap();
+            assert_eq!(actual, args);
+        }
+    }
+
+    #[test]
+    fn team_worker_launch_prepends_review_defaults_before_extra_args() {
+        let extra = vec!["--model".to_string(), "opus".to_string()];
+        let (_, args) =
+            team_worker_launch_command("claude", Some("code-reviewer"), extra.clone()).unwrap();
+
+        assert_eq!(
+            &args[0..2],
+            ["--permission-mode".to_string(), "dontAsk".to_string()]
+        );
+        assert_eq!(&args[args.len() - 2..], extra.as_slice());
+    }
+
+    #[test]
+    fn team_worker_launch_does_not_treat_preview_as_review_role() {
+        let (_, args) = team_worker_launch_command("claude", Some("preview"), Vec::new()).unwrap();
+
+        assert_eq!(
+            args,
+            vec!["--permission-mode".to_string(), "auto".to_string()]
+        );
     }
 
     #[test]
