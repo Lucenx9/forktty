@@ -39,6 +39,10 @@ All notable changes to ForkTTY are documented here.
   terminal input after the queued text is delivered when the message does not
   already end in carriage return.
 
+### Changed
+- `AGENTS.md` now reflects the current MCP/team/workflow/skill/AppImage
+  maintenance flow, including final-binary skill checksum verification.
+
 ### Fixed
 - `team.worker.shutdown`, MCP `team_worker_shutdown`, and CLI
   `forktty team-worker-shutdown` now submit shutdown text by default, so custom
