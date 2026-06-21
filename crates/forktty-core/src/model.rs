@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::agents::AgentKind;
+use crate::agents::{agent_metadata_aliases, AgentKind};
 use crate::session::{SessionData, SESSION_FORMAT_VERSION};
 
 pub type WorkspaceId = String;
@@ -345,16 +345,6 @@ fn agent_session_lifecycle_keeps_metadata(lifecycle: AgentSessionLifecycle) -> b
             | AgentSessionLifecycle::NeedsInput
             | AgentSessionLifecycle::Unknown
     )
-}
-
-fn agent_metadata_aliases(agent: AgentKind) -> &'static [&'static str] {
-    match agent {
-        AgentKind::ClaudeCode => &["claude", "claude-code", "claude_code"],
-        AgentKind::Codex => &["codex"],
-        AgentKind::Antigravity => &["antigravity", "agy"],
-        AgentKind::OpenCode => &["opencode", "open-code", "open_code"],
-        AgentKind::Custom => &["custom"],
-    }
 }
 
 fn agent_metadata_status_key_matches(agent: AgentKind, key: &str) -> bool {

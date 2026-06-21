@@ -72,6 +72,9 @@ All notable changes to ForkTTY are documented here.
   status, permission mode, token progress, and closed-surface metadata when no
   same-provider session is still active in that workspace, preventing stale
   agent names in the workspace sidebar summary.
+- The workspace sidebar now ignores stale surface/provider metadata for panes
+  or managed agents that are no longer present, preventing old `Exited` badges
+  or activity summaries from sticking after the active pane has moved on.
 - AppImage packaging now preserves the `libgtk4-layer-shell` runtime SONAME
   alongside the unversioned development name, so embedded Ghostty panes can
   load on hosts without a system gtk4-layer-shell installation.

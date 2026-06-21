@@ -20,6 +20,16 @@ pub enum AgentKind {
     Custom,
 }
 
+pub fn agent_metadata_aliases(agent: AgentKind) -> &'static [&'static str] {
+    match agent {
+        AgentKind::ClaudeCode => &["claude", "claude-code", "claude_code"],
+        AgentKind::Codex => &["codex"],
+        AgentKind::Antigravity => &["antigravity", "agy"],
+        AgentKind::OpenCode => &["opencode", "open-code", "open_code"],
+        AgentKind::Custom => &["custom"],
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentStatus {

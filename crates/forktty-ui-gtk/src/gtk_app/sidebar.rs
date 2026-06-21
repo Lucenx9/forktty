@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeSet;
 
 pub(super) struct SidebarWorkspaceRow {
     workspace: forktty_core::Workspace,
@@ -550,6 +551,8 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
     for workspace in model.list_workspaces() {
         let statuses = model.list_status(&workspace.id);
         let progress = model.list_progress(&workspace.id);
+        let (statuses, progress) =
+            sidebar_visible_metadata(&model, &workspace, &statuses, &progress);
         let logs = model.list_logs(&workspace.id);
         let latest_attention_notification = workspace
             .needs_attention
@@ -849,10 +852,12 @@ pub(super) fn workspace_status_badge(
     // colored red so the risky mode is visible on its own pill) describe a
     // standing configuration, not an event: they must not keep the whole
     // workspace badged as Error/Exited for as long as the mode is active.
+    let workspace_surface_ids = collect_panes(&workspace.pane_tree);
     let event_statuses = || {
-        statuses
-            .iter()
-            .filter(|status| !status_entry_is_mode_indicator(status))
+        statuses.iter().filter(|status| {
+            !status_entry_is_mode_indicator(status)
+                && status_entry_targets_workspace_surface(status, &workspace_surface_ids)
+        })
     };
 
     if event_statuses().any(status_entry_suggests_error) {
@@ -898,12 +903,122 @@ pub(super) fn workspace_status_badge(
     None
 }
 
+pub(super) fn sidebar_visible_metadata(
+    model: &forktty_core::WorkspaceModel,
+    workspace: &forktty_core::Workspace,
+    statuses: &[StatusEntry],
+    progress: &[ProgressEntry],
+) -> (Vec<StatusEntry>, Vec<ProgressEntry>) {
+    let workspace_surface_ids = collect_panes(&workspace.pane_tree);
+    let active_agent_aliases = active_agent_metadata_aliases(model, &workspace.id);
+    let statuses = statuses
+        .iter()
+        .filter(|status| {
+            sidebar_metadata_key_is_visible(
+                &status.key,
+                &workspace_surface_ids,
+                &active_agent_aliases,
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let progress = progress
+        .iter()
+        .filter(|progress| {
+            sidebar_metadata_key_is_visible(
+                &progress.key,
+                &workspace_surface_ids,
+                &active_agent_aliases,
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    (statuses, progress)
+}
+
+fn active_agent_metadata_aliases(
+    model: &forktty_core::WorkspaceModel,
+    workspace_id: &str,
+) -> BTreeSet<&'static str> {
+    model
+        .list_surfaces(Some(workspace_id))
+        .into_iter()
+        .filter_map(|surface| surface.agent_session)
+        .filter(|session| agent_lifecycle_keeps_sidebar_metadata(session.lifecycle))
+        .flat_map(|session| forktty_core::agents::agent_metadata_aliases(session.agent).iter())
+        .copied()
+        .collect()
+}
+
+fn agent_lifecycle_keeps_sidebar_metadata(lifecycle: forktty_core::AgentSessionLifecycle) -> bool {
+    matches!(
+        lifecycle,
+        forktty_core::AgentSessionLifecycle::Running
+            | forktty_core::AgentSessionLifecycle::Idle
+            | forktty_core::AgentSessionLifecycle::NeedsInput
+            | forktty_core::AgentSessionLifecycle::Unknown
+    )
+}
+
+fn sidebar_metadata_key_is_visible(
+    key: &str,
+    workspace_surface_ids: &[String],
+    active_agent_aliases: &BTreeSet<&'static str>,
+) -> bool {
+    if let Some(surface_id) = status_surface_id(key) {
+        return workspace_surface_ids.iter().any(|id| id == surface_id);
+    }
+    if let Some(agent_alias) = managed_agent_alias_from_metadata_key(key) {
+        return active_agent_aliases.contains(agent_alias);
+    }
+    true
+}
+
+fn managed_agent_alias_from_metadata_key(key: &str) -> Option<&'static str> {
+    let rest = key.strip_prefix("agent:")?;
+    [
+        forktty_core::AgentKind::ClaudeCode,
+        forktty_core::AgentKind::Codex,
+        forktty_core::AgentKind::Antigravity,
+        forktty_core::AgentKind::OpenCode,
+        forktty_core::AgentKind::Custom,
+    ]
+    .into_iter()
+    .flat_map(|agent| {
+        forktty_core::agents::agent_metadata_aliases(agent)
+            .iter()
+            .copied()
+    })
+    .find(|alias| {
+        rest == *alias
+            || rest
+                .strip_prefix(*alias)
+                .is_some_and(|suffix| suffix.starts_with(':'))
+    })
+}
+
 pub(super) fn surface_status_blocks_auto_spawn(statuses: &[StatusEntry], surface_id: &str) -> bool {
     let key = surface_status_key(surface_id);
     statuses.iter().any(|status| {
         status.key == key
             && (status_entry_suggests_error(status) || status_entry_suggests_exited(status))
     })
+}
+
+fn status_entry_targets_workspace_surface(
+    status: &StatusEntry,
+    workspace_surface_ids: &[String],
+) -> bool {
+    let Some(surface_id) = status_surface_id(&status.key) else {
+        return true;
+    };
+    workspace_surface_ids.iter().any(|id| id == surface_id)
+}
+
+fn status_surface_id(key: &str) -> Option<&str> {
+    key.strip_prefix("surface:")?
+        .split_once(':')
+        .map(|(id, _)| id)
 }
 
 pub(super) fn status_entry_suggests_running(status: &StatusEntry) -> bool {

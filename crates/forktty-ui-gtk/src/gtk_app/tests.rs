@@ -2449,6 +2449,94 @@ fn closed_terminal_status_blocks_auto_spawn() {
 }
 
 #[test]
+fn sidebar_badge_ignores_stale_surface_exit_status() {
+    let mut model = WorkspaceModel::new();
+    model.create_workspace("main", "/tmp");
+    let workspace = model.list_workspaces().remove(0);
+    let stale_exit = StatusEntry {
+        key: surface_status_key("surface-missing"),
+        label: "Terminal".to_string(),
+        value: "Exited (0)".to_string(),
+        color: Some("yellow".to_string()),
+    };
+    let running = StatusEntry {
+        key: "agent:codex".to_string(),
+        label: "Codex".to_string(),
+        value: "Running Bash".to_string(),
+        color: Some("blue".to_string()),
+    };
+
+    let badge = workspace_status_badge(&workspace, &[stale_exit, running], &[], None).unwrap();
+
+    assert_eq!(badge.label, "Running");
+    assert_eq!(badge.class_name, "running");
+}
+
+#[test]
+fn sidebar_activity_summary_ignores_inactive_agent_metadata() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let workspace_id = workspace.id.clone();
+    let surface_id = workspace.focused_surface_id.clone();
+    assert!(model.set_surface_agent_session(
+        &surface_id,
+        forktty_core::AgentKind::Codex,
+        "codex-session",
+    ));
+    model
+        .set_status(
+            &workspace_id,
+            "agent:codex",
+            "Codex",
+            "Running Bash",
+            Some("blue".to_string()),
+        )
+        .unwrap();
+    model
+        .set_status(
+            &workspace_id,
+            "agent:opencode",
+            "OpenCode",
+            "Ready",
+            Some("green".to_string()),
+        )
+        .unwrap();
+    model
+        .set_status(
+            &workspace_id,
+            surface_status_key("surface-missing"),
+            "Terminal",
+            "Closed",
+            None,
+        )
+        .unwrap();
+    model
+        .set_progress(
+            &workspace_id,
+            "agent:claude:tokens",
+            "Claude input tokens",
+            50.0,
+            Some(100.0),
+        )
+        .unwrap();
+    let workspace = model.list_workspaces().remove(0);
+    let (statuses, progress) = sidebar_visible_metadata(
+        &model,
+        &workspace,
+        &model.list_status(&workspace_id),
+        &model.list_progress(&workspace_id),
+    );
+
+    assert_eq!(statuses.len(), 1);
+    assert_eq!(statuses[0].key, "agent:codex");
+    assert!(progress.is_empty());
+    assert_eq!(
+        format_workspace_activity_summary(&statuses, &progress, None, None),
+        "Codex: Running Bash"
+    );
+}
+
+#[test]
 fn stale_surface_notification_does_not_target_workspace() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");
