@@ -44,6 +44,10 @@ All notable changes to ForkTTY are documented here.
   maintenance flow, including final-binary skill checksum verification.
 
 ### Fixed
+- `team.worker.health` now treats worker surfaces as live only when they still
+  exist in the workspace model and the terminal backend reports a ready runtime,
+  so exited or lost worker panes no longer report a running final
+  state from stale model metadata alone.
 - Agent hook `PreToolUse` events now keep the primary agent status value as the
   compact lifecycle state `Running` while preserving the exact tool name in the
   hook log metadata, reducing noisy `Running <tool>` snapshots for agents.

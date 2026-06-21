@@ -323,6 +323,22 @@ impl TerminalBackend for GtkTerminalBackend {
         Ok(())
     }
 
+    fn surface_ready(&self, surface_id: &str) -> Result<bool, TerminalError> {
+        if !self
+            .surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .contains_key(surface_id)
+        {
+            return Ok(false);
+        }
+        Ok(self
+            .ready_surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .contains(surface_id))
+    }
+
     fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
         let surfaces = self
             .surfaces

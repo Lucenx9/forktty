@@ -288,6 +288,12 @@ pub trait TerminalBackend: Send + Sync {
     fn forget_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
         self.close(surface_id)
     }
+    fn surface_ready(&self, surface_id: &str) -> Result<bool, TerminalError> {
+        Ok(self
+            .surfaces()?
+            .iter()
+            .any(|surface| surface.surface_id == surface_id))
+    }
     fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError>;
 }
 

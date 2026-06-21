@@ -516,6 +516,7 @@ fn gtk_backend_rejects_send_text_after_surface_exits() {
     let backend = GtkTerminalBackend::new(tx);
     backend.spawn(test_spawn_request()).unwrap();
     backend.mark_surface_ready("surface-1").unwrap();
+    assert!(backend.surface_ready("surface-1").unwrap());
     backend.send_text("surface-1", "echo ok\n").unwrap();
 
     backend.mark_surface_pid("surface-1", 4242).unwrap();
@@ -523,6 +524,7 @@ fn gtk_backend_rejects_send_text_after_surface_exits() {
 
     backend.mark_surface_not_ready("surface-1").unwrap();
     backend.clear_surface_pid("surface-1").unwrap();
+    assert!(!backend.surface_ready("surface-1").unwrap());
 
     let err = backend
         .send_text("surface-1", "echo after-exit\n")
