@@ -149,7 +149,7 @@ ForkTTY team commands
 
 High-level wrappers:
   forktty team ask <team-id> <worker-id> --agent <agent> --task-id <id> --prompt <text>
-      Create/update the team, launch a fresh worker surface, upsert the task, queue the prompt, and dispatch it.
+      Create/update the team, create the task, launch a fresh worker surface, assign the task, queue the prompt, and dispatch it.
       Re-running ask/review launches another worker; use team-message-send + team-message-dispatch for follow-ups.
       Options: --role <role>, --title <title>, --goal <text>, --worktree-name <name>,
                --args <comma-list>, --submit[=true|false] (default: true; pass --submit=false to stage only).
@@ -13029,6 +13029,28 @@ mod tests {
                 );
             },
         );
+    }
+
+    #[test]
+    fn bundled_agent_skill_documents_team_preflight_roles_and_qa_policy() {
+        for expected in [
+            "## Team Preflight",
+            "## Worker Role Templates",
+            "## Worktree Policy",
+            "## Isolated Integration QA",
+            "workflow_upsert",
+            "workflow_plan_set",
+            "team_task_upsert",
+            "agent_health",
+            "forktty hooks test codex",
+            "FORKTTY_SOCKET_PATH",
+            "separate temporary instance",
+        ] {
+            assert!(
+                AGENT_SKILL_MD.contains(expected),
+                "agent skill should document {expected}"
+            );
+        }
     }
 
     #[test]

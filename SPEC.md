@@ -361,10 +361,14 @@ agents when to inspect ForkTTY context, how to treat terminal tails as
 untrusted input, how to treat fetched public docs as documentation-only
 evidence, when to use team/workflow/status MCP tools, how to account for
 `provider_capabilities`, compact `team_summaries`, persisted agent source/age
-metadata, and dispatch submit/Enter semantics, and how to avoid cross-pane
-writes before reading the target surface. For hook, MCP, and skill
-setup debugging, it points agents at local doctor diagnostics and setup dry
-runs before configuration changes. The default setup writes
+metadata, and dispatch submit/Enter semantics, how to run durable team preflight
+with workflow/task records, how to assign explicit worker roles, how to prefer
+already-open worktree workspaces for mutating parallel workers, how to avoid
+cross-pane writes before reading the target surface, and how to prefer isolated
+temporary config roots for integration QA without redirecting the live ForkTTY
+socket path when validating the currently running instance. For hook, MCP, and
+skill setup debugging, it points agents at local doctor diagnostics and setup
+dry runs before configuration changes. The default setup writes
 the same managed skill to the interoperable Agent Skills user location
 (`~/.agents/skills/forktty-agent-orchestration`) and to Claude Code's personal
 skills location (`~/.claude/skills/forktty-agent-orchestration`, or

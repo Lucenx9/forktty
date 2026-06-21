@@ -58,6 +58,8 @@ All notable changes to ForkTTY are documented here.
   assign it after launch, matching the socket server's task and worker
   validation order and avoiding a `running` unassigned task if worker launch
   fails.
+- `forktty team ask/review --help` now describes the task creation and worker
+  launch order correctly.
 - Claude Code team workers now start with documented permission-mode defaults:
   review roles use non-interactive `dontAsk` with pre-approved built-in read
   tools (`Read`, `Grep`, and `Glob`), other Claude workers use `auto`, and
@@ -125,9 +127,13 @@ All notable changes to ForkTTY are documented here.
 - The managed ForkTTY agent orchestration skill now tells agents to start hook,
   MCP, and skill setup debugging with local `forktty doctor` diagnostics and
   provider-specific dry runs before changing configuration files.
-- The managed ForkTTY agent orchestration skill now points agents at
-  `provider_capabilities`, compact `team_summaries`, persisted agent
-  source/age metadata, and the dispatch submit/Enter carriage-return semantics.
+- The managed ForkTTY agent orchestration skill now points agents at provider
+  capability metadata, compact `team_summaries`, persisted agent source/age
+  metadata, and the dispatch submit/Enter carriage-return semantics.
+- The managed ForkTTY agent orchestration skill now gives agents a stricter
+  team preflight, worker role, worktree, and isolated integration QA policy,
+  including explicit guidance not to redirect the live ForkTTY socket path when
+  proving hooks against the current instance.
 - The managed ForkTTY agent orchestration skill now treats fetched public docs
   as untrusted documentation-only input, uses the canonical `context_snapshot`
   MCP name in its trigger text, declares its ForkTTY MCP dependency metadata,

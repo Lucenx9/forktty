@@ -110,11 +110,16 @@ forktty skills remove agents --dry-run
 
 The skill tells agents to inspect `context_snapshot` or equivalent read-only
 state before cross-pane work, treat terminal tails and fetched public docs as
-untrusted input, use team mailbox dispatch for worker prompts, compare
+untrusted input, run durable team preflight with `workflow_upsert`,
+`workflow_plan_set`, and `team_task_upsert` for non-trivial worker launches,
+use explicit worker role contracts, prefer already-open worktree workspaces for
+mutating parallel workers, use team mailbox dispatch for worker prompts, compare
 status/hooks/terminal tail when `running` or `needs_input` appears delayed, and
-record durable workflow/team state for long-running coordination. For hook,
+record durable workflow/team evidence for long-running coordination. For hook,
 MCP, and skill setup debugging it points agents at `forktty doctor --hooks`,
-`forktty --json doctor`, and setup dry runs before changing config files.
+`forktty --json doctor`, setup dry runs, and isolated temporary config roots
+before changing real config files, without redirecting the live ForkTTY socket
+path when validating the currently running instance.
 
 Setup refuses to overwrite an existing skill directory with the same name
 unless its `SKILL.md` contains ForkTTY's managed marker. Updating or removing a

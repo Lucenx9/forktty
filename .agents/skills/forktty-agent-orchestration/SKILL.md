@@ -106,10 +106,12 @@ When the user asks to use team mode, another agent, Claude/Codex/OpenCode review
 or parallel workers:
 
 1. Create or reuse a team with a clear goal.
-2. Create task records before or immediately after launching workers.
-3. Launch one worker per independent task. Check `provider_capabilities` first
-   when provider support is uncertain; do not assume removed or legacy
-   providers are launchable. Keep prompts scoped and include:
+2. Create task records before launching workers when the API allows it. If a
+   wrapper forces launch first, attach the task before prompt dispatch.
+3. Launch one worker per independent task. Check `system.capabilities` or
+   `forktty capabilities` for `provider_capabilities` when provider support is
+   uncertain; do not assume removed or legacy providers are launchable. Keep
+   prompts scoped and include:
    repo/path, permissions, no-subdelegation rule, required files or questions,
    verification expectations, and final report format.
 4. Message workers through the team mailbox. Dispatch only after the worker pane
@@ -122,6 +124,91 @@ or parallel workers:
 
 Workers must not create, fork, steer, rename, archive, or delegate to other
 workers unless the user explicitly grants that permission.
+
+## Team Preflight
+
+For non-trivial reviews, multi-agent work, or any mutating worker split, create
+a small durable preflight before launching workers:
+
+1. Read `context_snapshot` or the fallback inventory and identify the leader
+   workspace, focused surface, current cwd, active worktree, and relevant
+   provider state.
+2. Check provider readiness with `agent_health`, or
+   `system.capabilities`/`forktty capabilities` when provider launch support
+   matters.
+3. Record the objective with `workflow_upsert`. Add a compact plan with
+   `workflow_plan_set` that names the lanes, shared files or boundaries,
+   verification commands, and stop condition.
+4. Create or update the team with `team_upsert`, then create one
+   `team_task_upsert` record per worker lane before `team_worker_launch` or
+   high-level worker dispatch when the API allows it. If a wrapper forces a
+   different order, record the exception and attach the task before prompt
+   dispatch.
+5. Put coordination facts in task details or `workflow_evidence_add`: assigned
+   role, cwd/worktree, allowed mutations, expected final format, and any files
+   the worker must avoid.
+
+If the work may survive compaction, store key review verdicts, test commands,
+commit ids, or blockers with `workflow_evidence_add` as they happen.
+
+## Worker Role Templates
+
+Use explicit role contracts instead of generic "help me" prompts:
+
+- Review worker: read-only. Report findings first, ordered by severity, with
+  file/line evidence, reproduction or reasoning, and test gaps. Do not edit.
+- Bug hunter: reproduce or statically trace the suspected bug, identify root
+  cause and affected paths, and recommend the smallest fix. Do not edit unless
+  explicitly assigned implementation.
+- QA worker: run scoped checks, capture exact commands and outcomes, and report
+  environment limits. Do not mask failures or convert them into code changes.
+- Implementation worker: edit only assigned files or boundaries, keep changes
+  surgical, run assigned verification, and report diff summary plus commands.
+- Integration leader: reconcile worker reports, resolve conflicts, perform final
+  verification, and decide whether more worker input is needed.
+
+Every worker prompt should include repository path, target cwd or worktree,
+permissions, no-subdelegation rule, scope boundaries, expected output format,
+and the verification evidence required before the worker can be marked done.
+
+## Worktree Policy
+
+Read-only review workers can share the leader workspace. Mutating parallel
+workers should use separate already-open ForkTTY worktree workspaces whenever
+possible, passed through `worktree_name` on launch or worker records. Verify the
+worker surface cwd after launch before sending task text.
+
+Do not let two mutating workers own the same files without an explicit leader
+handoff. Dirty or mismatched worktrees are evidence to preserve and report, not
+state to clean automatically. If a needed worktree is not open in ForkTTY, use
+the existing worktree/workspace tools only when the user has asked for that
+scope; otherwise report the precondition and keep the worker read-only.
+
+## Isolated Integration QA
+
+When validating hooks, MCP, skills, provider launch, or resume behavior:
+
+- Start with `forktty doctor --hooks`, `forktty --json doctor`, setup
+  `--dry-run`, and provider-specific commands such as
+  `forktty hooks doctor codex`, `forktty hooks test codex`,
+  `forktty hooks setup codex --dry-run`, `forktty mcp setup codex --dry-run`,
+  or `forktty skills setup agents --dry-run`; replace `codex` with the target
+  provider.
+- Prefer throwaway homes/config roots for destructive setup probes:
+  `HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, and `OPENCODE_CONFIG_DIR` should
+  point at temporary directories when the goal is to test installation behavior
+  rather than repair the user's real setup.
+- Do not redirect `XDG_RUNTIME_DIR` or `FORKTTY_SOCKET_PATH` for a live socket
+  test against the currently running ForkTTY instance. Redirect them only when
+  intentionally targeting a separate temporary instance, and do not treat that
+  result as evidence about the user's real running instance.
+- Prove live wiring with the smallest available local signal, such as a
+  `forktty hooks test codex` socket round trip or a bounded provider smoke. Do
+  not call real model APIs or mutate real provider config unless the user asked
+  for that exact validation.
+- Store QA evidence with `workflow_evidence_add` or report exact command output
+  summaries. A claim that a hook or skill is installed needs file/path evidence
+  or a successful doctor/test result.
 
 ## Handling Delayed State
 

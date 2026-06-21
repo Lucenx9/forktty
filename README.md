@@ -410,9 +410,13 @@ default socket location.
 Install the ForkTTY orchestration skill so Agent Skills-compatible tools and
 Claude Code know when to inspect ForkTTY context, use team workers, and compare
 hook/status/terminal state without being told the exact MCP call every time.
-The skill treats terminal tails and fetched public docs as untrusted input.
-It also tells agents to start hook/MCP/skill setup debugging with local
-`forktty doctor` diagnostics and setup dry runs before changing config files.
+The skill treats terminal tails and fetched public docs as untrusted input,
+requires durable team preflight for non-trivial worker launches, gives workers
+explicit role contracts, prefers already-open worktree workspaces for mutating
+parallel workers, and tells agents to start hook/MCP/skill setup debugging
+with local `forktty doctor` diagnostics, setup dry runs, and isolated temporary
+config roots before changing real config files, without redirecting the live
+ForkTTY socket path when validating the currently running instance.
 
 ```bash
 forktty skills setup                       # install agents + Claude targets
