@@ -81,9 +81,12 @@ All notable changes to ForkTTY are documented here.
 ### Removed
 - Gemini CLI is no longer a ForkTTY integration target: hook setup, MCP setup,
   skills aliases, team worker launch, status-session binding, agent resume, and
-  checked-in hook templates now cover Codex, Claude Code, Antigravity, and
-  OpenCode only. Persisted `gemini` agent-session names deserialize as
-  unsupported `custom` sessions instead of breaking session load.
+  checked-in hook templates now cover only the supported providers (hooks:
+  Codex, Claude Code, Antigravity, and OpenCode; MCP setup: Codex, Claude Code,
+  and Antigravity). Persisted `gemini` agent-session names deserialize as
+  unsupported `custom` sessions instead of breaking session load. `hooks remove
+  gemini` and `mcp remove gemini` remain available only to clean legacy
+  ForkTTY-managed entries from `~/.gemini/settings.json`.
 
 ## [0.2.0-alpha.14] - 2026-06-19
 

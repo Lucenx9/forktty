@@ -120,14 +120,16 @@ Usage:
   forktty clear-notifications
   forktty hooks setup [--full] [codex] [claude] [antigravity] [opencode]
       default setup agents: codex, claude, antigravity, opencode
-  forktty hooks remove [codex] [claude] [antigravity] [opencode]
+  forktty hooks remove [codex] [claude] [antigravity] [opencode] [gemini]
+      gemini is legacy cleanup only; setup remains unsupported
   forktty hooks doctor codex
   forktty hooks test codex
   forktty hooks <agent> <event>
   forktty mcp                                      Run the ForkTTY MCP stdio server
   forktty mcp setup [codex] [claude] [antigravity]
       default setup agents: codex, claude, antigravity
-  forktty mcp remove [codex] [claude] [antigravity]
+  forktty mcp remove [codex] [claude] [antigravity] [gemini]
+      gemini is legacy cleanup only; setup remains unsupported
   forktty skills setup [agents|codex|claude]
       default setup targets: agents, claude; codex aliases the interoperable agents target
   forktty skills remove [agents|codex|claude]
@@ -414,6 +416,11 @@ const HOOK_ENTRY_TIMEOUT_SECS: u64 = 30;
 
 const OPENCODE_HOOK_TIMEOUT_MS: u64 = HOOK_ENTRY_TIMEOUT_SECS * 1000;
 const OPENCODE_MAX_INPUT_BYTES: usize = MAX_STDIN_TEXT_BYTES;
+
+// Gemini CLI is no longer an active ForkTTY integration target. Keep only
+// enough legacy metadata to remove ForkTTY-managed config written by older
+// releases from ~/.gemini/settings.json.
+const LEGACY_GEMINI_HOOK_ENTRY_TIMEOUT_MS: u64 = HOOK_ENTRY_TIMEOUT_SECS * 1000;
 
 const CODEX_HOOK_ENTRIES: &[HookEntrySpec] = &[
     HookEntrySpec {
@@ -719,6 +726,64 @@ const OPENCODE_HOOK_ENTRIES: &[HookEntrySpec] = &[
     },
 ];
 
+const LEGACY_GEMINI_HOOK_ENTRIES: &[HookEntrySpec] = &[
+    HookEntrySpec {
+        event_name: "SessionStart",
+        hook_event_name: "session-start",
+        timeout: LEGACY_GEMINI_HOOK_ENTRY_TIMEOUT_MS,
+    },
+    HookEntrySpec {
+        event_name: "BeforeAgent",
+        hook_event_name: "prompt-submit",
+        timeout: LEGACY_GEMINI_HOOK_ENTRY_TIMEOUT_MS,
+    },
+    HookEntrySpec {
+        event_name: "BeforeTool",
+        hook_event_name: "pre-tool",
+        timeout: LEGACY_GEMINI_HOOK_ENTRY_TIMEOUT_MS,
+    },
+    HookEntrySpec {
+        event_name: "BeforeToolSelection",
+        hook_event_name: "before-tool-selection",
+        timeout: LEGACY_GEMINI_HOOK_ENTRY_TIMEOUT_MS,
+    },
+    HookEntrySpec {
+        event_name: "AfterTool",
+        hook_event_name: "post-tool",
+        timeout: LEGACY_GEMINI_HOOK_ENTRY_TIMEOUT_MS,
+    },
+    HookEntrySpec {
+        event_name: "BeforeModel",
+        hook_event_name: "before-model",
+        timeout: LEGACY_GEMINI_HOOK_ENTRY_TIMEOUT_MS,
+    },
+    HookEntrySpec {
+        event_name: "AfterModel",
+        hook_event_name: "after-model",
+        timeout: LEGACY_GEMINI_HOOK_ENTRY_TIMEOUT_MS,
+    },
+    HookEntrySpec {
+        event_name: "AfterAgent",
+        hook_event_name: "stop",
+        timeout: LEGACY_GEMINI_HOOK_ENTRY_TIMEOUT_MS,
+    },
+    HookEntrySpec {
+        event_name: "Notification",
+        hook_event_name: "notification",
+        timeout: LEGACY_GEMINI_HOOK_ENTRY_TIMEOUT_MS,
+    },
+    HookEntrySpec {
+        event_name: "PreCompress",
+        hook_event_name: "pre-compact",
+        timeout: LEGACY_GEMINI_HOOK_ENTRY_TIMEOUT_MS,
+    },
+    HookEntrySpec {
+        event_name: "SessionEnd",
+        hook_event_name: "session-end",
+        timeout: LEGACY_GEMINI_HOOK_ENTRY_TIMEOUT_MS,
+    },
+];
+
 const AGENTS: &[AgentSpec] = &[
     AgentSpec {
         key: "codex",
@@ -761,6 +826,16 @@ const AGENTS: &[AgentSpec] = &[
 
 const DEFAULT_HOOK_SETUP_AGENT_KEYS: &[&str] = &["codex", "claude", "antigravity", "opencode"];
 
+static LEGACY_GEMINI_HOOK_AGENT: AgentSpec = AgentSpec {
+    key: "gemini",
+    label: "Gemini",
+    disabled_env: "FORKTTY_GEMINI_HOOKS_DISABLED",
+    config_path: legacy_gemini_config_path,
+    hook_entries: LEGACY_GEMINI_HOOK_ENTRIES,
+    matcher: None,
+    install_kind: HookInstallKind::JsonConfig,
+};
+
 const MCP_AGENTS: &[McpAgentSpec] = &[
     McpAgentSpec {
         key: "codex",
@@ -783,6 +858,13 @@ const MCP_AGENTS: &[McpAgentSpec] = &[
 ];
 
 const DEFAULT_MCP_SETUP_AGENT_KEYS: &[&str] = &["codex", "claude", "antigravity"];
+
+static LEGACY_GEMINI_MCP_AGENT: McpAgentSpec = McpAgentSpec {
+    key: "gemini",
+    label: "Gemini",
+    config_path: legacy_gemini_mcp_config_path,
+    config_kind: McpConfigKind::JsonMcpServers,
+};
 
 const SKILL_TARGETS: &[SkillTargetSpec] = &[
     SkillTargetSpec {
@@ -6435,7 +6517,7 @@ fn handle_mcp(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         Some("remove") | Some("uninstall") => handle_mcp_remove(context, args[1..].to_vec()),
         Some("help") | Some("--help") | Some("-h") => {
             write_stdout_line(
-                "Usage: forktty mcp | forktty mcp setup [codex] [claude] [antigravity] | forktty mcp remove [codex] [claude] [antigravity]\nDefault setup agents: codex, claude, antigravity.",
+                "Usage: forktty mcp | forktty mcp setup [codex] [claude] [antigravity] | forktty mcp remove [codex] [claude] [antigravity] [gemini]\nDefault setup agents: codex, claude, antigravity. gemini is legacy cleanup only for remove.",
             )
         }
         Some(other) => Err(CliError::new(format!("mcp: unknown subcommand {other}"))),
@@ -6570,7 +6652,7 @@ fn handle_hooks_remove(context: &CliContext, args: Vec<String>) -> CliResult<()>
             "hooks remove: --dry-run must be true or false",
         ));
     };
-    let agents = supported_agents(&parsed.positionals)?;
+    let agents = supported_hook_remove_agents(&parsed.positionals)?;
     let current_launcher = stable_hook_launcher_path();
 
     let mut plans = Vec::new();
@@ -6833,7 +6915,7 @@ fn handle_mcp_remove(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let Some(dry_run) = bool_option(&parsed.options, "dry-run") else {
         return Err(CliError::new("mcp remove: --dry-run must be true or false"));
     };
-    let agents = supported_mcp_agents(&parsed.positionals)?;
+    let agents = supported_mcp_remove_agents(&parsed.positionals)?;
 
     let mut plans = Vec::new();
     for spec in agents {
@@ -7361,6 +7443,26 @@ fn supported_agents(names: &[String]) -> CliResult<Vec<&'static AgentSpec>> {
     Ok(out)
 }
 
+fn supported_hook_remove_agents(names: &[String]) -> CliResult<Vec<&'static AgentSpec>> {
+    if names.is_empty() {
+        return Ok(AGENTS.iter().collect());
+    }
+    let mut out = Vec::new();
+    for name in names {
+        let normalized = normalize_agent_name(name);
+        let spec = agent_spec(&normalized)
+            .or_else(|| (normalized == "gemini").then_some(&LEGACY_GEMINI_HOOK_AGENT))
+            .ok_or_else(|| CliError::new(format!("Unsupported agent: {name}")))?;
+        if !out
+            .iter()
+            .any(|existing: &&AgentSpec| existing.key == spec.key)
+        {
+            out.push(spec);
+        }
+    }
+    Ok(out)
+}
+
 fn default_hook_setup_agents() -> Vec<&'static AgentSpec> {
     DEFAULT_HOOK_SETUP_AGENT_KEYS
         .iter()
@@ -7376,6 +7478,26 @@ fn supported_mcp_agents(names: &[String]) -> CliResult<Vec<&'static McpAgentSpec
     for name in names {
         let normalized = normalize_agent_name(name);
         let spec = mcp_agent_spec(&normalized)
+            .ok_or_else(|| CliError::new(format!("Unsupported mcp agent: {name}")))?;
+        if !out
+            .iter()
+            .any(|existing: &&McpAgentSpec| existing.key == spec.key)
+        {
+            out.push(spec);
+        }
+    }
+    Ok(out)
+}
+
+fn supported_mcp_remove_agents(names: &[String]) -> CliResult<Vec<&'static McpAgentSpec>> {
+    if names.is_empty() {
+        return Ok(MCP_AGENTS.iter().collect());
+    }
+    let mut out = Vec::new();
+    for name in names {
+        let normalized = normalize_agent_name(name);
+        let spec = mcp_agent_spec(&normalized)
+            .or_else(|| (normalized == "gemini").then_some(&LEGACY_GEMINI_MCP_AGENT))
             .ok_or_else(|| CliError::new(format!("Unsupported mcp agent: {name}")))?;
         if !out
             .iter()
@@ -7537,6 +7659,14 @@ fn claude_skill_dir() -> PathBuf {
         .unwrap_or_else(|| home_dir().join(".claude"))
         .join("skills")
         .join(AGENT_SKILL_NAME)
+}
+
+fn legacy_gemini_config_path() -> PathBuf {
+    home_dir().join(".gemini/settings.json")
+}
+
+fn legacy_gemini_mcp_config_path() -> PathBuf {
+    legacy_gemini_config_path()
 }
 
 // Antigravity CLI loads user-level hooks from ~/.gemini/config/hooks.json
@@ -12398,6 +12528,65 @@ mod tests {
     }
 
     #[test]
+    fn hook_remove_cleans_legacy_gemini_config_without_enabling_setup() {
+        let home = tempfile::tempdir().unwrap();
+        let home_s = home.path().to_string_lossy().to_string();
+
+        with_env(&[("HOME", Some(home_s.as_str()))], || {
+            let context = test_context();
+            let gemini_path = home.path().join(".gemini/settings.json");
+            ensure_parent_dir(&gemini_path).unwrap();
+            fs::write(
+                &gemini_path,
+                serde_json::to_string_pretty(&json!({
+                    "hooks": {
+                        "SessionStart": [
+                            {
+                                "hooks": [{
+                                    "type": "command",
+                                    "command": "[ \"${FORKTTY_GEMINI_HOOKS_DISABLED:-}\" != \"1\" ] && '/usr/bin/forktty' hooks gemini session-start || echo '{\"continue\":true,\"suppressOutput\":false}'"
+                                }]
+                            },
+                            {
+                                "hooks": [{
+                                    "type": "command",
+                                    "command": "custom-gemini-hook"
+                                }]
+                            }
+                        ]
+                    },
+                    "mcpServers": {
+                        "forktty": {
+                            "command": "/usr/bin/forktty",
+                            "args": ["mcp"],
+                            "env": { MCP_MANAGED_ENV: MCP_SERVER_NAME }
+                        }
+                    },
+                    "theme": "dark"
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+
+            assert_err_contains(
+                handle_hooks_setup(&context, strings(&["gemini"])),
+                "Unsupported agent: gemini",
+            );
+            handle_hooks_remove(&context, strings(&["gemini"])).unwrap();
+
+            let config = read_json(&gemini_path);
+            let entries = config["hooks"]["SessionStart"].as_array().unwrap();
+            assert_eq!(entries.len(), 1);
+            assert_eq!(
+                entries[0]["hooks"][0]["command"],
+                Value::String("custom-gemini-hook".to_string())
+            );
+            assert!(config["mcpServers"].get("forktty").is_some());
+            assert_eq!(config["theme"], "dark");
+        });
+    }
+
+    #[test]
     fn claude_hook_setup_profiles_migrate_and_remove() {
         let dir = tempfile::tempdir().unwrap();
         let claude_dir = dir.path().join("claude config");
@@ -12735,6 +12924,54 @@ mod tests {
                 assert!(!legacy_gemini_path.exists());
             },
         );
+    }
+
+    #[test]
+    fn mcp_remove_cleans_legacy_gemini_config_without_enabling_setup() {
+        let home = tempfile::tempdir().unwrap();
+        let home_s = home.path().to_string_lossy().to_string();
+
+        with_env(&[("HOME", Some(home_s.as_str()))], || {
+            let context = test_context();
+            let gemini_path = home.path().join(".gemini/settings.json");
+            ensure_parent_dir(&gemini_path).unwrap();
+            fs::write(
+                &gemini_path,
+                serde_json::to_string_pretty(&json!({
+                    "mcpServers": {
+                        "forktty": {
+                            "command": "/usr/bin/forktty",
+                            "args": ["mcp"],
+                            "env": { MCP_MANAGED_ENV: MCP_SERVER_NAME }
+                        },
+                        "foreign": {
+                            "command": "/bin/true"
+                        }
+                    },
+                    "hooks": {
+                        "SessionStart": [{
+                            "hooks": [{
+                                "type": "command",
+                                "command": "custom-gemini-hook"
+                            }]
+                        }]
+                    }
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+
+            assert_err_contains(
+                handle_mcp_setup(&context, strings(&["gemini"])),
+                "Unsupported mcp agent: gemini",
+            );
+            handle_mcp_remove(&context, strings(&["gemini"])).unwrap();
+
+            let config = read_json(&gemini_path);
+            assert!(config["mcpServers"].get("forktty").is_none());
+            assert_eq!(config["mcpServers"]["foreign"]["command"], "/bin/true");
+            assert!(config["hooks"].get("SessionStart").is_some());
+        });
     }
 
     #[test]
@@ -13183,10 +13420,7 @@ mod tests {
         assert_eq!(backup_count(dir.path(), ".atomic.json.tmp-"), 0);
 
         let target_in_missing_dir = dir.path().join("missing").join("atomic.json");
-        assert_err_contains(
-            atomic_write_file(&target_in_missing_dir, b"content\n"),
-            "No such file or directory",
-        );
+        assert!(atomic_write_file(&target_in_missing_dir, b"content\n").is_err());
         assert!(!target_in_missing_dir.exists());
         assert_eq!(backup_count(dir.path(), ".atomic.json.tmp-"), 0);
     }

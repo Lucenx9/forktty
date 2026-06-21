@@ -26,6 +26,7 @@ forktty hooks setup --dry-run
 forktty hooks setup codex --dry-run
 forktty hooks setup --full claude
 forktty hooks remove codex --dry-run
+forktty hooks remove gemini        # legacy cleanup only
 ```
 
 Each setup run writes the agent config or generated plugin atomically
@@ -33,7 +34,10 @@ Each setup run writes the agent config or generated plugin atomically
 backup next to the original. The OpenCode file is intentionally generated
 under its plugins directory so `opencode.json` does not need to be edited.
 `forktty hooks remove` deletes only ForkTTY-managed entries or the generated
-OpenCode plugin; custom hook commands are preserved.
+OpenCode plugin; custom hook commands are preserved. `forktty hooks remove
+gemini` is retained only to remove ForkTTY-managed entries from legacy
+`~/.gemini/settings.json` files written by older releases; Gemini setup remains
+unsupported.
 
 Claude Code setup installs a lifecycle profile by default. That profile omits
 the high-frequency `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, and
@@ -75,8 +79,10 @@ the default Codex, Claude Code, and Antigravity config locations:
 | Antigravity CLI | `~/.gemini/config/mcp_config.json` (`mcpServers.forktty`) |
 
 Setup and removal use the same atomic write, `.bak-*` backup, dry-run, and
-managed-entry preservation behavior as hook setup. OpenCode hook support remains
-available, but no verified OpenCode MCP registration path is managed yet.
+managed-entry preservation behavior as hook setup. `forktty mcp remove gemini`
+is legacy cleanup only for ForkTTY-managed `~/.gemini/settings.json` entries;
+Gemini MCP setup remains unsupported. OpenCode hook support remains available,
+but no verified OpenCode MCP registration path is managed yet.
 
 ## Agent skills
 

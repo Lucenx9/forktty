@@ -339,7 +339,9 @@ config locations for Codex (`$CODEX_HOME/config.toml` or
 (`~/.gemini/config/mcp_config.json`). Registration writes a ForkTTY-managed
 server named `forktty`, preserves foreign MCP servers, writes atomically, and
 creates a `.bak-*` backup when content changes.
-`forktty mcp remove` removes only that managed server entry.
+`forktty mcp remove` removes only that managed server entry. `forktty mcp
+remove gemini` is kept only to clean legacy ForkTTY-managed server entries
+from `~/.gemini/settings.json`; Gemini MCP setup remains unsupported.
 
 ### Agent skills
 

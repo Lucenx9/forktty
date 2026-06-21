@@ -426,6 +426,7 @@ forktty hooks setup codex                 # install just one
 forktty hooks setup codex claude --dry-run
 forktty hooks setup --full claude         # include Claude per-tool hooks
 forktty hooks remove opencode             # remove ForkTTY-managed hooks/plugin
+forktty hooks remove gemini               # cleanup legacy Gemini config only
 ```
 
 `--dry-run` prints the would-be diff without touching disk. Claude Code setup
@@ -434,6 +435,9 @@ tool call; pass `--full` to include `PreToolUse`, `PostToolUse`,
 `PostToolUseFailure`, and `PostToolBatch`. Re-running setup migrates Claude to
 the lifecycle profile unless `--full` is passed. `hooks remove` removes only
 ForkTTY-managed entries/plugins and leaves unrelated agent hooks in place.
+`hooks remove gemini` is kept only to clean legacy ForkTTY-managed
+`~/.gemini/settings.json` entries from older releases; Gemini setup remains
+unsupported.
 
 The installer merges commands into the agent's own config file:
 
