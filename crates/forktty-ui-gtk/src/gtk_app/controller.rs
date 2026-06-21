@@ -289,6 +289,52 @@ fn snapshot_embedded_scrollback_tail_to_model(
     }
 }
 
+pub(super) fn sync_terminal_surface_size_from_snapshot(
+    terminal: &dyn TerminalBackend,
+    surface_id: &str,
+    snapshot: &TerminalTextSnapshot,
+) -> Result<bool, TerminalError> {
+    if snapshot.cols == 0 || snapshot.rows == 0 {
+        return Ok(false);
+    }
+    let current = terminal
+        .surfaces()?
+        .into_iter()
+        .find(|surface| surface.surface_id == surface_id)
+        .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+    if current.cols == snapshot.cols && current.rows == snapshot.rows {
+        return Ok(false);
+    }
+    terminal.resize(surface_id, snapshot.cols, snapshot.rows)?;
+    Ok(true)
+}
+
+fn sync_embedded_ghostty_surface_size(
+    state: &SocketAppState,
+    embedder: &GhosttyGtkEmbedder,
+    widget: &gtk::Widget,
+    surface_id: &str,
+) {
+    if !embedder.supports_bounded_read_text() {
+        return;
+    }
+    let snapshot =
+        unsafe { embedder.read_text_snapshot(widget, surface_id, TerminalTextCapture::Visible, 0) };
+    match snapshot {
+        Ok(snapshot) => {
+            if let Err(err) = sync_terminal_surface_size_from_snapshot(
+                state.terminal.as_ref(),
+                surface_id,
+                &snapshot,
+            ) {
+                eprintln!("Failed to sync embedded Ghostty size {surface_id}: {err}");
+            }
+        }
+        Err(TerminalError::NotReady(_)) => {}
+        Err(err) => eprintln!("Failed to read embedded Ghostty size {surface_id}: {err}"),
+    }
+}
+
 impl TerminalController {
     pub(super) fn new(
         container: gtk::Box,
@@ -508,11 +554,18 @@ impl TerminalController {
         if embedder.supports_send_text() {
             if let Some(state) = self.state.clone() {
                 let surface_id = request.surface_id.clone();
-                widget.connect_local("init", false, move |_| {
+                let embedder = Rc::clone(&embedder);
+                widget.connect_local("init", false, move |args| {
                     if let Err(err) = state.terminal.mark_surface_ready(&surface_id) {
                         eprintln!(
                             "Failed to mark embedded Ghostty GTK surface ready {surface_id}: {err}"
                         );
+                    }
+                    if let Some(widget) = args
+                        .first()
+                        .and_then(|value| value.get::<gtk::Widget>().ok())
+                    {
+                        sync_embedded_ghostty_surface_size(&state, &embedder, &widget, &surface_id);
                     }
                     None
                 });
@@ -554,6 +607,21 @@ impl TerminalController {
                     }
                 }
                 None
+            });
+        }
+
+        if let Some(state) = self.state.clone() {
+            let embedder = Rc::clone(&embedder);
+            let surface_id = request.surface_id.clone();
+            widget.connect_notify_local(Some("width"), move |widget, _| {
+                sync_embedded_ghostty_surface_size(&state, &embedder, widget, &surface_id);
+            });
+        }
+        if let Some(state) = self.state.clone() {
+            let embedder = Rc::clone(&embedder);
+            let surface_id = request.surface_id.clone();
+            widget.connect_notify_local(Some("height"), move |widget, _| {
+                sync_embedded_ghostty_surface_size(&state, &embedder, widget, &surface_id);
             });
         }
 

@@ -1725,7 +1725,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "context_snapshot",
             annotations: read_only_annotations(),
-            description: "Return a compact read-only situational snapshot for one ForkTTY workspace: workspace, pane tree, surfaces, status, agent health, workflow/team/feed/remote summaries, and bounded untrusted terminal tails.",
+            description: "Return a compact read-only situational snapshot for one ForkTTY workspace: workspace, pane tree, surfaces, status, agent health, workflow/team/feed/remote summaries, compact team aggregate rows, and bounded untrusted terminal tails.",
             input_schema: object_schema(
                 &[],
                 json!({
@@ -2089,7 +2089,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "status_summary",
             annotations: read_only_annotations(),
-            description: "Return a compact workspace summary with persisted agent sessions, status entries, and progress entries for statusline/HUD integrations.",
+            description: "Return a compact workspace summary with persisted agent sessions carrying source/age metadata and status/progress entries carrying source annotations for statusline/HUD integrations.",
             input_schema: object_schema(
                 &[],
                 json!({

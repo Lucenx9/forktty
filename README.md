@@ -301,9 +301,12 @@ forktty events
 `forktty team ask` and `forktty team review` compose the existing team socket
 methods for common coordination flows: create/update the team, create the task,
 launch a fresh worker surface, assign the task after launch, queue the prompt,
-and dispatch it. Re-run them to launch a new worker; use
-`team-message-send` plus `team-message-dispatch` for follow-up prompts to an
-existing worker.
+and dispatch it. Submit mode sends an explicit terminal Enter unless the queued
+message already ends in carriage return. Re-run them to launch a new worker;
+use `team-message-send` plus `team-message-dispatch` for follow-up prompts to
+an existing worker. Context snapshots include compact `team_summaries` rows so
+leaders can scan worker/task/message counts without first calling
+`team.summary` for each team.
 
 The titlebar Agent HUD shows persisted agent sessions across workspaces, highlights
 sessions that need input, and can focus or resume a tracked agent. `forktty agents`,
@@ -311,10 +314,12 @@ sessions that need input, and can focus or resume a tracked agent. `forktty agen
 agent lifecycle (`running`, `idle`, `needs_input`, `ended`, or `unknown`) when
 a provider session id has been persisted; hook events drive the live state, and
 terminal child exit marks attached sessions `ended`. `forktty agents` and
-`forktty agent-health` also expose hook-derived `resume_cwd` and
-`last_activity_ms`. For Antigravity CLI, `resume_cwd` comes from the hook
-payload's `workspacePaths`, because `agy` executes the generated wrapper scripts
-from `~/.gemini/config` rather than from the project directory.
+`forktty agent-health` also expose persisted `resume_cwd`, `last_activity_ms`,
+`source`, response `observed_at_ms`, and nullable `age_ms` so delayed
+agent state can be compared with terminal evidence. For Antigravity CLI,
+`resume_cwd` comes from the hook payload's `workspacePaths`, because `agy`
+executes the generated wrapper scripts from `~/.gemini/config` rather than from
+the project directory.
 After a ForkTTY restart, restored terminal panes with a supported persisted
 agent session respawn through the provider's argv-only resume command, such as
 `codex resume -C <resume_cwd> <session-id>` when Codex hook metadata recorded
@@ -352,6 +357,13 @@ forktty browser import discover
 The socket CLI and agent hook bridge are native Rust code in the
 `forktty` binary, so source checkouts and packaged builds do not
 require Node.js.
+
+`forktty capabilities` includes the socket method list plus a
+`provider_capabilities` matrix for the supported providers (`codex`, `claude`,
+`opencode`, and `antigravity`), including their launch program, whether
+ForkTTY has safe resume support, and whether the provider exposes a dedicated
+cwd resume flag. Providers without a cwd flag, such as Claude Code, can still
+resume in ForkTTY's recorded process cwd when `resume_cwd` is available.
 
 ### MCP server
 

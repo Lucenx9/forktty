@@ -284,6 +284,23 @@ fn gtk_backend_rolls_back_resize_when_ui_channel_is_closed() {
 }
 
 #[test]
+fn embedded_runtime_size_sync_updates_backend_metadata() {
+    let backend = forktty_terminal::HeadlessTerminalBackend::new();
+    backend.spawn(test_spawn_request()).unwrap();
+    let snapshot =
+        TerminalTextSnapshot::from_text("surface-1", "", 166, 42, TerminalTextCapture::Visible, 0);
+
+    let changed =
+        sync_terminal_surface_size_from_snapshot(&backend, "surface-1", &snapshot).unwrap();
+
+    assert!(changed);
+    let mut surfaces = backend.surfaces().unwrap();
+    assert_eq!(surfaces.len(), 1);
+    let surface = surfaces.remove(0);
+    assert_eq!((surface.cols, surface.rows), (166, 42));
+}
+
+#[test]
 fn gtk_backend_rolls_back_close_when_ui_channel_is_closed() {
     let (tx, rx) = mpsc::channel();
     let backend = GtkTerminalBackend::new(tx);

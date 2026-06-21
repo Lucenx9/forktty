@@ -5,9 +5,9 @@ use forktty_core::{
     validate_worktree_name, worktree, AgentKind, AgentResumeError, AgentSession,
     AgentSessionLifecycle, AgentStatus, BrowserCmdError, BrowserCommand, BrowserOp, CmdResult,
     FeedApprovalState, FeedEntry, FeedEntryType, FeedStore, JsonRpcRequest, JsonRpcResponse,
-    LogLevel, NotificationItem, NotificationKind, SplitAxis, StatusHookMetadata, SurfaceKind,
-    WorkflowEvidenceInput, WorkflowPlanStepInput, WorkflowQuery, WorkflowReplayQuery,
-    WorkflowUpsert, WorkspaceModel, WorkspaceSelector, MAX_BROWSER_URL_BYTES,
+    LogLevel, NotificationItem, NotificationKind, ProgressEntry, SplitAxis, StatusEntry,
+    StatusHookMetadata, SurfaceKind, WorkflowEvidenceInput, WorkflowPlanStepInput, WorkflowQuery,
+    WorkflowReplayQuery, WorkflowUpsert, WorkspaceModel, WorkspaceSelector, MAX_BROWSER_URL_BYTES,
 };
 use forktty_terminal::{
     spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
@@ -939,6 +939,43 @@ async fn reject_over_capacity_connection(stream: tokio::net::UnixStream) {
     }
 }
 
+fn provider_capabilities() -> Value {
+    json!({
+        "codex": {
+            "program": "codex",
+            "team_worker_launch": true,
+            "safe_resume": true,
+            "cwd_resume_flag": true,
+            "permission_bypass_resume": true,
+            "aliases": ["codex"],
+        },
+        "claude": {
+            "program": "claude",
+            "team_worker_launch": true,
+            "safe_resume": true,
+            "cwd_resume_flag": false,
+            "permission_bypass_resume": true,
+            "aliases": ["claude", "claude_code", "claude-code"],
+        },
+        "opencode": {
+            "program": "opencode",
+            "team_worker_launch": true,
+            "safe_resume": true,
+            "cwd_resume_flag": false,
+            "permission_bypass_resume": false,
+            "aliases": ["opencode", "open_code", "open-code"],
+        },
+        "antigravity": {
+            "program": "agy",
+            "team_worker_launch": true,
+            "safe_resume": true,
+            "cwd_resume_flag": false,
+            "permission_bypass_resume": false,
+            "aliases": ["antigravity", "agy"],
+        },
+    })
+}
+
 pub async fn dispatch(
     state: &SocketAppState,
     method: &str,
@@ -957,6 +994,7 @@ pub async fn dispatch(
         "system.capabilities" => Ok(json!({
             "version": env!("CARGO_PKG_VERSION"),
             "methods": METHODS,
+            "provider_capabilities": provider_capabilities(),
         })),
         "context.snapshot" => context_snapshot(state, &params),
         "feed.approval.respond" => {
@@ -1308,7 +1346,11 @@ pub async fn dispatch(
                 Err(DispatchError::MissingParam(_)) => None,
                 Err(err) => return Err(err),
             };
-            Ok(json!(agent_health_rows(&model, workspace_id.as_deref())))
+            Ok(json!(agent_health_rows(
+                &model,
+                workspace_id.as_deref(),
+                current_unix_epoch_ms(),
+            )))
         }
         "agent.hibernate" => hibernate_agent_session(state, &params),
         "agent.list" => {
@@ -1325,7 +1367,11 @@ pub async fn dispatch(
                 Err(DispatchError::MissingParam(_)) => None,
                 Err(err) => return Err(err),
             };
-            Ok(json!(agent_session_rows(&model, workspace_id.as_deref())))
+            Ok(json!(agent_session_rows(
+                &model,
+                workspace_id.as_deref(),
+                current_unix_epoch_ms(),
+            )))
         }
         "agent.reclaim.plan" => {
             let model = state
@@ -2563,6 +2609,7 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
     let tail_lines = context_snapshot_tail_lines_from_params(params)?;
     let tail_max_bytes = context_snapshot_tail_max_bytes_from_params(params)?;
     let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
+    let now_ms = current_unix_epoch_ms();
 
     let (
         workspace,
@@ -2630,9 +2677,9 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
             }),
             pane_tree,
             surface_list_rows(&model, Some(&workspace_id), terminal_surfaces.clone()),
-            status_summary(&model, &workspace_id).unwrap_or(Value::Null),
-            agent_session_rows(&model, Some(&workspace_id)),
-            agent_health_rows(&model, Some(&workspace_id)),
+            status_summary_at(&model, &workspace_id, now_ms).unwrap_or(Value::Null),
+            agent_session_rows(&model, Some(&workspace_id), now_ms),
+            agent_health_rows(&model, Some(&workspace_id), now_ms),
             feed,
             remotes,
             terminal_surface_ids,
@@ -2642,7 +2689,7 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
     let (terminal_tails, terminal_tail_errors) =
         context_snapshot_terminal_tails(state, &terminal_surface_ids, tail_lines, tail_max_bytes);
     let workflows = context_snapshot_workflows(state, &workspace_id)?;
-    let teams = context_snapshot_teams(state, &workspace_id)?;
+    let (teams, team_summaries) = context_snapshot_team_state(state, &workspace_id)?;
     let risk_flags = context_snapshot_risk_flags(
         &status,
         &agent_health,
@@ -2661,6 +2708,7 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
         "agent_health": agent_health,
         "workflows": workflows,
         "teams": teams,
+        "team_summaries": team_summaries,
         "feed": feed,
         "remotes": remotes,
         "terminal_tails": terminal_tails,
@@ -2718,20 +2766,26 @@ fn context_snapshot_workflows(
     })))
 }
 
-fn context_snapshot_teams(
+fn context_snapshot_team_state(
     state: &SocketAppState,
     workspace_id: &str,
-) -> Result<Value, DispatchError> {
+) -> Result<(Value, Value), DispatchError> {
     let Some(path) = state.team_store_path.as_deref() else {
-        return Ok(json!([]));
+        return Ok((json!([]), json!([])));
     };
     let store = forktty_core::load_teams_from_path(path).map_err(DispatchError::from)?;
-    Ok(json!(store.list(&forktty_core::TeamQuery {
+    let teams = store.list(&forktty_core::TeamQuery {
         workspace_id: Some(workspace_id.to_string()),
         status: None,
         query: None,
         limit: Some(20),
-    })))
+    });
+    let summaries = teams
+        .iter()
+        .map(|team| store.summary(&team.id).map(|summary| json!(summary)))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(DispatchError::from)?;
+    Ok((json!(teams), json!(summaries)))
 }
 
 fn context_snapshot_risk_flags(
@@ -2794,7 +2848,11 @@ fn context_snapshot_risk_flags(
     flags
 }
 
-fn agent_session_rows(model: &WorkspaceModel, workspace_id: Option<&str>) -> Vec<Value> {
+fn agent_session_rows(
+    model: &WorkspaceModel,
+    workspace_id: Option<&str>,
+    observed_at_ms: u64,
+) -> Vec<Value> {
     let workspaces = model
         .list_workspaces()
         .into_iter()
@@ -2810,6 +2868,7 @@ fn agent_session_rows(model: &WorkspaceModel, workspace_id: Option<&str>) -> Vec
                 .get(&surface.workspace_id)
                 .map(|workspace| workspace.name.clone())
                 .unwrap_or_default();
+            let age_ms = agent_session_age_ms(agent_session.last_activity_ms, observed_at_ms);
             Some(json!({
                 "workspace_id": surface.workspace_id,
                 "workspace_name": workspace_name,
@@ -2822,20 +2881,28 @@ fn agent_session_rows(model: &WorkspaceModel, workspace_id: Option<&str>) -> Vec
                 "permission_mode": agent_session.permission_mode,
                 "lifecycle": agent_session.lifecycle,
                 "last_activity_ms": agent_session.last_activity_ms,
+                "observed_at_ms": observed_at_ms,
+                "age_ms": age_ms,
+                "source": "persisted_agent_session",
             }))
         })
         .collect()
 }
 
-fn agent_health_rows(model: &WorkspaceModel, workspace_id: Option<&str>) -> Vec<Value> {
+fn agent_health_rows(
+    model: &WorkspaceModel,
+    workspace_id: Option<&str>,
+    observed_at_ms: u64,
+) -> Vec<Value> {
     let path = std::env::var_os("PATH");
-    agent_health_rows_with_path(model, workspace_id, path.as_deref())
+    agent_health_rows_with_path(model, workspace_id, path.as_deref(), observed_at_ms)
 }
 
 fn agent_health_rows_with_path(
     model: &WorkspaceModel,
     workspace_id: Option<&str>,
     path: Option<&OsStr>,
+    observed_at_ms: u64,
 ) -> Vec<Value> {
     let workspaces = model
         .list_workspaces()
@@ -2860,6 +2927,7 @@ fn agent_health_rows_with_path(
                 agent_session.permission_mode.as_deref(),
                 path,
             );
+            let age_ms = agent_session_age_ms(agent_session.last_activity_ms, observed_at_ms);
             Some(json!({
                 "workspace_id": surface.workspace_id,
                 "workspace_name": workspace_name,
@@ -2872,6 +2940,9 @@ fn agent_health_rows_with_path(
                 "permission_mode": agent_session.permission_mode,
                 "lifecycle": agent_session.lifecycle,
                 "last_activity_ms": agent_session.last_activity_ms,
+                "observed_at_ms": observed_at_ms,
+                "age_ms": age_ms,
+                "source": "persisted_agent_session",
                 "ready": ready,
                 "reason": reason,
                 "program": program,
@@ -2880,6 +2951,14 @@ fn agent_health_rows_with_path(
             }))
         })
         .collect()
+}
+
+fn agent_session_age_ms(last_activity_ms: u64, observed_at_ms: u64) -> Value {
+    if last_activity_ms == 0 {
+        Value::Null
+    } else {
+        json!(observed_at_ms.saturating_sub(last_activity_ms))
+    }
 }
 
 fn agent_reclaim_plan(
@@ -2906,7 +2985,7 @@ fn agent_reclaim_plan_with_path(
 ) -> Value {
     let mut candidates = Vec::new();
     let mut protected = Vec::new();
-    for mut row in agent_health_rows_with_path(model, workspace_id, path) {
+    for mut row in agent_health_rows_with_path(model, workspace_id, path, now_ms) {
         let last_activity_ms = row
             .get("last_activity_ms")
             .and_then(Value::as_u64)
@@ -3371,6 +3450,14 @@ fn resume_agent_session(state: &SocketAppState, params: &Value) -> Result<Value,
 }
 
 fn status_summary(model: &WorkspaceModel, workspace_id: &str) -> Option<Value> {
+    status_summary_at(model, workspace_id, current_unix_epoch_ms())
+}
+
+fn status_summary_at(
+    model: &WorkspaceModel,
+    workspace_id: &str,
+    observed_at_ms: u64,
+) -> Option<Value> {
     let workspace = model
         .list_workspaces()
         .into_iter()
@@ -3386,10 +3473,40 @@ fn status_summary(model: &WorkspaceModel, workspace_id: &str) -> Option<Value> {
             "focused_surface_id": workspace.focused_surface_id,
             "surfaces": surface_count,
         },
-        "agents": agent_session_rows(model, Some(workspace_id)),
-        "status": model.list_status(workspace_id),
-        "progress": model.list_progress(workspace_id),
+        "agents": agent_session_rows(model, Some(workspace_id), observed_at_ms),
+        "status": status_entries_with_source(model.list_status(workspace_id)),
+        "progress": progress_entries_with_source(model.list_progress(workspace_id)),
     }))
+}
+
+fn status_entries_with_source(entries: Vec<StatusEntry>) -> Vec<Value> {
+    entries
+        .into_iter()
+        .map(|entry| {
+            json!({
+                "key": entry.key,
+                "label": entry.label,
+                "value": entry.value,
+                "color": entry.color,
+                "source": "model",
+            })
+        })
+        .collect()
+}
+
+fn progress_entries_with_source(entries: Vec<ProgressEntry>) -> Vec<Value> {
+    entries
+        .into_iter()
+        .map(|entry| {
+            json!({
+                "key": entry.key,
+                "label": entry.label,
+                "value": entry.value,
+                "total": entry.total,
+                "source": "model",
+            })
+        })
+        .collect()
 }
 
 fn remote_list(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
@@ -4966,7 +5083,7 @@ async fn dispatch_team_message_text(
         .terminal
         .send_text(surface_id, body)
         .map_err(DispatchError::from)?;
-    if submit && !body.ends_with('\r') && !body.ends_with('\n') {
+    if submit && !body.ends_with('\r') {
         tokio::time::sleep(TEAM_MESSAGE_SUBMIT_ENTER_DELAY).await;
         state
             .terminal
@@ -7222,6 +7339,25 @@ mod tests {
     }
 
     #[test]
+    fn team_worker_launch_accepts_documented_provider_aliases() {
+        for (alias, expected_program) in [
+            ("codex", "codex"),
+            ("claude", "claude"),
+            ("claude_code", "claude"),
+            ("claude-code", "claude"),
+            ("opencode", "opencode"),
+            ("open_code", "opencode"),
+            ("open-code", "opencode"),
+            ("antigravity", "agy"),
+            ("agy", "agy"),
+        ] {
+            let (program, args) = team_worker_launch_command(alias, Vec::new()).unwrap();
+            assert_eq!(program, expected_program, "{alias}");
+            assert!(args.is_empty(), "{alias}");
+        }
+    }
+
+    #[test]
     fn optional_limit_param_clamps_and_preserves_none() {
         assert_eq!(optional_limit_param(&json!({}), "limit").unwrap(), None);
         assert_eq!(
@@ -8393,6 +8529,14 @@ mod tests {
         assert_eq!(result["status"]["status"][0]["key"], "agent:codex");
         assert_eq!(result["agents"][0]["surface_id"], surface_id);
         assert_eq!(result["agents"][0]["lifecycle"], "running");
+        assert_eq!(
+            result["agents"][0]["observed_at_ms"],
+            result["status"]["agents"][0]["observed_at_ms"]
+        );
+        assert_eq!(
+            result["agents"][0]["age_ms"],
+            result["status"]["agents"][0]["age_ms"]
+        );
         assert_eq!(result["terminal_tails"][0]["surface_id"], surface_id);
         assert_eq!(result["terminal_tails"][0]["text"], "two\nthree\n");
         assert_eq!(result["terminal_tails"][0]["untrusted"], true);
@@ -8401,6 +8545,42 @@ mod tests {
             .as_array()
             .unwrap()
             .contains(&json!("terminal_text_untrusted")));
+    }
+
+    #[tokio::test]
+    async fn context_snapshot_surface_id_selects_inactive_workspace() {
+        let (state, _) = test_state();
+        let review_dir = tempfile::tempdir().unwrap();
+        let first = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let first_workspace_id = first[0]["id"].as_str().unwrap().to_string();
+        let second = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "review", "workingDir": review_dir.path()}),
+        )
+        .await
+        .unwrap();
+        let second_workspace_id = second["id"].as_str().unwrap().to_string();
+        let second_surface_id = second["focused_surface_id"].as_str().unwrap().to_string();
+        dispatch(
+            &state,
+            "workspace.select",
+            json!({"workspace_id": first_workspace_id}),
+        )
+        .await
+        .unwrap();
+
+        let result = dispatch(
+            &state,
+            "context.snapshot",
+            json!({"surface_id": second_surface_id, "tail_lines": 0}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["workspace"]["id"], second_workspace_id);
+        assert_eq!(result["workspace"]["focused_surface_id"], second_surface_id);
+        assert_eq!(result["surfaces"][0]["id"], second_surface_id);
     }
 
     #[tokio::test]
@@ -8920,6 +9100,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn context_snapshot_includes_compact_team_summaries() {
+        let (mut state, _backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspace[0]["id"].as_str().unwrap();
+        let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+        let worker_surface = dispatch(
+            &state,
+            "surface.split",
+            json!({"surface_id": surface_id, "axis": "vertical"}),
+        )
+        .await
+        .unwrap();
+        let worker_surface_id = worker_surface["id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "leader_surface_id": surface_id,
+                "goal": "review state"
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "claude",
+                "surface_id": worker_surface_id,
+                "status": "running"
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.task.upsert",
+            json!({
+                "team_id": "team-1",
+                "task_id": "task-1",
+                "title": "Review"
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.message.send",
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-1",
+                "from": "leader",
+                "to_worker_id": "worker-1",
+                "body": "status?"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let snapshot = dispatch(
+            &state,
+            "context.snapshot",
+            json!({"workspace_id": workspace_id, "tail_lines": 0}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(snapshot["team_summaries"][0]["team_id"], "team-1");
+        assert_eq!(snapshot["team_summaries"][0]["workers_total"], 1);
+        assert_eq!(snapshot["team_summaries"][0]["workers_active"], 1);
+        assert_eq!(snapshot["team_summaries"][0]["tasks_open"], 1);
+        assert_eq!(snapshot["team_summaries"][0]["messages_pending"], 1);
+    }
+
+    #[tokio::test]
     async fn team_message_dispatch_submit_sends_enter_and_marks_team_wide_delivered() {
         let (mut state, backend) = test_state();
         let dir = tempfile::tempdir().unwrap();
@@ -9021,6 +9282,29 @@ mod tests {
             "team.message.send",
             json!({
                 "team_id": "team-1",
+                "message_id": "msg-trailing-lf",
+                "from": "leader",
+                "to_worker_id": "worker-1",
+                "body": "multi-line prompt\n"
+            }),
+        )
+        .await
+        .unwrap();
+        let trailing_lf = dispatch(
+            &state,
+            "team.message.dispatch",
+            json!({"team_id": "team-1", "message_id": "msg-trailing-lf", "submit": true}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(trailing_lf["submitted"], true);
+        assert_eq!(trailing_lf["message"]["delivered"], true);
+
+        dispatch(
+            &state,
+            "team.message.send",
+            json!({
+                "team_id": "team-1",
                 "message_id": "msg-team-wide",
                 "from": "leader",
                 "body": "broadcast"
@@ -9050,6 +9334,8 @@ mod tests {
                 "run status".to_string(),
                 "\r".to_string(),
                 "already entered\r".to_string(),
+                "multi-line prompt\n".to_string(),
+                "\r".to_string(),
                 "broadcast".to_string(),
                 "\r".to_string()
             ]
@@ -11719,6 +12005,7 @@ mod tests {
                 AgentKind::Codex,
                 "codex-session-1",
             ));
+            assert!(model.set_surface_agent_session_last_activity_ms(&surface_id, 1_000));
             (workspace.id, surface_id)
         };
         let _plain = dispatch(
@@ -11736,6 +12023,10 @@ mod tests {
         assert_eq!(agents[0]["surface_id"], surface_id);
         assert_eq!(agents[0]["agent"], "codex");
         assert_eq!(agents[0]["session_id"], "codex-session-1");
+        assert_eq!(agents[0]["source"], "persisted_agent_session");
+        let observed_at_ms = agents[0]["observed_at_ms"].as_u64().unwrap();
+        assert!(observed_at_ms >= 1_000);
+        assert_eq!(agents[0]["age_ms"], observed_at_ms - 1_000);
 
         let scoped = dispatch(&state, "agent.list", json!({"workspace_id": workspace_id}))
             .await
@@ -11770,6 +12061,9 @@ mod tests {
         assert_eq!(health[0]["surface_id"], surface_id);
         assert_eq!(health[0]["agent"], "custom");
         assert_eq!(health[0]["session_id"], "custom-session-1");
+        assert_eq!(health[0]["source"], "persisted_agent_session");
+        assert!(health[0]["observed_at_ms"].as_u64().is_some());
+        assert!(health[0]["age_ms"].is_null());
         assert_eq!(health[0]["ready"], false);
         assert_eq!(health[0]["reason"], "unsupported_agent");
         assert_eq!(health[0]["argv"], json!([]));
@@ -11793,7 +12087,7 @@ mod tests {
         let surface_id = workspace.focused_surface_id.clone();
         assert!(model.set_surface_agent_session(&surface_id, AgentKind::Codex, "codex-session-1",));
 
-        let health = agent_health_rows_with_path(&model, None, Some(dir.path().as_os_str()));
+        let health = agent_health_rows_with_path(&model, None, Some(dir.path().as_os_str()), 1_000);
 
         assert_eq!(health.len(), 1);
         assert_eq!(health[0]["ready"], true);
@@ -11850,7 +12144,8 @@ mod tests {
             "codex-session-health-fallback",
         ));
 
-        let health = agent_health_rows_with_path(&model, None, Some(path_dir.path().as_os_str()));
+        let health =
+            agent_health_rows_with_path(&model, None, Some(path_dir.path().as_os_str()), 1_000);
 
         assert_eq!(health.len(), 1);
         assert_eq!(health[0]["ready"], true);
@@ -11875,7 +12170,8 @@ mod tests {
         let surface_id = workspace.focused_surface_id.clone();
         assert!(model.set_surface_agent_session(&surface_id, AgentKind::Codex, "codex-session-1",));
 
-        let health = agent_health_rows_with_path(&model, None, Some(empty_path.path().as_os_str()));
+        let health =
+            agent_health_rows_with_path(&model, None, Some(empty_path.path().as_os_str()), 1_000);
 
         assert_eq!(health.len(), 1);
         assert_eq!(health[0]["ready"], false);
@@ -12212,6 +12508,7 @@ mod tests {
                 AgentKind::Codex,
                 "codex-session-1",
             ));
+            assert!(model.set_surface_agent_session_last_activity_ms(&surface_id, 1_000));
             model
                 .set_status(
                     &workspace.id,
@@ -12233,10 +12530,14 @@ mod tests {
         assert_eq!(summary["workspace"]["focused_surface_id"], surface_id);
         assert_eq!(summary["agents"][0]["agent"], "codex");
         assert_eq!(summary["agents"][0]["session_id"], "codex-session-1");
+        assert_eq!(summary["agents"][0]["source"], "persisted_agent_session");
+        assert!(summary["agents"][0]["age_ms"].as_u64().is_some());
         assert_eq!(summary["status"][0]["key"], "agent:codex");
         assert_eq!(summary["status"][0]["value"], "Running");
+        assert_eq!(summary["status"][0]["source"], "model");
         assert_eq!(summary["progress"][0]["key"], "build");
         assert_eq!(summary["progress"][0]["value"], 2.0);
+        assert_eq!(summary["progress"][0]["source"], "model");
 
         let scoped = dispatch(
             &state,
@@ -14128,6 +14429,12 @@ mod tests {
         let methods = result["methods"].as_array().unwrap();
         assert!(methods.iter().any(|m| m == "system.ping"));
         assert!(methods.iter().any(|m| m == "events.subscribe"));
+        let providers = &result["provider_capabilities"];
+        assert_eq!(providers["codex"]["team_worker_launch"], true);
+        assert_eq!(providers["codex"]["safe_resume"], true);
+        assert_eq!(providers["claude"]["cwd_resume_flag"], false);
+        assert_eq!(providers["antigravity"]["program"], "agy");
+        assert!(providers.get("gemini").is_none());
         #[cfg(not(feature = "browser"))]
         assert!(!methods.iter().any(|m| {
             m.as_str()

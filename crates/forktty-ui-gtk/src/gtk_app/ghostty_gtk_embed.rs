@@ -367,6 +367,10 @@ impl GhosttyGtkEmbedder {
             && self.text_free.is_some()
     }
 
+    pub(super) fn supports_bounded_read_text(&self) -> bool {
+        self.surface_read_text_limited.is_some() && self.text_free.is_some()
+    }
+
     pub(super) fn supports_child_pid(&self) -> bool {
         self.surface_child_pid.is_some()
     }

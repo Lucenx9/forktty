@@ -14,12 +14,17 @@ All notable changes to ForkTTY are documented here.
   ForkTTY MCP, hooks, context snapshots, and team workers.
 - Socket `context.snapshot` and MCP `context_snapshot` now provide a compact
   read-only workspace snapshot with pane/surface state, status, agent health,
-  workflow/team/feed/remote summaries, and bounded untrusted terminal tails.
+  workflow/team/feed/remote summaries, compact team aggregate rows, and bounded
+  untrusted terminal tails.
+- `system.capabilities` now advertises a provider capability matrix for the
+  supported team/resume providers (`codex`, `claude`, `opencode`, and
+  `antigravity`) so socket and MCP clients do not need to infer provider support
+  by trial and error.
 - Team message dispatch now supports an explicit submit mode through socket
   `team.message.dispatch` (`submit: true`), MCP `team_message_dispatch`, and
   CLI `forktty team-message-dispatch --submit`, sending Enter as a separate
   terminal input after the queued text is delivered when the message does not
-  already end in a newline.
+  already end in carriage return.
 
 ### Fixed
 - The local `forktty doctor` hook diagnostics now include the default
@@ -43,8 +48,15 @@ All notable changes to ForkTTY are documented here.
 - Team-wide message dispatch with an explicit worker target now marks the
   message delivered after the terminal accepts the text and optional submit
   input.
+- Team message dispatch submit mode now still sends the separate Enter input
+  for LF-terminated prompt text, fixing full-screen agent TUIs where a pasted
+  newline is not equivalent to pressing Enter.
 - MCP `team_message_dispatch` is now annotated as destructive and open-world,
   matching that it can type into an agent pane and optionally submit input.
+- Embedded Ghostty panes now synchronize runtime `cols`/`rows` metadata through
+  Ghostty's bounded read-text ABI, so `surface.list`, `context.snapshot`,
+  `topology.tree`, and `system.top` stop reporting the initial 80x24 size after
+  the pane is resized on current embed builds.
 - Agent lifecycle summaries now ignore stale hook events consistently with the
   visible status row, preventing delayed `running`/`needs input` updates from
   overriding newer agent state.
@@ -62,6 +74,9 @@ All notable changes to ForkTTY are documented here.
   directories alongside socket, executable, environment, and hook config
   diagnostics; local `forktty doctor --hooks` remains scoped to hook config
   path/status checks.
+- `agent.list`, `agent.health`, and `status.summary` now include source/age
+  metadata for persisted agent rows, making delayed agent state easier to
+  distinguish from fresh terminal evidence.
 - Team wrapper help now documents that `forktty team ask/review` launch a fresh
   worker on each run, documents the `--submit` default, and reports the failed
   step when a multi-request prompt dispatch flow stops part-way through.
@@ -71,6 +86,9 @@ All notable changes to ForkTTY are documented here.
 - The managed ForkTTY agent orchestration skill now tells agents to start hook,
   MCP, and skill setup debugging with local `forktty doctor` diagnostics and
   provider-specific dry runs before changing configuration files.
+- The managed ForkTTY agent orchestration skill now points agents at
+  `provider_capabilities`, compact `team_summaries`, persisted agent
+  source/age metadata, and the dispatch submit/Enter carriage-return semantics.
 - The managed ForkTTY agent orchestration skill now treats fetched public docs
   as untrusted documentation-only input, uses the canonical `context_snapshot`
   MCP name in its trigger text, declares its ForkTTY MCP dependency metadata,

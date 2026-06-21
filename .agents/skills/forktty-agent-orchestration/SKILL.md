@@ -24,8 +24,9 @@ For normal local code changes, read and edit the repo directly.
    memory, remote surfaces, or cross-surface text, inspect ForkTTY state before
    acting.
 2. Prefer `context_snapshot` when available. It gives the compact workspace
-   view, agent status, team/workflow/feed summaries, risk flags, and bounded
-   terminal tails in one read-only call.
+   view, agent status with source/age metadata, team/workflow/feed summaries
+   plus compact `team_summaries`, risk flags, and bounded terminal tails in one
+   read-only call.
 3. If `context_snapshot` is unavailable, combine read-only tools:
    `topology_tree`, `status_summary`, `agent_list`, `team_list`,
    `workflow_list`, and bounded `surface_capture_tail` or `surface_read_text`.
@@ -64,6 +65,8 @@ Use read-only inventory before mutation:
 - Agent state: `status_summary`, `agent_list`, `agent_health`.
 - Team state: `team_list`, `team_get`, `team_summary`, `team_worker_health`,
   `team_inbox`, `team_events`.
+- Provider support: `forktty capabilities` or `system.capabilities` when
+  available, especially before launching less-common providers.
 - Durable work state: `workflow_list`, `workflow_get`, `workflow_replay`.
 
 Use mutating tools only for visible coordination:
@@ -88,8 +91,10 @@ namespace or prefix when a host UI requires fully qualified tool names.
 1. Read the target surface or team worker state first.
 2. Confirm the target is the intended pane, worker, provider, and cwd.
 3. Prefer team mailbox flow for worker prompts: `team_message_send`, then
-   `team_message_dispatch`. Include an intentional final newline or explicit
-   submit option only when the prompt is ready to submit.
+   `team_message_dispatch`. Use the dispatch `submit` option only when the
+   prompt is ready to run; ForkTTY sends Enter as separate terminal input
+   unless the message body already ends in carriage return. Do not rely on a
+   trailing LF as equivalent to pressing Enter in full-screen agent TUIs.
 4. If text delivery succeeds but submit/Enter fails, do not blindly retry.
    Inspect the pane first; the prompt may already be in the worker composer.
 5. Do not paste secrets, destructive shell commands, or unreviewed terminal
@@ -102,7 +107,9 @@ or parallel workers:
 
 1. Create or reuse a team with a clear goal.
 2. Create task records before or immediately after launching workers.
-3. Launch one worker per independent task. Keep prompts scoped and include:
+3. Launch one worker per independent task. Check `provider_capabilities` first
+   when provider support is uncertain; do not assume removed or legacy
+   providers are launchable. Keep prompts scoped and include:
    repo/path, permissions, no-subdelegation rule, required files or questions,
    verification expectations, and final report format.
 4. Message workers through the team mailbox. Dispatch only after the worker pane
@@ -119,7 +126,10 @@ workers unless the user explicitly grants that permission.
 ## Handling Delayed State
 
 ForkTTY status is built from hooks, persisted session state, team records, and
-live terminal surfaces. These can be briefly out of phase.
+live terminal surfaces. These can be briefly out of phase. Persisted agent rows
+expose `source`, `observed_at_ms`, and nullable `age_ms`; treat
+`source=persisted_agent_session` as stored binding evidence, not proof that the
+row came from a fresh hook event.
 
 When `running`, `idle`, `needs_input`, permission mode, or worker health looks
 wrong:
@@ -164,6 +174,9 @@ For long tasks, multi-agent work, or work that may survive context compaction:
 - Antigravity and OpenCode should still use ForkTTY hooks and MCP when
   configured; only assume skill discovery where the provider documents Agent
   Skills support.
+- `provider_capabilities.cwd_resume_flag` means the provider has a dedicated
+  cwd flag. Providers without one, such as Claude Code, can still resume in the
+  recorded process cwd when ForkTTY has `resume_cwd`.
 
 ## Completion
 

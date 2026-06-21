@@ -57,6 +57,9 @@ This is a baseline taxonomy for safe future integration. It does not change how 
   interoperable `agents` target.
 - The managed skill directs hook/MCP/skill setup debugging through local
   `forktty doctor` diagnostics and setup dry runs before config writes.
+- `system.capabilities` exposes a `provider_capabilities` matrix for supported
+  launch/resume providers so socket and MCP clients can read provider support
+  directly instead of probing failed operations.
 - `forktty hooks doctor <agent>` reports hook config path state, launcher
   freshness, supported events, Claude profile, and Codex trust-record state.
 - Status normalization is centralized in `forktty-core` for reuse by UI/socket/script layers.
