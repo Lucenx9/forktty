@@ -14,6 +14,7 @@ pub enum AgentKind {
     ClaudeCode,
     Codex,
     Antigravity,
+    Pi,
     #[serde(rename = "opencode", alias = "open_code")]
     OpenCode,
     #[serde(other)]
@@ -25,6 +26,7 @@ pub fn agent_metadata_aliases(agent: AgentKind) -> &'static [&'static str] {
         AgentKind::ClaudeCode => &["claude", "claude-code", "claude_code"],
         AgentKind::Codex => &["codex"],
         AgentKind::Antigravity => &["antigravity", "agy"],
+        AgentKind::Pi => &["pi"],
         AgentKind::OpenCode => &["opencode", "open-code", "open_code"],
         AgentKind::Custom => &["custom"],
     }
@@ -122,6 +124,7 @@ pub fn agent_resume_command_with_cwd_and_permission_mode(
             ("claude", args)
         }
         AgentKind::Antigravity => ("agy", vec!["--conversation".to_string(), session_id]),
+        AgentKind::Pi => ("pi", vec!["--session".to_string(), session_id]),
         AgentKind::OpenCode => ("opencode", vec!["--session".to_string(), session_id]),
         AgentKind::Custom => return Err(AgentResumeError::UnsupportedAgent(agent)),
     };
@@ -316,6 +319,15 @@ mod tests {
     }
 
     #[test]
+    fn pi_provider_key_matches_documented_spelling() {
+        assert_eq!(serde_json::to_string(&AgentKind::Pi).unwrap(), "\"pi\"");
+        assert_eq!(
+            serde_json::from_str::<AgentKind>("\"pi\"").unwrap(),
+            AgentKind::Pi
+        );
+    }
+
+    #[test]
     fn builds_provider_resume_commands_as_argv() {
         let cases = [
             (
@@ -338,6 +350,7 @@ mod tests {
                 "opencode",
                 &["--session", "ses_opencode"][..],
             ),
+            (AgentKind::Pi, "pi", &["--session", "pi-session-1"][..]),
         ];
 
         for (agent, program, expected_args) in cases {

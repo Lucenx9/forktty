@@ -93,6 +93,7 @@ those tools without waiting for the user to spell out the exact MCP call.
 ```bash
 forktty skills setup
 forktty skills setup agents --dry-run
+forktty skills setup pi
 forktty skills setup claude
 forktty skills remove agents --dry-run
 ```
@@ -102,7 +103,7 @@ forktty skills remove agents --dry-run
 
 | Target | Destination |
 |---|---|
-| Agent Skills-compatible tools (`agents`, plus `codex` alias) | `~/.agents/skills/forktty-agent-orchestration` |
+| Agent Skills-compatible tools (`agents`, plus `codex` and `pi` aliases) | `~/.agents/skills/forktty-agent-orchestration` |
 | Claude Code (`claude`) | `$CLAUDE_CONFIG_DIR/skills/forktty-agent-orchestration` or `~/.claude/skills/forktty-agent-orchestration` |
 
 The skill tells agents to inspect `context_snapshot` or equivalent read-only

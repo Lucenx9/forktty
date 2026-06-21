@@ -130,9 +130,9 @@ Usage:
       default setup agents: codex, claude, antigravity
   forktty mcp remove [codex] [claude] [antigravity] [gemini]
       gemini is legacy cleanup only; setup remains unsupported
-  forktty skills setup [agents|codex|claude]
-      default setup targets: agents, claude; codex aliases the interoperable agents target
-  forktty skills remove [agents|codex|claude]
+  forktty skills setup [agents|codex|pi|claude]
+      default setup targets: agents, claude; codex and pi alias the interoperable agents target
+  forktty skills remove [agents|codex|pi|claude]
   forktty --json doctor                            Socket/hook doctor; needs a global flag before
                                                    `doctor` (bare `forktty doctor` runs the local doctor)
   forktty ping
@@ -6530,7 +6530,7 @@ fn handle_skills(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         Some("setup") | Some("install") => handle_skills_setup(context, args[1..].to_vec()),
         Some("remove") | Some("uninstall") => handle_skills_remove(context, args[1..].to_vec()),
         Some("help") | Some("--help") | Some("-h") => write_stdout_line(
-            "Usage: forktty skills setup [agents|codex|claude] | forktty skills remove [agents|codex|claude]\nDefault setup targets: agents, claude. codex aliases the interoperable agents target.",
+            "Usage: forktty skills setup [agents|codex|pi|claude] | forktty skills remove [agents|codex|pi|claude]\nDefault setup targets: agents, claude. codex and pi alias the interoperable agents target.",
         ),
         Some(other) => Err(CliError::new(format!("skills: unknown subcommand {other}"))),
         None => Err(CliError::new(
@@ -7566,7 +7566,7 @@ fn normalize_agent_name(agent: &str) -> String {
 fn normalize_skill_target_name(target: &str) -> String {
     match target.to_lowercase().as_str() {
         "agent" | "agents" | "agent-skills" | "agent_skills" | "open-agent" | "open_agent"
-        | "openagents" | "codex" => "agents".to_string(),
+        | "openagents" | "codex" | "pi" | "pi-agent" | "pi_agent" => "agents".to_string(),
         "claude-code" | "claude_code" => "claude".to_string(),
         other => other.to_string(),
     }
@@ -13016,6 +13016,27 @@ mod tests {
                     ),
                     0
                 );
+            },
+        );
+    }
+
+    #[test]
+    fn skill_setup_pi_alias_targets_interoperable_agents_dir() {
+        let home = tempfile::tempdir().unwrap();
+        let claude_dir = tempfile::tempdir().unwrap();
+        let home_s = home.path().to_string_lossy().to_string();
+        let claude_dir_s = claude_dir.path().to_string_lossy().to_string();
+
+        with_env(
+            &[
+                ("HOME", Some(home_s.as_str())),
+                ("CLAUDE_CONFIG_DIR", Some(claude_dir_s.as_str())),
+            ],
+            || {
+                handle_skills_setup(&test_context(), strings(&["pi"])).unwrap();
+
+                assert!(agent_skills_dir().join("SKILL.md").exists());
+                assert!(!claude_skill_dir().exists());
             },
         );
     }

@@ -732,6 +732,7 @@ fn agent_kind_label(agent: forktty_core::AgentKind) -> &'static str {
         forktty_core::AgentKind::ClaudeCode => "Claude",
         forktty_core::AgentKind::Codex => "Codex",
         forktty_core::AgentKind::Antigravity => "Antigravity",
+        forktty_core::AgentKind::Pi => "Pi",
         forktty_core::AgentKind::OpenCode => "OpenCode",
         forktty_core::AgentKind::Custom => "Custom",
     }

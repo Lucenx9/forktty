@@ -35,7 +35,7 @@ on the project overview, install paths, quick start, and contributor commands.
 
 ## Why ForkTTY
 
-- **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Antigravity CLI, OpenCode, shell scripts, and custom tools.
+- **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Pi, Antigravity CLI, OpenCode, shell scripts, and custom tools.
 - **First-class worktree workflows**: create, attach, remove, and merge isolated worktree workspaces through native `git2` operations and optional `.forktty/setup` / `.forktty/teardown` hooks.
 - **Native Linux terminal stack**: GTK4/libadwaita shell with embedded Ghostty-backed terminals, split panes, session restore, notifications, command palette, settings, and quake mode.
 - **Local-first posture**: no crash reporting or product event tracking, an anonymous daily usage ping that can be disabled, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution. Optional update checks hit GitHub Releases at most once per day and can also be disabled.
@@ -360,10 +360,11 @@ require Node.js.
 
 `forktty capabilities` includes the socket method list plus a
 `provider_capabilities` matrix for the supported providers (`codex`, `claude`,
-`opencode`, and `antigravity`), including their launch program, whether
+`pi`, `opencode`, and `antigravity`), including their launch program, whether
 ForkTTY has safe resume support, and whether the provider exposes a dedicated
 cwd resume flag. Providers without a cwd flag, such as Claude Code, can still
 resume in ForkTTY's recorded process cwd when `resume_cwd` is available.
+Pi resume uses the documented `pi --session <id>` flow.
 
 ### MCP server
 
@@ -413,11 +414,12 @@ It also tells agents to start hook/MCP/skill setup debugging with local
 ```bash
 forktty skills setup                       # install agents + Claude targets
 forktty skills setup agents --dry-run      # interoperable ~/.agents/skills target
+forktty skills setup pi                    # Pi aliases the interoperable target
 forktty skills setup claude
 forktty skills remove agents
 ```
 
-`agents` and `codex` target the interoperable
+`agents`, `codex`, and `pi` target the interoperable
 `~/.agents/skills/forktty-agent-orchestration` location. `claude` targets
 `$CLAUDE_CONFIG_DIR/skills/forktty-agent-orchestration` or
 `~/.claude/skills/forktty-agent-orchestration`. Setup refuses to overwrite an

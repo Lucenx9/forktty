@@ -17,9 +17,13 @@ All notable changes to ForkTTY are documented here.
   workflow/team/feed/remote summaries, compact team aggregate rows, and bounded
   untrusted terminal tails.
 - `system.capabilities` now advertises a provider capability matrix for the
-  supported team/resume providers (`codex`, `claude`, `opencode`, and
+  supported team/resume providers (`codex`, `claude`, `pi`, `opencode`, and
   `antigravity`) so socket and MCP clients do not need to infer provider support
   by trial and error.
+- Pi is now a supported team/resume provider: team launch accepts `--agent pi`,
+  agent resume uses `pi --session <id>`, `forktty skills setup pi` aliases the
+  interoperable Agent Skills target, and Pi review workers default to read-only
+  `--tools read,grep,find,ls` unless explicit Pi tool args are supplied.
 - Team message dispatch now supports an explicit submit mode through socket
   `team.message.dispatch` (`submit: true`), MCP `team_message_dispatch`, and
   CLI `forktty team-message-dispatch --submit`, sending Enter as a separate

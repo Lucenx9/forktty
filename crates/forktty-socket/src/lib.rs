@@ -969,6 +969,14 @@ fn provider_capabilities() -> Value {
             "permission_bypass_resume": false,
             "aliases": ["opencode", "open_code", "open-code"],
         },
+        "pi": {
+            "program": "pi",
+            "team_worker_launch": true,
+            "safe_resume": true,
+            "cwd_resume_flag": false,
+            "permission_bypass_resume": false,
+            "aliases": ["pi"],
+        },
         "antigravity": {
             "program": "agy",
             "team_worker_launch": true,
@@ -5037,6 +5045,7 @@ fn team_worker_launch_command(
         "claude" | "claude_code" | "claude-code" => "claude",
         "opencode" | "open_code" | "open-code" => "opencode",
         "antigravity" | "agy" => "agy",
+        "pi" => "pi",
         _ => {
             return Err(DispatchError::InvalidParam(format!(
                 "unsupported team worker agent: {agent}"
@@ -5058,6 +5067,11 @@ fn team_worker_launch_command(
     }
     let mut args = if program == "claude" && !claude_args_have_permission_override(&extra_args) {
         claude_team_permission_args(role)
+    } else if program == "pi"
+        && role.is_some_and(team_role_is_review)
+        && !pi_args_have_tool_override(&extra_args)
+    {
+        vec!["--tools".to_string(), "read,grep,find,ls".to_string()]
     } else {
         Vec::new()
     };
@@ -5087,8 +5101,25 @@ fn claude_args_have_permission_override(args: &[String]) -> bool {
     })
 }
 
+fn pi_args_have_tool_override(args: &[String]) -> bool {
+    args.iter().any(|arg| {
+        let option = arg.split_once('=').map_or(arg.as_str(), |(key, _)| key);
+        matches!(
+            option,
+            "--tools"
+                | "-t"
+                | "--exclude-tools"
+                | "-xt"
+                | "--no-builtin-tools"
+                | "-nbt"
+                | "--no-tools"
+                | "-nt"
+        )
+    })
+}
+
 fn claude_team_permission_args(role: Option<&str>) -> Vec<String> {
-    if role.is_some_and(claude_role_is_review) {
+    if role.is_some_and(team_role_is_review) {
         vec![
             "--permission-mode".to_string(),
             "dontAsk".to_string(),
@@ -5100,7 +5131,7 @@ fn claude_team_permission_args(role: Option<&str>) -> Vec<String> {
     }
 }
 
-fn claude_role_is_review(role: &str) -> bool {
+fn team_role_is_review(role: &str) -> bool {
     role.split(|ch: char| !ch.is_ascii_alphanumeric())
         .any(|token| token.to_ascii_lowercase().starts_with("review"))
 }
@@ -6474,6 +6505,7 @@ fn agent_kind_from_status_key(key: &str) -> Option<AgentKind> {
         "claude" | "claude-code" | "claude_code" => Some(AgentKind::ClaudeCode),
         "codex" => Some(AgentKind::Codex),
         "antigravity" | "agy" => Some(AgentKind::Antigravity),
+        "pi" => Some(AgentKind::Pi),
         "opencode" | "open-code" | "open_code" => Some(AgentKind::OpenCode),
         "custom" => Some(AgentKind::Custom),
         _ => None,
@@ -6496,6 +6528,7 @@ fn agent_kind_from_permission_status_key(key: &str) -> Option<AgentKind> {
         "claude" | "claude-code" | "claude_code" => Some(AgentKind::ClaudeCode),
         "codex" => Some(AgentKind::Codex),
         "antigravity" | "agy" => Some(AgentKind::Antigravity),
+        "pi" => Some(AgentKind::Pi),
         "opencode" | "open-code" | "open_code" => Some(AgentKind::OpenCode),
         "custom" => Some(AgentKind::Custom),
         _ => None,
@@ -7426,6 +7459,15 @@ mod tests {
     }
 
     #[test]
+    fn pi_status_keys_bind_to_pi_agent() {
+        assert_eq!(agent_kind_from_status_key("agent:pi"), Some(AgentKind::Pi));
+        assert_eq!(
+            agent_kind_from_permission_status_key("agent:pi:permission"),
+            Some(AgentKind::Pi)
+        );
+    }
+
+    #[test]
     fn team_worker_launch_rejects_removed_gemini_provider() {
         let err = team_worker_launch_command("gemini", None, Vec::new()).unwrap_err();
         assert!(
@@ -7447,6 +7489,7 @@ mod tests {
             ("open-code", "opencode"),
             ("antigravity", "agy"),
             ("agy", "agy"),
+            ("pi", "pi"),
         ] {
             let (program, args) = team_worker_launch_command(alias, None, Vec::new()).unwrap();
             assert_eq!(program, expected_program, "{alias}");
@@ -7483,6 +7526,43 @@ mod tests {
         assert!(tools.contains("Glob"));
         assert!(!tools.contains("Bash("));
         assert!(!tools.contains("cargo test"));
+    }
+
+    #[test]
+    fn team_worker_launch_uses_read_only_tools_for_pi_review_roles() {
+        let (program, args) =
+            team_worker_launch_command("pi", Some("code-reviewer"), Vec::new()).unwrap();
+
+        assert_eq!(program, "pi");
+        assert_eq!(args, ["--tools", "read,grep,find,ls"]);
+    }
+
+    #[test]
+    fn team_worker_launch_does_not_add_pi_tools_for_non_review_roles() {
+        let (program, args) =
+            team_worker_launch_command("pi", Some("builder"), Vec::new()).unwrap();
+
+        assert_eq!(program, "pi");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn team_worker_launch_preserves_explicit_pi_tool_args() {
+        for args in [
+            vec!["--tools".to_string(), "read".to_string()],
+            vec!["--tools=read".to_string()],
+            vec!["-t".to_string(), "read".to_string()],
+            vec!["--exclude-tools=bash".to_string()],
+            vec!["-xt".to_string(), "bash".to_string()],
+            vec!["--no-tools".to_string()],
+            vec!["-nt".to_string()],
+            vec!["--no-builtin-tools".to_string()],
+            vec!["-nbt".to_string()],
+        ] {
+            let (_, actual) =
+                team_worker_launch_command("pi", Some("reviewer"), args.clone()).unwrap();
+            assert_eq!(actual, args);
+        }
     }
 
     #[test]
@@ -14967,6 +15047,8 @@ mod tests {
         assert_eq!(providers["codex"]["safe_resume"], true);
         assert_eq!(providers["claude"]["cwd_resume_flag"], false);
         assert_eq!(providers["antigravity"]["program"], "agy");
+        assert_eq!(providers["pi"]["program"], "pi");
+        assert_eq!(providers["pi"]["safe_resume"], true);
         assert!(providers.get("gemini").is_none());
         #[cfg(not(feature = "browser"))]
         assert!(!methods.iter().any(|m| {

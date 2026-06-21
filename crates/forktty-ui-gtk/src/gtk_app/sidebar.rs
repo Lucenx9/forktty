@@ -980,6 +980,7 @@ fn managed_agent_alias_from_metadata_key(key: &str) -> Option<&'static str> {
         forktty_core::AgentKind::ClaudeCode,
         forktty_core::AgentKind::Codex,
         forktty_core::AgentKind::Antigravity,
+        forktty_core::AgentKind::Pi,
         forktty_core::AgentKind::OpenCode,
         forktty_core::AgentKind::Custom,
     ]
