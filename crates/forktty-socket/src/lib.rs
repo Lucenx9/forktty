@@ -143,6 +143,7 @@ pub const METHODS: &[&str] = &[
     "surface.split",
     "status.summary",
     "system.capabilities",
+    "system.identify",
     "system.ping",
     "system.top",
     "team.events",
@@ -220,6 +221,7 @@ pub const METHODS: &[&str] = &[
     "surface.split",
     "status.summary",
     "system.capabilities",
+    "system.identify",
     "system.ping",
     "system.top",
     "team.events",
@@ -991,6 +993,195 @@ fn provider_capabilities() -> Value {
     })
 }
 
+fn system_identify(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let requested_surface_id = optional_surface_id_param(params)?.map(str::to_string);
+    let caller_workspace_id = optional_caller_id(params, "caller_workspace_id")?;
+    let caller_surface_id = optional_caller_id(params, "caller_surface_id")?;
+    let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
+    let terminal_by_id = terminal_surfaces
+        .iter()
+        .map(|surface| (surface.surface_id.as_str(), surface))
+        .collect::<HashMap<_, _>>();
+
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| DispatchError::Other("Lock poisoned".to_string()))?;
+    let workspaces = model.list_workspaces();
+    let workspace_selector = match workspace_selector_from_params(params) {
+        Ok(selector) => Some(selector),
+        Err(DispatchError::MissingParam(_)) => None,
+        Err(err) => return Err(err),
+    };
+    let (workspace_id, surface_id, target_source) =
+        if let Some(requested_surface_id) = requested_surface_id.as_deref() {
+            let surface = model
+                .surface(requested_surface_id)
+                .ok_or_else(|| DispatchError::NotFound("surface".to_string()))?;
+            if let Some(selector) = workspace_selector {
+                let selected_workspace_id = model
+                    .workspace_id_for(selector)
+                    .ok_or_else(|| DispatchError::NotFound("workspace".to_string()))?;
+                if selected_workspace_id != surface.workspace_id {
+                    return Err(DispatchError::NotFound("surface".to_string()));
+                }
+            }
+            (
+                surface.workspace_id.clone(),
+                surface.id.clone(),
+                "surface_selector",
+            )
+        } else if let Some(selector) = workspace_selector {
+            let workspace_id = model
+                .workspace_id_for(selector)
+                .ok_or_else(|| DispatchError::NotFound("workspace".to_string()))?;
+            let workspace = workspaces
+                .iter()
+                .find(|workspace| workspace.id == workspace_id)
+                .ok_or_else(|| DispatchError::NotFound("workspace".to_string()))?;
+            (
+                workspace.id.clone(),
+                workspace.focused_surface_id.clone(),
+                "workspace_selector",
+            )
+        } else {
+            if let Some(caller_surface) = caller_surface_id
+                .as_deref()
+                .and_then(|surface_id| model.surface(surface_id))
+            {
+                (
+                    caller_surface.workspace_id.clone(),
+                    caller_surface.id.clone(),
+                    "caller_surface",
+                )
+            } else {
+                let workspace_id = model
+                    .active_workspace_id()
+                    .ok_or_else(|| DispatchError::NotFound("workspace".to_string()))?;
+                let workspace = workspaces
+                    .iter()
+                    .find(|workspace| workspace.id == workspace_id)
+                    .ok_or_else(|| DispatchError::NotFound("workspace".to_string()))?;
+                (
+                    workspace.id.clone(),
+                    workspace.focused_surface_id.clone(),
+                    "active_workspace",
+                )
+            }
+        };
+    let workspace = workspaces
+        .iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .cloned()
+        .ok_or_else(|| DispatchError::NotFound("workspace".to_string()))?;
+    let surfaces = model.list_surfaces(Some(&workspace_id));
+    let surface = model
+        .surface(&surface_id)
+        .filter(|surface| surface.workspace_id == workspace_id)
+        .cloned()
+        .ok_or_else(|| DispatchError::NotFound("surface".to_string()))?;
+    let agent = surface
+        .agent_session
+        .as_ref()
+        .map(agent_session_identify_row)
+        .unwrap_or(Value::Null);
+    let caller_workspace_known = caller_workspace_id
+        .as_deref()
+        .map(|id| workspaces.iter().any(|workspace| workspace.id == id));
+    let caller_surface_known = caller_surface_id
+        .as_deref()
+        .map(|id| model.surface(id).is_some());
+    let caller_matches_workspace = caller_workspace_id
+        .as_deref()
+        .map(|id| id == workspace_id.as_str());
+    let caller_matches_surface = caller_surface_id
+        .as_deref()
+        .map(|id| id == surface_id.as_str());
+
+    Ok(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "target_source": target_source,
+        "workspace": {
+            "id": workspace.id,
+            "name": workspace.name,
+            "active": workspace.active,
+            "working_dir": workspace.working_dir,
+            "effective_project_cwd": workspace_effective_project_cwd(&workspace, &surfaces),
+            "git_branch": workspace.git_branch,
+            "worktree_name": workspace.worktree_name,
+            "focused_surface_id": workspace.focused_surface_id,
+            "needs_attention": workspace.needs_attention,
+        },
+        "surface": identify_surface_row(&surface, terminal_by_id.get(surface.id.as_str()).copied()),
+        "agent": agent,
+        "caller": {
+            "workspace_id": caller_workspace_id,
+            "surface_id": caller_surface_id,
+            "workspace_known": caller_workspace_known,
+            "surface_known": caller_surface_known,
+            "matches_workspace": caller_matches_workspace,
+            "matches_surface": caller_matches_surface,
+        },
+    }))
+}
+
+fn identify_surface_row(
+    surface: &forktty_core::Surface,
+    runtime: Option<&TerminalSurfaceState>,
+) -> Value {
+    let mut row = serde_json::to_value(surface).unwrap_or_else(|_| json!({}));
+    if let Some(object) = row.as_object_mut() {
+        object.insert(
+            "shell".to_string(),
+            runtime
+                .map(|surface| json!(surface.shell.clone()))
+                .unwrap_or(Value::Null),
+        );
+        object.insert(
+            "cols".to_string(),
+            runtime
+                .map(|surface| json!(surface.cols))
+                .unwrap_or(Value::Null),
+        );
+        object.insert(
+            "rows".to_string(),
+            runtime
+                .map(|surface| json!(surface.rows))
+                .unwrap_or(Value::Null),
+        );
+        object.insert(
+            "pid".to_string(),
+            runtime
+                .and_then(|surface| surface.pid)
+                .map_or(Value::Null, Value::from),
+        );
+        object.insert(
+            "effective_project_cwd".to_string(),
+            json!(surface_effective_project_cwd(surface)),
+        );
+    }
+    row
+}
+
+fn agent_session_identify_row(agent_session: &AgentSession) -> Value {
+    json!({
+        "agent": agent_session.agent,
+        "session_id": agent_session.session_id,
+        "resume_cwd": agent_session.resume_cwd,
+        "permission_mode": agent_session.permission_mode,
+        "lifecycle": agent_session.lifecycle,
+        "last_activity_ms": agent_session.last_activity_ms,
+    })
+}
+
+fn optional_caller_id(params: &Value, key: &'static str) -> Result<Option<String>, DispatchError> {
+    let Some(value) = optional_non_blank_string_param(params, key)? else {
+        return Ok(None);
+    };
+    ensure_max_text_size(key, value)?;
+    Ok(Some(value.to_string()))
+}
+
 pub async fn dispatch(
     state: &SocketAppState,
     method: &str,
@@ -1011,6 +1202,7 @@ pub async fn dispatch(
             "methods": METHODS,
             "provider_capabilities": provider_capabilities(),
         })),
+        "system.identify" => system_identify(state, &params),
         "context.snapshot" => context_snapshot(state, &params),
         "feed.approval.respond" => {
             let id = required_trimmed_string(&params, "id")?;
@@ -9238,6 +9430,113 @@ mod tests {
             snapshot["agent_health"][0]["effective_project_cwd"],
             project_cwd
         );
+    }
+
+    #[tokio::test]
+    async fn system_identify_reports_target_and_caller_context() {
+        let (state, _) = test_state();
+        let project_dir = tempfile::tempdir().unwrap();
+        let project_cwd = project_dir.path().to_string_lossy().to_string();
+        let (workspace_id, surface_id) = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &surface_id,
+                AgentKind::Codex,
+                "codex-session-1",
+            ));
+            assert!(model.set_surface_agent_session_resume_cwd(
+                &surface_id,
+                project_dir.path().to_path_buf()
+            ));
+            (workspace.id, surface_id)
+        };
+
+        let identify = dispatch(
+            &state,
+            "system.identify",
+            json!({
+                "caller_workspace_id": workspace_id,
+                "caller_surface_id": surface_id,
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(identify["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(identify["workspace"]["id"], workspace_id);
+        assert_eq!(identify["workspace"]["effective_project_cwd"], project_cwd);
+        assert_eq!(identify["surface"]["id"], surface_id);
+        assert_eq!(identify["surface"]["effective_project_cwd"], project_cwd);
+        assert_eq!(identify["agent"]["agent"], "codex");
+        assert_eq!(identify["agent"]["session_id"], "codex-session-1");
+        assert_eq!(identify["caller"]["workspace_id"], workspace_id);
+        assert_eq!(identify["caller"]["surface_id"], surface_id);
+        assert_eq!(identify["caller"]["workspace_known"], true);
+        assert_eq!(identify["caller"]["surface_known"], true);
+        assert_eq!(identify["caller"]["matches_workspace"], true);
+        assert_eq!(identify["caller"]["matches_surface"], true);
+    }
+
+    #[tokio::test]
+    async fn system_identify_defaults_to_known_caller_surface() {
+        let (state, _) = test_state();
+        let caller_surface_id = {
+            let model = state.model.lock().unwrap();
+            model.active_workspace().unwrap().focused_surface_id.clone()
+        };
+        let focused = dispatch(
+            &state,
+            "pane.new_tab",
+            json!({"surface_id": caller_surface_id}),
+        )
+        .await
+        .unwrap();
+        let focused_surface_id = focused["id"].as_str().unwrap().to_string();
+        assert_ne!(caller_surface_id, focused_surface_id);
+
+        let identify = dispatch(
+            &state,
+            "system.identify",
+            json!({"caller_surface_id": caller_surface_id}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(identify["target_source"], "caller_surface");
+        assert_eq!(identify["surface"]["id"], caller_surface_id);
+        assert_eq!(identify["caller"]["surface_known"], true);
+        assert_eq!(identify["caller"]["matches_surface"], true);
+    }
+
+    #[tokio::test]
+    async fn system_identify_degrades_stale_caller_surface_to_active_focus() {
+        let (state, _) = test_state();
+        let (workspace_id, focused_surface_id) = {
+            let model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            (workspace.id.clone(), workspace.focused_surface_id.clone())
+        };
+
+        let identify = dispatch(
+            &state,
+            "system.identify",
+            json!({
+                "caller_workspace_id": workspace_id,
+                "caller_surface_id": "surface-missing"
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(identify["target_source"], "active_workspace");
+        assert_eq!(identify["workspace"]["id"], workspace_id);
+        assert_eq!(identify["surface"]["id"], focused_surface_id);
+        assert_eq!(identify["caller"]["workspace_known"], true);
+        assert_eq!(identify["caller"]["surface_known"], false);
+        assert_eq!(identify["caller"]["matches_workspace"], true);
+        assert_eq!(identify["caller"]["matches_surface"], false);
     }
 
     #[tokio::test]

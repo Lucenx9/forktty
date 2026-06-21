@@ -285,6 +285,8 @@ forktty set-progress --key build --label Build --value 42 --total 100
 forktty statusline
 forktty status explain --tail-lines 20
 forktty status watch --count 3 --interval-ms 2000
+forktty identify --json
+forktty wait agent-status --status needs_input --timeout-ms 30000
 forktty context-snapshot --workspace-name main --tail-lines 0 --json
 forktty team ask review-team claude-review --agent claude --task-id review-head --prompt "Review HEAD read-only" --submit
 forktty team review review-team claude-review --agent claude --task-id review-head --commit HEAD --submit
@@ -321,6 +323,13 @@ Workspace, surface, agent, and agent-health rows expose
 workspace directory when they differ. `team.worker.health` includes a derived
 `final_state` such as `shutdown_requested`, `closed`, `surface_missing`, or
 `stale` so cleanup decisions do not require interpreting raw worker fields.
+For smaller control loops, `system.identify`/`forktty identify` returns the
+canonical target workspace/surface, caller id validation, current agent binding,
+and `effective_project_cwd`. ForkTTY pane environment ids are treated as caller
+context, so stale caller surface ids fall back to the active workspace focus
+instead of failing the read. `forktty wait agent-status` polls the persisted
+agent lifecycle with bounded timeout/interval values through short
+`context.snapshot` reads and no terminal text reads.
 
 The titlebar Agent HUD shows persisted agent sessions across workspaces, highlights
 sessions that need input, and can focus or resume a tracked agent. `forktty agents`,
@@ -381,7 +390,9 @@ require Node.js.
 ForkTTY has safe resume support, and whether the provider exposes a dedicated
 cwd resume flag. Providers without a cwd flag, such as Claude Code, can still
 resume in ForkTTY's recorded process cwd when `resume_cwd` is available.
-Pi resume uses the documented `pi --session <id>` flow.
+Pi resume uses the documented `pi --session <id>` flow. `forktty identify` is
+the smallest CLI read for "where am I in ForkTTY?", while
+`forktty wait agent-status` gives scripts and agents a bounded lifecycle wait.
 
 ### MCP server
 
@@ -395,17 +406,19 @@ forktty mcp setup codex claude --dry-run
 ```
 
 The MCP server is local-only: it opens no network listener and bridges validated
-tool calls to the owner-only ForkTTY Unix socket. It exposes workspace/surface
-inspection, topology tree, terminal read/capture, persisted agent-session
-inspection and explicit resume into a new tab, compact status summaries, pane
-split/focus/send-text, worktree create/attach/remove/merge, notifications, and
-`status_set`.
+tool calls to the owner-only ForkTTY Unix socket. It exposes identify,
+workspace/surface inspection, topology tree, terminal read/capture, persisted
+agent-session inspection and explicit resume into a new tab, compact status
+summaries, pane split/focus/send-text, worktree create/attach/remove/merge,
+notifications, and `status_set`.
 Codex MCP setup preserves hand-edited TOML comments/formatting and uses the
 larger MCP config size budget for `$CODEX_HOME/config.toml` or
 `~/.codex/config.toml`.
 `FORKTTY_SOCKET_PATH`,
 `FORKTTY_WORKSPACE_ID`, and `FORKTTY_SURFACE_ID` are honored as defaults when
-the MCP host launches from a ForkTTY pane.
+the MCP host launches from a ForkTTY pane, except `identify` treats workspace and
+surface env ids as caller validation context and degrades stale caller surfaces
+to the active focus.
 
 Spawned shells receive:
 
@@ -521,7 +534,7 @@ the same local socket pipeline. Manual hook-event commands can pass
 - Native GTK4/libadwaita desktop shell with embedded Ghostty-backed terminals.
 - Recursive split panes, pane focus/close, command palette, settings dialog, notification panel, and workspace sidebar.
 - Quake/dropdown mode through config and F12 where global shortcuts are supported.
-- Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, terminal read/capture, topology tree/top health inspection, pane-tab, notification, worktree, metadata, persisted agent-session inventory/resume, compact status summaries, event-stream, and capabilities.
+- Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, terminal read/capture, topology tree/top health inspection, pane-tab, notification, worktree, metadata, persisted agent-session inventory/resume, compact status summaries, context identify, event-stream, and capabilities; CLI wrappers add bounded lifecycle waits over read-only socket calls.
 - Agent HUD in the GTK titlebar for lifecycle, last activity, attention, focus, and resume across workspaces.
 - Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees. Setup hooks are advisory; teardown hook failures or teardown-created dirty state block removal.
 - Session restore for workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata.

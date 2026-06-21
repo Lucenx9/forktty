@@ -463,6 +463,42 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 params,
             }
         }
+        "identify" => {
+            reject_unexpected(
+                args,
+                &[
+                    "workspace_id",
+                    "workspace_name",
+                    "worktree_name",
+                    "surface_id",
+                    "caller_workspace_id",
+                    "caller_surface_id",
+                ],
+                name,
+            )?;
+            let mut params = workspace_target_params(args, false)?;
+            insert_optional_non_blank_param(args, &mut params, "surface_id")?;
+            if let Some(caller_workspace_id) = optional_non_blank(args, "caller_workspace_id")?
+                .or_else(|| trimmed_env("FORKTTY_WORKSPACE_ID"))
+            {
+                params.insert(
+                    "caller_workspace_id".to_string(),
+                    Value::String(caller_workspace_id),
+                );
+            }
+            if let Some(caller_surface_id) = optional_non_blank(args, "caller_surface_id")?
+                .or_else(|| trimmed_env("FORKTTY_SURFACE_ID"))
+            {
+                params.insert(
+                    "caller_surface_id".to_string(),
+                    Value::String(caller_surface_id),
+                );
+            }
+            SocketCall {
+                method: "system.identify",
+                params,
+            }
+        }
         "topology_tree" => {
             reject_unexpected(
                 args,
@@ -1584,6 +1620,7 @@ fn success_text(name: &str, result: &Value) -> String {
         "workspace_list" => "Listed ForkTTY workspaces.".to_string(),
         "surface_list" => "Listed ForkTTY surfaces.".to_string(),
         "context_snapshot" => "Built ForkTTY context snapshot.".to_string(),
+        "identify" => "Identified current ForkTTY workspace and surface context.".to_string(),
         "topology_tree" => "Built ForkTTY topology tree.".to_string(),
         "remote_list" => "Listed ForkTTY SSH remotes.".to_string(),
         "remote_status" => "Read ForkTTY SSH remote status.".to_string(),
@@ -1741,6 +1778,22 @@ fn tool_specs() -> Vec<ToolSpec> {
                     "tail_max_bytes": integer_prop("Maximum UTF-8 bytes per terminal tail; socket also enforces aggregate surface and byte upper bounds."),
                     "include_team_details": boolean_prop("Include full team records with workers, tasks, and mailbox messages. Defaults to false; use team_summaries for compact monitoring."),
                     "include_feed_trace": boolean_prop("Include status/progress trace rows in the feed. Defaults to false; compact snapshots keep semantic notifications and approvals."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "identify",
+            annotations: read_only_annotations(),
+            description: "Return the canonical ForkTTY workspace/surface context for the caller or selected target, including effective_project_cwd, caller id validation, and current agent binding when present.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "workspace_id": string_prop("Workspace id to inspect."),
+                    "workspace_name": string_prop("Workspace name to inspect."),
+                    "worktree_name": string_prop("Worktree name to inspect."),
+                    "surface_id": string_prop("Surface id to identify; defaults to caller surface when available, otherwise active workspace focus."),
+                    "caller_workspace_id": string_prop("Caller workspace id for validation; defaults from FORKTTY_WORKSPACE_ID when available."),
+                    "caller_surface_id": string_prop("Caller surface id for validation; defaults from FORKTTY_SURFACE_ID when available."),
                 }),
             ),
         },
@@ -2903,6 +2956,43 @@ mod tests {
         assert_eq!(params["tail_max_bytes"], 4096);
         assert_eq!(params["include_team_details"], true);
         assert_eq!(params["include_feed_trace"], true);
+    }
+
+    #[test]
+    fn identify_tool_maps_to_socket_system_identify() {
+        let (method, params) = build_socket_call_for_test(
+            "identify",
+            json!({
+                "workspace_id": "w1",
+                "caller_workspace_id": "caller-w",
+                "caller_surface_id": "caller-s"
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(method, "system.identify");
+        assert_eq!(params["workspace_id"], "w1");
+        assert_eq!(params["caller_workspace_id"], "caller-w");
+        assert_eq!(params["caller_surface_id"], "caller-s");
+    }
+
+    #[test]
+    fn identify_tool_uses_env_only_as_caller_context_without_target_args() {
+        with_env(
+            &[
+                ("FORKTTY_WORKSPACE_ID", Some("workspace-env")),
+                ("FORKTTY_SURFACE_ID", Some("surface-env")),
+            ],
+            || {
+                let (method, params) = build_socket_call_for_test("identify", json!({})).unwrap();
+
+                assert_eq!(method, "system.identify");
+                assert!(params.get("workspace_id").is_none());
+                assert!(params.get("surface_id").is_none());
+                assert_eq!(params["caller_workspace_id"], "workspace-env");
+                assert_eq!(params["caller_surface_id"], "surface-env");
+            },
+        );
     }
 
     #[test]

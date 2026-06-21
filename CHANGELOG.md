@@ -25,6 +25,10 @@ All notable changes to ForkTTY are documented here.
   block that correlates the persisted lifecycle, freshness timestamps, current
   workspace/provider status row, permission mode, and resume-readiness reason
   where available.
+- Socket/MCP/CLI automation now includes `system.identify`/`identify` for a
+  compact canonical workspace/surface/effective-project-cwd read, and CLI
+  automation adds `forktty wait agent-status` for bounded read-only polling of
+  persisted agent lifecycle state through short `context.snapshot` reads.
 - Pi is now a supported team/resume provider: team launch accepts `--agent pi`,
   agent resume uses `pi --session <id>`, `forktty skills setup pi` aliases the
   interoperable Agent Skills target, and Pi review workers default to read-only
@@ -36,6 +40,10 @@ All notable changes to ForkTTY are documented here.
   already end in carriage return.
 
 ### Fixed
+- `system.identify`, MCP `identify`, and `forktty identify` now treat ForkTTY
+  pane environment ids as caller context rather than mandatory target selectors,
+  so stale `FORKTTY_SURFACE_ID` values no longer make the compact identify read
+  fail before returning caller validation fields.
 - Polished small GTK UI details: suspended agents now have a proper lifecycle
   pill, truncated agent/notification text keeps full tooltips, pane status text
   has stronger contrast, and the Agents settings entry uses a more fitting
