@@ -2,6 +2,9 @@ use super::*;
 
 pub(super) enum GtkTerminalCommand {
     Spawn(SpawnRequest),
+    ShowSurface {
+        surface_id: String,
+    },
     SendText {
         surface_id: String,
         text: String,
@@ -124,6 +127,21 @@ impl TerminalBackend for GtkTerminalBackend {
         self.send_command(GtkTerminalCommand::SendText {
             surface_id: surface_id.to_string(),
             text: text.to_string(),
+        })
+    }
+
+    fn show_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
+        {
+            let surfaces = self
+                .surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?;
+            if !surfaces.contains_key(surface_id) {
+                return Err(TerminalError::NotFound(surface_id.to_string()));
+            }
+        }
+        self.send_command(GtkTerminalCommand::ShowSurface {
+            surface_id: surface_id.to_string(),
         })
     }
 

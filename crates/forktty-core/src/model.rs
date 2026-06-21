@@ -929,6 +929,23 @@ impl WorkspaceModel {
         true
     }
 
+    pub fn focus_surface_and_select_workspace(&mut self, surface_id: &str) -> bool {
+        let Some(workspace_id) = self
+            .surfaces
+            .get(surface_id)
+            .map(|surface| surface.workspace_id.clone())
+        else {
+            return false;
+        };
+        if !self.focus_surface(surface_id) {
+            return false;
+        }
+        for workspace in self.workspaces.values_mut() {
+            workspace.active = workspace.id == workspace_id;
+        }
+        true
+    }
+
     /// Add a new terminal tab to the pane whose tabs contain `near_surface_id`.
     /// The new tab becomes the active tab of that pane and the workspace focus.
     /// Returns the newly created Surface on success.

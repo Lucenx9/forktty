@@ -70,6 +70,10 @@ fn surface_has_agent_session(surface: &forktty_core::Surface) -> bool {
     surface.agent_session.is_some()
 }
 
+fn embedded_title_is_launcher_wrapper(title: &str) -> bool {
+    matches!(title.trim(), "/usr/bin/env" | "/bin/env" | "env")
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SurfacePid {
     pub(super) pid: i32,
@@ -376,6 +380,12 @@ impl TerminalController {
     pub(super) fn handle(&mut self, command: GtkTerminalCommand) {
         match command {
             GtkTerminalCommand::Spawn(request) => self.spawn(request),
+            GtkTerminalCommand::ShowSurface { surface_id } => {
+                if let Ok(mut model) = self.model.lock() {
+                    let _ = model.focus_surface_and_select_workspace(&surface_id);
+                }
+                self.sync_model_focus_to_ui();
+            }
             GtkTerminalCommand::SendText { surface_id, text } => {
                 if let Some(widget) = self.widgets.get(&surface_id) {
                     widget.send_text(&text);
@@ -640,6 +650,9 @@ impl TerminalController {
                 let title = widget
                     .property::<Option<String>>("title")
                     .unwrap_or_default();
+                if embedded_title_is_launcher_wrapper(&title) {
+                    return;
+                }
                 if let Ok(mut model) = model.lock() {
                     let _ = model.set_surface_title(&surface_id, title);
                 }
@@ -2802,6 +2815,15 @@ fn build_tab_context_menu(state: &SocketAppState, surface_id: &str) -> gtk::Popo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedded_title_filter_rejects_launcher_wrappers() {
+        assert!(embedded_title_is_launcher_wrapper("/usr/bin/env"));
+        assert!(embedded_title_is_launcher_wrapper(" /bin/env "));
+        assert!(embedded_title_is_launcher_wrapper("env"));
+        assert!(!embedded_title_is_launcher_wrapper("worker:codex-smoke"));
+        assert!(!embedded_title_is_launcher_wrapper("Codex"));
+    }
 
     #[test]
     fn embedded_ghostty_view_wraps_surface_in_vertical_scroller() {

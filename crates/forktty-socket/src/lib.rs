@@ -23,7 +23,7 @@ use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream as StdUnixS
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
@@ -47,6 +47,9 @@ const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// Give bracketed-paste-aware agent TUIs a short handoff window before Enter.
 const TEAM_MESSAGE_SUBMIT_ENTER_DELAY: Duration = Duration::from_millis(75);
+const TEAM_MESSAGE_SURFACE_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const TEAM_MESSAGE_SURFACE_READY_TIMEOUT: Duration = Duration::from_secs(10);
+static TEAM_MESSAGE_DISPATCH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 /// Buffered events per subscriber before a slow client gets a `Lagged` notice.
 const EVENTS_CHANNEL_CAPACITY: usize = 256;
 /// How often the background task snapshots the model and emits diffs.
@@ -5079,10 +5082,12 @@ async fn dispatch_team_message_text(
     body: &str,
     submit: bool,
 ) -> Result<(), DispatchError> {
-    state
-        .terminal
-        .send_text(surface_id, body)
-        .map_err(DispatchError::from)?;
+    // Team dispatches are serialized because GTK can only foreground one
+    // worker surface at a time. Keep the wait bounded so a never-ready surface
+    // cannot block unrelated dispatches indefinitely.
+    let _dispatch_guard = team_message_dispatch_lock().lock().await;
+    show_team_message_surface(state, surface_id)?;
+    send_team_message_body_when_ready(state, surface_id, body).await?;
     if submit && !body.ends_with('\r') {
         tokio::time::sleep(TEAM_MESSAGE_SUBMIT_ENTER_DELAY).await;
         state
@@ -5091,6 +5096,48 @@ async fn dispatch_team_message_text(
             .map_err(DispatchError::from)?;
     }
     Ok(())
+}
+
+fn team_message_dispatch_lock() -> &'static tokio::sync::Mutex<()> {
+    TEAM_MESSAGE_DISPATCH_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+fn show_team_message_surface(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> Result<(), DispatchError> {
+    {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        if !model.focus_surface_and_select_workspace(surface_id) {
+            return Err(DispatchError::NotFound("surface".to_string()));
+        }
+    }
+    state
+        .terminal
+        .show_surface(surface_id)
+        .map_err(DispatchError::from)
+}
+
+async fn send_team_message_body_when_ready(
+    state: &SocketAppState,
+    surface_id: &str,
+    body: &str,
+) -> Result<(), DispatchError> {
+    let started = Instant::now();
+    loop {
+        match state.terminal.send_text(surface_id, body) {
+            Ok(()) => return Ok(()),
+            Err(TerminalError::NotReady(_))
+                if started.elapsed() < TEAM_MESSAGE_SURFACE_READY_TIMEOUT =>
+            {
+                tokio::time::sleep(TEAM_MESSAGE_SURFACE_READY_POLL_INTERVAL).await;
+            }
+            Err(err) => return Err(DispatchError::from(err)),
+        }
+    }
 }
 
 fn team_store_path(state: &SocketAppState) -> Result<&Path, DispatchError> {
@@ -7293,6 +7340,7 @@ mod tests {
     use git2::Repository;
     use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
+    use std::sync::atomic::AtomicUsize;
     #[cfg(feature = "browser")]
     use std::sync::Barrier;
     use std::sync::{Arc, Mutex};
@@ -7758,6 +7806,84 @@ mod tests {
                 .values()
                 .cloned()
                 .collect())
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct ShowReadyBackend {
+        inner: HeadlessTerminalBackend,
+        not_ready_sends_after_show: AtomicUsize,
+        shown_surfaces: Mutex<Vec<String>>,
+    }
+
+    impl ShowReadyBackend {
+        fn with_not_ready_sends_after_show(count: usize) -> Self {
+            Self {
+                inner: HeadlessTerminalBackend::new(),
+                not_ready_sends_after_show: AtomicUsize::new(count),
+                shown_surfaces: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn sent_text(&self, surface_id: &str) -> Result<Vec<String>, TerminalError> {
+            self.inner.sent_text(surface_id)
+        }
+
+        fn shown_surfaces(&self) -> Vec<String> {
+            self.shown_surfaces.lock().unwrap().clone()
+        }
+    }
+
+    impl TerminalBackend for ShowReadyBackend {
+        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+            self.inner.spawn(request)
+        }
+
+        fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
+            if !self
+                .shown_surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .iter()
+                .any(|shown| shown == surface_id)
+            {
+                return Err(TerminalError::NotReady(surface_id.to_string()));
+            }
+            if self.not_ready_sends_after_show.load(Ordering::SeqCst) > 0 {
+                self.not_ready_sends_after_show
+                    .fetch_sub(1, Ordering::SeqCst);
+                return Err(TerminalError::NotReady(surface_id.to_string()));
+            }
+            self.inner.send_text(surface_id, text)
+        }
+
+        fn show_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
+            self.shown_surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .push(surface_id.to_string());
+            Ok(())
+        }
+
+        fn read_text(
+            &self,
+            surface_id: &str,
+            capture: TerminalTextCapture,
+            max_bytes: usize,
+        ) -> Result<TerminalTextSnapshot, TerminalError> {
+            self.inner.read_text(surface_id, capture, max_bytes)
+        }
+
+        fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
+            self.inner.resize(surface_id, cols, rows)
+        }
+
+        fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+            self.inner.close(surface_id)
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            self.inner.surfaces()
         }
     }
 
@@ -9339,6 +9465,236 @@ mod tests {
                 "broadcast".to_string(),
                 "\r".to_string()
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn team_message_dispatch_shows_worker_surface_before_sending() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(ShowReadyBackend::default());
+        let mut state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        state.workflow_store_path = None;
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "leader_surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+                "surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.message.send",
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-1",
+                "from": "leader",
+                "to_worker_id": "worker-1",
+                "body": "review queued prompt"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let dispatched = dispatch(
+            &state,
+            "team.message.dispatch",
+            json!({"team_id": "team-1", "message_id": "msg-1"}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(dispatched["message"]["delivered"], true);
+        assert_eq!(backend.shown_surfaces(), vec![surface_id.to_string()]);
+        assert_eq!(
+            backend.sent_text(surface_id).unwrap(),
+            vec!["review queued prompt".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn team_message_dispatch_retries_not_ready_without_repeated_focus() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(ShowReadyBackend::with_not_ready_sends_after_show(1));
+        let mut state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        state.workflow_store_path = None;
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "leader_surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+                "surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.message.send",
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-1",
+                "from": "leader",
+                "to_worker_id": "worker-1",
+                "body": "review queued prompt"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let dispatched = dispatch(
+            &state,
+            "team.message.dispatch",
+            json!({"team_id": "team-1", "message_id": "msg-1"}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(dispatched["message"]["delivered"], true);
+        assert_eq!(backend.shown_surfaces(), vec![surface_id.to_string()]);
+        assert_eq!(
+            backend.sent_text(surface_id).unwrap(),
+            vec!["review queued prompt".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn team_message_dispatch_activates_worker_workspace_before_sending() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(ShowReadyBackend::default());
+        let mut state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        state.workflow_store_path = None;
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+        let first = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let first_workspace_id = first[0]["id"].as_str().unwrap().to_string();
+        let second_dir = tempfile::tempdir().unwrap();
+        let second = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "review", "workingDir": second_dir.path()}),
+        )
+        .await
+        .unwrap();
+        let second_workspace_id = second["id"].as_str().unwrap().to_string();
+        let second_surface_id = second["focused_surface_id"].as_str().unwrap().to_string();
+        dispatch(
+            &state,
+            "workspace.select",
+            json!({"workspace_id": first_workspace_id}),
+        )
+        .await
+        .unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "leader_surface_id": first[0]["focused_surface_id"]
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+                "surface_id": second_surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.message.send",
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-1",
+                "from": "leader",
+                "to_worker_id": "worker-1",
+                "body": "review queued prompt"
+            }),
+        )
+        .await
+        .unwrap();
+
+        dispatch(
+            &state,
+            "team.message.dispatch",
+            json!({"team_id": "team-1", "message_id": "msg-1"}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            state.model.lock().unwrap().active_workspace_id().as_deref(),
+            Some(second_workspace_id.as_str())
+        );
+        assert_eq!(backend.shown_surfaces(), vec![second_surface_id.clone()]);
+        assert_eq!(
+            backend.sent_text(&second_surface_id).unwrap(),
+            vec!["review queued prompt".to_string()]
         );
     }
 

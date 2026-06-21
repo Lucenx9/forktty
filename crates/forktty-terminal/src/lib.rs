@@ -260,6 +260,9 @@ pub trait TerminalBackend: Send + Sync {
     fn send_enter(&self, surface_id: &str) -> Result<(), TerminalError> {
         self.send_text(surface_id, "\r")
     }
+    fn show_surface(&self, _surface_id: &str) -> Result<(), TerminalError> {
+        Ok(())
+    }
     fn read_text(
         &self,
         surface_id: &str,

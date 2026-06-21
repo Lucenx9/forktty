@@ -41,8 +41,13 @@ All notable changes to ForkTTY are documented here.
   validation order and avoiding a `running` unassigned task if worker launch
   fails.
 - Embedded Ghostty title updates now ignore launcher-wrapper titles such as
-  `/usr/bin/env`, preventing new team or terminal panes from replacing useful
-  pane titles with the wrapper executable path.
+  `/usr/bin/env` from both terminal events and embedded title notifications,
+  preventing new team or terminal panes from replacing useful pane titles with
+  the wrapper executable path.
+- Team message dispatch now brings the target worker workspace/tab to the
+  foreground and waits briefly for the embedded terminal surface to become
+  socket-ready before typing, fixing unattended `team ask/review` prompts that
+  were queued for a newly launched but hidden worker tab.
 - `forktty skills setup` and `forktty skills remove` now route through the
   top-level CLI parser instead of being rejected as unknown arguments.
 - Team-wide message dispatch with an explicit worker target now marks the
