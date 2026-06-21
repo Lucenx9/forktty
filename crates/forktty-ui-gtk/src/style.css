@@ -1,7 +1,8 @@
 /* --------------------------------------------------------------------------
  * ForkTTY design tokens
  * Surfaces step from bg-0 (deepest) to bg-3 (raised hover). Accent is reserved
- * for active, focus, and primary actions; everything else uses neutral tiers.
+ * for focus, prompt/attention cues, and selected controls; current-context
+ * markers use amber, while neutral controls carry routine actions.
  * -------------------------------------------------------------------------- */
 
 @define-color accent_color #e88745;
@@ -2620,15 +2621,28 @@ entry.search.command-search:focus-within,
 
 .agent-row {
   padding: 12px 12px 12px 14px;
-  border: 1px solid #292929;
+  border: 1px solid transparent;
   border-radius: 8px;
-  background: #181818;
-  box-shadow: inset 0 1px 0 alpha(white, 0.03);
+  background: #1b1b1b;
+  box-shadow: inset 0 1px 0 alpha(white, 0.025);
 }
 
 .agent-list row:hover .agent-row {
-  border-color: #373737;
-  background: #1b1b1b;
+  border-color: #303030;
+  background: #1f1f1f;
+}
+
+.agent-list row:hover .agent-row.needs-input {
+  border-color: transparent;
+  background: #1e1a17;
+}
+
+.agent-list row:hover .agent-row.current {
+  background: #1c1b18;
+}
+
+.agent-list row:hover .agent-row.needs-input.current {
+  background: #1e1a17;
 }
 
 .agent-list row:focus-visible .agent-row {
@@ -2636,20 +2650,28 @@ entry.search.command-search:focus-within,
   box-shadow: inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(#e88745, 0.18);
 }
 
+.agent-list row:focus-visible .agent-row.current {
+  box-shadow: inset 3px 0 0 alpha(#c8a75d, 0.58), inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(#e88745, 0.18);
+}
+
+.agent-list row:focus-visible .agent-row.needs-input {
+  box-shadow: inset 3px 0 0 alpha(#e88745, 0.82), inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(#e88745, 0.18);
+}
+
 .agent-row.needs-input {
-  border-color: alpha(#e88745, 0.48);
-  background: #1d1916;
-  box-shadow: inset 2px 0 0 alpha(#e88745, 0.82);
+  border-color: transparent;
+  background: #1e1a17;
+  box-shadow: inset 3px 0 0 alpha(#e88745, 0.76);
 }
 
 .agent-row.current {
-  border-color: #4a3b30;
-  box-shadow: inset 2px 0 0 #c8a75d;
+  background: #1c1b18;
+  box-shadow: inset 3px 0 0 alpha(#c8a75d, 0.58);
 }
 
 .agent-row.needs-input.current {
-  border-color: alpha(#e88745, 0.62);
-  box-shadow: inset 2px 0 0 alpha(#e88745, 0.88);
+  background: #1e1a17;
+  box-shadow: inset 3px 0 0 alpha(#e88745, 0.82);
 }
 
 .agent-row.compact {
@@ -2689,7 +2711,7 @@ entry.search.command-search:focus-within,
 }
 
 .agent-meta {
-  color: #777777;
+  color: #8a8a8a;
   font-size: 0.8em;
 }
 
@@ -2697,17 +2719,13 @@ entry.search.command-search:focus-within,
   color: #9a9a9a;
   font-family: monospace;
   font-size: 0.78em;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: #151515;
-  border: 1px solid #252525;
+  margin-top: 1px;
 }
 
 /* Needs-input rows show what the agent is waiting on, not raw output. */
 .agent-tail.attention {
   color: #e6ad87;
-  background: #1f1813;
-  border-color: #3a2618;
+  font-weight: 500;
 }
 
 entry.agent-reply {
@@ -2717,25 +2735,24 @@ entry.agent-reply {
 }
 
 .agent-lifecycle {
-  padding: 1px 7px;
+  padding: 1px 7px 2px 7px;
   border-radius: 999px;
   font-size: 0.68em;
-  font-weight: 700;
-  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .agent-lifecycle.needs-input {
-  color: #17110c;
-  background: #e88745;
+  color: #e6ad87;
+  background: #302118;
 }
 
 .agent-lifecycle.running {
-  color: #81a1c1;
+  color: #8aa9c8;
   background: #1c2732;
 }
 
 .agent-lifecycle.idle {
-  color: #82b28b;
+  color: #91bd97;
   background: #1d2a21;
 }
 
@@ -2756,26 +2773,25 @@ entry.agent-reply {
 
 .agent-current,
 .agent-permission {
-  padding: 1px 7px;
+  padding: 1px 7px 2px 7px;
   border-radius: 999px;
   font-size: 0.68em;
-  font-weight: 700;
-  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .agent-current {
   color: #c8a75d;
-  background: #2c2619;
+  background: #282318;
 }
 
 .agent-permission {
   color: #9a9a9a;
-  background: #252525;
+  background: #242424;
 }
 
 .agent-permission.risky {
-  color: #d36b6b;
-  background: #2f1f1f;
+  color: #d78f8f;
+  background: #2b1d1d;
 }
 
 button.agent-primary-action,
@@ -2795,9 +2811,9 @@ button.agent-danger-action {
 button.agent-primary-action {
   color: #eeeeee;
   background: #242424;
-  border-color: #3c3c3c;
+  border-color: #343434;
   box-shadow: none;
-  font-weight: 700;
+  font-weight: 650;
 }
 
 button.agent-primary-action:hover {
@@ -2807,14 +2823,14 @@ button.agent-primary-action:hover {
 
 button.agent-secondary-action,
 button.agent-danger-action {
-  background: #181818;
-  border-color: #2f2f2f;
+  background: transparent;
+  border-color: transparent;
   box-shadow: none;
 }
 
 button.agent-secondary-action:hover {
   background: #202020;
-  border-color: #414141;
+  border-color: transparent;
 }
 
 button.agent-danger-action {
@@ -2824,7 +2840,7 @@ button.agent-danger-action {
 button.agent-danger-action:hover {
   color: #d36b6b;
   background: #251b1b;
-  border-color: #4a2a2a;
+  border-color: transparent;
 }
 
 /* --------------------------------------------------------------------------

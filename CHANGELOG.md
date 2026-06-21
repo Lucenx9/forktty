@@ -46,7 +46,8 @@ All notable changes to ForkTTY are documented here.
   scan: notifications group prompt/current-workspace history, avoid a duplicate
   global open action, and style terminal notification actions; agent rows show
   the current pane, group lifecycles, surface risky permission modes, and
-  compact ended sessions.
+  compact ended sessions, quieter tonal cards, calmer status chips, compact
+  risky permission labels, and inline terminal previews.
 
 ### Fixed
 - `team.worker.health` now reports `surface_present`,

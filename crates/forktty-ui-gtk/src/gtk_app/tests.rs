@@ -1411,8 +1411,8 @@ fn agent_hud_risky_permission_modes_use_pills_outside_needs_input() {
     assert!(!rows[0].needs_input);
     assert!(rows[0].permission_mode_risky);
     assert_eq!(
-        agent_permission_pill_mode(&rows[0]),
-        Some("bypassPermissions")
+        agent_permission_pill_label(&rows[0]).as_deref(),
+        Some("Bypass")
     );
     assert!(!agent_meta_line(&rows[0]).contains("mode bypassPermissions"));
 }
@@ -1437,7 +1437,7 @@ fn agent_hud_safe_permission_modes_remain_meta_outside_needs_input() {
 
     assert_eq!(rows.len(), 1);
     assert!(!rows[0].permission_mode_risky);
-    assert_eq!(agent_permission_pill_mode(&rows[0]), None);
+    assert_eq!(agent_permission_pill_label(&rows[0]), None);
     assert!(agent_meta_line(&rows[0]).contains("mode dontAsk"));
 }
 
@@ -1542,6 +1542,49 @@ fn agent_hud_suspended_lifecycle_has_css_pill() {
     let source = include_str!("../style.css");
 
     assert!(source.contains(".agent-lifecycle.suspended"));
+}
+
+#[test]
+fn agent_hud_css_keeps_chips_quiet_and_tail_unboxed() {
+    let source = include_str!("../style.css");
+    let block = |selector: &str| {
+        source
+            .split(selector)
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .unwrap_or_else(|| panic!("missing CSS block {selector}"))
+    };
+
+    for selector in [".agent-lifecycle {", ".agent-current,\n.agent-permission {"] {
+        let css = block(selector);
+        assert!(!css.contains("text-transform: uppercase;"));
+        assert!(!css.contains("font-weight: 700;"));
+    }
+
+    let tail = block(".agent-tail {");
+    assert!(!tail.contains("background:"));
+    assert!(!tail.contains("border:"));
+}
+
+#[test]
+fn agent_hud_css_preserves_attention_tints_on_hover_and_focus() {
+    let source = include_str!("../style.css");
+    let block = |selector: &str| {
+        source
+            .split(selector)
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .unwrap_or_else(|| panic!("missing CSS block {selector}"))
+    };
+
+    assert!(
+        block(".agent-list row:hover .agent-row.needs-input {").contains("background: #1e1a17;")
+    );
+    assert!(block(".agent-list row:hover .agent-row.current {").contains("background: #1c1b18;"));
+    assert!(
+        block(".agent-list row:focus-visible .agent-row.needs-input {")
+            .contains("inset 3px 0 0 alpha(#e88745")
+    );
 }
 
 #[test]

@@ -2,6 +2,7 @@ use super::*;
 use forktty_core::agent_resume_command_with_cwd_and_permission_mode;
 use forktty_socket::dispatch;
 use serde_json::json;
+use std::borrow::Cow;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct AgentHudRow {
@@ -541,15 +542,22 @@ fn append_agent_row(
         current.set_tooltip_text(Some("This agent is in the focused pane"));
         top.append(&current);
     }
-    if let Some(permission_mode) = agent_permission_pill_mode(row) {
-        let permission = gtk::Label::builder().label(permission_mode).build();
+    if let Some(permission_label) = agent_permission_pill_label(row) {
+        let permission = gtk::Label::builder()
+            .label(permission_label.as_ref())
+            .build();
         permission.add_css_class("agent-permission");
+        let full_permission_mode = row
+            .permission_mode
+            .as_deref()
+            .unwrap_or_else(|| permission_label.as_ref());
         if row.permission_mode_risky {
             permission.add_css_class("risky");
-            permission
-                .set_tooltip_text(Some(&format!("Permission mode: {permission_mode} (risky)")));
+            permission.set_tooltip_text(Some(&format!(
+                "Permission mode: {full_permission_mode} (risky)"
+            )));
         } else {
-            permission.set_tooltip_text(Some(&format!("Permission mode: {permission_mode}")));
+            permission.set_tooltip_text(Some(&format!("Permission mode: {full_permission_mode}")));
         }
         top.append(&permission);
     }
@@ -796,7 +804,7 @@ pub(super) fn agent_meta_line(row: &AgentHudRow) -> String {
         format!("session {}", row.session_short),
         row.last_activity_label.clone(),
     ];
-    if agent_permission_pill_mode(row).is_none() {
+    if agent_permission_pill_label(row).is_none() {
         if let Some(permission_mode) = row.permission_mode.as_deref() {
             parts.push(format!("mode {permission_mode}"));
         }
@@ -804,10 +812,22 @@ pub(super) fn agent_meta_line(row: &AgentHudRow) -> String {
     parts.join(" · ")
 }
 
-pub(super) fn agent_permission_pill_mode(row: &AgentHudRow) -> Option<&str> {
+pub(super) fn agent_permission_pill_label(row: &AgentHudRow) -> Option<Cow<'_, str>> {
     row.permission_mode
         .as_deref()
         .filter(|_| row.needs_input || row.permission_mode_risky)
+        .map(compact_permission_mode_label)
+}
+
+fn compact_permission_mode_label(permission_mode: &str) -> Cow<'_, str> {
+    match permission_mode {
+        "bypassPermissions" | "dangerously-skip-permissions" => Cow::Borrowed("Bypass"),
+        "acceptEdits" => Cow::Borrowed("Accept edits"),
+        "dontAsk" => Cow::Borrowed("Don't ask"),
+        "on-request" => Cow::Borrowed("On request"),
+        "read-only" => Cow::Borrowed("Read only"),
+        other => Cow::Borrowed(other),
+    }
 }
 
 fn permission_mode_is_risky(permission_mode: &str) -> bool {
