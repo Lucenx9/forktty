@@ -699,7 +699,7 @@ popover.ft-context-menu contents {
 }
 
 .pane-status {
-  color: #595959;
+  color: #8a8a8a;
   font-size: 0.78em;
   margin-left: 12px;
 }
@@ -2678,6 +2678,11 @@ entry.agent-reply {
 .agent-lifecycle.idle {
   color: #82b28b;
   background: #1d2a21;
+}
+
+.agent-lifecycle.suspended {
+  color: #9aa0a6;
+  background: #202427;
 }
 
 .agent-lifecycle.unknown {

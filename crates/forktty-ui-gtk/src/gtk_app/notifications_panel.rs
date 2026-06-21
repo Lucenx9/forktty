@@ -461,6 +461,7 @@ pub(super) fn show_notification_panel(
             badge.add_css_class(notification_kind_class(notification.kind));
             let title = gtk::Label::builder()
                 .label(&notification.title)
+                .tooltip_text(&notification.title)
                 .xalign(0.0)
                 .hexpand(true)
                 .ellipsize(gtk::pango::EllipsizeMode::End)
@@ -580,7 +581,8 @@ pub(super) fn show_notification_panel(
             }
             if let Some(target) = notification_target_label(state, notification) {
                 let target_label = gtk::Label::builder()
-                    .label(target)
+                    .label(&target)
+                    .tooltip_text(&target)
                     .xalign(0.0)
                     .ellipsize(gtk::pango::EllipsizeMode::Middle)
                     .max_width_chars(58)

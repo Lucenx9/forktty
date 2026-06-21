@@ -1239,6 +1239,31 @@ fn agent_hud_tail_picks_last_nonempty_line() {
 }
 
 #[test]
+fn agent_hud_truncated_tail_keeps_full_tooltip() {
+    let source = include_str!("agents_panel.rs");
+
+    assert!(source.contains(
+        "if label.label() != text {\n                label.set_label(text);\n                if text.is_empty() {\n                    label.set_tooltip_text(None);\n                } else {\n                    label.set_tooltip_text(Some(text));\n                }\n            }"
+    ));
+    assert!(source.contains("label.set_tooltip_text(None);"));
+}
+
+#[test]
+fn agent_hud_suspended_lifecycle_has_css_pill() {
+    let source = include_str!("../style.css");
+
+    assert!(source.contains(".agent-lifecycle.suspended"));
+}
+
+#[test]
+fn agent_reply_placeholder_uses_ascii_ellipsis() {
+    let source = include_str!("agents_panel.rs");
+
+    assert!(source.contains(".placeholder_text(\"Reply and press Enter...\")"));
+    assert!(!source.contains("Reply and press Enter…"));
+}
+
+#[test]
 fn embedded_agent_hud_tail_generation_advances_without_content_generation() {
     assert_eq!(embedded_agent_tail_generation(None), 0);
     let known = (41, Some("old tail".to_string()));
@@ -3757,6 +3782,35 @@ fn settings_dialog_does_not_expose_runtime_scrollback_limit() {
 fn settings_agents_initial_page_targets_agents_stack() {
     assert_eq!(SettingsInitialPage::Interface.stack_name(), "interface");
     assert_eq!(SettingsInitialPage::Agents.stack_name(), "agents");
+}
+
+#[test]
+fn settings_agents_nav_uses_agent_semantic_icon() {
+    let source = include_str!("settings_dialog.rs");
+
+    assert!(source.contains(
+        "settings_nav_button(\"forktty-terminal-symbolic\", \"Agents\", \"Hooks, MCP, skills\")"
+    ));
+}
+
+#[test]
+fn notification_panel_truncated_labels_keep_full_tooltips() {
+    let source = include_str!("notifications_panel.rs");
+
+    assert!(source.contains(".tooltip_text(&notification.title)"));
+    assert!(source.contains(".tooltip_text(&target)"));
+}
+
+#[test]
+fn pane_status_uses_readable_muted_contrast() {
+    let source = include_str!("../style.css");
+    let pane_status = source
+        .split(".pane-status {")
+        .nth(1)
+        .and_then(|rest| rest.split('}').next())
+        .expect("pane-status block");
+
+    assert!(pane_status.contains("color: #8a8a8a;"));
 }
 
 #[test]

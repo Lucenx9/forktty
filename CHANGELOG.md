@@ -31,6 +31,10 @@ All notable changes to ForkTTY are documented here.
   already end in carriage return.
 
 ### Fixed
+- Polished small GTK UI details: suspended agents now have a proper lifecycle
+  pill, truncated agent/notification text keeps full tooltips, pane status text
+  has stronger contrast, and the Agents settings entry uses a more fitting
+  icon.
 - Socket `context.snapshot` and MCP `context_snapshot` now cap terminal-tail
   snapshots by aggregate surface count and text bytes, preventing large
   workspaces from multiplying the per-surface tail limit into an oversized

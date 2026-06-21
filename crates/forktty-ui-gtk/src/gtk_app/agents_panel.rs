@@ -225,6 +225,11 @@ impl AgentPanelUi {
                 .unwrap_or("");
             if label.label() != text {
                 label.set_label(text);
+                if text.is_empty() {
+                    label.set_tooltip_text(None);
+                } else {
+                    label.set_tooltip_text(Some(text));
+                }
             }
             if hint.is_some() {
                 label.add_css_class("attention");
@@ -526,7 +531,7 @@ fn append_agent_row(
     // hook-driven lifecycle flip back to Running then removes the entry.
     if row.needs_input && ui.controller.is_some() {
         let reply = gtk::Entry::builder()
-            .placeholder_text("Reply and press Enter…")
+            .placeholder_text("Reply and press Enter...")
             .build();
         reply.add_css_class("agent-reply");
         let controller_for_reply = ui.controller.clone();

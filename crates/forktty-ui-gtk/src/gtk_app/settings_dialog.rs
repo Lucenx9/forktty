@@ -85,7 +85,7 @@ pub(super) fn show_settings_dialog_page(
     let worktrees_nav =
         settings_nav_button("forktty-grid-symbolic", "Worktrees", "Workspaces and PRs");
     let agents_nav =
-        settings_nav_button("forktty-keyboard-symbolic", "Agents", "Hooks, MCP, skills");
+        settings_nav_button("forktty-terminal-symbolic", "Agents", "Hooks, MCP, skills");
     let alerts_nav = settings_nav_button(
         "forktty-notifications-symbolic",
         "Notifications",
