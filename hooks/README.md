@@ -127,7 +127,9 @@ managed skill moves the previous directory to a `.bak-*` backup first. The
 welcome/setup flow runs `hooks setup`, `mcp setup`, and `skills setup` together.
 Run `forktty doctor --hooks` to inspect local hook config paths. Run
 `forktty --json doctor` to inspect hook config paths, MCP config paths, and
-agent skill directories ForkTTY resolves from the current environment.
+agent skill directories ForkTTY resolves from the current environment; skill
+rows include managed status, source/installed checksums, and a repair command
+when the installed managed skill is missing, invalid, or stale.
 
 Antigravity CLI (`agy`) executes a hook
 `command` as one bare executable path — no argument splitting and no shell —

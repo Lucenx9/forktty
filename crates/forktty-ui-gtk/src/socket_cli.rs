@@ -104,7 +104,7 @@ Usage:
   forktty statusline [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
   forktty status explain [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>|--surface-id <id>]
   forktty status watch [--count <n>] [--interval-ms <ms>] [workspace selectors]
-  forktty context-snapshot [workspace selectors] [--surface-id <id>] [--tail-lines <n>] [--include-team-details]
+  forktty context-snapshot [workspace selectors] [--surface-id <id>] [--tail-lines <n>] [--include-team-details] [--include-feed-trace]
   forktty feed [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--limit <n>] [--json]
   forktty feed respond <approval-id> --decision approve|deny [--json]
   forktty workflows [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--surface-id <id>] [--session-id <id>] [--query <text>] [--limit <n>] [--json]
@@ -185,7 +185,7 @@ ForkTTY status commands
   forktty status watch [workspace selectors] [--surface-id <id>] [--count <n>] [--interval-ms <ms>]
       Re-run status explain output. Omit --count to watch until interrupted; interval must be greater than 0.
 
-  forktty context-snapshot [workspace selectors] [--surface-id <id>] [--tail-lines <n>] [--tail-max-bytes <n>] [--include-team-details]
+  forktty context-snapshot [workspace selectors] [--surface-id <id>] [--tail-lines <n>] [--tail-max-bytes <n>] [--include-team-details] [--include-feed-trace]
       Direct CLI alias for the context.snapshot socket/MCP method.
 ";
 
@@ -4150,6 +4150,7 @@ fn context_snapshot_params(args: Vec<String>, command: &str) -> CliResult<Map<St
             "tail-lines",
             "tail-max-bytes",
             "include-team-details",
+            "include-feed-trace",
         ],
         command,
     )?;
@@ -4189,6 +4190,12 @@ fn context_snapshot_params_from_options(
         options,
         "include-team-details",
         "include_team_details",
+    )?;
+    insert_optional_cli_bool_param(
+        &mut params,
+        options,
+        "include-feed-trace",
+        "include_feed_trace",
     )?;
     Ok(params)
 }
@@ -6437,7 +6444,7 @@ fn build_socket_doctor_report(context: &CliContext) -> Value {
     }
     let mut skill_dirs = Map::new();
     for spec in SKILL_TARGETS {
-        skill_dirs.insert(spec.key.to_string(), inspect_path(&(spec.skill_dir)()));
+        skill_dirs.insert(spec.key.to_string(), inspect_skill_target(spec));
     }
     json!({
         "socket": {
@@ -6774,16 +6781,7 @@ fn handle_skills_setup(context: &CliContext, args: Vec<String>) -> CliResult<()>
                 atomic_write_file(path, content.as_bytes())?;
             }
         }
-        summaries.push(json!({
-            "target": plan.spec.key,
-            "agent": plan.spec.key,
-            "label": plan.spec.label,
-            "skillDir": plan.skill_dir,
-            "configPath": plan.skill_dir,
-            "changed": plan.changed,
-            "backupPath": backup_path,
-            "dryRun": dry_run,
-        }));
+        summaries.push(skill_setup_summary(&plan, dry_run, backup_path));
     }
 
     if context.json {
@@ -6804,6 +6802,12 @@ fn handle_skills_setup(context: &CliContext, args: Vec<String>) -> CliResult<()>
             "already installed"
         };
         write_stdout_line(&format!("{target}: {verb} ForkTTY skill at {skill_dir}"))?;
+        if let Some(status) = summary["status"].as_str() {
+            write_stdout_line(&format!("  status: {status}"))?;
+        }
+        if let Some(repair) = summary["repairCommand"].as_str() {
+            write_stdout_line(&format!("  repair: {repair}"))?;
+        }
         if let Some(backup) = summary["backupPath"].as_str() {
             write_stdout_line(&format!("  backup: {backup}"))?;
         }
@@ -7052,6 +7056,10 @@ struct SkillSetupPlan {
     spec: &'static SkillTargetSpec,
     skill_dir: PathBuf,
     changed: bool,
+    status: &'static str,
+    source_checksum: String,
+    installed_checksum: String,
+    repair_command: Option<String>,
     files: Vec<(PathBuf, String)>,
 }
 
@@ -7238,14 +7246,133 @@ fn build_skill_setup_plan(spec: &'static SkillTargetSpec) -> CliResult<SkillSetu
         (skill_path, AGENT_SKILL_MD.to_string()),
         (metadata_path, AGENT_SKILL_OPENAI_YAML.to_string()),
     ];
+    let source_checksum = skill_content_checksum(AGENT_SKILL_MD, Some(AGENT_SKILL_OPENAI_YAML));
+    let installed_checksum = existing
+        .as_deref()
+        .map(|skill| skill_content_checksum(skill, existing_metadata.as_deref()))
+        .unwrap_or_default();
     let changed = existing.as_deref() != Some(AGENT_SKILL_MD)
         || existing_metadata.as_deref() != Some(AGENT_SKILL_OPENAI_YAML);
+    let status = if existing.is_none() {
+        "missing"
+    } else if changed {
+        "update_available"
+    } else {
+        "up_to_date"
+    };
     Ok(SkillSetupPlan {
         spec,
         skill_dir,
         changed,
+        status,
+        source_checksum,
+        installed_checksum,
+        repair_command: changed.then(|| format!("forktty skills setup {}", spec.key)),
         files,
     })
+}
+
+fn skill_setup_summary(
+    plan: &SkillSetupPlan,
+    dry_run: bool,
+    backup_path: Option<PathBuf>,
+) -> Value {
+    let applied = plan.changed && !dry_run;
+    let installed_checksum = if applied {
+        Value::String(plan.source_checksum.clone())
+    } else if plan.installed_checksum.is_empty() {
+        Value::Null
+    } else {
+        Value::String(plan.installed_checksum.clone())
+    };
+    json!({
+        "target": plan.spec.key,
+        "agent": plan.spec.key,
+        "label": plan.spec.label,
+        "skillDir": plan.skill_dir,
+        "configPath": plan.skill_dir,
+        "changed": plan.changed,
+        "status": if applied { "up_to_date" } else { plan.status },
+        "sourceChecksum": plan.source_checksum,
+        "installedChecksum": installed_checksum,
+        "repairCommand": if applied { None } else { plan.repair_command.clone() },
+        "backupPath": backup_path,
+        "dryRun": dry_run,
+    })
+}
+
+fn inspect_skill_target(spec: &'static SkillTargetSpec) -> Value {
+    let skill_dir = (spec.skill_dir)();
+    let mut value = inspect_path(&skill_dir);
+    let source_checksum = skill_content_checksum(AGENT_SKILL_MD, Some(AGENT_SKILL_OPENAI_YAML));
+    let (status, installed_checksum, repair_command) =
+        skill_target_status(&skill_dir, &source_checksum, spec.key);
+    if let Some(object) = value.as_object_mut() {
+        object.insert("status".to_string(), Value::String(status.to_string()));
+        object.insert("sourceChecksum".to_string(), Value::String(source_checksum));
+        object.insert(
+            "installedChecksum".to_string(),
+            installed_checksum.map(Value::String).unwrap_or(Value::Null),
+        );
+        object.insert(
+            "repairCommand".to_string(),
+            repair_command.map(Value::String).unwrap_or(Value::Null),
+        );
+    }
+    value
+}
+
+fn skill_target_status(
+    skill_dir: &Path,
+    source_checksum: &str,
+    target: &str,
+) -> (&'static str, Option<String>, Option<String>) {
+    let repair = || Some(format!("forktty skills setup {target}"));
+    let meta = match fs::symlink_metadata(skill_dir) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            return ("missing", None, repair());
+        }
+        Err(_) => return ("invalid", None, repair()),
+    };
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return ("invalid", None, repair());
+    }
+    let skill = match fs::read_to_string(skill_dir.join("SKILL.md")) {
+        Ok(skill) => skill,
+        Err(_) => return ("invalid", None, repair()),
+    };
+    if !skill.contains(AGENT_SKILL_MARKER) {
+        return (
+            "unmanaged",
+            Some(skill_content_checksum(&skill, None)),
+            None,
+        );
+    }
+    let metadata = fs::read_to_string(skill_dir.join("agents").join("openai.yaml")).ok();
+    let installed_checksum = skill_content_checksum(&skill, metadata.as_deref());
+    if installed_checksum == source_checksum {
+        ("up_to_date", Some(installed_checksum), None)
+    } else {
+        ("update_available", Some(installed_checksum), repair())
+    }
+}
+
+fn skill_content_checksum(skill: &str, metadata: Option<&str>) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    fn feed(hash: &mut u64, bytes: &[u8]) {
+        for byte in bytes {
+            *hash ^= u64::from(*byte);
+            *hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    feed(&mut hash, b"SKILL.md\0");
+    feed(&mut hash, skill.as_bytes());
+    feed(&mut hash, b"\0agents/openai.yaml\0");
+    if let Some(metadata) = metadata {
+        feed(&mut hash, metadata.as_bytes());
+    }
+    format!("fnv1a64:{hash:016x}")
 }
 
 fn build_skill_remove_plan(spec: &'static SkillTargetSpec) -> CliResult<SkillRemovePlan> {
@@ -11601,22 +11728,29 @@ mod tests {
                 "--surface-id".to_string(),
                 "surface-1".to_string(),
                 "--include-team-details".to_string(),
+                "--include-feed-trace".to_string(),
             ],
             "context-snapshot",
         )
         .unwrap();
         assert_eq!(snapshot_params["include_team_details"], Value::Bool(true));
+        assert_eq!(snapshot_params["include_feed_trace"], Value::Bool(true));
         let compact_snapshot_params = context_snapshot_params(
             vec![
                 "--surface-id".to_string(),
                 "surface-1".to_string(),
                 "--include-team-details=false".to_string(),
+                "--include-feed-trace=false".to_string(),
             ],
             "context-snapshot",
         )
         .unwrap();
         assert_eq!(
             compact_snapshot_params["include_team_details"],
+            Value::Bool(false)
+        );
+        assert_eq!(
+            compact_snapshot_params["include_feed_trace"],
             Value::Bool(false)
         );
         assert_err_contains(
@@ -11629,6 +11763,17 @@ mod tests {
                 "context-snapshot",
             ),
             "--include-team-details expects true or false",
+        );
+        assert_err_contains(
+            context_snapshot_params(
+                vec![
+                    "--surface-id".to_string(),
+                    "surface-1".to_string(),
+                    "--include-feed-trace=maybe".to_string(),
+                ],
+                "context-snapshot",
+            ),
+            "--include-feed-trace expects true or false",
         );
     }
 
@@ -13106,6 +13251,10 @@ mod tests {
             "team_task_upsert",
             "agent_health",
             "lifecycle_evidence",
+            "include_feed_trace",
+            "effective_project_cwd",
+            "final_state",
+            "source/installed checksums",
             "forktty hooks test codex",
             "FORKTTY_SOCKET_PATH",
             "separate temporary instance",
@@ -13184,6 +13333,75 @@ mod tests {
                 fs::read_to_string(skill_dir.join("SKILL.md")).unwrap(),
                 "---\nname: forktty-agent-orchestration\ndescription: custom\n---\ncustom\n"
             );
+        });
+    }
+
+    #[test]
+    fn skill_setup_and_doctor_report_managed_skill_drift_checksums() {
+        let home = tempfile::tempdir().unwrap();
+        let home_s = home.path().to_string_lossy().to_string();
+
+        with_env(&[("HOME", Some(home_s.as_str()))], || {
+            let skill_dir = agent_skills_dir();
+            fs::create_dir_all(skill_dir.join("agents")).unwrap();
+            fs::write(
+                skill_dir.join("SKILL.md"),
+                format!("{AGENT_SKILL_MARKER}\n# stale\n"),
+            )
+            .unwrap();
+            fs::write(
+                skill_dir.join("agents").join("openai.yaml"),
+                "stale: true\n",
+            )
+            .unwrap();
+
+            let spec = supported_skill_targets(&strings(&["agents"])).unwrap()[0];
+            let plan = build_skill_setup_plan(spec).unwrap();
+            assert_eq!(plan.status, "update_available");
+            assert!(plan.changed);
+            assert_ne!(plan.installed_checksum, plan.source_checksum);
+
+            let report = build_socket_doctor_report(&test_context());
+            assert_eq!(report["skillDirs"]["agents"]["status"], "update_available");
+            assert_ne!(
+                report["skillDirs"]["agents"]["installedChecksum"],
+                report["skillDirs"]["agents"]["sourceChecksum"]
+            );
+            assert_eq!(
+                report["skillDirs"]["agents"]["repairCommand"],
+                "forktty skills setup agents"
+            );
+        });
+    }
+
+    #[test]
+    fn skill_setup_summary_reports_repaired_state_after_install() {
+        let home = tempfile::tempdir().unwrap();
+        let home_s = home.path().to_string_lossy().to_string();
+
+        with_env(&[("HOME", Some(home_s.as_str()))], || {
+            let skill_dir = agent_skills_dir();
+            fs::create_dir_all(skill_dir.join("agents")).unwrap();
+            fs::write(
+                skill_dir.join("SKILL.md"),
+                format!("{AGENT_SKILL_MARKER}\n# stale\n"),
+            )
+            .unwrap();
+            fs::write(
+                skill_dir.join("agents").join("openai.yaml"),
+                "stale: true\n",
+            )
+            .unwrap();
+
+            let spec = supported_skill_targets(&strings(&["agents"])).unwrap()[0];
+            let plan = build_skill_setup_plan(spec).unwrap();
+            assert_eq!(plan.status, "update_available");
+            let summary = skill_setup_summary(&plan, false, Some(PathBuf::from("backup")));
+
+            assert_eq!(summary["changed"], true);
+            assert_eq!(summary["status"], "up_to_date");
+            assert_eq!(summary["installedChecksum"], summary["sourceChecksum"]);
+            assert!(summary["repairCommand"].is_null());
         });
     }
 

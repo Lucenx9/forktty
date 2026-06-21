@@ -448,6 +448,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                     "tail_lines",
                     "tail_max_bytes",
                     "include_team_details",
+                    "include_feed_trace",
                 ],
                 name,
             )?;
@@ -456,6 +457,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             insert_optional_u64_param(args, &mut params, "tail_lines")?;
             insert_optional_u64_param(args, &mut params, "tail_max_bytes")?;
             insert_optional_bool_param(args, &mut params, "include_team_details")?;
+            insert_optional_bool_param(args, &mut params, "include_feed_trace")?;
             SocketCall {
                 method: "context.snapshot",
                 params,
@@ -1738,6 +1740,7 @@ fn tool_specs() -> Vec<ToolSpec> {
                     "tail_lines": integer_prop("Terminal tail lines per terminal surface; 0 disables terminal text. Defaults to a compact bounded tail."),
                     "tail_max_bytes": integer_prop("Maximum UTF-8 bytes per terminal tail; socket also enforces aggregate surface and byte upper bounds."),
                     "include_team_details": boolean_prop("Include full team records with workers, tasks, and mailbox messages. Defaults to false; use team_summaries for compact monitoring."),
+                    "include_feed_trace": boolean_prop("Include status/progress trace rows in the feed. Defaults to false; compact snapshots keep semantic notifications and approvals."),
                 }),
             ),
         },
@@ -2888,7 +2891,8 @@ mod tests {
                 "workspace_id": "w1",
                 "tail_lines": 20,
                 "tail_max_bytes": 4096,
-                "include_team_details": true
+                "include_team_details": true,
+                "include_feed_trace": true
             }),
         )
         .unwrap();
@@ -2898,6 +2902,7 @@ mod tests {
         assert_eq!(params["tail_lines"], 20);
         assert_eq!(params["tail_max_bytes"], 4096);
         assert_eq!(params["include_team_details"], true);
+        assert_eq!(params["include_feed_trace"], true);
     }
 
     #[test]

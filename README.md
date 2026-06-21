@@ -311,6 +311,16 @@ included only when `context.snapshot` receives `include_team_details: true`.
 `team_summaries` rows include `consistency_warnings` when a team marked `done`
 still has active workers, open tasks, or pending messages, and snapshots raise
 `team_consistency_warning` in `risk_flags` for the same condition.
+Workflow rows in `context.snapshot` also include `consistency_warnings`, with
+`workflow_consistency_warning` in `risk_flags` when a running workflow has a
+completed plan or a terminal workflow still has open steps. Snapshot feed rows
+are compact by default: approvals and notifications remain, while status and
+progress trace rows are available with `include_feed_trace: true`.
+Workspace, surface, agent, and agent-health rows expose
+`effective_project_cwd`, preferring the tracked agent `resume_cwd` over the
+workspace directory when they differ. `team.worker.health` includes a derived
+`final_state` such as `shutdown_requested`, `closed`, `surface_missing`, or
+`stale` so cleanup decisions do not require interpreting raw worker fields.
 
 The titlebar Agent HUD shows persisted agent sessions across workspaces, highlights
 sessions that need input, and can focus or resume a tracked agent. `forktty agents`,
@@ -439,7 +449,11 @@ forktty skills remove agents
 `$CLAUDE_CONFIG_DIR/skills/forktty-agent-orchestration` or
 `~/.claude/skills/forktty-agent-orchestration`. Setup refuses to overwrite an
 unmanaged skill with the same name; managed updates/removals first move the old
-directory to a `.bak-*` backup.
+directory to a `.bak-*` backup. `forktty skills setup --dry-run` and
+`forktty --json doctor` report the managed skill status
+(`missing`, `up_to_date`, `update_available`, or `unmanaged`), source and
+installed checksums, and a `forktty skills setup <target>` repair command when
+the installed managed copy is stale.
 
 Run `forktty doctor --hooks` to inspect local hook config paths. Run
 `forktty --json doctor` to inspect the hook config paths, MCP config paths,

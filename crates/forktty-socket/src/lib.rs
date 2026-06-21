@@ -7,7 +7,8 @@ use forktty_core::{
     FeedApprovalState, FeedEntry, FeedEntryType, FeedStore, JsonRpcRequest, JsonRpcResponse,
     LogLevel, NotificationItem, NotificationKind, ProgressEntry, SplitAxis, StatusEntry,
     StatusHookMetadata, SurfaceKind, WorkflowEvidenceInput, WorkflowPlanStepInput, WorkflowQuery,
-    WorkflowReplayQuery, WorkflowUpsert, WorkspaceModel, WorkspaceSelector, MAX_BROWSER_URL_BYTES,
+    WorkflowReplayQuery, WorkflowState, WorkflowUpsert, WorkspaceModel, WorkspaceSelector,
+    MAX_BROWSER_URL_BYTES,
 };
 use forktty_terminal::{
     spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
@@ -2626,6 +2627,7 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
     let tail_max_bytes = context_snapshot_tail_max_bytes_from_params(params)?;
     let include_team_details =
         optional_bool_param(params, "include_team_details")?.unwrap_or(false);
+    let include_feed_trace = optional_bool_param(params, "include_feed_trace")?.unwrap_or(false);
     let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
     let now_ms = current_unix_epoch_ms();
 
@@ -2669,7 +2671,7 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
             .iter()
             .filter_map(|surface| remote_row(surface, &model, &terminal_by_id))
             .collect::<Vec<_>>();
-        let feed = if let Ok(store) = state.feed_store.lock() {
+        let raw_feed = if let Ok(store) = state.feed_store.lock() {
             if let Some(store) = store.as_ref() {
                 store
                     .list(Some(&workspace_id), 20)
@@ -2682,12 +2684,15 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
         } else {
             feed_list(&model, Some(&workspace_id), 20)
         };
+        let feed = context_snapshot_feed(raw_feed, include_feed_trace);
+        let effective_project_cwd = workspace_effective_project_cwd(&workspace, &model_surfaces);
         (
             json!({
                 "id": workspace.id,
                 "name": workspace.name,
                 "active": workspace.active,
                 "working_dir": workspace.working_dir,
+                "effective_project_cwd": effective_project_cwd,
                 "git_branch": workspace.git_branch,
                 "worktree_name": workspace.worktree_name,
                 "focused_surface_id": workspace.focused_surface_id,
@@ -2709,15 +2714,16 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
     let workflows = context_snapshot_workflows(state, &workspace_id)?;
     let (teams, team_summaries) =
         context_snapshot_team_state(state, &workspace_id, include_team_details)?;
-    let risk_flags = context_snapshot_risk_flags(
-        &status,
-        &agent_health,
-        &feed,
-        &remotes,
-        &terminal_tails,
-        &terminal_tail_errors,
-        &team_summaries,
-    );
+    let risk_flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
+        status: &status,
+        agent_health: &agent_health,
+        feed: &feed,
+        remotes: &remotes,
+        terminal_tails: &terminal_tails,
+        terminal_tail_errors: &terminal_tail_errors,
+        workflows: &workflows,
+        team_summaries: &team_summaries,
+    });
 
     Ok(json!({
         "workspace": workspace,
@@ -2735,6 +2741,22 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
         "terminal_tail_errors": terminal_tail_errors,
         "risk_flags": risk_flags,
     }))
+}
+
+fn context_snapshot_feed(feed: Vec<Value>, include_trace: bool) -> Vec<Value> {
+    if include_trace {
+        return feed;
+    }
+    feed.into_iter()
+        .filter(|entry| !matches!(feed_entry_type_name(entry), Some("status" | "progress")))
+        .collect()
+}
+
+fn feed_entry_type_name(entry: &Value) -> Option<&str> {
+    entry
+        .get("type")
+        .or_else(|| entry.get("entry_type"))
+        .and_then(Value::as_str)
 }
 
 fn context_snapshot_terminal_tails(
@@ -2811,13 +2833,88 @@ fn context_snapshot_workflows(
         return Ok(json!([]));
     };
     let store = forktty_core::load_workflows_from_path(path).map_err(workflow_error)?;
-    Ok(json!(store.list(&WorkflowQuery {
-        workspace_id: Some(workspace_id.to_string()),
-        surface_id: None,
-        session_id: None,
-        query: None,
-        limit: Some(20),
-    })))
+    let workflows = store
+        .list(&WorkflowQuery {
+            workspace_id: Some(workspace_id.to_string()),
+            surface_id: None,
+            session_id: None,
+            query: None,
+            limit: Some(20),
+        })
+        .into_iter()
+        .map(context_snapshot_workflow_row)
+        .collect::<Vec<_>>();
+    Ok(json!(workflows))
+}
+
+fn context_snapshot_workflow_row(workflow: WorkflowState) -> Value {
+    let warnings = workflow_consistency_warnings(&workflow);
+    let mut value = serde_json::to_value(workflow).unwrap_or_else(|_| json!({}));
+    if let Some(object) = value.as_object_mut() {
+        object.insert("consistency_warnings".to_string(), json!(warnings));
+    }
+    value
+}
+
+fn workflow_consistency_warnings(workflow: &WorkflowState) -> Vec<&'static str> {
+    if workflow.plan.is_empty() {
+        return Vec::new();
+    }
+    let plan_open = workflow
+        .plan
+        .iter()
+        .any(|step| !workflow_plan_step_status_is_terminal(&step.status));
+    let plan_complete = workflow
+        .plan
+        .iter()
+        .all(|step| workflow_plan_step_status_is_terminal(&step.status));
+    if workflow_status_is_terminal(&workflow.status) && plan_open {
+        vec!["done_with_open_plan_steps"]
+    } else if workflow_status_is_active(&workflow.status) && plan_complete {
+        vec!["running_with_completed_plan"]
+    } else {
+        Vec::new()
+    }
+}
+
+fn workflow_status_is_terminal(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "done" | "closed" | "cancelled" | "canceled" | "failed"
+    )
+}
+
+fn workflow_status_is_active(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "active" | "running" | "in_progress" | "in-progress"
+    )
+}
+
+fn workflow_plan_step_status_is_terminal(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "done" | "closed" | "cancelled" | "canceled" | "skipped"
+    )
+}
+
+fn workspace_effective_project_cwd(
+    workspace: &forktty_core::Workspace,
+    surfaces: &[forktty_core::Surface],
+) -> PathBuf {
+    surfaces
+        .iter()
+        .find(|surface| surface.id == workspace.focused_surface_id)
+        .map(surface_effective_project_cwd)
+        .unwrap_or_else(|| workspace.working_dir.clone())
+}
+
+fn surface_effective_project_cwd(surface: &forktty_core::Surface) -> PathBuf {
+    surface
+        .agent_session
+        .as_ref()
+        .and_then(effective_agent_resume_cwd)
+        .unwrap_or_else(|| surface.cwd.clone())
 }
 
 fn context_snapshot_team_state(
@@ -2848,29 +2945,33 @@ fn context_snapshot_team_state(
     Ok((teams, json!(summaries)))
 }
 
-fn context_snapshot_risk_flags(
-    status: &Value,
-    agent_health: &[Value],
-    feed: &[Value],
-    remotes: &[Value],
-    terminal_tails: &[Value],
-    terminal_tail_errors: &[Value],
-    team_summaries: &Value,
-) -> Vec<&'static str> {
+struct ContextSnapshotRiskInputs<'a> {
+    status: &'a Value,
+    agent_health: &'a [Value],
+    feed: &'a [Value],
+    remotes: &'a [Value],
+    terminal_tails: &'a [Value],
+    terminal_tail_errors: &'a [Value],
+    workflows: &'a Value,
+    team_summaries: &'a Value,
+}
+
+fn context_snapshot_risk_flags(inputs: ContextSnapshotRiskInputs<'_>) -> Vec<&'static str> {
     let mut flags = Vec::new();
-    if !terminal_tails.is_empty() {
+    if !inputs.terminal_tails.is_empty() {
         flags.push("terminal_text_untrusted");
     }
-    if terminal_tails
+    if inputs
+        .terminal_tails
         .iter()
         .any(|tail| tail.get("truncated").and_then(Value::as_bool) == Some(true))
     {
         flags.push("terminal_tail_truncated");
     }
-    if !terminal_tail_errors.is_empty() {
+    if !inputs.terminal_tail_errors.is_empty() {
         flags.push("terminal_tail_unavailable");
     }
-    if team_summaries.as_array().is_some_and(|summaries| {
+    if inputs.team_summaries.as_array().is_some_and(|summaries| {
         summaries.iter().any(|summary| {
             summary
                 .get("consistency_warnings")
@@ -2880,10 +2981,20 @@ fn context_snapshot_risk_flags(
     }) {
         flags.push("team_consistency_warning");
     }
-    if !remotes.is_empty() {
+    if inputs.workflows.as_array().is_some_and(|workflows| {
+        workflows.iter().any(|workflow| {
+            workflow
+                .get("consistency_warnings")
+                .and_then(Value::as_array)
+                .is_some_and(|warnings| !warnings.is_empty())
+        })
+    }) {
+        flags.push("workflow_consistency_warning");
+    }
+    if !inputs.remotes.is_empty() {
         flags.push("remote_surface");
     }
-    if feed.iter().any(|entry| {
+    if inputs.feed.iter().any(|entry| {
         entry
             .get("type")
             .or_else(|| entry.get("entry_type"))
@@ -2892,7 +3003,8 @@ fn context_snapshot_risk_flags(
     }) {
         flags.push("pending_approval");
     }
-    let permission_status_bypass = status
+    let permission_status_bypass = inputs
+        .status
         .get("status")
         .and_then(Value::as_array)
         .into_iter()
@@ -2907,7 +3019,7 @@ fn context_snapshot_risk_flags(
                     .and_then(Value::as_str)
                     .is_some_and(|value| value == "bypassPermissions")
         });
-    let agent_health_bypass = agent_health.iter().any(|entry| {
+    let agent_health_bypass = inputs.agent_health.iter().any(|entry| {
         entry
             .get("permission_mode")
             .and_then(Value::as_str)
@@ -2934,6 +3046,7 @@ fn agent_session_rows(
         .list_surfaces(workspace_id)
         .into_iter()
         .filter_map(|surface| {
+            let effective_project_cwd = surface_effective_project_cwd(&surface);
             let agent_session = surface.agent_session?;
             let workspace_name = workspaces
                 .get(&surface.workspace_id)
@@ -2950,6 +3063,7 @@ fn agent_session_rows(
                 "surface_id": surface.id,
                 "title": surface.title,
                 "cwd": surface.cwd,
+                "effective_project_cwd": effective_project_cwd,
                 "agent": agent_session.agent,
                 "session_id": agent_session.session_id,
                 "resume_cwd": agent_session.resume_cwd,
@@ -2990,6 +3104,7 @@ fn agent_health_rows_with_path(
         .list_surfaces(workspace_id)
         .into_iter()
         .filter_map(|surface| {
+            let effective_project_cwd = surface_effective_project_cwd(&surface);
             let agent_session = surface.agent_session?;
             let workspace_name = workspaces
                 .get(&surface.workspace_id)
@@ -3018,6 +3133,7 @@ fn agent_health_rows_with_path(
                 "surface_id": surface.id,
                 "title": surface.title,
                 "cwd": surface.cwd,
+                "effective_project_cwd": effective_project_cwd,
                 "agent": agent_session.agent,
                 "session_id": agent_session.session_id,
                 "resume_cwd": resume_cwd,
@@ -4216,6 +4332,10 @@ fn surface_list_rows(
                     runtime
                         .and_then(|surface| surface.pid)
                         .map_or(Value::Null, Value::from),
+                );
+                row.insert(
+                    "effective_project_cwd".to_string(),
+                    json!(surface_effective_project_cwd(&surface)),
                 );
             }
             row
@@ -5623,11 +5743,13 @@ fn team_worker_health_rows(
             } else {
                 worker.status.as_str()
             };
+            let final_state = team_worker_final_state(worker, surface_alive, stale);
             json!({
                 "worker_id": worker.id,
                 "agent": worker.agent,
                 "status": worker.status,
                 "lifecycle": lifecycle,
+                "final_state": final_state,
                 "surface_id": worker.surface_id,
                 "surface_alive": surface_alive,
                 "heartbeat_age_ms": heartbeat_age_ms,
@@ -5643,6 +5765,32 @@ fn team_worker_health_rows(
         "stale_after_ms": stale_after_ms,
         "workers": workers,
     }))
+}
+
+fn team_worker_final_state(
+    worker: &forktty_core::TeamWorker,
+    surface_alive: bool,
+    stale: bool,
+) -> &'static str {
+    if worker.shutdown_requested_at_ms > 0 {
+        return if surface_alive {
+            "shutdown_requested"
+        } else {
+            "closed"
+        };
+    }
+    if worker.surface_id.is_some() && !surface_alive {
+        return "surface_missing";
+    }
+    if stale {
+        return "stale";
+    }
+    match worker.status.as_str() {
+        "done" | "closed" | "idle" => "idle",
+        "running" | "busy" | "active" | "working" => "running",
+        "blocked" | "needs_input" => "needs_input",
+        _ => "idle",
+    }
 }
 
 fn validate_optional_surface_id(
@@ -9055,6 +9203,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn context_snapshot_exposes_effective_project_cwd_from_resume_cwd() {
+        let (state, _) = test_state();
+        let project_dir = tempfile::tempdir().unwrap();
+        let project_cwd = project_dir.path().to_string_lossy().to_string();
+        {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let surface_id = workspace.focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &surface_id,
+                AgentKind::Codex,
+                "codex-session-1",
+            ));
+            assert!(model.set_surface_agent_session_resume_cwd(
+                &surface_id,
+                project_dir.path().to_path_buf()
+            ));
+        }
+
+        let snapshot = dispatch(&state, "context.snapshot", json!({"tail_lines": 0}))
+            .await
+            .unwrap();
+
+        assert_eq!(snapshot["workspace"]["working_dir"], "/tmp");
+        assert_eq!(snapshot["workspace"]["effective_project_cwd"], project_cwd);
+        assert_eq!(snapshot["surfaces"][0]["cwd"], "/tmp");
+        assert_eq!(
+            snapshot["surfaces"][0]["effective_project_cwd"],
+            project_cwd
+        );
+        assert_eq!(snapshot["agents"][0]["effective_project_cwd"], project_cwd);
+        assert_eq!(
+            snapshot["agent_health"][0]["effective_project_cwd"],
+            project_cwd
+        );
+    }
+
+    #[tokio::test]
     async fn context_snapshot_limits_terminal_tail_surface_count() {
         let surface_limit = MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_SURFACES;
         let (state, backend) = test_state();
@@ -9273,29 +9459,39 @@ mod tests {
         ));
         assert_eq!(truncated_tail["truncated"], true);
 
-        let flags = context_snapshot_risk_flags(
-            &json!({
-                "status": [{
-                    "key": "agent:codex:permission",
-                    "value": "bypassPermissions",
-                }],
-            }),
-            &[json!({
-                "surface_id": "surface-1",
-                "permission_mode": "bypassPermissions",
-            })],
-            &[approval_json],
-            &[json!({"surface_id": "surface-ssh", "kind": "ssh"})],
-            &[truncated_tail],
-            &[json!({"surface_id": "surface-missing", "error": "not ready"})],
-            &json!([{"consistency_warnings": ["done_with_active_workers"]}]),
-        );
+        let status = json!({
+            "status": [{
+                "key": "agent:codex:permission",
+                "value": "bypassPermissions",
+            }],
+        });
+        let agent_health = [json!({
+            "surface_id": "surface-1",
+            "permission_mode": "bypassPermissions",
+        })];
+        let feed = [approval_json];
+        let remotes = [json!({"surface_id": "surface-ssh", "kind": "ssh"})];
+        let terminal_tails = [truncated_tail];
+        let terminal_tail_errors = [json!({"surface_id": "surface-missing", "error": "not ready"})];
+        let workflows = json!([{"consistency_warnings": ["running_with_completed_plan"]}]);
+        let team_summaries = json!([{"consistency_warnings": ["done_with_active_workers"]}]);
+        let flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
+            status: &status,
+            agent_health: &agent_health,
+            feed: &feed,
+            remotes: &remotes,
+            terminal_tails: &terminal_tails,
+            terminal_tail_errors: &terminal_tail_errors,
+            workflows: &workflows,
+            team_summaries: &team_summaries,
+        });
 
         for expected in [
             "terminal_text_untrusted",
             "terminal_tail_truncated",
             "terminal_tail_unavailable",
             "team_consistency_warning",
+            "workflow_consistency_warning",
             "remote_surface",
             "pending_approval",
             "permission_bypass",
@@ -9309,15 +9505,20 @@ mod tests {
 
     #[test]
     fn context_snapshot_review_gap_permission_bypass_reads_agent_health() {
-        let flags = context_snapshot_risk_flags(
-            &json!({"status": []}),
-            &[json!({"permission_mode": "bypassPermissions"})],
-            &[],
-            &[],
-            &[],
-            &[],
-            &json!([]),
-        );
+        let status = json!({"status": []});
+        let agent_health = [json!({"permission_mode": "bypassPermissions"})];
+        let workflows = json!([]);
+        let team_summaries = json!([]);
+        let flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
+            status: &status,
+            agent_health: &agent_health,
+            feed: &[],
+            remotes: &[],
+            terminal_tails: &[],
+            terminal_tail_errors: &[],
+            workflows: &workflows,
+            team_summaries: &team_summaries,
+        });
 
         assert_eq!(flags, vec!["permission_bypass"]);
     }
@@ -9401,6 +9602,64 @@ mod tests {
         assert!(items
             .iter()
             .any(|item| item["type"] == "progress" && item["title"] == "Build"));
+    }
+
+    #[tokio::test]
+    async fn context_snapshot_compacts_feed_trace_by_default_and_expands_on_request() {
+        let (state, _) = test_state();
+        let workspace_id = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let surface_id = workspace.focused_surface_id.clone();
+            model
+                .set_status(
+                    &workspace.id,
+                    "tool:mcp__forktty__context_snapshot",
+                    "Tool",
+                    "Running mcp__forktty__context_snapshot",
+                    None,
+                )
+                .unwrap();
+            model
+                .set_progress(&workspace.id, "tool:review", "Review", 1.0, Some(2.0))
+                .unwrap();
+            model.create_notification(
+                "Permission",
+                "Run command?",
+                NotificationKind::Prompt,
+                Some(workspace.id.clone()),
+                Some(surface_id),
+            );
+            workspace.id
+        };
+
+        let compact = dispatch(
+            &state,
+            "context.snapshot",
+            json!({"workspace_id": workspace_id, "tail_lines": 0}),
+        )
+        .await
+        .unwrap();
+        let compact_feed = compact["feed"].as_array().unwrap();
+        assert!(compact_feed.iter().any(|item| item["type"] == "approval"));
+        assert!(!compact_feed
+            .iter()
+            .any(|item| matches!(item["type"].as_str(), Some("status" | "progress"))));
+
+        let expanded = dispatch(
+            &state,
+            "context.snapshot",
+            json!({
+                "workspace_id": workspace_id,
+                "tail_lines": 0,
+                "include_feed_trace": true
+            }),
+        )
+        .await
+        .unwrap();
+        let expanded_feed = expanded["feed"].as_array().unwrap();
+        assert!(expanded_feed.iter().any(|item| item["type"] == "status"));
+        assert!(expanded_feed.iter().any(|item| item["type"] == "progress"));
     }
 
     #[tokio::test]
@@ -9683,6 +9942,7 @@ mod tests {
             .find(|worker| worker["worker_id"] == "worker-2")
             .unwrap();
         assert_eq!(worker_health["lifecycle"], "shutdown_requested");
+        assert_eq!(worker_health["final_state"], "shutdown_requested");
         assert_eq!(worker_health["surface_alive"], true);
 
         let summary = dispatch(&state, "team.summary", json!({"team_id": "team-1"}))
@@ -9705,6 +9965,60 @@ mod tests {
             .await
             .unwrap();
         assert!(events.as_array().unwrap().len() >= 10);
+    }
+
+    #[tokio::test]
+    async fn team_worker_health_reports_active_status_as_running_final_state() {
+        let (mut state, _backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspace[0]["id"].as_str().unwrap();
+        let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "workspace_id": workspace_id,
+                "leader_surface_id": surface_id,
+                "status": "done"
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "surface_id": surface_id,
+                "status": "active"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let summary = dispatch(&state, "team.summary", json!({"team_id": "team-1"}))
+            .await
+            .unwrap();
+        assert_eq!(summary["workers_active"], 1);
+        assert!(summary["consistency_warnings"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("done_with_active_workers")));
+
+        let health = dispatch(
+            &state,
+            "team.worker.health",
+            json!({"team_id": "team-1", "stale_after_ms": 1_000_000}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(health["workers"][0]["lifecycle"], "active");
+        assert_eq!(health["workers"][0]["final_state"], "running");
     }
 
     #[tokio::test]
@@ -10593,6 +10907,61 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(error.code(), "invalid_param");
+    }
+
+    #[tokio::test]
+    async fn context_snapshot_reports_workflow_consistency_warnings() {
+        let (state, _) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        let state = state.with_workflow_store_path(dir.path().join("workflow-v1.json"));
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        let workflow = dispatch(
+            &state,
+            "workflow.upsert",
+            json!({
+                "workflow_id": "workflow-1",
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "status": "running",
+                "goal": "Review policy"
+            }),
+        )
+        .await
+        .unwrap();
+        let workflow_id = workflow["id"].as_str().unwrap();
+        dispatch(
+            &state,
+            "workflow.plan.set",
+            json!({
+                "workflow_id": workflow_id,
+                "steps": [
+                    {"id": "inspect", "title": "Inspect", "status": "done"},
+                    {"id": "verify", "title": "Verify", "status": "done"}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        let snapshot = dispatch(
+            &state,
+            "context.snapshot",
+            json!({"workspace_id": workspace_id, "tail_lines": 0}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            snapshot["workflows"][0]["consistency_warnings"],
+            json!(["running_with_completed_plan"])
+        );
+        assert!(snapshot["risk_flags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("workflow_consistency_warning")));
     }
 
     #[tokio::test]

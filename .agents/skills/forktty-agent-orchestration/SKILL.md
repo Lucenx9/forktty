@@ -32,6 +32,12 @@ For normal local code changes, read and edit the repo directly.
    `team_get` only when detailed worker/task/message state is needed. Treat
    `consistency_warnings` and the `team_consistency_warning` risk flag as
    prompts to inspect the affected team before deciding it is finished.
+   Feed status/progress trace rows are compacted out by default; request
+   `include_feed_trace` only when debugging tool-call/status churn. Treat
+   workflow `consistency_warnings` and `workflow_consistency_warning` the same
+   way: inspect before declaring the workflow finished or stale.
+   Prefer `effective_project_cwd` over the workspace `working_dir` when
+   launching, reviewing, or checking where an agent is actually working.
 3. If `context_snapshot` is unavailable, combine read-only tools:
    `topology_tree`, `status_summary`, `agent_list`, `agent_health`,
    `team_list`, `workflow_list`, and bounded `surface_capture_tail` or
@@ -123,8 +129,10 @@ or parallel workers:
 4. Message workers through the team mailbox. Dispatch only after the worker pane
    is ready.
 5. Monitor with `team_worker_health`, `team_events`, and bounded terminal tail
-   reads. Nudge only for stale or blocked workers, not while coherent work is
-   active.
+   reads. Use each worker's derived `final_state` (`shutdown_requested`,
+   `closed`, `surface_missing`, `stale`, `idle`, `running`, or `needs_input`)
+   for cleanup decisions. Nudge only for stale or blocked workers, not while
+   coherent work is active.
 6. Mark tasks done/blocked with evidence. Request worker shutdown when the work
    is complete or no longer needed.
 
@@ -246,7 +254,10 @@ before changing files:
 
 - Use `forktty doctor --hooks` for local hook config path/status checks.
 - Use `forktty --json doctor` when socket, launcher, environment, hook config,
-  MCP config, and skill directory paths all matter.
+  MCP config, and skill directory paths all matter. Skill directory entries
+  include status plus source/installed checksums; run the reported repair
+  command, usually `forktty skills setup <target>`, when a managed skill is
+  missing or `update_available`.
 - Use `forktty hooks doctor <agent>` or setup `--dry-run` commands for
   provider-specific repair decisions.
 - Treat missing optional provider configs as neutral until the task says that

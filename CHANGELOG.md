@@ -122,10 +122,19 @@ All notable changes to ForkTTY are documented here.
   Team summaries also report `consistency_warnings`, and snapshots raise
   `team_consistency_warning`, when a team marked `done` still has active
   workers, open tasks, or pending messages.
+- `context.snapshot` now keeps status/progress feed trace rows out of the
+  default snapshot and exposes them only with `include_feed_trace`; workflow
+  rows include `consistency_warnings` with a matching
+  `workflow_consistency_warning` risk flag, workspace/surface/agent rows expose
+  `effective_project_cwd`, and `team.worker.health` workers include a derived
+  `final_state` for shutdown/closed/stale/surface-missing decisions.
 - `forktty --json doctor` now reports managed MCP config paths and agent skill
   directories alongside socket, executable, environment, and hook config
   diagnostics; local `forktty doctor --hooks` remains scoped to hook config
   path/status checks.
+- `forktty --json doctor` and `forktty skills setup --dry-run` now expose
+  managed skill status, source/installed checksums, and an explicit repair
+  command when a user-level skill copy is missing or stale.
 - `agent.list`, `agent.health`, and `status.summary` now include source/age
   metadata for persisted agent rows, making delayed agent state easier to
   distinguish from fresh terminal evidence.

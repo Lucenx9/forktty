@@ -801,7 +801,12 @@ impl TeamStoreData {
         let workers_active = team
             .workers
             .iter()
-            .filter(|worker| matches!(worker.status.as_str(), "running" | "busy" | "active"))
+            .filter(|worker| {
+                matches!(
+                    worker.status.as_str(),
+                    "running" | "busy" | "active" | "working"
+                )
+            })
             .count();
         let tasks_open = team
             .tasks
@@ -1360,6 +1365,18 @@ mod tests {
                 "done_with_open_tasks".to_string()
             ]
         );
+        store
+            .heartbeat(
+                TeamHeartbeat {
+                    team_id: "team-1".to_string(),
+                    worker_id: "worker-1".to_string(),
+                    status: Some("working".to_string()),
+                    assigned_task_id: Some("task-1".to_string()),
+                },
+                8,
+            )
+            .unwrap();
+        assert_eq!(store.summary("team-1").unwrap().workers_active, 1);
         assert_eq!(
             store
                 .events(&TeamEventQuery {
@@ -1369,7 +1386,7 @@ mod tests {
                 })
                 .unwrap()
                 .len(),
-            7
+            8
         );
     }
 
