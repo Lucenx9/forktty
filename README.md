@@ -323,6 +323,10 @@ Workspace, surface, agent, and agent-health rows expose
 workspace directory when they differ. `team.worker.health` includes a derived
 `final_state` such as `shutdown_requested`, `closed`, `surface_missing`, or
 `stale` so cleanup decisions do not require interpreting raw worker fields.
+`team.worker.shutdown` submits shutdown text by default; its `close_surface`
+option, exposed by CLI `forktty team-worker-shutdown --close`, immediately
+closes only surfaces that ForkTTY created through `team.worker.launch`, not
+manually attached user panes.
 For smaller control loops, `system.identify`/`forktty identify` returns the
 canonical target workspace/surface, caller id validation, current agent binding,
 and `effective_project_cwd`. ForkTTY pane environment ids are treated as caller

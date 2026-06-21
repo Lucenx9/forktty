@@ -84,6 +84,8 @@ pub struct TeamWorker {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launched_surface_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_name: Option<String>,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -398,6 +400,7 @@ impl TeamStoreData {
                     role: None,
                     agent: None,
                     surface_id: None,
+                    launched_surface_id: None,
                     worktree_name: None,
                     status: "idle".to_string(),
                     assigned_task_id: None,
@@ -418,6 +421,7 @@ impl TeamStoreData {
         }
         if surface_id.is_some() {
             worker.surface_id = surface_id;
+            worker.launched_surface_id = None;
         }
         if worktree_name.is_some() {
             worker.worktree_name = worktree_name;
@@ -473,6 +477,7 @@ impl TeamStoreData {
                     role: None,
                     agent: None,
                     surface_id: None,
+                    launched_surface_id: None,
                     worktree_name: None,
                     status: "idle".to_string(),
                     assigned_task_id: None,
@@ -490,6 +495,7 @@ impl TeamStoreData {
         }
         worker.agent = Some(agent);
         worker.surface_id = Some(surface_id);
+        worker.launched_surface_id = worker.surface_id.clone();
         if worktree_name.is_some() {
             worker.worktree_name = worktree_name;
         }

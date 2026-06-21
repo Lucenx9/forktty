@@ -67,7 +67,7 @@ Usage:
   forktty team-worker-launch <team-id> <worker-id> --agent <agent> [--role <role>] [--assigned-task-id <id>] [--worktree-name <name>] [--args <comma-list>] [--json]
   forktty team-worker-health <team-id> [--stale-after-ms <ms>] [--json]
   forktty team-worker-nudge <team-id> <worker-id> [--text <text>] [--json]
-  forktty team-worker-shutdown <team-id> <worker-id> [--text <text>] [--json]
+  forktty team-worker-shutdown <team-id> <worker-id> [--text <text>] [--no-submit] [--close] [--json]
   forktty team-task-upsert <team-id> <task-id> [--title <title>] [--status <status>] [--detail <text>] [--depends-on <comma-list>] [--assigned-worker-id <id>] [--json]
   forktty team-message-send <team-id> --from <id> --body <text> [--message-id <id>] [--to-worker-id <id>] [--task-id <id>] [--json]
   forktty team-message-dispatch <team-id> <message-id> [--worker-id <id>] [--submit] [--json]
@@ -175,6 +175,7 @@ Low-level aliases still exist:
   forktty teams | team-list | team:list | team.list
   forktty team-get | team:get | team.get
   forktty team-worker-launch | team.worker.launch
+  forktty team-worker-shutdown --close closes launch-owned disposable worker panes
   forktty team-message-send | team.message.send
   forktty team-message-dispatch | team.message.dispatch
 ";
@@ -3824,12 +3825,55 @@ fn handle_team_worker_nudge(context: &CliContext, args: Vec<String>) -> CliResul
 }
 
 fn handle_team_worker_shutdown(context: &CliContext, args: Vec<String>) -> CliResult<()> {
-    team_worker_text_action(
-        context,
-        args,
-        "team.worker.shutdown",
+    let parsed = parse_flags(args, &["no-submit", "close"]);
+    reject_unknown_options(
+        &parsed.options,
+        &["text", "no-submit", "close"],
         "team-worker-shutdown",
-        "Shutdown requested",
+    )?;
+    let positionals = required_positionals(
+        &parsed.positionals,
+        "team-worker-shutdown",
+        &["team-id", "worker-id"],
+    )?;
+    let mut params = Map::new();
+    params.insert("team_id".to_string(), Value::String(positionals[0].clone()));
+    params.insert(
+        "worker_id".to_string(),
+        Value::String(positionals[1].clone()),
+    );
+    insert_optional_cli_raw_string_param(&mut params, &parsed.options, "text", "text")?;
+    match bool_option(&parsed.options, "no-submit") {
+        Some(true) => {
+            params.insert("submit".to_string(), Value::Bool(false));
+        }
+        Some(false) => {}
+        None => {
+            return Err(CliError::new(
+                "team-worker-shutdown: --no-submit expects true or false",
+            ));
+        }
+    }
+    match bool_option(&parsed.options, "close") {
+        Some(true) => {
+            params.insert("close_surface".to_string(), Value::Bool(true));
+        }
+        Some(false) => {}
+        None => {
+            return Err(CliError::new(
+                "team-worker-shutdown: --close expects true or false",
+            ));
+        }
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        "team.worker.shutdown",
+        Value::Object(params),
+    )?;
+    print_result_or_json(
+        context,
+        format!("Shutdown requested {}", positionals[1]),
+        result,
     )
 }
 
@@ -15480,6 +15524,28 @@ mod tests {
         );
         assert_eq!(shutdown["method"], "team.worker.shutdown");
         assert_eq!(shutdown["params"]["worker_id"], "worker-2");
+
+        let shutdown_options = with_socket_response(
+            |req| json!({"id": req["id"], "ok": true, "result": {"sent": true}}).to_string(),
+            |socket_path| {
+                handle_team_worker_shutdown(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "team-1",
+                        "worker-2",
+                        "--text",
+                        "stop",
+                        "--no-submit",
+                        "--close",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(shutdown_options["method"], "team.worker.shutdown");
+        assert_eq!(shutdown_options["params"]["text"], "stop");
+        assert_eq!(shutdown_options["params"]["submit"], false);
+        assert_eq!(shutdown_options["params"]["close_surface"], true);
     }
 
     #[test]

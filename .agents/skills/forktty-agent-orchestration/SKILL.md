@@ -97,7 +97,9 @@ Use mutating tools only for visible coordination:
 - `team_message_send` queues a message; `team_message_dispatch` sends it to the
   worker pane and acknowledges only after delivery succeeds.
 - `team_worker_nudge` and `team_worker_shutdown` send explicit text requests to
-  a worker pane; shutdown is a request, not a process kill.
+  a worker pane. Shutdown submits the request by default; use `close_surface`
+  only for immediate cleanup of disposable worker panes launched by ForkTTY team
+  tools, never for manually attached user panes.
 - `workflow_upsert`, `workflow_plan_set`, and workflow evidence tools preserve
   compaction-resistant goal, plan, and proof state.
 
@@ -140,7 +142,8 @@ or parallel workers:
    for cleanup decisions. Nudge only for stale or blocked workers, not while
    coherent work is active.
 6. Mark tasks done/blocked with evidence. Request worker shutdown when the work
-   is complete or no longer needed.
+   is complete or no longer needed; use the shutdown close option only when the
+   worker pane was created for that disposable team worker.
 
 Workers must not create, fork, steer, rename, archive, or delegate to other
 workers unless the user explicitly grants that permission.

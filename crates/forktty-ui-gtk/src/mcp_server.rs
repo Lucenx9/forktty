@@ -803,12 +803,18 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             }
         }
         "team_worker_shutdown" => {
-            reject_unexpected(args, &["team_id", "worker_id", "text"], name)?;
+            reject_unexpected(
+                args,
+                &["team_id", "worker_id", "text", "submit", "close_surface"],
+                name,
+            )?;
             let mut params = map_from_pairs([
                 ("team_id", required_non_blank(args, "team_id")?),
                 ("worker_id", required_non_blank(args, "worker_id")?),
             ]);
             insert_optional_string_param(args, &mut params, "text")?;
+            insert_optional_bool_param(args, &mut params, "submit")?;
+            insert_optional_bool_param(args, &mut params, "close_surface")?;
             SocketCall {
                 method: "team.worker.shutdown",
                 params,
@@ -2036,14 +2042,16 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "team_worker_shutdown",
-            annotations: mutating_annotations(false, false),
-            description: "Request safe shutdown by sending text to a team worker's attached terminal pane and marking the worker shutdown_requested after delivery succeeds.",
+            annotations: mutating_annotations(true, false),
+            description: "Request team worker shutdown by sending and submitting text by default, marking the worker shutdown_requested after delivery succeeds, and optionally closing launch-owned worker panes immediately.",
             input_schema: object_schema(
                 &["team_id", "worker_id"],
                 json!({
                     "team_id": string_prop("Team id."),
                     "worker_id": string_prop("Worker id."),
                     "text": string_prop("Optional exact shutdown request text."),
+                    "submit": boolean_prop("Also submit the shutdown text. Defaults to true; set false to stage text without Enter."),
+                    "close_surface": boolean_prop("Immediately close the worker surface after shutdown text is delivered and submitted. Defaults to false and only works for surfaces created by team_worker_launch."),
                 }),
             ),
         },
@@ -2873,11 +2881,20 @@ mod tests {
 
         let (method, params) = build_socket_call_for_test(
             "team_worker_shutdown",
-            json!({"team_id": "team-1", "worker_id": "worker-2"}),
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-2",
+                "text": "stop",
+                "submit": false,
+                "close_surface": true,
+            }),
         )
         .unwrap();
         assert_eq!(method, "team.worker.shutdown");
         assert_eq!(params["worker_id"], "worker-2");
+        assert_eq!(params["text"], "stop");
+        assert_eq!(params["submit"], false);
+        assert_eq!(params["close_surface"], true);
 
         let (method, params) = build_socket_call_for_test(
             "team_task_upsert",

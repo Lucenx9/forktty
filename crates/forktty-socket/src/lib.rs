@@ -1412,15 +1412,28 @@ pub async fn dispatch(
         "team.worker.shutdown" => {
             let team_id = required_trimmed_string(&params, "team_id")?.to_string();
             let worker_id = required_trimmed_string(&params, "worker_id")?.to_string();
+            let submit = optional_bool_param(&params, "submit")?.unwrap_or(true);
+            let close_surface = optional_bool_param(&params, "close_surface")?.unwrap_or(false);
             let text = team_worker_action_text(
                 optional_string_param(&params, "text")?,
-                "Please stop after your current safe checkpoint and report shutdown.\r",
+                "Please stop after your current safe checkpoint and report shutdown.",
             )?;
-            let surface_id = team_worker_surface_id(state, &team_id, &worker_id)?;
+            let surface_id = if close_surface {
+                team_worker_launch_owned_surface_id(state, &team_id, &worker_id)?
+            } else {
+                team_worker_surface_id(state, &team_id, &worker_id)?
+            };
             state
                 .terminal
                 .send_text(&surface_id, &text)
                 .map_err(DispatchError::from)?;
+            if submit && !text.ends_with('\r') {
+                tokio::time::sleep(TEAM_MESSAGE_SUBMIT_ENTER_DELAY).await;
+                state
+                    .terminal
+                    .send_enter(&surface_id)
+                    .map_err(DispatchError::from)?;
+            }
             let worker = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
                 store.request_worker_shutdown(
                     forktty_core::TeamWorkerAction { team_id, worker_id },
@@ -1428,7 +1441,19 @@ pub async fn dispatch(
                 )
             })
             .map_err(DispatchError::from)?;
-            Ok(json!({"sent": true, "surface_id": surface_id, "worker": worker}))
+            let closed = if close_surface {
+                Some(close_surface_request(state, &surface_id).await?)
+            } else {
+                None
+            };
+            Ok(json!({
+                "sent": true,
+                "submitted": submit,
+                "closed_surface": close_surface,
+                "surface_id": surface_id,
+                "worker": worker,
+                "closed": closed,
+            }))
         }
         "team.task.upsert" => {
             let input = forktty_core::TeamTaskUpsert {
@@ -2472,63 +2497,7 @@ pub async fn dispatch(
                 Err(DispatchError::NotFound("surface".to_string()))
             }
         }
-        "surface.close" => {
-            let surface_id = required_surface_id(&params)?;
-            let root_replacement = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                if model.surface(surface_id).is_none() {
-                    return Err(DispatchError::NotFound("surface".to_string()));
-                }
-                model.prepare_root_surface_replacement(surface_id)
-            };
-            if let Some(replacement) = root_replacement {
-                if let Err(err) = spawn_surface_terminal(state, &replacement) {
-                    return Err(err.into());
-                }
-                if let Err(err) = close_terminal_surface_if_present(state, surface_id) {
-                    let mut err = err;
-                    if let Err(cleanup_err) =
-                        close_replacement_terminal_surface_if_present(state, &replacement.id)
-                    {
-                        err = format!("{err}; replacement cleanup failed: {cleanup_err}");
-                    }
-                    return Err(err.into());
-                }
-                let (surface, replacement_in_model) = {
-                    let mut model = state
-                        .model
-                        .lock()
-                        .map_err(|_| "Lock poisoned".to_string())?;
-                    let surface = model
-                        .close_surface_with_replacement(surface_id, Some(replacement.clone()))
-                        .ok_or(DispatchError::NotFound("surface".to_string()));
-                    let replacement_in_model = model.surface(&replacement.id).is_some();
-                    (surface, replacement_in_model)
-                };
-                if surface.is_err() || !replacement_in_model {
-                    close_replacement_terminal_surface_if_present(state, &replacement.id)?;
-                }
-                let surface = surface?;
-                evict_hook_session_targets_for_surface(state, surface_id)?;
-                return Ok(json!(surface));
-            }
-            close_terminal_surface_if_present(state, surface_id)?;
-            let surface = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                model
-                    .close_surface(surface_id)
-                    .ok_or(DispatchError::NotFound("surface".to_string()))?
-            };
-            evict_hook_session_targets_for_surface(state, surface_id)?;
-            ensure_terminal_for_active_workspace(state).await?;
-            Ok(json!(surface))
-        }
+        "surface.close" => close_surface_request(state, required_surface_id(&params)?).await,
         "notification.create" => {
             let title = notification_title_from_params(&params)?;
             let body = notification_body_from_params(&params)?;
@@ -5106,6 +5075,66 @@ fn close_terminal_surfaces_if_present(
     Ok(())
 }
 
+async fn close_surface_request(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> Result<Value, DispatchError> {
+    let root_replacement = {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        if model.surface(surface_id).is_none() {
+            return Err(DispatchError::NotFound("surface".to_string()));
+        }
+        model.prepare_root_surface_replacement(surface_id)
+    };
+    if let Some(replacement) = root_replacement {
+        if let Err(err) = spawn_surface_terminal(state, &replacement) {
+            return Err(err.into());
+        }
+        if let Err(err) = close_terminal_surface_if_present(state, surface_id) {
+            let mut err = err;
+            if let Err(cleanup_err) =
+                close_replacement_terminal_surface_if_present(state, &replacement.id)
+            {
+                err = format!("{err}; replacement cleanup failed: {cleanup_err}");
+            }
+            return Err(err.into());
+        }
+        let (surface, replacement_in_model) = {
+            let mut model = state
+                .model
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            let surface = model
+                .close_surface_with_replacement(surface_id, Some(replacement.clone()))
+                .ok_or(DispatchError::NotFound("surface".to_string()));
+            let replacement_in_model = model.surface(&replacement.id).is_some();
+            (surface, replacement_in_model)
+        };
+        if surface.is_err() || !replacement_in_model {
+            close_replacement_terminal_surface_if_present(state, &replacement.id)?;
+        }
+        let surface = surface?;
+        evict_hook_session_targets_for_surface(state, surface_id)?;
+        return Ok(json!(surface));
+    }
+    close_terminal_surface_if_present(state, surface_id)?;
+    let surface = {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        model
+            .close_surface(surface_id)
+            .ok_or(DispatchError::NotFound("surface".to_string()))?
+    };
+    evict_hook_session_targets_for_surface(state, surface_id)?;
+    ensure_terminal_for_active_workspace(state).await?;
+    Ok(json!(surface))
+}
+
 fn evict_hook_session_targets_for_surface(
     state: &SocketAppState,
     surface_id: &str,
@@ -5850,6 +5879,33 @@ fn team_worker_surface_id(
     let surface_id = worker.surface_id.clone().ok_or_else(|| {
         DispatchError::PreconditionFailed("team worker has no surface_id".to_string())
     })?;
+    ensure_model_surface_exists(state, &surface_id)?;
+    Ok(surface_id)
+}
+
+fn team_worker_launch_owned_surface_id(
+    state: &SocketAppState,
+    team_id: &str,
+    worker_id: &str,
+) -> Result<String, DispatchError> {
+    let store =
+        forktty_core::load_teams_from_path(team_store_path(state)?).map_err(DispatchError::from)?;
+    let team = store
+        .get(team_id)
+        .ok_or(DispatchError::NotFound("team".to_string()))?;
+    let worker = team
+        .workers
+        .iter()
+        .find(|worker| worker.id == worker_id)
+        .ok_or(DispatchError::NotFound("worker".to_string()))?;
+    let surface_id = worker.surface_id.clone().ok_or_else(|| {
+        DispatchError::PreconditionFailed("team worker has no surface_id".to_string())
+    })?;
+    if worker.launched_surface_id.as_deref() != Some(surface_id.as_str()) {
+        return Err(DispatchError::PreconditionFailed(
+            "team worker surface was not launched by team.worker.launch".to_string(),
+        ));
+    }
     ensure_model_surface_exists(state, &surface_id)?;
     Ok(surface_id)
 }
@@ -10213,17 +10269,20 @@ mod tests {
         let shutdown = dispatch(
             &state,
             "team.worker.shutdown",
-            json!({"team_id": "team-1", "worker_id": "worker-2", "text": "stop\r"}),
+            json!({"team_id": "team-1", "worker_id": "worker-2", "text": "stop"}),
         )
         .await
         .unwrap();
         assert_eq!(shutdown["worker"]["status"], "shutdown_requested");
+        assert_eq!(shutdown["submitted"], true);
+        assert_eq!(shutdown["closed_surface"], false);
         assert_eq!(
             backend.sent_text(launched_surface_id).unwrap(),
             vec![
                 "review this\r".to_string(),
                 "ping\r".to_string(),
-                "stop\r".to_string()
+                "stop".to_string(),
+                "\r".to_string()
             ]
         );
 
@@ -10264,6 +10323,190 @@ mod tests {
             .await
             .unwrap();
         assert!(events.as_array().unwrap().len() >= 10);
+    }
+
+    #[tokio::test]
+    async fn team_worker_shutdown_can_close_launch_owned_worker_surface() {
+        let (mut state, backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let workspace_id = state.model.lock().unwrap().active_workspace().unwrap().id;
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "name": "Close Workers",
+                "workspace_id": workspace_id,
+            }),
+        )
+        .await
+        .unwrap();
+        let launched = dispatch(
+            &state,
+            "team.worker.launch",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+            }),
+        )
+        .await
+        .unwrap();
+        let surface_id = launched["surface"]["id"].as_str().unwrap().to_string();
+
+        let shutdown = dispatch(
+            &state,
+            "team.worker.shutdown",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "text": "stop now",
+                "close_surface": true,
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(shutdown["sent"], true);
+        assert_eq!(shutdown["submitted"], true);
+        assert_eq!(shutdown["closed_surface"], true);
+        assert!(backend.sent_text(&surface_id).is_err());
+        let health = dispatch(
+            &state,
+            "team.worker.health",
+            json!({"team_id": "team-1", "stale_after_ms": 1_000_000}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(health["workers"][0]["final_state"], "closed");
+    }
+
+    #[tokio::test]
+    async fn team_worker_shutdown_rejects_close_for_manually_attached_surface() {
+        let (mut state, backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let surface_id = state
+            .model
+            .lock()
+            .unwrap()
+            .active_workspace()
+            .unwrap()
+            .focused_surface_id;
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "name": "Manual Worker",
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+                "surface_id": surface_id,
+                "status": "running",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let err = dispatch(
+            &state,
+            "team.worker.shutdown",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "text": "stop now",
+                "close_surface": true,
+            }),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.code(), "precondition_failed");
+        assert!(backend.sent_text(&surface_id).unwrap().is_empty());
+        assert!(state.model.lock().unwrap().surface(&surface_id).is_some());
+    }
+
+    #[tokio::test]
+    async fn team_worker_shutdown_rejects_close_after_manual_surface_upsert() {
+        let (mut state, backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let (workspace_id, manual_surface_id) = {
+            let model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            (workspace.id.clone(), workspace.focused_surface_id.clone())
+        };
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "name": "Manual Reattach",
+                "workspace_id": workspace_id,
+            }),
+        )
+        .await
+        .unwrap();
+        let launched = dispatch(
+            &state,
+            "team.worker.launch",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+            }),
+        )
+        .await
+        .unwrap();
+        let launched_surface_id = launched["surface"]["id"].as_str().unwrap().to_string();
+
+        let worker = dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "surface_id": manual_surface_id,
+                "status": "running",
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(worker["surface_id"], manual_surface_id);
+        assert_eq!(worker["launched_surface_id"], Value::Null);
+
+        let err = dispatch(
+            &state,
+            "team.worker.shutdown",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "text": "stop now",
+                "close_surface": true,
+            }),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.code(), "precondition_failed");
+        assert!(backend.sent_text(&manual_surface_id).unwrap().is_empty());
+        assert!(backend.sent_text(&launched_surface_id).unwrap().is_empty());
+        let model = state.model.lock().unwrap();
+        assert!(model.surface(&manual_surface_id).is_some());
+        assert!(model.surface(&launched_surface_id).is_some());
     }
 
     #[tokio::test]

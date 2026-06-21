@@ -40,6 +40,12 @@ All notable changes to ForkTTY are documented here.
   already end in carriage return.
 
 ### Fixed
+- `team.worker.shutdown`, MCP `team_worker_shutdown`, and CLI
+  `forktty team-worker-shutdown` now submit shutdown text by default, so custom
+  shutdown messages no longer sit unexecuted in full-screen agent composers.
+  They also support an explicit close option for surfaces created by
+  `team.worker.launch`, giving team leaders a safe way to immediately close
+  disposable worker panes without closing manually attached surfaces.
 - `system.identify`, MCP `identify`, and `forktty identify` now treat ForkTTY
   pane environment ids as caller context rather than mandatory target selectors,
   so stale `FORKTTY_SURFACE_ID` values no longer make the compact identify read
