@@ -27,6 +27,11 @@ For normal local code changes, read and edit the repo directly.
    view, agent status with source/age/lifecycle-evidence metadata,
    team/workflow/feed summaries plus compact `team_summaries`, risk flags, and
    bounded terminal tails in one read-only call.
+   Full team records, including mailbox message bodies, are opt-in via
+   `include_team_details`; prefer `team_summaries` and follow up with
+   `team_get` only when detailed worker/task/message state is needed. Treat
+   `consistency_warnings` and the `team_consistency_warning` risk flag as
+   prompts to inspect the affected team before deciding it is finished.
 3. If `context_snapshot` is unavailable, combine read-only tools:
    `topology_tree`, `status_summary`, `agent_list`, `agent_health`,
    `team_list`, `workflow_list`, and bounded `surface_capture_tail` or

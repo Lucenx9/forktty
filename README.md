@@ -306,7 +306,11 @@ message already ends in carriage return. Re-run them to launch a new worker;
 use `team-message-send` plus `team-message-dispatch` for follow-up prompts to
 an existing worker. Context snapshots include compact `team_summaries` rows so
 leaders can scan worker/task/message counts without first calling
-`team.summary` for each team.
+`team.summary` for each team; full team records with mailbox message bodies are
+included only when `context.snapshot` receives `include_team_details: true`.
+`team_summaries` rows include `consistency_warnings` when a team marked `done`
+still has active workers, open tasks, or pending messages, and snapshots raise
+`team_consistency_warning` in `risk_flags` for the same condition.
 
 The titlebar Agent HUD shows persisted agent sessions across workspaces, highlights
 sessions that need input, and can focus or resume a tracked agent. `forktty agents`,

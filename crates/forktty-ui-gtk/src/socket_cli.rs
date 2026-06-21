@@ -104,7 +104,7 @@ Usage:
   forktty statusline [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
   forktty status explain [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>|--surface-id <id>]
   forktty status watch [--count <n>] [--interval-ms <ms>] [workspace selectors]
-  forktty context-snapshot [workspace selectors] [--surface-id <id>] [--tail-lines <n>]
+  forktty context-snapshot [workspace selectors] [--surface-id <id>] [--tail-lines <n>] [--include-team-details]
   forktty feed [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--limit <n>] [--json]
   forktty feed respond <approval-id> --decision approve|deny [--json]
   forktty workflows [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--surface-id <id>] [--session-id <id>] [--query <text>] [--limit <n>] [--json]
@@ -185,7 +185,7 @@ ForkTTY status commands
   forktty status watch [workspace selectors] [--surface-id <id>] [--count <n>] [--interval-ms <ms>]
       Re-run status explain output. Omit --count to watch until interrupted; interval must be greater than 0.
 
-  forktty context-snapshot [workspace selectors] [--surface-id <id>] [--tail-lines <n>] [--tail-max-bytes <n>]
+  forktty context-snapshot [workspace selectors] [--surface-id <id>] [--tail-lines <n>] [--tail-max-bytes <n>] [--include-team-details]
       Direct CLI alias for the context.snapshot socket/MCP method.
 ";
 
@@ -3792,6 +3792,27 @@ fn insert_optional_cli_u64_param(
     Ok(())
 }
 
+fn insert_optional_cli_bool_param(
+    params: &mut Map<String, Value>,
+    options: &BTreeMap<String, FlagValue>,
+    option: &str,
+    field: &str,
+) -> CliResult<()> {
+    let Some(raw) = options.get(option) else {
+        return Ok(());
+    };
+    let value = match raw {
+        FlagValue::Bool => true,
+        FlagValue::String(value) if value == "true" => true,
+        FlagValue::String(value) if value == "false" => false,
+        FlagValue::String(_) => {
+            return Err(CliError::new(format!("--{option} expects true or false")));
+        }
+    };
+    params.insert(field.to_string(), Value::Bool(value));
+    Ok(())
+}
+
 fn comma_list_option(
     options: &BTreeMap<String, FlagValue>,
     key: &str,
@@ -4128,6 +4149,7 @@ fn context_snapshot_params(args: Vec<String>, command: &str) -> CliResult<Map<St
             "surface-id",
             "tail-lines",
             "tail-max-bytes",
+            "include-team-details",
         ],
         command,
     )?;
@@ -4162,6 +4184,12 @@ fn context_snapshot_params_from_options(
     insert_optional_cli_string_param(&mut params, options, "surface-id", "surface_id")?;
     insert_optional_cli_u64_param(&mut params, options, "tail-lines", "tail_lines")?;
     insert_optional_cli_u64_param(&mut params, options, "tail-max-bytes", "tail_max_bytes")?;
+    insert_optional_cli_bool_param(
+        &mut params,
+        options,
+        "include-team-details",
+        "include_team_details",
+    )?;
     Ok(params)
 }
 
@@ -11566,6 +11594,41 @@ mod tests {
         assert_err_contains(
             build_target_params(&selectors, "set-progress"),
             "set-progress: cannot combine --workspace-id and --workspace-name",
+        );
+
+        let snapshot_params = context_snapshot_params(
+            vec![
+                "--surface-id".to_string(),
+                "surface-1".to_string(),
+                "--include-team-details".to_string(),
+            ],
+            "context-snapshot",
+        )
+        .unwrap();
+        assert_eq!(snapshot_params["include_team_details"], Value::Bool(true));
+        let compact_snapshot_params = context_snapshot_params(
+            vec![
+                "--surface-id".to_string(),
+                "surface-1".to_string(),
+                "--include-team-details=false".to_string(),
+            ],
+            "context-snapshot",
+        )
+        .unwrap();
+        assert_eq!(
+            compact_snapshot_params["include_team_details"],
+            Value::Bool(false)
+        );
+        assert_err_contains(
+            context_snapshot_params(
+                vec![
+                    "--surface-id".to_string(),
+                    "surface-1".to_string(),
+                    "--include-team-details=maybe".to_string(),
+                ],
+                "context-snapshot",
+            ),
+            "--include-team-details expects true or false",
         );
     }
 

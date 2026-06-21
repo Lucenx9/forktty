@@ -246,6 +246,8 @@ pub struct TeamSummary {
     pub tasks_open: usize,
     pub messages_pending: usize,
     pub last_event_seq: u64,
+    #[serde(default)]
+    pub consistency_warnings: Vec<String>,
 }
 
 fn default_team_version() -> u32 {
@@ -818,6 +820,18 @@ impl TeamStoreData {
             .find(|event| event.team_id == team_id)
             .map(|event| event.seq)
             .unwrap_or(0);
+        let mut consistency_warnings = Vec::new();
+        if team.status == "done" {
+            if workers_active > 0 {
+                consistency_warnings.push("done_with_active_workers".to_string());
+            }
+            if tasks_open > 0 {
+                consistency_warnings.push("done_with_open_tasks".to_string());
+            }
+            if messages_pending > 0 {
+                consistency_warnings.push("done_with_pending_messages".to_string());
+            }
+        }
         Ok(TeamSummary {
             team_id: team.id.clone(),
             status: team.status.clone(),
@@ -827,6 +841,7 @@ impl TeamStoreData {
             tasks_open,
             messages_pending,
             last_event_seq,
+            consistency_warnings,
         })
     }
 
@@ -1324,6 +1339,27 @@ mod tests {
         assert_eq!(summary.workers_active, 1);
         assert_eq!(summary.tasks_open, 1);
         assert_eq!(summary.messages_pending, 0);
+        assert!(summary.consistency_warnings.is_empty());
+        store
+            .upsert_team(
+                TeamUpsert {
+                    team_id: "team-1".to_string(),
+                    workspace_id: None,
+                    leader_surface_id: None,
+                    name: None,
+                    status: Some("done".to_string()),
+                    goal: None,
+                },
+                7,
+            )
+            .unwrap();
+        assert_eq!(
+            store.summary("team-1").unwrap().consistency_warnings,
+            vec![
+                "done_with_active_workers".to_string(),
+                "done_with_open_tasks".to_string()
+            ]
+        );
         assert_eq!(
             store
                 .events(&TeamEventQuery {
@@ -1333,7 +1369,7 @@ mod tests {
                 })
                 .unwrap()
                 .len(),
-            6
+            7
         );
     }
 

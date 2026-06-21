@@ -116,6 +116,12 @@ All notable changes to ForkTTY are documented here.
   when the pane has no terminal chrome or tab-strip entry.
 
 ### Changed
+- `context.snapshot` and MCP `context_snapshot` now keep full team records out
+  of the default snapshot payload; agents get compact `team_summaries` by
+  default and can opt into workers/tasks/messages with `include_team_details`.
+  Team summaries also report `consistency_warnings`, and snapshots raise
+  `team_consistency_warning`, when a team marked `done` still has active
+  workers, open tasks, or pending messages.
 - `forktty --json doctor` now reports managed MCP config paths and agent skill
   directories alongside socket, executable, environment, and hook config
   diagnostics; local `forktty doctor --hooks` remains scoped to hook config

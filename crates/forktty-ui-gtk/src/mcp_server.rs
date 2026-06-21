@@ -447,6 +447,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                     "surface_id",
                     "tail_lines",
                     "tail_max_bytes",
+                    "include_team_details",
                 ],
                 name,
             )?;
@@ -454,6 +455,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             insert_optional_non_blank_param(args, &mut params, "surface_id")?;
             insert_optional_u64_param(args, &mut params, "tail_lines")?;
             insert_optional_u64_param(args, &mut params, "tail_max_bytes")?;
+            insert_optional_bool_param(args, &mut params, "include_team_details")?;
             SocketCall {
                 method: "context.snapshot",
                 params,
@@ -1735,6 +1737,7 @@ fn tool_specs() -> Vec<ToolSpec> {
                     "surface_id": string_prop("Surface id whose workspace should be inspected."),
                     "tail_lines": integer_prop("Terminal tail lines per terminal surface; 0 disables terminal text. Defaults to a compact bounded tail."),
                     "tail_max_bytes": integer_prop("Maximum UTF-8 bytes per terminal tail; socket also enforces aggregate surface and byte upper bounds."),
+                    "include_team_details": boolean_prop("Include full team records with workers, tasks, and mailbox messages. Defaults to false; use team_summaries for compact monitoring."),
                 }),
             ),
         },
@@ -2881,7 +2884,12 @@ mod tests {
     fn context_snapshot_tool_maps_to_socket_context_snapshot() {
         let (method, params) = build_socket_call_for_test(
             "context_snapshot",
-            json!({"workspace_id": "w1", "tail_lines": 20, "tail_max_bytes": 4096}),
+            json!({
+                "workspace_id": "w1",
+                "tail_lines": 20,
+                "tail_max_bytes": 4096,
+                "include_team_details": true
+            }),
         )
         .unwrap();
 
@@ -2889,6 +2897,7 @@ mod tests {
         assert_eq!(params["workspace_id"], "w1");
         assert_eq!(params["tail_lines"], 20);
         assert_eq!(params["tail_max_bytes"], 4096);
+        assert_eq!(params["include_team_details"], true);
     }
 
     #[test]
