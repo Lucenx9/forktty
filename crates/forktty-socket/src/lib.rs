@@ -4907,7 +4907,6 @@ fn team_worker_launch_command(
     let program = match agent.trim().to_ascii_lowercase().as_str() {
         "codex" => "codex",
         "claude" | "claude_code" | "claude-code" => "claude",
-        "gemini" => "gemini",
         "opencode" | "open_code" | "open-code" => "opencode",
         "antigravity" | "agy" => "agy",
         _ => {
@@ -6263,7 +6262,6 @@ fn agent_kind_from_status_key(key: &str) -> Option<AgentKind> {
         "codex" => Some(AgentKind::Codex),
         "antigravity" | "agy" => Some(AgentKind::Antigravity),
         "opencode" | "open-code" | "open_code" => Some(AgentKind::OpenCode),
-        "gemini" => Some(AgentKind::Gemini),
         "custom" => Some(AgentKind::Custom),
         _ => None,
     }
@@ -6286,7 +6284,6 @@ fn agent_kind_from_permission_status_key(key: &str) -> Option<AgentKind> {
         "codex" => Some(AgentKind::Codex),
         "antigravity" | "agy" => Some(AgentKind::Antigravity),
         "opencode" | "open-code" | "open_code" => Some(AgentKind::OpenCode),
-        "gemini" => Some(AgentKind::Gemini),
         "custom" => Some(AgentKind::Custom),
         _ => None,
     }
@@ -7206,6 +7203,22 @@ mod tests {
 
         let wrong_type = serde_json::json!({ "key": 7 });
         assert!(optional_non_blank_string_param(&wrong_type, "key").is_err());
+    }
+
+    #[test]
+    fn gemini_status_keys_are_not_agent_bindings() {
+        assert!(agent_kind_from_status_key("agent:gemini").is_none());
+        assert!(agent_kind_from_permission_status_key("agent:gemini:permission").is_none());
+    }
+
+    #[test]
+    fn team_worker_launch_rejects_removed_gemini_provider() {
+        let err = team_worker_launch_command("gemini", Vec::new()).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("unsupported team worker agent: gemini"),
+            "{err}"
+        );
     }
 
     #[test]

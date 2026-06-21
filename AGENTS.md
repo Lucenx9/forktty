@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Guidance for coding agents (Claude Code, Codex, Gemini CLI, …) working in this repository. `CLAUDE.md` and `GEMINI.md` are symlinks to this file.
+Guidance for coding agents (Claude Code, Codex, OpenCode, …) working in this repository. `CLAUDE.md` is a symlink to this file.
 
 ForkTTY is a Linux-only GTK4/libadwaita terminal multiplexer for coding agents: embedded Ghostty-backed terminals, a JSON-RPC Unix socket API, git worktree workflows, and agent hook integration. Rust workspace, AGPL-3.0-only, currently in alpha.
 
@@ -77,7 +77,7 @@ Five workspace crates plus `xtask`, with a strict dependency flow: `forktty-core
 - **forktty-socket** — tokio Unix-socket JSON-RPC server logic, shared by the GTK app (server) and CLI (client). Owner-only permissions, size-bounded request lines.
 - **forktty-ui-gtk** — the `forktty` binary is *both* the GTK app and the socket CLI: `main.rs` dispatches CLI subcommands (`cli.rs`, covered by Rust tests) vs. GUI launch. The GTK shell lives in `src/gtk_app/`: `controller.rs` is the central orchestrator (workspaces, pane tree, focus); `ghostty_gtk_embed.rs` loads `ghostty-gtk-embed.so` and drives embedded Ghostty surfaces; `pane_chrome.rs` wraps those surfaces in ForkTTY headers/dividers; `socket_server.rs` connects socket requests to controller actions. `terminal_runtime.rs`, `terminal_widget.rs`, and `terminal_renderer.rs` are legacy classic-pane cleanup debt unless the code you are reading proves a path still calls them. Pane chrome (header, dividers) is hidden when a workspace has a single pane — that's by design, not a bug.
 - **forktty-import** — headless browser-profile import (history/bookmarks/cookies from Firefox/Chromium); `keyring` feature gates the Secret Service path.
-- **hooks/** — agent hook templates (Claude Code, Codex, Gemini) installed by `forktty hooks setup`; after editing them run `cargo run -p xtask -- check`.
+- **hooks/** — agent hook templates and generated integration references for Claude Code, Codex, Antigravity, and OpenCode installed by `forktty hooks setup`; after editing them run `cargo run -p xtask -- check`.
 
 Useful CLI for inspecting a running instance: `forktty doctor`, `forktty list`, `forktty surfaces`, `forktty events`, `forktty capabilities`.
 

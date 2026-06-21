@@ -58,7 +58,7 @@ browser feature remains source-only and tracked separately in `ROADMAP.md`.
   that inventory and hook-derived lifecycle through `agent.list`,
   `forktty agents`, and MCP `agent_list`, reports local resume readiness through
   `agent.health`, `forktty agent-health`, and MCP `agent_health`, can explicitly
-  resume a persisted Codex/Claude/Gemini/OpenCode/Antigravity session into a
+  resume a persisted Codex/Claude/OpenCode/Antigravity session into a
   new tab through argv-only provider commands, auto-resumes supported persisted
   agent terminal surfaces during session restore using the saved resume cwd as a
   provider flag where available or as the child process cwd otherwise (Codex can

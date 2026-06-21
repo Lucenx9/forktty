@@ -16,7 +16,7 @@ pub enum AgentKind {
     Antigravity,
     #[serde(rename = "opencode", alias = "open_code")]
     OpenCode,
-    Gemini,
+    #[serde(other)]
     Custom,
 }
 
@@ -113,7 +113,6 @@ pub fn agent_resume_command_with_cwd_and_permission_mode(
         }
         AgentKind::Antigravity => ("agy", vec!["--conversation".to_string(), session_id]),
         AgentKind::OpenCode => ("opencode", vec!["--session".to_string(), session_id]),
-        AgentKind::Gemini => ("gemini", vec!["--resume".to_string(), session_id]),
         AgentKind::Custom => return Err(AgentResumeError::UnsupportedAgent(agent)),
     };
     Ok(AgentResumeCommand {
@@ -329,11 +328,6 @@ mod tests {
                 "opencode",
                 &["--session", "ses_opencode"][..],
             ),
-            (
-                AgentKind::Gemini,
-                "gemini",
-                &["--resume", "gemini-session-1"][..],
-            ),
         ];
 
         for (agent, program, expected_args) in cases {
@@ -342,6 +336,14 @@ mod tests {
             assert_eq!(command.program, program);
             assert_eq!(command.args, expected_args);
         }
+    }
+
+    #[test]
+    fn removed_provider_names_deserialize_as_custom() {
+        assert_eq!(
+            serde_json::from_str::<AgentKind>("\"gemini\"").unwrap(),
+            AgentKind::Custom
+        );
     }
 
     #[test]

@@ -118,19 +118,19 @@ Usage:
   forktty clear-logs [--workspace-id <id>]
   forktty notifications [--json]
   forktty clear-notifications
-  forktty hooks setup [--full] [codex] [claude] [gemini] [antigravity] [opencode]
-      default setup agents: codex, claude, antigravity, opencode; gemini is legacy opt-in
-  forktty hooks remove [codex] [claude] [gemini] [antigravity] [opencode]
+  forktty hooks setup [--full] [codex] [claude] [antigravity] [opencode]
+      default setup agents: codex, claude, antigravity, opencode
+  forktty hooks remove [codex] [claude] [antigravity] [opencode]
   forktty hooks doctor codex
   forktty hooks test codex
   forktty hooks <agent> <event>
   forktty mcp                                      Run the ForkTTY MCP stdio server
-  forktty mcp setup [codex] [claude] [gemini] [antigravity]
-      default setup agents: codex, claude, antigravity; gemini is legacy opt-in
-  forktty mcp remove [codex] [claude] [gemini] [antigravity]
-  forktty skills setup [agents|codex|gemini|claude]
-      default setup targets: agents, claude; codex/gemini alias the interoperable agents target
-  forktty skills remove [agents|codex|gemini|claude]
+  forktty mcp setup [codex] [claude] [antigravity]
+      default setup agents: codex, claude, antigravity
+  forktty mcp remove [codex] [claude] [antigravity]
+  forktty skills setup [agents|codex|claude]
+      default setup targets: agents, claude; codex aliases the interoperable agents target
+  forktty skills remove [agents|codex|claude]
   forktty --json doctor                            Socket/hook doctor; needs a global flag before
                                                    `doctor` (bare `forktty doctor` runs the local doctor)
   forktty ping
@@ -412,10 +412,6 @@ struct SkillTargetSpec {
 // round-trip while still leaving headroom over the socket request budget.
 const HOOK_ENTRY_TIMEOUT_SECS: u64 = 30;
 
-// Gemini CLI treats the hook `timeout` field as milliseconds (default 60000).
-// Mirror the 30s budget used for Codex/Claude so a slow local socket round-trip
-// does not kill a Gemini hook sooner than the other providers.
-const GEMINI_HOOK_ENTRY_TIMEOUT_MS: u64 = HOOK_ENTRY_TIMEOUT_SECS * 1000;
 const OPENCODE_HOOK_TIMEOUT_MS: u64 = HOOK_ENTRY_TIMEOUT_SECS * 1000;
 const OPENCODE_MAX_INPUT_BYTES: usize = MAX_STDIN_TEXT_BYTES;
 
@@ -643,64 +639,6 @@ const CLAUDE_HIGH_FREQUENCY_HOOK_ENTRIES: &[HookEntrySpec] = &[
     },
 ];
 
-const GEMINI_HOOK_ENTRIES: &[HookEntrySpec] = &[
-    HookEntrySpec {
-        event_name: "SessionStart",
-        hook_event_name: "session-start",
-        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
-    },
-    HookEntrySpec {
-        event_name: "BeforeAgent",
-        hook_event_name: "prompt-submit",
-        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
-    },
-    HookEntrySpec {
-        event_name: "BeforeTool",
-        hook_event_name: "pre-tool",
-        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
-    },
-    HookEntrySpec {
-        event_name: "BeforeToolSelection",
-        hook_event_name: "before-tool-selection",
-        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
-    },
-    HookEntrySpec {
-        event_name: "AfterTool",
-        hook_event_name: "post-tool",
-        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
-    },
-    HookEntrySpec {
-        event_name: "BeforeModel",
-        hook_event_name: "before-model",
-        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
-    },
-    HookEntrySpec {
-        event_name: "AfterModel",
-        hook_event_name: "after-model",
-        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
-    },
-    HookEntrySpec {
-        event_name: "AfterAgent",
-        hook_event_name: "stop",
-        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
-    },
-    HookEntrySpec {
-        event_name: "Notification",
-        hook_event_name: "notification",
-        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
-    },
-    HookEntrySpec {
-        event_name: "PreCompress",
-        hook_event_name: "pre-compact",
-        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
-    },
-    HookEntrySpec {
-        event_name: "SessionEnd",
-        hook_event_name: "session-end",
-        timeout: GEMINI_HOOK_ENTRY_TIMEOUT_MS,
-    },
-];
-
 // Antigravity CLI v1.0.3 parses exactly these hook events from hooks.json;
 // unknown event names are dropped silently (verified against the binary's
 // "N total handlers" load log). PreInvocation fires before each model call.
@@ -801,15 +739,6 @@ const AGENTS: &[AgentSpec] = &[
         install_kind: HookInstallKind::JsonConfig,
     },
     AgentSpec {
-        key: "gemini",
-        label: "Gemini",
-        disabled_env: "FORKTTY_GEMINI_HOOKS_DISABLED",
-        config_path: gemini_config_path,
-        hook_entries: GEMINI_HOOK_ENTRIES,
-        matcher: None,
-        install_kind: HookInstallKind::JsonConfig,
-    },
-    AgentSpec {
         key: "antigravity",
         label: "Antigravity",
         disabled_env: "FORKTTY_ANTIGRAVITY_HOOKS_DISABLED",
@@ -843,12 +772,6 @@ const MCP_AGENTS: &[McpAgentSpec] = &[
         key: "claude",
         label: "Claude",
         config_path: claude_mcp_config_path,
-        config_kind: McpConfigKind::JsonMcpServers,
-    },
-    McpAgentSpec {
-        key: "gemini",
-        label: "Gemini",
-        config_path: gemini_mcp_config_path,
         config_kind: McpConfigKind::JsonMcpServers,
     },
     McpAgentSpec {
@@ -6347,40 +6270,47 @@ fn handle_socket_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()
     if context.json {
         return print_json(&report);
     }
-    write_stdout_line("ForkTTY doctor")?;
-    write_stdout_line(&format!(
+    write_stdout_text(&format_socket_doctor_text(&report))
+}
+
+fn format_socket_doctor_text(report: &Value) -> String {
+    let mut lines = Vec::new();
+    lines.push("ForkTTY doctor".to_string());
+    lines.push(format!(
         "socket source: {}",
         report["socket"]["source"].as_str().unwrap_or("default")
-    ))?;
-    write_stdout_line(&format_doctor_path("socket", &report["socket"]["inspect"]))?;
+    ));
+    lines.push(format_doctor_path("socket", &report["socket"]["inspect"]));
     if let Some(info) = report["executable"]["forktty"].as_object() {
-        write_stdout_line(&format_doctor_path("forktty", &Value::Object(info.clone())))?;
+        lines.push(format_doctor_path("forktty", &Value::Object(info.clone())));
     }
-    write_stdout_line("environment:")?;
+    lines.push("environment:".to_string());
     if let Some(env) = report["env"].as_object() {
         for (key, value) in env {
-            write_stdout_line(&format!("  {key}={}", value.as_str().unwrap_or("(unset)")))?;
+            lines.push(format!("  {key}={}", value.as_str().unwrap_or("(unset)")));
         }
     }
-    write_stdout_line("hook configs:")?;
+    lines.push("hook configs:".to_string());
     if let Some(configs) = report["hookConfigs"].as_object() {
         for (agent, info) in configs {
-            write_stdout_line(&format!("  {}", format_doctor_path(agent, info)))?;
+            lines.push(format!("  {}", format_doctor_path(agent, info)));
         }
     }
-    write_stdout_line("mcp configs:")?;
+    lines.push("mcp configs:".to_string());
     if let Some(configs) = report["mcpConfigs"].as_object() {
         for (agent, info) in configs {
-            write_stdout_line(&format!("  {}", format_doctor_path(agent, info)))?;
+            lines.push(format!("  {}", format_doctor_path(agent, info)));
         }
     }
-    write_stdout_line("skill dirs:")?;
+    lines.push("skill dirs:".to_string());
     if let Some(dirs) = report["skillDirs"].as_object() {
         for (target, info) in dirs {
-            write_stdout_line(&format!("  {}", format_doctor_path(target, info)))?;
+            lines.push(format!("  {}", format_doctor_path(target, info)));
         }
     }
-    Ok(())
+    let mut text = lines.join("\n");
+    text.push('\n');
+    text
 }
 
 fn build_socket_doctor_report(context: &CliContext) -> Value {
@@ -6505,7 +6435,7 @@ fn handle_mcp(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         Some("remove") | Some("uninstall") => handle_mcp_remove(context, args[1..].to_vec()),
         Some("help") | Some("--help") | Some("-h") => {
             write_stdout_line(
-                "Usage: forktty mcp | forktty mcp setup [codex] [claude] [gemini] [antigravity] | forktty mcp remove [codex] [claude] [gemini] [antigravity]\nDefault setup agents: codex, claude, antigravity; gemini is legacy opt-in.",
+                "Usage: forktty mcp | forktty mcp setup [codex] [claude] [antigravity] | forktty mcp remove [codex] [claude] [antigravity]\nDefault setup agents: codex, claude, antigravity.",
             )
         }
         Some(other) => Err(CliError::new(format!("mcp: unknown subcommand {other}"))),
@@ -6518,7 +6448,7 @@ fn handle_skills(context: &CliContext, args: Vec<String>) -> CliResult<()> {
         Some("setup") | Some("install") => handle_skills_setup(context, args[1..].to_vec()),
         Some("remove") | Some("uninstall") => handle_skills_remove(context, args[1..].to_vec()),
         Some("help") | Some("--help") | Some("-h") => write_stdout_line(
-            "Usage: forktty skills setup [agents|codex|gemini|claude] | forktty skills remove [agents|codex|gemini|claude]\nDefault setup targets: agents, claude. codex and gemini alias the interoperable agents target.",
+            "Usage: forktty skills setup [agents|codex|claude] | forktty skills remove [agents|codex|claude]\nDefault setup targets: agents, claude. codex aliases the interoperable agents target.",
         ),
         Some(other) => Err(CliError::new(format!("skills: unknown subcommand {other}"))),
         None => Err(CliError::new(
@@ -7514,7 +7444,7 @@ fn normalize_agent_name(agent: &str) -> String {
 fn normalize_skill_target_name(target: &str) -> String {
     match target.to_lowercase().as_str() {
         "agent" | "agents" | "agent-skills" | "agent_skills" | "open-agent" | "open_agent"
-        | "openagents" | "codex" | "gemini" => "agents".to_string(),
+        | "openagents" | "codex" => "agents".to_string(),
         "claude-code" | "claude_code" => "claude".to_string(),
         other => other.to_string(),
     }
@@ -7607,14 +7537,6 @@ fn claude_skill_dir() -> PathBuf {
         .unwrap_or_else(|| home_dir().join(".claude"))
         .join("skills")
         .join(AGENT_SKILL_NAME)
-}
-
-fn gemini_config_path() -> PathBuf {
-    home_dir().join(".gemini/settings.json")
-}
-
-fn gemini_mcp_config_path() -> PathBuf {
-    gemini_config_path()
 }
 
 // Antigravity CLI loads user-level hooks from ~/.gemini/config/hooks.json
@@ -8886,12 +8808,12 @@ fn hook_setup_reminder_message_for_statuses<'a>(
         .any(|status| matches!(*status, "stale" | "current_launcher_unknown"));
     if stale {
         Some(
-            "Refresh ForkTTY agent hooks by running `forktty hooks setup` so Codex, Claude Code, Antigravity, and OpenCode can publish status, progress, and notifications. Gemini CLI is legacy; use `forktty hooks setup gemini` only if you still need it."
+            "Refresh ForkTTY agent hooks by running `forktty hooks setup` so Codex, Claude Code, Antigravity, and OpenCode can publish status, progress, and notifications."
                 .to_string(),
         )
     } else if !installed {
         Some(
-            "Install ForkTTY agent hooks by running `forktty hooks setup` to connect Codex, Claude Code, Antigravity, and OpenCode to status, progress, and notifications. Gemini CLI is legacy; use `forktty hooks setup gemini` only if you still need it."
+            "Install ForkTTY agent hooks by running `forktty hooks setup` to connect Codex, Claude Code, Antigravity, and OpenCode to status, progress, and notifications."
                 .to_string(),
         )
     } else {
@@ -10928,6 +10850,14 @@ mod tests {
                         .display()
                         .to_string())
                 );
+
+                let text = format_socket_doctor_text(&report);
+                assert!(text.contains("mcp configs:\n"));
+                assert!(text.contains("  codex:"));
+                assert!(text.contains("  claude:"));
+                assert!(text.contains("  antigravity:"));
+                assert!(text.contains("skill dirs:\n"));
+                assert!(text.contains("  agents:"));
             },
         );
     }
@@ -11567,15 +11497,6 @@ mod tests {
                     .contains("Bash reported an error"));
                 assert_eq!(actions[1].0, "notification.create");
                 assert_eq!(actions[1].1["kind"], "error");
-
-                let gemini = agent_spec("gemini").unwrap();
-                let actions = build_hook_actions(gemini, "session-end", &Value::Null, "99");
-                assert_eq!(actions.len(), 3);
-                assert_eq!(actions[0].1["message"], "Gemini session ended");
-                assert_eq!(actions[1].0, "metadata.clear_status");
-                assert_eq!(actions[1].1["key"], "agent:gemini");
-                assert_eq!(actions[2].0, "metadata.clear_status");
-                assert_eq!(actions[2].1["key"], "agent:gemini:permission");
             },
         );
     }
@@ -12282,16 +12203,6 @@ mod tests {
         assert!(!codex_events.contains(&"Notification"));
         assert!(!codex_events.contains(&"SessionEnd"));
 
-        let gemini_events: Vec<&str> = agent_spec("gemini")
-            .unwrap()
-            .hook_entries
-            .iter()
-            .map(|entry| entry.event_name)
-            .collect();
-        assert!(gemini_events.contains(&"BeforeModel"));
-        assert!(gemini_events.contains(&"AfterModel"));
-        assert!(gemini_events.contains(&"BeforeToolSelection"));
-
         let opencode_events: Vec<&str> = agent_spec("opencode")
             .unwrap()
             .hook_entries
@@ -12380,15 +12291,11 @@ mod tests {
             ],
             || {
                 let context = test_context();
-                handle_hooks_setup(
-                    &context,
-                    strings(&["codex", "claude", "gemini", "opencode", "codex"]),
-                )
-                .unwrap();
+                handle_hooks_setup(&context, strings(&["codex", "claude", "opencode", "codex"]))
+                    .unwrap();
 
                 let codex_path = codex_home.join("hooks.json");
                 let claude_path = claude_dir.join("settings.json");
-                let gemini_path = home.join(".gemini/settings.json");
                 let opencode_path = home
                     .join(".config/opencode")
                     .join("plugins/forktty.generated.js");
@@ -12435,22 +12342,7 @@ mod tests {
                 );
                 assert_eq!(describe_claude_installed_profile(&claude_path), "lifecycle");
 
-                let gemini = read_json(&gemini_path);
-                for event in [
-                    "BeforeTool",
-                    "BeforeToolSelection",
-                    "AfterTool",
-                    "BeforeModel",
-                    "AfterModel",
-                    "Notification",
-                    "PreCompress",
-                ] {
-                    assert!(gemini["hooks"][event].is_array(), "missing {event}");
-                }
-                assert!(gemini["hooks"]["PreCompress"][0]["hooks"][0]["command"]
-                    .as_str()
-                    .unwrap()
-                    .contains(" hooks gemini pre-compact"));
+                assert!(!home.join(".gemini/settings.json").exists());
                 let opencode = fs::read_to_string(&opencode_path).unwrap();
                 assert!(opencode.contains(OPENCODE_PLUGIN_TAG));
                 assert!(opencode.contains("hooks\", \"opencode\""));
@@ -12470,7 +12362,7 @@ mod tests {
     }
 
     #[test]
-    fn hook_setup_default_skips_deprecated_gemini_but_explicit_gemini_still_works() {
+    fn hook_setup_rejects_removed_gemini_target() {
         let dir = tempfile::tempdir().unwrap();
         let codex_home = dir.path().join("codex home");
         let claude_dir = dir.path().join("claude config");
@@ -12498,9 +12390,9 @@ mod tests {
                 assert!(home.join(".gemini/config/hooks.json").exists());
                 assert!(!home.join(".gemini/settings.json").exists());
 
-                handle_hooks_setup(&context, strings(&["gemini"])).unwrap();
-                let gemini = read_json(&home.join(".gemini/settings.json"));
-                assert!(gemini["hooks"]["BeforeModel"].is_array());
+                let err = handle_hooks_setup(&context, strings(&["gemini"])).unwrap_err();
+                assert!(err.message.contains("Unsupported agent: gemini"), "{err:?}");
+                assert!(!home.join(".gemini/settings.json").exists());
             },
         );
     }
@@ -12770,7 +12662,7 @@ mod tests {
             ],
             || {
                 let launcher = Path::new("/usr/bin/forktty");
-                for agent in ["codex", "claude", "gemini", "antigravity"] {
+                for agent in ["codex", "claude", "antigravity"] {
                     let spec = mcp_agent_spec(agent).unwrap();
                     let plan = build_mcp_setup_plan(spec, launcher).unwrap();
                     assert!(plan.changed, "{agent} initial plan should change");
@@ -12802,7 +12694,6 @@ mod tests {
 
                 for (agent, path) in [
                     ("claude", claude_mcp_config_path()),
-                    ("gemini", gemini_mcp_config_path()),
                     ("antigravity", antigravity_mcp_config_path()),
                 ] {
                     let config = read_json(&path);
@@ -12816,7 +12707,7 @@ mod tests {
     }
 
     #[test]
-    fn mcp_setup_default_skips_deprecated_gemini_but_explicit_gemini_still_works() {
+    fn mcp_setup_rejects_removed_gemini_target() {
         let home = tempfile::tempdir().unwrap();
         let codex_home = tempfile::tempdir().unwrap();
         let home = home.path().to_string_lossy().to_string();
@@ -12833,14 +12724,15 @@ mod tests {
                 assert!(codex_mcp_config_path().exists());
                 assert!(claude_mcp_config_path().exists());
                 assert!(antigravity_mcp_config_path().exists());
-                assert!(!gemini_mcp_config_path().exists());
+                let legacy_gemini_path = Path::new(&home).join(".gemini/settings.json");
+                assert!(!legacy_gemini_path.exists());
 
-                handle_mcp_setup(&context, strings(&["gemini"])).unwrap();
-                let gemini = read_json(&gemini_mcp_config_path());
-                assert_eq!(
-                    gemini["mcpServers"]["forktty"]["env"][MCP_MANAGED_ENV],
-                    MCP_SERVER_NAME
+                let err = handle_mcp_setup(&context, strings(&["gemini"])).unwrap_err();
+                assert!(
+                    err.message.contains("Unsupported mcp agent: gemini"),
+                    "{err:?}"
                 );
+                assert!(!legacy_gemini_path.exists());
             },
         );
     }
@@ -12892,7 +12784,7 @@ mod tests {
     }
 
     #[test]
-    fn skill_setup_aliases_codex_and_gemini_to_agents_target() {
+    fn skill_setup_rejects_removed_gemini_target() {
         let home = tempfile::tempdir().unwrap();
         let claude_dir = tempfile::tempdir().unwrap();
         let home_s = home.path().to_string_lossy().to_string();
@@ -12904,9 +12796,12 @@ mod tests {
                 ("CLAUDE_CONFIG_DIR", Some(claude_dir_s.as_str())),
             ],
             || {
-                handle_skills_setup(&test_context(), strings(&["codex", "gemini"])).unwrap();
-
-                assert!(agent_skills_dir().join("SKILL.md").exists());
+                let err = handle_skills_setup(&test_context(), strings(&["gemini"])).unwrap_err();
+                assert!(
+                    err.message.contains("Unsupported skills target: gemini"),
+                    "{err:?}"
+                );
+                assert!(!agent_skills_dir().exists());
                 assert!(!claude_skill_dir().exists());
             },
         );
@@ -13046,8 +12941,8 @@ mod tests {
                 fs::write(codex_mcp_config_path(), content).unwrap();
                 assert!(!build_mcp_remove_plan(codex).unwrap().changed);
 
-                let gemini = mcp_agent_spec("gemini").unwrap();
-                let path = gemini_mcp_config_path();
+                let claude = mcp_agent_spec("claude").unwrap();
+                let path = claude_mcp_config_path();
                 ensure_parent_dir(&path).unwrap();
                 fs::write(
                     &path,
@@ -13061,16 +12956,16 @@ mod tests {
                     .unwrap(),
                 )
                 .unwrap();
-                let remove = build_mcp_remove_plan(gemini).unwrap();
+                let remove = build_mcp_remove_plan(claude).unwrap();
                 let McpRemoveAction::Write(content) = remove.action else {
-                    panic!("gemini remove should rewrite config");
+                    panic!("claude remove should rewrite config");
                 };
                 let value: Value = serde_json::from_str(&content).unwrap();
                 assert!(value["mcpServers"].get("forktty").is_none());
                 assert_eq!(value["mcpServers"]["foreign"]["command"], "/bin/true");
                 assert_eq!(value["theme"], "dark");
                 fs::write(path, content).unwrap();
-                assert!(!build_mcp_remove_plan(gemini).unwrap().changed);
+                assert!(!build_mcp_remove_plan(claude).unwrap().changed);
             },
         );
     }
@@ -13480,8 +13375,8 @@ mod tests {
     #[test]
     fn describe_launcher_check_marks_missing_config_as_not_installed() {
         let dir = tempfile::tempdir().unwrap();
-        let spec = agent_spec("gemini").unwrap();
-        let config_path = dir.path().join("settings.json");
+        let spec = agent_spec("opencode").unwrap();
+        let config_path = dir.path().join("forktty.generated.js");
         let check =
             describe_launcher_check(spec, &config_path, Some(Path::new("/usr/bin/forktty")));
         assert_eq!(check["status"], Value::String("not_installed".to_string()));
@@ -13780,7 +13675,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_hook_config_installs_current_codex_and_gemini_observability_events() {
+    fn merge_hook_config_installs_current_codex_observability_events() {
         let (_, codex) = merge_hook_config(
             &json!({}),
             agent_spec("codex").unwrap(),
@@ -13805,32 +13700,6 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("hooks codex pre-tool"));
-
-        let (_, gemini) = merge_hook_config(
-            &json!({}),
-            agent_spec("gemini").unwrap(),
-            Path::new("/usr/bin/forktty"),
-        )
-        .unwrap();
-        for event in [
-            "SessionStart",
-            "BeforeAgent",
-            "BeforeTool",
-            "BeforeToolSelection",
-            "AfterTool",
-            "BeforeModel",
-            "AfterModel",
-            "AfterAgent",
-            "Notification",
-            "PreCompress",
-            "SessionEnd",
-        ] {
-            assert!(gemini["hooks"][event].is_array(), "missing Gemini {event}");
-        }
-        assert!(gemini["hooks"]["PreCompress"][0]["hooks"][0]["command"]
-            .as_str()
-            .unwrap()
-            .contains("hooks gemini pre-compact"));
     }
 
     #[test]
@@ -13838,7 +13707,6 @@ mod tests {
         for (agent, template) in [
             ("codex", "codex-hooks.json"),
             ("claude", "claude-settings.json"),
-            ("gemini", "gemini-settings.json"),
         ] {
             let path = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../..")
@@ -13973,24 +13841,6 @@ mod tests {
                     }
                 }
             }
-        }
-    }
-
-    #[test]
-    fn gemini_hook_timeouts_are_milliseconds_matching_shared_budget() {
-        // Gemini CLI treats `timeout` as milliseconds (default 60000), unlike
-        // Codex/Claude which use seconds. The installer must emit the shared
-        // 30s budget expressed in ms so a Gemini hook is not killed sooner
-        // than the other providers, and never regresses to the bare `30`
-        // that would mean 30ms.
-        assert_eq!(GEMINI_HOOK_ENTRY_TIMEOUT_MS, 30_000);
-        let spec = agent_spec("gemini").unwrap();
-        for entry in spec.hook_entries {
-            assert_eq!(
-                entry.timeout, GEMINI_HOOK_ENTRY_TIMEOUT_MS,
-                "gemini {} entry must encode timeout in milliseconds",
-                entry.event_name
-            );
         }
     }
 

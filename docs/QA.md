@@ -62,7 +62,7 @@ should be one of:
 | Notifications appear (desktop + panel)|                           |                       |                  |                          |
 | Quake mode toggle                     |                           |                       |                  |                          |
 | Socket: `forktty ping`                |                           |                       |                  |                          |
-| Socket: hooks setup/remove (codex/claude/gemini/opencode) |        |                       |                  |                          |
+| Socket: hooks setup/remove (codex/claude/antigravity/opencode) |    |                       |                  |                          |
 | Socket: skills setup/remove (agents/claude) |                  |                       |                  |                          |
 | Worktree: create / attach / status    |                           |                       |                  |                          |
 | Worktree: merge / remove              |                           |                       |                  |                          |

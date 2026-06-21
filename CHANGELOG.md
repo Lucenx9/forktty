@@ -23,8 +23,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - The local `forktty doctor` hook diagnostics now include the default
-  Antigravity hook config path alongside Codex, Claude Code, Gemini, and
-  OpenCode.
+  Antigravity hook config path alongside Codex, Claude Code, and OpenCode.
 - Automatically named workspaces now keep the visible name aligned with the
   allocated workspace id, even after earlier workspaces are closed and the id
   counter has gaps.
@@ -59,9 +58,10 @@ All notable changes to ForkTTY are documented here.
   when the pane has no terminal chrome or tab-strip entry.
 
 ### Changed
-- `forktty doctor` now reports managed MCP config paths and agent skill
+- `forktty --json doctor` now reports managed MCP config paths and agent skill
   directories alongside socket, executable, environment, and hook config
-  diagnostics.
+  diagnostics; local `forktty doctor --hooks` remains scoped to hook config
+  path/status checks.
 - Team wrapper help now documents that `forktty team ask/review` launch a fresh
   worker on each run, documents the `--submit` default, and reports the failed
   step when a multi-request prompt dispatch flow stops part-way through.
@@ -77,6 +77,13 @@ All notable changes to ForkTTY are documented here.
   and includes source-tree eval cases for implicit-trigger coverage.
 - README now points GitHub readers to the canonical `forktty.dev` docs and
   agent retrieval files, and corrects stale alpha/session-path references.
+
+### Removed
+- Gemini CLI is no longer a ForkTTY integration target: hook setup, MCP setup,
+  skills aliases, team worker launch, status-session binding, agent resume, and
+  checked-in hook templates now cover Codex, Claude Code, Antigravity, and
+  OpenCode only. Persisted `gemini` agent-session names deserialize as
+  unsupported `custom` sessions instead of breaking session load.
 
 ## [0.2.0-alpha.14] - 2026-06-19
 

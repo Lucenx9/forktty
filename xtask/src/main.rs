@@ -17,9 +17,8 @@ struct HookTemplate {
     entries: &'static [(&'static str, &'static str, u64)],
 }
 
-// Codex and Claude Code treat `timeout` as seconds, while Gemini CLI treats it
-// as milliseconds. Keep these repository templates aligned with the native
-// installer's hook timeout constants.
+// Keep repository templates aligned with the native installer's hook timeout
+// constants.
 const CODEX_ENTRIES: &[(&str, &str, u64)] = &[
     ("SessionStart", "session-start", 30),
     ("UserPromptSubmit", "prompt-submit", 30),
@@ -61,20 +60,6 @@ const CLAUDE_ENTRIES: &[(&str, &str, u64)] = &[
     ("SessionEnd", "session-end", 30),
 ];
 
-const GEMINI_ENTRIES: &[(&str, &str, u64)] = &[
-    ("SessionStart", "session-start", 30000),
-    ("BeforeAgent", "prompt-submit", 30000),
-    ("BeforeTool", "pre-tool", 30000),
-    ("BeforeToolSelection", "before-tool-selection", 30000),
-    ("AfterTool", "post-tool", 30000),
-    ("BeforeModel", "before-model", 30000),
-    ("AfterModel", "after-model", 30000),
-    ("AfterAgent", "stop", 30000),
-    ("Notification", "notification", 30000),
-    ("PreCompress", "pre-compact", 30000),
-    ("SessionEnd", "session-end", 30000),
-];
-
 const TEMPLATES: &[HookTemplate] = &[
     HookTemplate {
         file: "codex-hooks.json",
@@ -93,14 +78,6 @@ const TEMPLATES: &[HookTemplate] = &[
         // The checked-in Claude template represents the default lifecycle
         // profile; `forktty hooks setup --full claude` adds per-tool events.
         entries: CLAUDE_ENTRIES,
-    },
-    HookTemplate {
-        file: "gemini-settings.json",
-        agent: "gemini",
-        label: "Gemini",
-        disabled_env: "FORKTTY_GEMINI_HOOKS_DISABLED",
-        matcher: None,
-        entries: GEMINI_ENTRIES,
     },
 ];
 

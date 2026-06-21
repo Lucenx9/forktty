@@ -1936,13 +1936,13 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "team_worker_launch",
             annotations: mutating_annotations(false, false),
-            description: "Launch a provider worker in a new ForkTTY tab and attach it to a team worker record. Supported agents are codex, claude, gemini, opencode, and antigravity.",
+            description: "Launch a provider worker in a new ForkTTY tab and attach it to a team worker record. Supported agents are codex, claude, opencode, and antigravity.",
             input_schema: object_schema(
                 &["team_id", "worker_id", "agent"],
                 json!({
                     "team_id": string_prop("Team id."),
                     "worker_id": string_prop("Worker id."),
-                    "agent": string_prop("Provider to launch: codex, claude, gemini, opencode, or antigravity."),
+                    "agent": string_prop("Provider to launch: codex, claude, opencode, or antigravity."),
                     "role": string_prop("Worker role."),
                     "assigned_task_id": string_prop("Task id currently assigned to this worker."),
                     "worktree_name": string_prop("Worktree name assigned to this worker."),

@@ -35,7 +35,7 @@ on the project overview, install paths, quick start, and contributor commands.
 
 ## Why ForkTTY
 
-- **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Antigravity CLI, OpenCode, legacy Gemini CLI, shell scripts, and custom tools.
+- **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Antigravity CLI, OpenCode, shell scripts, and custom tools.
 - **First-class worktree workflows**: create, attach, remove, and merge isolated worktree workspaces through native `git2` operations and optional `.forktty/setup` / `.forktty/teardown` hooks.
 - **Native Linux terminal stack**: GTK4/libadwaita shell with embedded Ghostty-backed terminals, split panes, session restore, notifications, command palette, settings, and quake mode.
 - **Local-first posture**: no crash reporting or product event tracking, an anonymous daily usage ping that can be disabled, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution. Optional update checks hit GitHub Releases at most once per day and can also be disabled.
@@ -223,9 +223,10 @@ forktty doctor
 ```
 
 `forktty doctor` is a local-only inspector. It reports the resolved
-config, session, socket, hook config paths, MCP config paths, agent
-skill directories, and known recovery behaviors, and exits 0 on a clean
-environment or 2 with explicit warnings.
+config, session, socket, hook config paths, and known recovery behaviors,
+and exits 0 on a clean environment or 2 with explicit warnings. Use
+`forktty --json doctor` when you also need the socket doctor report with
+environment, executable, hook config, MCP config, and agent skill paths.
 
 ### Default workspace and shortcuts
 
@@ -361,8 +362,6 @@ agents that support stdio MCP servers:
 forktty mcp                              # run the MCP server on stdio
 forktty mcp setup                        # register Codex, Claude, Antigravity
 forktty mcp setup codex claude --dry-run
-forktty mcp setup gemini                 # legacy Gemini CLI opt-in
-forktty mcp remove gemini
 ```
 
 The MCP server is local-only: it opens no network listener and bridges validated
@@ -406,15 +405,16 @@ forktty skills setup claude
 forktty skills remove agents
 ```
 
-`agents`, `codex`, and `gemini` target the interoperable
+`agents` and `codex` target the interoperable
 `~/.agents/skills/forktty-agent-orchestration` location. `claude` targets
 `$CLAUDE_CONFIG_DIR/skills/forktty-agent-orchestration` or
 `~/.claude/skills/forktty-agent-orchestration`. Setup refuses to overwrite an
 unmanaged skill with the same name; managed updates/removals first move the old
 directory to a `.bak-*` backup.
 
-Run `forktty doctor` to inspect the hook config paths, MCP config paths, and
-agent skill directories ForkTTY would use for the current environment.
+Run `forktty doctor --hooks` to inspect local hook config paths. Run
+`forktty --json doctor` to inspect the hook config paths, MCP config paths,
+and agent skill directories ForkTTY resolves from the current environment.
 
 ## Agent Hooks
 
@@ -423,7 +423,6 @@ Install hook templates for Codex, Claude Code, Antigravity CLI, and OpenCode:
 ```bash
 forktty hooks setup                       # install default agents
 forktty hooks setup codex                 # install just one
-forktty hooks setup gemini                # legacy Gemini CLI opt-in
 forktty hooks setup codex claude --dry-run
 forktty hooks setup --full claude         # include Claude per-tool hooks
 forktty hooks remove opencode             # remove ForkTTY-managed hooks/plugin
@@ -435,8 +434,6 @@ tool call; pass `--full` to include `PreToolUse`, `PostToolUse`,
 `PostToolUseFailure`, and `PostToolBatch`. Re-running setup migrates Claude to
 the lifecycle profile unless `--full` is passed. `hooks remove` removes only
 ForkTTY-managed entries/plugins and leaves unrelated agent hooks in place.
-Gemini CLI remains supported as a legacy explicit target for existing installs,
-but default setup skips it and prefers Antigravity.
 
 The installer merges commands into the agent's own config file:
 
@@ -446,7 +443,6 @@ The installer merges commands into the agent's own config file:
 | Claude Code | `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json`   |
 | Antigravity CLI | `~/.gemini/config/hooks.json` plus wrapper scripts in `~/.gemini/config/forktty-hooks.generated/` |
 | OpenCode    | `$OPENCODE_CONFIG_DIR/plugins/forktty.generated.js` or `~/.config/opencode/plugins/forktty.generated.js` |
-| Gemini CLI  | `~/.gemini/settings.json` (legacy opt-in: `forktty hooks setup gemini`) |
 
 When `HOME` is overridden, the `~` defaults are resolved under that home
 directory. Existing configs are written atomically (tmp + rename) and a
@@ -466,7 +462,6 @@ Each agent's hook commands honor a per-agent disable variable:
 
 - `FORKTTY_CODEX_HOOKS_DISABLED=1`
 - `FORKTTY_CLAUDE_HOOKS_DISABLED=1`
-- `FORKTTY_GEMINI_HOOKS_DISABLED=1`
 - `FORKTTY_ANTIGRAVITY_HOOKS_DISABLED=1`
 - `FORKTTY_OPENCODE_HOOKS_DISABLED=1`
 
@@ -564,7 +559,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 
 ## Troubleshooting
 
-- `forktty doctor` is the first stop: it explains config, session, socket, and hook config problems before they trigger a launch failure.
+- `forktty doctor` is the first stop: it explains config, session, socket, and hook config problems before they trigger a launch failure. Use `forktty --json doctor` for socket, environment, executable, hook config, MCP config, and skill path diagnostics.
 - If terminal panes report `ghostty-gtk-embed.so` as missing in a source tree,
   run `git submodule update --init vendor/ghostty` and
   `scripts/ghostty-gtk-lib-probe.sh --ensure --print-path`. For packaged

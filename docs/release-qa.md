@@ -218,7 +218,7 @@ checking that the opt-in browser feature still builds and starts.
 - `forktty hooks setup --dryrun codex` — exits with `unknown option --dryrun` and does not create or update hook configs.
 - `forktty hooks setup codex codex` — updates Codex once and prints one Codex summary, without creating redundant backups.
 - `forktty hooks setup` (first run) — creates/updates all supported agent configs/plugins, prints `updated` and a backup path.
-- `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= OPENCODE_CONFIG_DIR= forktty hooks setup` — creates `.codex`, `.claude`, `.gemini`, and `.config/opencode/plugins/forktty.generated.js` under that temporary home, not the real home directory.
+- `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= OPENCODE_CONFIG_DIR= forktty hooks setup` — creates `.codex`, `.claude`, `.gemini/config` for Antigravity, and `.config/opencode/plugins/forktty.generated.js` under that temporary home, not the real home directory.
 - `forktty hooks remove codex --dry-run` — prints `would remove` and leaves the Codex config unchanged.
 - `forktty hooks remove codex opencode` — removes only ForkTTY-managed Codex entries and the generated OpenCode plugin, preserving unrelated hook commands.
 - Launch the GTK app with no ForkTTY-managed hooks installed — it shows an Agent Hooks Available notification that suggests `forktty hooks setup`; if at least one provider is already configured and current, missing optional providers do not nag.
@@ -228,7 +228,7 @@ checking that the opt-in browser feature still builds and starts.
 ## Skill Installer Smoke
 
 - `forktty skills setup agents --dry-run` — prints `would install` but does not create `~/.agents/skills/forktty-agent-orchestration`.
-- `forktty skills setup codex gemini` — writes one shared `~/.agents/skills/forktty-agent-orchestration` skill, not duplicate provider directories.
+- `forktty skills setup codex` — writes the shared `~/.agents/skills/forktty-agent-orchestration` skill via the interoperable agents target.
 - `forktty skills setup claude` — writes `~/.claude/skills/forktty-agent-orchestration` or `$CLAUDE_CONFIG_DIR/skills/forktty-agent-orchestration`.
 - Create an unmanaged `SKILL.md` at the same destination, then run `forktty skills setup agents` — setup refuses to overwrite it.
 - `forktty skills remove agents` — moves the managed skill directory to a `.bak-*` backup and leaves no active skill with that name.

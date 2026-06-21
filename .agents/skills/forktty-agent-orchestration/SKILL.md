@@ -97,7 +97,7 @@ namespace or prefix when a host UI requires fully qualified tool names.
 
 ## Team Worker Procedure
 
-When the user asks to use team mode, another agent, Claude/Codex/Gemini review,
+When the user asks to use team mode, another agent, Claude/Codex/OpenCode review,
 or parallel workers:
 
 1. Create or reuse a team with a clear goal.
@@ -157,13 +157,10 @@ For long tasks, multi-agent work, or work that may survive context compaction:
 
 ## Provider Notes
 
-- Codex and Gemini-compatible tools discover interoperable skills from
-  `.agents/skills` workspace folders and user-level `~/.agents/skills`.
+- Codex and other Agent Skills-compatible tools discover interoperable skills
+  from `.agents/skills` workspace folders and user-level `~/.agents/skills`.
 - Claude Code discovers project skills from `.claude/skills` and personal
   skills from `~/.claude/skills`.
-- Gemini CLI also discovers `.gemini/skills` and `~/.gemini/skills`, but
-  `.agents/skills` is the interoperable alias and takes precedence in the same
-  tier.
 - Antigravity and OpenCode should still use ForkTTY hooks and MCP when
   configured; only assume skill discovery where the provider documents Agent
   Skills support.

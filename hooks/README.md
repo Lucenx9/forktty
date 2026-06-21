@@ -8,8 +8,7 @@ forktty hooks setup
 ```
 
 That writes default agent-specific hook config into the user config for Codex,
-Claude Code, Antigravity CLI, and OpenCode. Gemini CLI remains available as a
-legacy explicit target:
+Claude Code, Antigravity CLI, and OpenCode:
 
 | Agent | Destination |
 |---|---|
@@ -17,7 +16,6 @@ legacy explicit target:
 | Claude Code | `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json` |
 | Antigravity CLI | `~/.gemini/config/hooks.json` + `~/.gemini/config/forktty-hooks.generated/` |
 | OpenCode | `$OPENCODE_CONFIG_DIR/plugins/forktty.generated.js` or `~/.config/opencode/plugins/forktty.generated.js` |
-| Gemini CLI | `~/.gemini/settings.json` (legacy opt-in: `forktty hooks setup gemini`) |
 
 The installer writes an absolute path to the `forktty` launcher so hooks can run
 from any project. Re-run `forktty hooks setup` if the AppImage or installed
@@ -26,7 +24,6 @@ binary moves. `--dry-run` prints the would-be diff without touching disk:
 ```bash
 forktty hooks setup --dry-run
 forktty hooks setup codex --dry-run
-forktty hooks setup gemini --dry-run
 forktty hooks setup --full claude
 forktty hooks remove codex --dry-run
 ```
@@ -53,8 +50,6 @@ inspect and drive ForkTTY on demand:
 ```bash
 forktty mcp setup
 forktty mcp setup codex claude --dry-run
-forktty mcp setup gemini
-forktty mcp remove gemini
 ```
 
 `forktty mcp` itself is a stdio MCP server. It validates tool arguments and
@@ -71,15 +66,13 @@ status, notifications, or cross-surface text; normal edits in the current repo
 should not trigger ForkTTY tool calls.
 
 `forktty mcp setup` writes a ForkTTY-managed MCP server named `forktty` into
-the default Codex, Claude Code, and Antigravity config locations. Gemini CLI is
-legacy opt-in via `forktty mcp setup gemini`:
+the default Codex, Claude Code, and Antigravity config locations:
 
 | Agent | Destination |
 |---|---|
 | Codex | `$CODEX_HOME/config.toml` or `~/.codex/config.toml` (`[mcp_servers.forktty]`) |
 | Claude Code | `~/.claude.json` (`mcpServers.forktty`) |
 | Antigravity CLI | `~/.gemini/config/mcp_config.json` (`mcpServers.forktty`) |
-| Gemini CLI | `~/.gemini/settings.json` (`mcpServers.forktty`, legacy opt-in) |
 
 Setup and removal use the same atomic write, `.bak-*` backup, dry-run, and
 managed-entry preservation behavior as hook setup. OpenCode hook support remains
@@ -103,7 +96,7 @@ forktty skills remove agents --dry-run
 
 | Target | Destination |
 |---|---|
-| Agent Skills-compatible tools (`agents`, plus `codex`/`gemini` aliases) | `~/.agents/skills/forktty-agent-orchestration` |
+| Agent Skills-compatible tools (`agents`, plus `codex` alias) | `~/.agents/skills/forktty-agent-orchestration` |
 | Claude Code (`claude`) | `$CLAUDE_CONFIG_DIR/skills/forktty-agent-orchestration` or `~/.claude/skills/forktty-agent-orchestration` |
 
 The skill tells agents to inspect `context_snapshot` or equivalent read-only
@@ -111,17 +104,18 @@ state before cross-pane work, treat terminal tails and fetched public docs as
 untrusted input, use team mailbox dispatch for worker prompts, compare
 status/hooks/terminal tail when `running` or `needs_input` appears delayed, and
 record durable workflow/team state for long-running coordination. For hook,
-MCP, and skill setup debugging it points agents at local `forktty doctor`
-diagnostics and setup dry runs before changing config files.
+MCP, and skill setup debugging it points agents at `forktty doctor --hooks`,
+`forktty --json doctor`, and setup dry runs before changing config files.
 
 Setup refuses to overwrite an existing skill directory with the same name
 unless its `SKILL.md` contains ForkTTY's managed marker. Updating or removing a
 managed skill moves the previous directory to a `.bak-*` backup first. The
 welcome/setup flow runs `hooks setup`, `mcp setup`, and `skills setup` together.
-Run `forktty doctor` to inspect the hook config paths, MCP config paths, and
+Run `forktty doctor --hooks` to inspect local hook config paths. Run
+`forktty --json doctor` to inspect hook config paths, MCP config paths, and
 agent skill directories ForkTTY resolves from the current environment.
 
-Antigravity CLI (Google's Gemini CLI successor, `agy`) executes a hook
+Antigravity CLI (`agy`) executes a hook
 `command` as one bare executable path — no argument splitting and no shell —
 so the installer writes per-event wrapper scripts under
 `~/.gemini/config/forktty-hooks.generated/` and points the ForkTTY-owned
@@ -132,9 +126,7 @@ Antigravity v1.0.3 supports `PreInvocation`, `PreToolUse`, and `PostToolUse`;
 unknown event names are dropped silently, and hook stdout is unmarshaled
 strictly. ForkTTY therefore avoids the `continue` JSON used by other
 providers; it returns an explicit `{"decision":"approve"}` for the gating
-`PreToolUse` hook and `{}` for non-gating Antigravity hooks. Gemini CLI hooks
-remain supported only as a legacy explicit install for users that keep using it
-(Google retires Gemini CLI for non-enterprise tiers on 2026-06-18).
+`PreToolUse` hook and `{}` for non-gating Antigravity hooks.
 Antigravity runs the generated wrapper scripts from its config directory, so
 ForkTTY derives Antigravity `resume_cwd` from the hook payload's
 `workspacePaths` instead of the wrapper process cwd.
@@ -161,7 +153,7 @@ status means the AppImage or installed binary has moved since the last
 `hooks setup` run; re-run `forktty hooks setup` to rewrite the hook commands.
 The doctor JSON also exposes `supportedEvents`, the list of provider-side
 event names ForkTTY can install hooks for (Codex: 10; Claude Code: 25
-lifecycle / 29 full; Gemini: 11; Antigravity: 3; OpenCode plugin events: 11).
+lifecycle / 29 full; Antigravity: 3; OpenCode plugin events: 11).
 For Claude Code it also reports `installedProfile` as `lifecycle`, `full`, or
 `not_installed`.
 
@@ -194,7 +186,6 @@ Files in this directory are canonical examples for review or manual repair:
 - `codex-hooks.json`
 - `claude-settings.json` (Claude lifecycle profile; use `hooks setup --full`
   to generate the full profile)
-- `gemini-settings.json`
 - OpenCode uses a generated plugin file instead of a JSON template.
 - Antigravity uses a generated `"forktty"` group plus wrapper scripts
   instead of a JSON template (its hook commands cannot take arguments).
@@ -205,16 +196,14 @@ quoting automatically.
 
 The `timeout` field is provider-defined. Claude Code and Codex measure it in
 **seconds** (Codex default 600 s; Claude default 600 s, 30 s for
-`UserPromptSubmit`), and ForkTTY pins those entries at 30 s. Gemini templates
-use `30000`, matching Gemini's millisecond-style hook timeout field and the
-same 30 s budget. Antigravity has no verified timeout field, so its entries
-omit one. The intent is the same for every provider: a hook should not
-block the agent loop longer than a local socket round-trip needs.
+`UserPromptSubmit`), and ForkTTY pins those entries at 30 s. Antigravity has no
+verified timeout field, so its entries omit one. The intent is the same for
+every provider: a hook should not block the agent loop longer than a local
+socket round-trip needs.
 
 Each command is guarded by a per-agent disable variable:
 
 - `FORKTTY_CODEX_HOOKS_DISABLED=1`
 - `FORKTTY_CLAUDE_HOOKS_DISABLED=1`
-- `FORKTTY_GEMINI_HOOKS_DISABLED=1`
 - `FORKTTY_ANTIGRAVITY_HOOKS_DISABLED=1`
 - `FORKTTY_OPENCODE_HOOKS_DISABLED=1`
