@@ -93,6 +93,24 @@ pub struct AgentSession {
     pub last_activity_ms: u64,
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ClearedAgentMetadata {
+    statuses: Vec<ClearedStatusEntry>,
+    progress: Vec<ProgressEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClearedAgentSession {
+    agent_session: AgentSession,
+    metadata: ClearedAgentMetadata,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ClearedStatusEntry {
+    entry: StatusEntry,
+    hook: Option<StatusHookMetadata>,
+}
+
 fn is_zero_u64(value: &u64) -> bool {
     *value == 0
 }
@@ -318,6 +336,48 @@ const MAX_NOTIFICATIONS: usize = 1_000;
 const MAX_STATUS_ENTRIES: usize = 256;
 const MAX_PROGRESS_ENTRIES: usize = 256;
 const HOOK_TERMINAL_PROMPT_GUARD_NS: u128 = 2_000_000_000;
+
+fn agent_session_lifecycle_keeps_metadata(lifecycle: AgentSessionLifecycle) -> bool {
+    matches!(
+        lifecycle,
+        AgentSessionLifecycle::Running
+            | AgentSessionLifecycle::Idle
+            | AgentSessionLifecycle::NeedsInput
+            | AgentSessionLifecycle::Unknown
+    )
+}
+
+fn agent_metadata_aliases(agent: AgentKind) -> &'static [&'static str] {
+    match agent {
+        AgentKind::ClaudeCode => &["claude", "claude-code", "claude_code"],
+        AgentKind::Codex => &["codex"],
+        AgentKind::Antigravity => &["antigravity", "agy"],
+        AgentKind::OpenCode => &["opencode", "open-code", "open_code"],
+        AgentKind::Custom => &["custom"],
+    }
+}
+
+fn agent_metadata_status_key_matches(agent: AgentKind, key: &str) -> bool {
+    let Some(rest) = key.strip_prefix("agent:") else {
+        return false;
+    };
+    agent_metadata_aliases(agent).iter().any(|alias| {
+        rest == *alias
+            || rest
+                .strip_prefix(alias)
+                .is_some_and(|suffix| suffix == ":permission")
+    })
+}
+
+fn agent_metadata_progress_key_matches(agent: AgentKind, key: &str) -> bool {
+    let Some(rest) = key.strip_prefix("agent:") else {
+        return false;
+    };
+    agent_metadata_aliases(agent).iter().any(|alias| {
+        rest.strip_prefix(alias)
+            .is_some_and(|suffix| suffix.starts_with(':'))
+    })
+}
 
 impl WorkspaceModel {
     pub fn new() -> Self {
@@ -1112,7 +1172,26 @@ impl WorkspaceModel {
     }
 
     pub fn clear_surface_agent_session(&mut self, surface_id: &str) -> Option<AgentSession> {
-        self.surfaces.get_mut(surface_id)?.agent_session.take()
+        self.clear_surface_agent_session_with_metadata(surface_id)
+            .map(|cleared| cleared.agent_session)
+    }
+
+    pub fn clear_surface_agent_session_with_metadata(
+        &mut self,
+        surface_id: &str,
+    ) -> Option<ClearedAgentSession> {
+        let (workspace_id, agent_session) = {
+            let surface = self.surfaces.get_mut(surface_id)?;
+            let workspace_id = surface.workspace_id.clone();
+            let agent_session = surface.agent_session.take()?;
+            (workspace_id, agent_session)
+        };
+        let metadata =
+            self.clear_agent_metadata_if_no_active_session(&workspace_id, agent_session.agent);
+        Some(ClearedAgentSession {
+            agent_session,
+            metadata,
+        })
     }
 
     pub fn restore_surface_agent_session(
@@ -1153,6 +1232,24 @@ impl WorkspaceModel {
         }
         surface.agent_session = Some(agent_session);
         true
+    }
+
+    pub fn restore_surface_agent_session_with_metadata(
+        &mut self,
+        surface_id: &str,
+        cleared: ClearedAgentSession,
+    ) -> bool {
+        let Some(workspace_id) = self
+            .surfaces
+            .get(surface_id)
+            .map(|surface| surface.workspace_id.clone())
+        else {
+            return false;
+        };
+        if !self.restore_surface_agent_session(surface_id, cleared.agent_session) {
+            return false;
+        }
+        self.restore_agent_metadata(&workspace_id, cleared.metadata)
     }
 
     pub fn set_surface_agent_session_resume_cwd(
@@ -1201,14 +1298,26 @@ impl WorkspaceModel {
         surface_id: &str,
         lifecycle: AgentSessionLifecycle,
     ) -> bool {
-        let Some(surface) = self.surfaces.get_mut(surface_id) else {
-            return false;
+        self.set_surface_agent_session_lifecycle_with_cleared_metadata(surface_id, lifecycle)
+            .is_some()
+    }
+
+    pub fn set_surface_agent_session_lifecycle_with_cleared_metadata(
+        &mut self,
+        surface_id: &str,
+        lifecycle: AgentSessionLifecycle,
+    ) -> Option<ClearedAgentMetadata> {
+        let (workspace_id, agent) = {
+            let surface = self.surfaces.get_mut(surface_id)?;
+            let agent_session = surface.agent_session.as_mut()?;
+            agent_session.lifecycle = lifecycle;
+            (surface.workspace_id.clone(), agent_session.agent)
         };
-        let Some(agent_session) = surface.agent_session.as_mut() else {
-            return false;
-        };
-        agent_session.lifecycle = lifecycle;
-        true
+        Some(if agent_session_lifecycle_keeps_metadata(lifecycle) {
+            ClearedAgentMetadata::default()
+        } else {
+            self.clear_agent_metadata_if_no_active_session(&workspace_id, agent)
+        })
     }
 
     pub fn set_surface_agent_session_last_activity_ms(
@@ -1282,6 +1391,7 @@ impl WorkspaceModel {
                     }
                 }
                 let removed = self.surfaces.remove(surface_id)?;
+                self.clear_removed_surface_metadata(&removed);
                 self.recompute_workspace_attention(&workspace_id);
                 return Some(removed);
             }
@@ -1333,6 +1443,7 @@ impl WorkspaceModel {
                 workspace.focused_surface_id = first;
             }
         }
+        self.clear_removed_surface_metadata(&removed);
         self.recompute_workspace_attention(&workspace_id);
         Some(removed)
     }
@@ -1798,6 +1909,165 @@ impl WorkspaceModel {
         };
         entries.clear();
         true
+    }
+
+    pub fn restore_agent_metadata(
+        &mut self,
+        workspace_id: &str,
+        metadata: ClearedAgentMetadata,
+    ) -> bool {
+        if !self.workspaces.contains_key(workspace_id) {
+            return false;
+        }
+        for status in metadata.statuses {
+            let entry = status.entry;
+            let _ = self.set_status_with_hook_metadata(
+                workspace_id,
+                entry.key,
+                entry.label,
+                entry.value,
+                entry.color,
+                status.hook,
+            );
+        }
+        for entry in metadata.progress {
+            let _ = self.set_progress(
+                workspace_id,
+                entry.key,
+                entry.label,
+                entry.value,
+                entry.total,
+            );
+        }
+        true
+    }
+
+    fn clear_removed_surface_metadata(&mut self, surface: &Surface) {
+        let surface_prefix = format!("surface:{}:", surface.id);
+        self.clear_status_keys_matching(&surface.workspace_id, |key| {
+            key.starts_with(&surface_prefix)
+        });
+        self.clear_progress_keys_matching(&surface.workspace_id, |key| {
+            key.starts_with(&surface_prefix)
+        });
+        if let Some(agent_session) = surface.agent_session.as_ref() {
+            self.clear_agent_metadata_if_no_active_session(
+                &surface.workspace_id,
+                agent_session.agent,
+            );
+        }
+    }
+
+    fn clear_agent_metadata_if_no_active_session(
+        &mut self,
+        workspace_id: &str,
+        agent: AgentKind,
+    ) -> ClearedAgentMetadata {
+        if self.workspace_has_active_agent_metadata_session(workspace_id, agent) {
+            return ClearedAgentMetadata::default();
+        }
+        let metadata = self.agent_metadata_snapshot(workspace_id, agent);
+        self.clear_status_keys_matching(workspace_id, |key| {
+            agent_metadata_status_key_matches(agent, key)
+        });
+        self.clear_progress_keys_matching(workspace_id, |key| {
+            agent_metadata_progress_key_matches(agent, key)
+        });
+        metadata
+    }
+
+    fn agent_metadata_snapshot(
+        &self,
+        workspace_id: &str,
+        agent: AgentKind,
+    ) -> ClearedAgentMetadata {
+        let statuses = self
+            .statuses
+            .get(workspace_id)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter(|entry| agent_metadata_status_key_matches(agent, &entry.key))
+                    .map(|entry| ClearedStatusEntry {
+                        entry: entry.clone(),
+                        hook: self
+                            .status_hooks
+                            .get(workspace_id)
+                            .and_then(|hooks| hooks.get(&entry.key))
+                            .cloned(),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let progress = self
+            .progress
+            .get(workspace_id)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter(|entry| agent_metadata_progress_key_matches(agent, &entry.key))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        ClearedAgentMetadata { statuses, progress }
+    }
+
+    fn workspace_has_active_agent_metadata_session(
+        &self,
+        workspace_id: &str,
+        agent: AgentKind,
+    ) -> bool {
+        self.surfaces.values().any(|surface| {
+            surface.workspace_id == workspace_id
+                && surface.agent_session.as_ref().is_some_and(|session| {
+                    session.agent == agent
+                        && agent_session_lifecycle_keeps_metadata(session.lifecycle)
+                })
+        })
+    }
+
+    fn clear_status_keys_matching(
+        &mut self,
+        workspace_id: &str,
+        mut should_clear: impl FnMut(&str) -> bool,
+    ) {
+        let mut keys = BTreeSet::new();
+        if let Some(entries) = self.statuses.get(workspace_id) {
+            keys.extend(
+                entries
+                    .iter()
+                    .filter(|entry| should_clear(&entry.key))
+                    .map(|entry| entry.key.clone()),
+            );
+        }
+        if let Some(hooks) = self.status_hooks.get(workspace_id) {
+            keys.extend(hooks.keys().filter(|key| should_clear(key)).cloned());
+        }
+        for key in keys {
+            let _ = self.clear_status(workspace_id, Some(&key));
+        }
+    }
+
+    fn clear_progress_keys_matching(
+        &mut self,
+        workspace_id: &str,
+        mut should_clear: impl FnMut(&str) -> bool,
+    ) {
+        let keys = self
+            .progress
+            .get(workspace_id)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter(|entry| should_clear(&entry.key))
+                    .map(|entry| entry.key.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for key in keys {
+            let _ = self.clear_progress(workspace_id, Some(&key));
+        }
     }
 
     fn next_workspace_id(&mut self) -> WorkspaceId {
@@ -3015,6 +3285,125 @@ mod tests {
         assert!(model.restore_surface_agent_session(&surface_id, forgotten));
         assert!(model.surface(&surface_id).unwrap().agent_session.is_some());
         assert_eq!(model.to_session_data().surfaces.len(), 1);
+    }
+
+    #[test]
+    fn ending_last_agent_session_removes_agent_status_and_progress() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let surface_id = workspace.focused_surface_id.clone();
+
+        assert!(model.set_surface_agent_session(
+            &surface_id,
+            crate::agents::AgentKind::Codex,
+            "codex-session-1"
+        ));
+        model
+            .set_status(&workspace.id, "agent:codex", "Codex", "Ready", None)
+            .unwrap();
+        model
+            .set_status(
+                &workspace.id,
+                "agent:codex:permission",
+                "Codex mode",
+                "bypassPermissions",
+                Some("red".to_string()),
+            )
+            .unwrap();
+        model
+            .set_status(&workspace.id, "agent:claude", "Claude", "Ready", None)
+            .unwrap();
+        model
+            .set_progress(
+                &workspace.id,
+                "agent:codex:tokens",
+                "Codex tokens",
+                42.0,
+                Some(100.0),
+            )
+            .unwrap();
+        model
+            .set_progress(&workspace.id, "build", "Build", 1.0, Some(2.0))
+            .unwrap();
+
+        assert!(model.set_surface_agent_session_lifecycle(
+            &surface_id,
+            crate::model::AgentSessionLifecycle::Ended
+        ));
+
+        let statuses = model.list_status(&workspace.id);
+        assert!(!statuses.iter().any(|status| status.key == "agent:codex"));
+        assert!(!statuses
+            .iter()
+            .any(|status| status.key == "agent:codex:permission"));
+        assert!(statuses.iter().any(|status| status.key == "agent:claude"));
+        let progress = model.list_progress(&workspace.id);
+        assert!(!progress
+            .iter()
+            .any(|entry| entry.key == "agent:codex:tokens"));
+        assert!(progress.iter().any(|entry| entry.key == "build"));
+    }
+
+    #[test]
+    fn closing_agent_surface_removes_surface_and_agent_metadata() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let surface_id = workspace.focused_surface_id.clone();
+        let agent_surface = model.add_tab(&surface_id).expect("add tab");
+
+        assert!(model.set_surface_agent_session(
+            &agent_surface.id,
+            crate::agents::AgentKind::OpenCode,
+            "opencode-session-1"
+        ));
+        model
+            .set_status(&workspace.id, "agent:opencode", "OpenCode", "Ready", None)
+            .unwrap();
+        model
+            .set_status(
+                &workspace.id,
+                "agent:opencode:permission",
+                "OpenCode mode",
+                "bypassPermissions",
+                Some("red".to_string()),
+            )
+            .unwrap();
+        model
+            .set_status(
+                &workspace.id,
+                format!("surface:{}:status", agent_surface.id),
+                "Terminal",
+                "Closed",
+                None,
+            )
+            .unwrap();
+        model
+            .set_progress(
+                &workspace.id,
+                "agent:opencode:tokens",
+                "OpenCode tokens",
+                10.0,
+                Some(100.0),
+            )
+            .unwrap();
+
+        let removed = model
+            .close_surface(&agent_surface.id)
+            .expect("surface removed");
+        assert_eq!(removed.id, agent_surface.id);
+
+        let statuses = model.list_status(&workspace.id);
+        assert!(!statuses.iter().any(|status| status.key == "agent:opencode"));
+        assert!(!statuses
+            .iter()
+            .any(|status| status.key == "agent:opencode:permission"));
+        assert!(!statuses.iter().any(|status| status
+            .key
+            .starts_with(&format!("surface:{}:", agent_surface.id))));
+        assert!(!model
+            .list_progress(&workspace.id)
+            .iter()
+            .any(|entry| entry.key == "agent:opencode:tokens"));
     }
 
     #[test]

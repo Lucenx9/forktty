@@ -180,7 +180,7 @@ They render in the ForkTTY UI status row and can be inspected from the CLI:
 |---|---|---|---|
 | `agent:<key>` | lifecycle, prompt, permission, tool, compact, stop, notification events | session-end | `green` ready, `blue` running, `yellow` needs input / compacting / permission, `red` error |
 | `agent:<key>:permission` | events that include `permission_mode` | session-end | `muted` for documented-safe or unknown modes, `yellow` for `acceptEdits`/`auto`/`dontAsk`, `red` for `bypassPermissions` |
-| `agent:claude:tokens` | prompt-submit (Claude only, when a transcript is available) | not cleared automatically | progress against `FORKTTY_HOOK_TOKEN_CEILING` (default 200,000) |
+| `agent:claude:tokens` | prompt-submit (Claude only, when a transcript is available) | last Claude session ended, closed, forgotten, or hibernated | progress against `FORKTTY_HOOK_TOKEN_CEILING` (default 200,000) |
 
 Unknown provider modes stay `muted`; ForkTTY only colors permission values
 that are documented by the provider.

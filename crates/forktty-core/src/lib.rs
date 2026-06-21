@@ -35,10 +35,11 @@ pub use browser_history::{Bookmark, BookmarkStore, HistoryError, HistoryStore, V
 pub use config::{AppConfig, AppearanceConfig, GeneralConfig, NotificationConfig, UpdateConfig};
 pub use model::{
     has_uri_scheme, normalize_browser_url, validated_browser_url, AgentSession,
-    AgentSessionLifecycle, LogEntry, LogLevel, MovePosition, NotificationItem, NotificationKind,
-    PaneNode, ProgressEntry, SplitAxis, StatusEntry, StatusHookMetadata, Surface, SurfaceId,
-    SurfaceKind, TerminalNotificationMetadata, Workspace, WorkspaceId, WorkspaceModel,
-    WorkspaceSelector, MAX_BROWSER_URL_BYTES, MAX_PERSISTED_SCROLLBACK_BYTES,
+    AgentSessionLifecycle, ClearedAgentMetadata, ClearedAgentSession, LogEntry, LogLevel,
+    MovePosition, NotificationItem, NotificationKind, PaneNode, ProgressEntry, SplitAxis,
+    StatusEntry, StatusHookMetadata, Surface, SurfaceId, SurfaceKind, TerminalNotificationMetadata,
+    Workspace, WorkspaceId, WorkspaceModel, WorkspaceSelector, MAX_BROWSER_URL_BYTES,
+    MAX_PERSISTED_SCROLLBACK_BYTES,
 };
 pub use notification::{
     close_desktop_notification, dispatch_notification, NotificationDispatchError,

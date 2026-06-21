@@ -3195,7 +3195,12 @@ fn hibernate_agent_surface(
         let agent = agent_session.agent;
         let session_id = agent_session.session_id.clone();
         let permission_mode = agent_session.permission_mode.clone();
-        model.set_surface_agent_session_lifecycle(surface_id, AgentSessionLifecycle::Suspended);
+        let cleared_agent_metadata = model
+            .set_surface_agent_session_lifecycle_with_cleared_metadata(
+                surface_id,
+                AgentSessionLifecycle::Suspended,
+            )
+            .ok_or(DispatchError::NotFound("agent session".to_string()))?;
         model.set_surface_agent_session_last_activity_ms(surface_id, now_ms);
         let _ = model.mark_surface_unread(surface_id, false);
         let status = model.set_status(
@@ -3209,6 +3214,7 @@ fn hibernate_agent_surface(
             model.set_surface_agent_session_lifecycle(surface_id, AgentSessionLifecycle::Idle);
             model.set_surface_agent_session_last_activity_ms(surface_id, previous_last_activity_ms);
             let _ = model.mark_surface_unread(surface_id, previous_unread);
+            let _ = model.restore_agent_metadata(&workspace_id, cleared_agent_metadata);
             if let Some(previous_status) = previous_status {
                 let _ = model.set_status(
                     &workspace_id,
@@ -11123,7 +11129,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hook_session_status_surface_close_invalidates_learned_target() {
+    async fn hook_session_status_surface_close_clears_status_and_invalidates_learned_target() {
         let (state, _backend) = test_state();
         let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
         let workspace_id = workspaces[0]["id"].as_str().unwrap().to_string();
@@ -11200,7 +11206,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(original_statuses[0]["value"], "Ready");
+        assert_eq!(original_statuses, json!([]));
         assert_eq!(other_statuses[0]["value"], "Untargeted after close");
     }
 
@@ -12616,6 +12622,7 @@ mod tests {
         let surface_id = {
             let mut model = state.model.lock().unwrap();
             let workspace = model.active_workspace().unwrap();
+            let workspace_id = workspace.id.clone();
             let surface_id = workspace.focused_surface_id.clone();
             assert!(model.set_surface_agent_session(
                 &surface_id,
@@ -12625,6 +12632,18 @@ mod tests {
             assert!(model
                 .set_surface_agent_session_lifecycle(&surface_id, AgentSessionLifecycle::Idle,));
             assert!(model.set_surface_agent_session_last_activity_ms(&surface_id, 1));
+            assert!(model
+                .set_status(&workspace_id, "agent:codex", "Codex", "Ready", None)
+                .is_some());
+            assert!(model
+                .set_progress(
+                    &workspace_id,
+                    "agent:codex:tokens",
+                    "Codex tokens",
+                    42.0,
+                    Some(100.0),
+                )
+                .is_some());
             surface_id
         };
 
@@ -12656,6 +12675,7 @@ mod tests {
             surface.agent_session.as_ref().unwrap().lifecycle,
             AgentSessionLifecycle::Suspended
         );
+        assert_eq!(model.list_status(&surface.workspace_id).len(), 1);
         assert_eq!(
             model.list_status(&surface.workspace_id)[0].key,
             surface_status_key(&surface_id)
@@ -12664,6 +12684,7 @@ mod tests {
             model.list_status(&surface.workspace_id)[0].value,
             "Suspended"
         );
+        assert!(model.list_progress(&surface.workspace_id).is_empty());
     }
 
     #[tokio::test]
@@ -12706,6 +12727,18 @@ mod tests {
                     Some("green".to_string()),
                 )
                 .is_some());
+            assert!(model
+                .set_status(&workspace_id, "agent:codex", "Codex", "Ready", None)
+                .is_some());
+            assert!(model
+                .set_progress(
+                    &workspace_id,
+                    "agent:codex:tokens",
+                    "Codex tokens",
+                    42.0,
+                    Some(100.0),
+                )
+                .is_some());
             surface_id
         };
 
@@ -12734,10 +12767,18 @@ mod tests {
         assert_eq!(surface.agent_session.as_ref().unwrap().last_activity_ms, 1);
         assert!(surface.unread);
         let statuses = model.list_status(&surface.workspace_id);
-        assert_eq!(statuses.len(), 1);
-        assert_eq!(statuses[0].key, surface_status_key(&surface_id));
-        assert_eq!(statuses[0].value, "Running");
-        assert_eq!(statuses[0].color.as_deref(), Some("green"));
+        assert_eq!(statuses.len(), 2);
+        assert!(statuses.iter().any(|status| {
+            status.key == surface_status_key(&surface_id)
+                && status.value == "Running"
+                && status.color.as_deref() == Some("green")
+        }));
+        assert!(statuses
+            .iter()
+            .any(|status| status.key == "agent:codex" && status.value == "Ready"));
+        let progress = model.list_progress(&surface.workspace_id);
+        assert_eq!(progress.len(), 1);
+        assert_eq!(progress[0].key, "agent:codex:tokens");
     }
 
     #[tokio::test]

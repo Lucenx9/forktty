@@ -429,23 +429,25 @@ pub(super) fn agent_reply_payload(text: &str) -> Option<String> {
 pub(super) fn forget_agent_surface(
     state: &SocketAppState,
     surface_id: &str,
-) -> Option<forktty_core::AgentSession> {
+) -> Option<forktty_core::ClearedAgentSession> {
     state
         .model
         .lock()
         .ok()?
-        .clear_surface_agent_session(surface_id)
+        .clear_surface_agent_session_with_metadata(surface_id)
 }
 
 pub(super) fn restore_forgotten_agent_surface(
     state: &SocketAppState,
     surface_id: &str,
-    agent_session: forktty_core::AgentSession,
+    agent_session: forktty_core::ClearedAgentSession,
 ) -> bool {
     state
         .model
         .lock()
-        .map(|mut model| model.restore_surface_agent_session(surface_id, agent_session))
+        .map(|mut model| {
+            model.restore_surface_agent_session_with_metadata(surface_id, agent_session)
+        })
         .unwrap_or(false)
 }
 
@@ -639,7 +641,7 @@ fn show_agent_forget_toast(
     state: SocketAppState,
     ui: AgentPanelUi,
     surface_id: String,
-    forgotten: forktty_core::AgentSession,
+    forgotten: forktty_core::ClearedAgentSession,
 ) {
     let toast = adw::Toast::new("Agent forgotten");
     toast.set_button_label(Some("Undo"));

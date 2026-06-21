@@ -68,6 +68,10 @@ All notable changes to ForkTTY are documented here.
 - Agent sessions attached to terminal panes are now marked `ended` when the
   terminal child exits, preventing stale `running`/`needs input` state after an
   agent process has already stopped.
+- Closed, forgotten, hibernated, or ended agent panes now clear their provider
+  status, permission mode, token progress, and closed-surface metadata when no
+  same-provider session is still active in that workspace, preventing stale
+  agent names in the workspace sidebar summary.
 - AppImage packaging now preserves the `libgtk4-layer-shell` runtime SONAME
   alongside the unversioned development name, so embedded Ghostty panes can
   load on hosts without a system gtk4-layer-shell installation.

@@ -1299,16 +1299,38 @@ fn agent_hud_forget_removes_and_can_restore_tracked_agent() {
         PathBuf::from("/tmp/forktty.sock"),
     )
     .with_notification_dispatch(false);
-    let surface_id = {
+    let (workspace_id, surface_id) = {
         let mut model = model.lock().unwrap();
         let workspace = model.create_workspace("main", "/tmp/main");
+        let workspace_id = workspace.id.clone();
         let surface_id = workspace.focused_surface_id.clone();
         assert!(model.set_surface_agent_session(
             &surface_id,
             forktty_core::AgentKind::Codex,
             "codex-session",
         ));
-        surface_id
+        model
+            .set_status(&workspace_id, "agent:codex", "Codex", "Ready", None)
+            .unwrap();
+        model
+            .set_status(
+                &workspace_id,
+                "agent:codex:permission",
+                "Codex mode",
+                "bypassPermissions",
+                Some("red".to_string()),
+            )
+            .unwrap();
+        model
+            .set_progress(
+                &workspace_id,
+                "agent:codex:tokens",
+                "Codex tokens",
+                42.0,
+                Some(100.0),
+            )
+            .unwrap();
+        (workspace_id, surface_id)
     };
 
     let forgotten = forget_agent_surface(&state, &surface_id).expect("agent session forgotten");
@@ -1316,6 +1338,8 @@ fn agent_hud_forget_removes_and_can_restore_tracked_agent() {
         let model = model.lock().unwrap();
         assert!(model.surface(&surface_id).is_some());
         assert!(agent_hud_rows(&model, 1_700_000_300_000).is_empty());
+        assert!(model.list_status(&workspace_id).is_empty());
+        assert!(model.list_progress(&workspace_id).is_empty());
     }
 
     assert!(restore_forgotten_agent_surface(
@@ -1327,6 +1351,16 @@ fn agent_hud_forget_removes_and_can_restore_tracked_agent() {
     let rows = agent_hud_rows(&model, 1_700_000_300_000);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].agent_label, "Codex");
+    assert_eq!(model.list_status(&workspace_id).len(), 2);
+    assert!(model
+        .list_status(&workspace_id)
+        .iter()
+        .any(|entry| entry.key == "agent:codex" && entry.value == "Ready"));
+    assert_eq!(model.list_progress(&workspace_id).len(), 1);
+    assert_eq!(
+        model.list_progress(&workspace_id)[0].key,
+        "agent:codex:tokens"
+    );
 }
 
 #[test]
