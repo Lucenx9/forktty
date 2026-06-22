@@ -48,7 +48,7 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
             ("Split Right", "Ctrl+Shift+H"),
             ("Split Down", SPLIT_VERTICAL_SHORTCUT),
             ("Restart Pane", RESTART_PANE_SHORTCUT),
-            ("Close Pane", "Ctrl+Shift+W"),
+            ("Close Pane...", "Ctrl+Shift+W"),
             ("Maximize Pane", "Ctrl+Shift+Enter"),
         ],
     );
@@ -68,10 +68,16 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
         &[
             ("New Workspace", "Ctrl+Shift+N"),
             ("Open Workspace", "Ctrl+Shift+O"),
+        ],
+    );
+    append_shortcut_group(
+        &content,
+        "General",
+        &[
             ("Command Palette", "Ctrl+Shift+P"),
             ("Agents", "Command Palette"),
             ("Notifications", "Ctrl+Shift+M"),
-            ("Keyboard Shortcuts", "F1"),
+            ("Keyboard Shortcuts", "Ctrl+? / F1"),
             ("Toggle Sidebar", "Ctrl+B / F9"),
             ("Settings", "Ctrl+,"),
         ],
@@ -83,11 +89,11 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
             ("Copy", "Ctrl+Shift+C"),
             ("Paste", "Ctrl+Shift+V"),
             ("Select All", "Ctrl+Shift+A"),
-            ("Find", "Ctrl+Shift+F"),
+            ("Find in Terminal", "Ctrl+Shift+F"),
             ("Zoom In", TERMINAL_ZOOM_IN_SHORTCUT),
             ("Zoom Out", TERMINAL_ZOOM_OUT_SHORTCUT),
-            ("Reset Zoom", TERMINAL_ZOOM_RESET_SHORTCUT),
-            ("Reset and Clear", "Command Palette / Context Menu"),
+            ("Reset Terminal Zoom", TERMINAL_ZOOM_RESET_SHORTCUT),
+            ("Reset and Clear Terminal", "Command Palette / Context Menu"),
             ("Context Menu", "Right Click"),
         ],
     );
@@ -183,7 +189,7 @@ pub(super) fn show_command_palette_with_query(
     let header = gtk::Box::new(gtk::Orientation::Vertical, 2);
     header.add_css_class("ft-dialog-header");
     let title = gtk::Label::builder()
-        .label("Run Command")
+        .label("Command Palette")
         .xalign(0.0)
         .build();
     title.add_css_class("ft-dialog-title");
@@ -197,7 +203,9 @@ pub(super) fn show_command_palette_with_query(
         .placeholder_text("Search commands or shortcuts")
         .hexpand(true)
         .build();
-    search.update_property(&[gtk::accessible::Property::Label("Search commands")]);
+    search.update_property(&[gtk::accessible::Property::Label(
+        "Search commands or shortcuts",
+    )]);
     search.set_tooltip_text(Some("Filter the command list"));
     search.add_css_class("command-search");
     body.append(&search);
@@ -419,7 +427,7 @@ pub(super) fn show_command_palette_with_query(
             activate_app_action(&parent, "toggle-sidebar");
         }
     });
-    command!("Keyboard Shortcuts", Some("F1"), {
+    command!("Keyboard Shortcuts", Some("Ctrl+? / F1"), {
         let parent = parent.clone();
         let dialog = dialog.clone();
         move || {
@@ -587,7 +595,7 @@ pub(super) fn show_command_palette_with_query(
             }
         });
     }
-    command!("Close Workspace", None, {
+    command!("Close Workspace...", None, {
         let state = state.clone();
         let parent = parent.clone();
         let dialog = dialog.clone();
@@ -786,9 +794,14 @@ fn expand_shortcut_token(token: &str) -> Vec<String> {
                 } else {
                     modifier
                 };
-                return vec![normalized.to_string(), rest.to_string()];
+                let mut expanded = vec![normalized.to_string()];
+                expanded.extend(expand_shortcut_token(rest));
+                return expanded;
             }
         }
+    }
+    if token == "?" {
+        return vec!["question".to_string()];
     }
     vec![token.to_string()]
 }

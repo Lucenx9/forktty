@@ -234,7 +234,7 @@ pub(super) fn install_actions(
     app.set_accels_for_action("app.toggle-maximize-pane", &["<Control><Shift>Return"]);
     app.set_accels_for_action("app.notifications", &["<Control><Shift>M"]);
     app.set_accels_for_action("app.settings", &["<Control>comma"]);
-    app.set_accels_for_action("app.shortcuts", &["F1"]);
+    app.set_accels_for_action("app.shortcuts", &["<Control>question", "F1"]);
     app.set_accels_for_action("app.toggle-sidebar", &["F9", "<Control>b"]);
     if quake_mode {
         app.set_accels_for_action("app.toggle-quake", &["F12"]);

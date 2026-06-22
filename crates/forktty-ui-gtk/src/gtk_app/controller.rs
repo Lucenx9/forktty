@@ -124,6 +124,7 @@ pub(super) fn build_embedded_ghostty_scroll_view(
     surface: &gtk::Widget,
     scrollbar: GhosttyScrollbarPolicy,
 ) -> gtk::Widget {
+    surface.add_css_class("forktty-terminal-focus-boundary");
     surface.set_hexpand(true);
     surface.set_vexpand(true);
     let scroller = gtk::ScrolledWindow::builder()
@@ -2355,6 +2356,7 @@ fn install_embedded_ghostty_accelerators(widget: &gtk::Widget, embedder: Rc<Ghos
 pub(super) struct EmbeddedContextMenuAction {
     pub(super) icon_name: &'static str,
     pub(super) label: &'static str,
+    pub(super) shortcut: Option<&'static str>,
     pub(super) action: EmbeddedSurfaceAction,
 }
 
@@ -2362,26 +2364,31 @@ pub(super) const EMBEDDED_CONTEXT_MENU_ACTIONS: &[EmbeddedContextMenuAction] = &
     EmbeddedContextMenuAction {
         icon_name: "forktty-copy-symbolic",
         label: "Copy",
+        shortcut: Some("Ctrl+Shift+C"),
         action: EmbeddedSurfaceAction::Copy,
     },
     EmbeddedContextMenuAction {
         icon_name: "forktty-paste-symbolic",
         label: "Paste",
+        shortcut: Some("Ctrl+Shift+V"),
         action: EmbeddedSurfaceAction::Paste,
     },
     EmbeddedContextMenuAction {
         icon_name: "forktty-select-all-symbolic",
         label: "Select All",
+        shortcut: Some("Ctrl+Shift+A"),
         action: EmbeddedSurfaceAction::SelectAll,
     },
     EmbeddedContextMenuAction {
         icon_name: "forktty-search-symbolic",
         label: "Find",
+        shortcut: Some("Ctrl+Shift+F"),
         action: EmbeddedSurfaceAction::StartSearch,
     },
     EmbeddedContextMenuAction {
         icon_name: "forktty-clear-symbolic",
         label: "Reset and Clear",
+        shortcut: None,
         action: EmbeddedSurfaceAction::ClearScreen,
     },
 ];
@@ -2472,11 +2479,12 @@ fn build_embedded_ghostty_context_menu(
         let embedder_for_action = Rc::clone(&embedder);
         let widget_for_action = widget.clone();
         let action = item.action;
-        add_context_menu_item(
+        add_context_menu_item_with_shortcut(
             &menu,
             &popover,
             item.icon_name,
             item.label,
+            item.shortcut,
             false,
             move || {
                 perform_embedded_context_action(&embedder_for_action, &widget_for_action, action);

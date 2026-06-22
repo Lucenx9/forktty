@@ -436,6 +436,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         }
     }
     app_menu.set_popover(Some(&build_app_menu_popover(&window)));
+    install_main_menu_shortcut(&window, &app_menu);
     {
         let window = window.clone();
         minimize.connect_clicked(move |_| window.minimize());
@@ -804,11 +805,12 @@ fn build_app_menu_popover(parent: &adw::ApplicationWindow) -> gtk::Popover {
             }
         },
     );
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-settings-symbolic",
         "Settings",
+        Some("Ctrl+,"),
         false,
         {
             let parent = parent.clone();
@@ -817,11 +819,12 @@ fn build_app_menu_popover(parent: &adw::ApplicationWindow) -> gtk::Popover {
             }
         },
     );
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-keyboard-symbolic",
         "Keyboard Shortcuts",
+        Some("Ctrl+?"),
         false,
         {
             let parent = parent.clone();
@@ -846,6 +849,52 @@ fn build_app_menu_popover(parent: &adw::ApplicationWindow) -> gtk::Popover {
 
     popover.set_child(Some(&menu));
     popover
+}
+
+fn install_main_menu_shortcut(window: &adw::ApplicationWindow, app_menu: &gtk::MenuButton) {
+    let controller = gtk::EventControllerKey::new();
+    controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let window_weak = window.downgrade();
+    let app_menu = app_menu.downgrade();
+    controller.connect_key_pressed(move |_, key, _, modifiers| {
+        let modified = modifiers.intersects(
+            gtk::gdk::ModifierType::CONTROL_MASK
+                | gtk::gdk::ModifierType::ALT_MASK
+                | gtk::gdk::ModifierType::SUPER_MASK
+                | gtk::gdk::ModifierType::SHIFT_MASK,
+        );
+        if key == gtk::gdk::Key::F10 && !modified {
+            if let (Some(window), Some(app_menu)) = (window_weak.upgrade(), app_menu.upgrade()) {
+                if !main_menu_shortcut_should_open(
+                    gtk::prelude::GtkWindowExt::focus(&window).as_ref(),
+                ) {
+                    return glib::Propagation::Proceed;
+                }
+                app_menu.popup();
+                return glib::Propagation::Stop;
+            }
+        }
+        glib::Propagation::Proceed
+    });
+    window.add_controller(controller);
+}
+
+fn main_menu_shortcut_should_open(focus: Option<&gtk::Widget>) -> bool {
+    !focus.is_some_and(|focus| {
+        widget_or_ancestor_has_css_class(focus, "ghostty-terminal")
+            || widget_or_ancestor_has_css_class(focus, "forktty-terminal-focus-boundary")
+    })
+}
+
+fn widget_or_ancestor_has_css_class(widget: &gtk::Widget, class_name: &str) -> bool {
+    let mut current = Some(widget.clone());
+    while let Some(widget) = current {
+        if widget.has_css_class(class_name) {
+            return true;
+        }
+        current = widget.parent();
+    }
+    false
 }
 
 pub(super) fn default_startup_workspace_dir_from(

@@ -343,11 +343,12 @@ pub(super) fn build_terminal_context_menu(
     }
 
     let terminal_for_copy = terminal.downgrade_widget();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-copy-symbolic",
         "Copy",
+        Some("Ctrl+Shift+C"),
         false,
         move || {
             if let Some(terminal) = terminal_for_copy.upgrade() {
@@ -357,11 +358,12 @@ pub(super) fn build_terminal_context_menu(
     );
 
     let terminal_for_paste = terminal.downgrade_widget();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-paste-symbolic",
         "Paste",
+        Some("Ctrl+Shift+V"),
         false,
         move || {
             if let Some(terminal) = terminal_for_paste.upgrade() {
@@ -371,11 +373,12 @@ pub(super) fn build_terminal_context_menu(
     );
 
     let terminal_for_select = terminal.downgrade_widget();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-select-all-symbolic",
         "Select All",
+        Some("Ctrl+Shift+A"),
         false,
         move || {
             if let Some(terminal) = terminal_for_select.upgrade() {

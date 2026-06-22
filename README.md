@@ -244,8 +244,10 @@ command palette for most navigation and pane actions:
 - `Ctrl+B` or `F9`: toggle workspace sidebar
 - Agents: titlebar button or command palette
 - `Ctrl+Shift+M`: notifications
-- `F1`: keyboard shortcuts
+- `Ctrl+?` (`F1` also works): keyboard shortcuts
 - `Ctrl+,`: settings
+- `F10`: main menu when focus is outside terminal content; terminal panes keep
+  plain `F10` for TUI apps
 
 ## Socket CLI
 

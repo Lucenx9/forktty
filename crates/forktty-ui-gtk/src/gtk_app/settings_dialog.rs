@@ -183,7 +183,7 @@ pub(super) fn show_settings_dialog_page(
     let (team_provider_section, team_provider_list) = settings_section("Team workers", "");
     let team_default_agent = settings_combo_row(
         "Default provider",
-        "Auto uses the provider order below and skips unavailable harnesses.",
+        "Auto uses the provider order below and skips disabled and unavailable providers.",
         TEAM_DEFAULT_AGENT_ITEMS,
         &loaded.team.default_agent,
     );
@@ -222,7 +222,7 @@ pub(super) fn show_settings_dialog_page(
     agents_content.append(&team_provider_section);
 
     let (provider_detection_section, provider_detection_list) =
-        settings_section("Detected Harnesses", "");
+        settings_section("Detected Providers", "");
     append_team_provider_detection_rows(&provider_detection_list, &loaded.team);
     agents_content.append(&provider_detection_section);
 
@@ -774,7 +774,7 @@ pub(super) fn show_settings_dialog_page(
             show_destructive_confirmation(
                 &confirmation_parent,
                 "Reset Settings?",
-                "Restore ForkTTY settings to their default values. This changes appearance, workspace, privacy, and notification preferences.",
+                "Restore ForkTTY settings to their default values. This changes appearance, workspace, team provider preferences, privacy, and notification preferences.",
                 "Reset Settings",
                 move || {
                     let defaults = config::AppConfig::default();
@@ -836,7 +836,14 @@ pub(super) fn show_settings_dialog_page(
     });
 
     window.present();
-    interface_nav.grab_focus();
+    match initial_page {
+        SettingsInitialPage::Interface => {
+            interface_nav.grab_focus();
+        }
+        SettingsInitialPage::Agents => {
+            agents_nav.grab_focus();
+        }
+    };
 }
 
 fn apply_settings_dialog_chrome(window: &gtk::Window) {

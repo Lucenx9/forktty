@@ -244,7 +244,10 @@ pub(super) fn install_escape_close(window: &gtk::Window) {
 }
 
 const FORKTTY_SUPPORT_URI: &str = "https://ko-fi.com/lucenx9";
+const FORKTTY_WEBSITE_URI: &str = env!("CARGO_PKG_HOMEPAGE");
 const FORKTTY_REPOSITORY_URI: &str = env!("CARGO_PKG_REPOSITORY");
+const FORKTTY_ISSUES_URI: &str = "https://github.com/Lucenx9/forktty/issues";
+const FORKTTY_CHANGELOG_URI: &str = "https://github.com/Lucenx9/forktty/blob/main/CHANGELOG.md";
 const FORKTTY_LICENSE: &str = "AGPL-3.0-only";
 
 pub(super) fn open_support_uri() {
@@ -300,18 +303,42 @@ pub(super) fn show_about_dialog(parent: &adw::ApplicationWindow) {
     details.append(&about_detail_row("Copyright", "2026 Lucenx9"));
     body.append(&details);
 
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let actions = gtk::Box::new(gtk::Orientation::Vertical, 8);
     actions.add_css_class("about-actions");
     actions.set_halign(gtk::Align::Center);
+
+    let primary_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    primary_actions.add_css_class("about-action-row");
+    let website = about_action_button("Website");
+    website.connect_clicked(move |_| {
+        open_external_uri(FORKTTY_WEBSITE_URI, "website");
+    });
     let repository = about_action_button("Source Code");
     repository.connect_clicked(move |_| {
         open_external_uri(FORKTTY_REPOSITORY_URI, "repository");
     });
+    let issues = about_action_button("Report Issue");
+    issues.connect_clicked(move |_| {
+        open_external_uri(FORKTTY_ISSUES_URI, "issue tracker");
+    });
+    primary_actions.append(&website);
+    primary_actions.append(&repository);
+    primary_actions.append(&issues);
+
+    let secondary_actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    secondary_actions.add_css_class("about-action-row");
+    let changelog = about_action_button("Changelog");
+    changelog.connect_clicked(move |_| {
+        open_external_uri(FORKTTY_CHANGELOG_URI, "changelog");
+    });
     let support = about_action_button("Support me");
     support.add_css_class("suggested-action");
     support.connect_clicked(move |_| open_support_uri());
-    actions.append(&repository);
-    actions.append(&support);
+    secondary_actions.append(&changelog);
+    secondary_actions.append(&support);
+
+    actions.append(&primary_actions);
+    actions.append(&secondary_actions);
     body.append(&actions);
 
     dialog.set_child(Some(&body));
@@ -561,12 +588,21 @@ pub(super) fn accessible_shortcut_text(shortcut: &str) -> String {
         .map(str::trim)
         .filter(|part| !part.is_empty())
         .map(|part| {
-            part.replace("Ctrl", "Control")
-                .replace("Esc", "Escape")
-                .replace("Control+,", "Control+comma")
+            part.split('+')
+                .map(accessible_shortcut_token)
+                .collect::<Vec<_>>()
+                .join("+")
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn accessible_shortcut_token(token: &str) -> &str {
+    match token {
+        "Ctrl" => "Control",
+        "Esc" => "Escape",
+        _ => token,
+    }
 }
 
 pub(super) fn set_status_message(label: &gtk::Label, message: &str, kind: StatusKind) {
@@ -687,6 +723,20 @@ pub(super) fn add_context_menu_item<F>(
 ) where
     F: Fn() + 'static,
 {
+    add_context_menu_item_with_shortcut(menu, popover, icon_name, label, None, destructive, action);
+}
+
+pub(super) fn add_context_menu_item_with_shortcut<F>(
+    menu: &gtk::Box,
+    popover: &gtk::Popover,
+    icon_name: &str,
+    label: &str,
+    shortcut: Option<&str>,
+    destructive: bool,
+    action: F,
+) where
+    F: Fn() + 'static,
+{
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     content.set_hexpand(true);
     let icon = gtk::Image::from_icon_name(icon_name);
@@ -700,10 +750,29 @@ pub(super) fn add_context_menu_item<F>(
     label_widget.add_css_class("ft-menu-label");
     content.append(&icon);
     content.append(&label_widget);
+    if let Some(shortcut) = shortcut {
+        let shortcut_label = gtk::Label::builder()
+            .label(shortcut)
+            .xalign(1.0)
+            .halign(gtk::Align::End)
+            .build();
+        shortcut_label.add_css_class("ft-menu-shortcut");
+        shortcut_label.add_css_class("monospace");
+        content.append(&shortcut_label);
+    }
 
     let button = gtk::Button::builder().child(&content).build();
     button.add_css_class("flat");
     button.add_css_class("ft-menu-item");
+    if let Some(shortcut) = shortcut {
+        let shortcut = accessible_shortcut_text(shortcut);
+        button.update_property(&[
+            gtk::accessible::Property::Label(label),
+            gtk::accessible::Property::KeyShortcuts(shortcut.as_str()),
+        ]);
+    } else {
+        button.update_property(&[gtk::accessible::Property::Label(label)]);
+    }
     if destructive {
         button.add_css_class("destructive-action");
     }

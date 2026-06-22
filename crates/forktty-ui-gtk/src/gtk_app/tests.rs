@@ -4694,7 +4694,7 @@ fn command_palette_search_matches_labels_and_shortcuts() {
     let new_tab = command_search_text("New Tab", Some("Ctrl+Shift+T"));
     let settings = command_search_text("Settings", Some("Ctrl+,"));
     let sidebar = command_search_text("Toggle Sidebar", Some("Ctrl+B / F9"));
-    let shortcuts = command_search_text("Keyboard Shortcuts", Some("F1"));
+    let shortcuts = command_search_text("Keyboard Shortcuts", Some("Ctrl+?"));
     let zoom = command_search_text("Zoom In", Some(TERMINAL_ZOOM_IN_SHORTCUT));
 
     assert!(command_matches(&copy, "copy"));
@@ -4704,7 +4704,8 @@ fn command_palette_search_matches_labels_and_shortcuts() {
     assert!(command_matches(&new_tab, "ctrl shift t"));
     assert!(command_matches(&settings, "ctrl,"));
     assert!(command_matches(&sidebar, "f9"));
-    assert!(command_matches(&shortcuts, "f1"));
+    assert!(command_matches(&shortcuts, "ctrl?"));
+    assert!(command_matches(&shortcuts, "ctrl question"));
     assert!(command_matches(&zoom, "zoom in"));
     assert!(command_matches(&zoom, "ctrl+"));
     assert!(!command_matches(&copy, "paste"));
@@ -4737,8 +4738,75 @@ fn accessible_shortcut_text_uses_accessibility_key_names() {
         accessible_shortcut_text("Ctrl+L / Alt+D"),
         "Control+L Alt+D"
     );
-    assert_eq!(accessible_shortcut_text("Ctrl+,"), "Control+comma");
+    assert_eq!(accessible_shortcut_text("Ctrl+,"), "Control+,");
+    assert_eq!(accessible_shortcut_text("Ctrl+?"), "Control+?");
     assert_eq!(accessible_shortcut_text("Esc"), "Escape");
+}
+
+#[test]
+fn app_menu_source_uses_packaged_icon_and_guarded_f10_shortcut() {
+    let source = include_str!("app.rs");
+
+    assert!(source.contains(".icon_name(\"forktty-menu-symbolic\")"));
+    assert!(source.contains("gtk::gdk::Key::F10"));
+    assert!(source.contains("app_menu.popup()"));
+    assert!(source.contains("main_menu_shortcut_should_open"));
+    assert!(source.contains("\"ghostty-terminal\""));
+    assert!(source.contains("\"forktty-terminal-focus-boundary\""));
+}
+
+#[test]
+fn embedded_ghostty_surface_marks_terminal_focus_boundary() {
+    let source = include_str!("controller.rs");
+
+    assert!(source.contains("surface.add_css_class(\"forktty-terminal-focus-boundary\")"));
+    assert!(source.contains("build_embedded_ghostty_scroll_view"));
+}
+
+#[test]
+fn command_palette_source_uses_polished_labels_and_accessibility() {
+    let source = include_str!("command_palette.rs");
+
+    assert!(
+        source.contains("let title = gtk::Label::builder()\n        .label(\"Command Palette\")")
+    );
+    assert!(source.contains("gtk::accessible::Property::Label"));
+    assert!(source.contains("\"Search commands or shortcuts\""));
+    assert!(source.contains("command!(\"Keyboard Shortcuts\", Some(\"Ctrl+? / F1\")"));
+    assert!(source.contains("command!(\"Close Workspace...\""));
+}
+
+#[test]
+fn settings_initial_focus_tracks_requested_page() {
+    let source = include_str!("settings_dialog.rs");
+
+    assert!(source.contains("SettingsInitialPage::Interface =>"));
+    assert!(source.contains("interface_nav.grab_focus();"));
+    assert!(source.contains("SettingsInitialPage::Agents =>"));
+    assert!(source.contains("agents_nav.grab_focus();"));
+    assert!(source.contains("skips disabled and unavailable providers"));
+    assert!(source.contains("team provider preferences"));
+}
+
+#[test]
+fn custom_menu_items_can_render_shortcut_metadata() {
+    let source = include_str!("ui_common.rs");
+
+    assert!(source.contains("add_context_menu_item_with_shortcut"));
+    assert!(source.contains("ft-menu-shortcut"));
+    assert!(source.contains("gtk::accessible::Property::KeyShortcuts"));
+}
+
+#[test]
+fn about_dialog_source_includes_standard_links() {
+    let source = include_str!("ui_common.rs");
+
+    assert!(source.contains("Website"));
+    assert!(source.contains("Report Issue"));
+    assert!(source.contains("Changelog"));
+    assert!(source.contains("FORKTTY_WEBSITE_URI"));
+    assert!(source.contains("FORKTTY_ISSUES_URI"));
+    assert!(source.contains("FORKTTY_CHANGELOG_URI"));
 }
 
 #[test]

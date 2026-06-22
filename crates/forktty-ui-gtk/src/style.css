@@ -326,9 +326,19 @@ popover.ft-context-menu contents {
   margin: 0;
 }
 
+.ft-menu-shortcut {
+  color: #626262;
+  font-size: 0.78em;
+  margin-left: 14px;
+}
+
 .ft-menu-item:hover {
   background: #232323;
   color: #d7d7d7;
+}
+
+.ft-menu-item:hover .ft-menu-shortcut {
+  color: #8a8a8a;
 }
 
 .ft-menu-item:focus-visible {
