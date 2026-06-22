@@ -15,6 +15,7 @@ const MAX_WORKFLOW_STORE_BYTES: u64 = 1_048_576;
 const MAX_WORKFLOWS: usize = 512;
 const MAX_PLAN_STEPS: usize = 128;
 const MAX_EVIDENCE_ITEMS: usize = 128;
+const MAX_LOOP_GATES: usize = 64;
 const MAX_EVENTS: usize = 4096;
 const DEFAULT_QUERY_LIMIT: usize = 50;
 const MAX_QUERY_LIMIT: usize = 200;
@@ -69,6 +70,20 @@ pub struct WorkflowState {
     pub goal: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_recipe: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_stage: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_iteration: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_max_iterations: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_stop_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loop_updated_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub loop_gates: Vec<WorkflowLoopGate>,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -97,6 +112,17 @@ pub struct WorkflowEvidence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<PathBuf>,
     pub created_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkflowLoopGate {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    pub updated_at_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -136,6 +162,25 @@ pub struct WorkflowEvidenceInput {
     pub title: String,
     pub text: Option<String>,
     pub path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WorkflowLoopStateInput {
+    pub recipe: Option<String>,
+    pub stage: Option<String>,
+    pub iteration: Option<u32>,
+    pub max_iterations: Option<u32>,
+    pub stop_reason: Option<String>,
+    pub gates: Option<Vec<WorkflowLoopGateInput>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkflowLoopGateInput {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub status: String,
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -244,6 +289,13 @@ impl WorkflowStoreData {
                     status: status.clone().unwrap_or_else(|| "active".to_string()),
                     goal: None,
                     memory: None,
+                    loop_recipe: None,
+                    loop_stage: None,
+                    loop_iteration: None,
+                    loop_max_iterations: None,
+                    loop_stop_reason: None,
+                    loop_updated_at_ms: None,
+                    loop_gates: Vec::new(),
                     created_at_ms: now_ms,
                     updated_at_ms: now_ms,
                     plan: Vec::new(),
@@ -282,6 +334,73 @@ impl WorkflowStoreData {
             now_ms,
         )?;
         validate_workflow(&row)?;
+        Ok(row)
+    }
+
+    pub fn set_loop_state(
+        &mut self,
+        workflow_id: &str,
+        input: WorkflowLoopStateInput,
+        now_ms: u64,
+    ) -> Result<WorkflowState, WorkflowError> {
+        let id = clean_id("workflow_id", workflow_id)?;
+        let recipe = clean_optional_short("loop.recipe", input.recipe.as_deref())?;
+        let stage = clean_optional_short("loop.stage", input.stage.as_deref())?;
+        let stop_reason = clean_optional_short("loop.stop_reason", input.stop_reason.as_deref())?;
+        if input.max_iterations == Some(0) {
+            return Err(WorkflowError::InvalidData(
+                "loop max_iterations must be greater than 0".to_string(),
+            ));
+        }
+        let gates = input.gates.map(|gates| clean_loop_gates(gates, now_ms));
+        let gates = match gates {
+            Some(Ok(gates)) => Some(gates),
+            Some(Err(err)) => return Err(err),
+            None => None,
+        };
+        let workflow = self
+            .workflows
+            .iter_mut()
+            .find(|workflow| workflow.id == id)
+            .ok_or(WorkflowError::NotFound)?;
+        let iteration_changed = input
+            .iteration
+            .is_some_and(|iteration| workflow.loop_iteration != Some(iteration));
+        if let Some(recipe) = recipe {
+            workflow.loop_recipe = Some(recipe);
+        }
+        if let Some(stage) = stage {
+            workflow.loop_stage = Some(stage);
+        }
+        if let Some(iteration) = input.iteration {
+            workflow.loop_iteration = Some(iteration);
+        }
+        if let Some(max_iterations) = input.max_iterations {
+            workflow.loop_max_iterations = Some(max_iterations);
+        }
+        if let Some(stop_reason) = stop_reason {
+            workflow.loop_stop_reason = Some(stop_reason);
+        } else if iteration_changed {
+            workflow.loop_stop_reason = None;
+        }
+        if let Some(gates) = gates {
+            workflow.loop_gates = gates;
+        } else if iteration_changed {
+            workflow.loop_gates.clear();
+        }
+        workflow.loop_updated_at_ms = Some(now_ms);
+        workflow.updated_at_ms = now_ms;
+        validate_workflow_loop_state(workflow)?;
+        let row = workflow.clone();
+        self.push_event(
+            &row.id,
+            "workflow.loop.set",
+            row.loop_stage
+                .as_deref()
+                .map(|stage| format!("loop stage {stage}"))
+                .unwrap_or_else(|| "loop state updated".to_string()),
+            now_ms,
+        )?;
         Ok(row)
     }
 
@@ -468,6 +587,9 @@ impl WorkflowState {
             self.surface_id.as_deref().unwrap_or_default(),
             self.agent.as_deref().unwrap_or_default(),
             self.session_id.as_deref().unwrap_or_default(),
+            self.loop_recipe.as_deref().unwrap_or_default(),
+            self.loop_stage.as_deref().unwrap_or_default(),
+            self.loop_stop_reason.as_deref().unwrap_or_default(),
         ];
         for step in &self.plan {
             haystacks.push(step.id.as_str());
@@ -480,6 +602,13 @@ impl WorkflowState {
             haystacks.push(evidence.kind.as_str());
             haystacks.push(evidence.title.as_str());
             haystacks.push(evidence.text.as_deref().unwrap_or_default());
+        }
+        for gate in &self.loop_gates {
+            haystacks.push(gate.id.as_str());
+            haystacks.push(gate.kind.as_str());
+            haystacks.push(gate.label.as_str());
+            haystacks.push(gate.status.as_str());
+            haystacks.push(gate.summary.as_deref().unwrap_or_default());
         }
         haystacks
             .into_iter()
@@ -748,6 +877,37 @@ fn clean_text(
     Ok(if trim { value.trim() } else { value }.to_string())
 }
 
+fn clean_loop_gates(
+    gates: Vec<WorkflowLoopGateInput>,
+    now_ms: u64,
+) -> Result<Vec<WorkflowLoopGate>, WorkflowError> {
+    if gates.len() > MAX_LOOP_GATES {
+        return Err(WorkflowError::InvalidData(format!(
+            "loop has too many gates (limit {MAX_LOOP_GATES})"
+        )));
+    }
+    let mut seen = HashSet::new();
+    gates
+        .into_iter()
+        .map(|gate| {
+            let id = clean_id("loop.gate.id", &gate.id)?;
+            if !seen.insert(id.clone()) {
+                return Err(WorkflowError::InvalidData(format!(
+                    "duplicate loop gate id: {id}"
+                )));
+            }
+            Ok(WorkflowLoopGate {
+                id,
+                kind: clean_short("loop.gate.kind", &gate.kind)?,
+                label: clean_short("loop.gate.label", &gate.label)?,
+                status: clean_short("loop.gate.status", &gate.status)?,
+                summary: clean_optional_short("loop.gate.summary", gate.summary.as_deref())?,
+                updated_at_ms: now_ms,
+            })
+        })
+        .collect()
+}
+
 fn validate_store(data: &WorkflowStoreData) -> Result<(), WorkflowError> {
     if data.version != WORKFLOW_FORMAT_VERSION {
         return Err(WorkflowError::UnsupportedVersion(data.version));
@@ -797,6 +957,13 @@ fn validate_workflow(workflow: &WorkflowState) -> Result<(), WorkflowError> {
     clean_short("workflow.status", &workflow.status)?;
     clean_optional_long("workflow.goal", workflow.goal.as_deref())?;
     clean_optional_long("workflow.memory", workflow.memory.as_deref())?;
+    clean_optional_short("workflow.loop_recipe", workflow.loop_recipe.as_deref())?;
+    clean_optional_short("workflow.loop_stage", workflow.loop_stage.as_deref())?;
+    clean_optional_short(
+        "workflow.loop_stop_reason",
+        workflow.loop_stop_reason.as_deref(),
+    )?;
+    validate_workflow_loop_state(workflow)?;
     if workflow.plan.len() > MAX_PLAN_STEPS {
         return Err(WorkflowError::InvalidData(format!(
             "workflow has too many plan steps (limit {MAX_PLAN_STEPS})"
@@ -827,6 +994,43 @@ fn validate_workflow(workflow: &WorkflowState) -> Result<(), WorkflowError> {
             return Err(WorkflowError::InvalidData(format!(
                 "duplicate evidence id: {}",
                 evidence.id
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_workflow_loop_state(workflow: &WorkflowState) -> Result<(), WorkflowError> {
+    if workflow.loop_max_iterations == Some(0) {
+        return Err(WorkflowError::InvalidData(
+            "loop max_iterations must be greater than 0".to_string(),
+        ));
+    }
+    if let (Some(iteration), Some(max_iterations)) =
+        (workflow.loop_iteration, workflow.loop_max_iterations)
+    {
+        if iteration > max_iterations {
+            return Err(WorkflowError::InvalidData(
+                "loop iteration must not exceed max iterations".to_string(),
+            ));
+        }
+    }
+    if workflow.loop_gates.len() > MAX_LOOP_GATES {
+        return Err(WorkflowError::InvalidData(format!(
+            "loop has too many gates (limit {MAX_LOOP_GATES})"
+        )));
+    }
+    let mut gate_ids = HashSet::new();
+    for gate in &workflow.loop_gates {
+        clean_id("loop.gate.id", &gate.id)?;
+        clean_short("loop.gate.kind", &gate.kind)?;
+        clean_short("loop.gate.label", &gate.label)?;
+        clean_short("loop.gate.status", &gate.status)?;
+        clean_optional_short("loop.gate.summary", gate.summary.as_deref())?;
+        if !gate_ids.insert(gate.id.as_str()) {
+            return Err(WorkflowError::InvalidData(format!(
+                "duplicate loop gate id: {}",
+                gate.id
             )));
         }
     }
@@ -963,6 +1167,235 @@ mod tests {
                 "workflow.evidence.added"
             ]
         );
+    }
+
+    #[test]
+    fn workflow_store_deserializes_pre_loop_v1_records() {
+        let store: WorkflowStoreData = serde_json::from_str(
+            r#"{
+                "version": 1,
+                "next_event_seq": 1,
+                "workflows": [{
+                    "id": "workflow-1",
+                    "workspace_id": "workspace-1",
+                    "mode": "default",
+                    "status": "running",
+                    "created_at_ms": 1,
+                    "updated_at_ms": 1
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let workflow = &store.workflows[0];
+        assert_eq!(workflow.loop_recipe, None);
+        assert_eq!(workflow.loop_stage, None);
+        assert_eq!(workflow.loop_iteration, None);
+        assert_eq!(workflow.loop_max_iterations, None);
+        assert_eq!(workflow.loop_stop_reason, None);
+        assert_eq!(workflow.loop_updated_at_ms, None);
+        assert!(workflow.loop_gates.is_empty());
+    }
+
+    #[test]
+    fn workflow_store_persists_bounded_loop_state() {
+        let mut store = WorkflowStoreData::default();
+        let workflow = store
+            .upsert(
+                WorkflowUpsert {
+                    workflow_id: Some("workflow-1".to_string()),
+                    workspace_id: Some("workspace-1".to_string()),
+                    status: Some("running".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                1,
+            )
+            .unwrap();
+
+        let updated = store
+            .set_loop_state(
+                &workflow.id,
+                WorkflowLoopStateInput {
+                    recipe: Some("review-fix-verify".to_string()),
+                    stage: Some("verify".to_string()),
+                    iteration: Some(2),
+                    max_iterations: Some(3),
+                    stop_reason: None,
+                    gates: Some(vec![
+                        WorkflowLoopGateInput {
+                            id: "fmt".to_string(),
+                            kind: "command".to_string(),
+                            label: "cargo fmt --all --check".to_string(),
+                            status: "passed".to_string(),
+                            summary: Some("formatting clean".to_string()),
+                        },
+                        WorkflowLoopGateInput {
+                            id: "review".to_string(),
+                            kind: "worker_review".to_string(),
+                            label: "Claude review".to_string(),
+                            status: "running".to_string(),
+                            summary: None,
+                        },
+                    ]),
+                },
+                2,
+            )
+            .unwrap();
+
+        assert_eq!(updated.loop_recipe.as_deref(), Some("review-fix-verify"));
+        assert_eq!(updated.loop_stage.as_deref(), Some("verify"));
+        assert_eq!(updated.loop_iteration, Some(2));
+        assert_eq!(updated.loop_max_iterations, Some(3));
+        assert_eq!(updated.loop_updated_at_ms, Some(2));
+        assert_eq!(updated.loop_gates.len(), 2);
+        assert_eq!(updated.loop_gates[0].id, "fmt");
+        assert_eq!(updated.loop_gates[0].updated_at_ms, 2);
+
+        let invalid = store
+            .set_loop_state(
+                &workflow.id,
+                WorkflowLoopStateInput {
+                    iteration: Some(4),
+                    max_iterations: Some(3),
+                    ..WorkflowLoopStateInput::default()
+                },
+                3,
+            )
+            .unwrap_err();
+        assert!(invalid
+            .to_string()
+            .contains("loop iteration must not exceed max iterations"));
+    }
+
+    #[test]
+    fn workflow_loop_iteration_update_clears_stale_gate_and_stop_state() {
+        let mut store = WorkflowStoreData::default();
+        let workflow = store
+            .upsert(
+                WorkflowUpsert {
+                    workflow_id: Some("workflow-1".to_string()),
+                    status: Some("running".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                1,
+            )
+            .unwrap();
+        store
+            .set_loop_state(
+                &workflow.id,
+                WorkflowLoopStateInput {
+                    iteration: Some(1),
+                    max_iterations: Some(3),
+                    stop_reason: Some("blocked".to_string()),
+                    gates: Some(vec![WorkflowLoopGateInput {
+                        id: "review".to_string(),
+                        kind: "worker_review".to_string(),
+                        label: "Review".to_string(),
+                        status: "failed".to_string(),
+                        summary: Some("one blocker".to_string()),
+                    }]),
+                    ..WorkflowLoopStateInput::default()
+                },
+                2,
+            )
+            .unwrap();
+
+        let updated = store
+            .set_loop_state(
+                &workflow.id,
+                WorkflowLoopStateInput {
+                    iteration: Some(2),
+                    ..WorkflowLoopStateInput::default()
+                },
+                3,
+            )
+            .unwrap();
+
+        assert_eq!(updated.loop_iteration, Some(2));
+        assert_eq!(updated.loop_stop_reason, None);
+        assert!(updated.loop_gates.is_empty());
+    }
+
+    #[test]
+    fn workflow_store_rejects_invalid_loop_gate_payloads() {
+        let mut store = WorkflowStoreData::default();
+        let workflow = store
+            .upsert(
+                WorkflowUpsert {
+                    workflow_id: Some("workflow-1".to_string()),
+                    status: Some("running".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                1,
+            )
+            .unwrap();
+
+        let too_many = store
+            .set_loop_state(
+                &workflow.id,
+                WorkflowLoopStateInput {
+                    gates: Some(
+                        (0..=MAX_LOOP_GATES)
+                            .map(|index| WorkflowLoopGateInput {
+                                id: format!("gate-{index}"),
+                                kind: "command".to_string(),
+                                label: "verify".to_string(),
+                                status: "pending".to_string(),
+                                summary: None,
+                            })
+                            .collect(),
+                    ),
+                    ..WorkflowLoopStateInput::default()
+                },
+                2,
+            )
+            .unwrap_err();
+        assert!(too_many.to_string().contains("loop has too many gates"));
+
+        let duplicate = store
+            .set_loop_state(
+                &workflow.id,
+                WorkflowLoopStateInput {
+                    gates: Some(vec![
+                        WorkflowLoopGateInput {
+                            id: "same".to_string(),
+                            kind: "command".to_string(),
+                            label: "first".to_string(),
+                            status: "pending".to_string(),
+                            summary: None,
+                        },
+                        WorkflowLoopGateInput {
+                            id: "same".to_string(),
+                            kind: "command".to_string(),
+                            label: "second".to_string(),
+                            status: "pending".to_string(),
+                            summary: None,
+                        },
+                    ]),
+                    ..WorkflowLoopStateInput::default()
+                },
+                3,
+            )
+            .unwrap_err();
+        assert!(duplicate.to_string().contains("duplicate loop gate id"));
+
+        let control = store
+            .set_loop_state(
+                &workflow.id,
+                WorkflowLoopStateInput {
+                    gates: Some(vec![WorkflowLoopGateInput {
+                        id: "control".to_string(),
+                        kind: "command".to_string(),
+                        label: "bad\u{0007}".to_string(),
+                        status: "pending".to_string(),
+                        summary: None,
+                    }]),
+                    ..WorkflowLoopStateInput::default()
+                },
+                4,
+            )
+            .unwrap_err();
+        assert!(control.to_string().contains("control characters"));
     }
 
     #[test]

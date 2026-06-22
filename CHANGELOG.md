@@ -42,6 +42,11 @@ All notable changes to ForkTTY are documented here.
   `forktty team finish` to verify team state, optionally close current-runtime
   launch-owned disposable worker panes, normalize missing worker surfaces, and
   mark the team done in one finalization step.
+- Workflow automation now includes bounded closed-loop state through socket
+  `workflow.loop.set`, MCP `workflow_loop_set`, and CLI
+  `forktty workflow-loop-set`: agents can record a loop recipe, stage,
+  iteration budget, stop reason, and verification gate counts without granting
+  ForkTTY any background scheduler or automatic command execution.
 
 ### Changed
 - `AGENTS.md` now reflects the current MCP/team/workflow/skill/AppImage
@@ -75,6 +80,14 @@ All notable changes to ForkTTY are documented here.
   provider-aware input: Claude receives staged text, a short settle, and a
   separate Enter, while other providers keep text plus carriage-return Enter in
   one terminal input.
+- Context snapshots now include compact `loop_summaries` rows for workflow
+  loops, including stale surface-binding detection and risk flags for failed
+  gates, blocked/needs-human stages, exhausted loop budgets, and stale
+  workflow surface bindings; the rows omit full workflow goals and detailed
+  gate notes so default snapshots stay compact.
+- Workflow loop iteration updates now clear prior gate results and stop reasons
+  unless the same request supplies replacements, preventing stale failed gates
+  from carrying into a new verification pass.
 - `team.summary` now flags active teams that have no active workers, open tasks,
   or pending messages as `active_without_open_work`, so stale orchestration
   records are visible before an agent mistakes them for still-running work.
@@ -443,7 +456,7 @@ All notable changes to ForkTTY are documented here.
   `capture_tail`. See `docs/ghostty-renderer-embedding-spike.md` for the
   Ghostty-side design.
 - Bumped the vendored Ghostty pin to
-  `0e77c39df35d2cb3a79393c0061b13e5e583e508`, which adds the
+  `31da31b65d1011b59e40932cd2b81cb9c69556bd`, which adds the
   `ghostty_gtk_surface_restore_scrollback`,
   `ghostty_gtk_surface_new_with_working_directory_and_command`, and
   `ghostty_gtk_surface_read_text_limited`,

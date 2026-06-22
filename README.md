@@ -288,6 +288,7 @@ forktty status watch --count 3 --interval-ms 2000
 forktty identify --json
 forktty wait agent-status --status needs_input --timeout-ms 30000
 forktty context-snapshot --workspace-name main --tail-lines 0 --json
+forktty workflow-loop-set loop-runtime --stage verify --iteration 2 --max-iterations 4
 forktty team ask review-team claude-review --agent claude --task-id review-head --prompt "Review HEAD read-only" --submit
 forktty team review review-team claude-review --agent claude --task-id review-head --commit HEAD --submit
 forktty team watch review-team --stale-after-ms 120000 --limit 10
@@ -332,6 +333,16 @@ rows include `consistency_warnings`, with `workflow_consistency_warning` in
 still has open steps. Snapshot feed rows are compact by default: approvals and
 notifications remain, while status and progress trace rows are available with
 `include_feed_trace: true`.
+For closed loops, `workflow.loop.set` / `workflow_loop_set` /
+`forktty workflow-loop-set` records bounded loop metadata on an existing
+workflow: recipe, stage, iteration budget, stop reason, and compact gate
+counts. It is deliberately state-only: ForkTTY does not run a hidden scheduler,
+execute commands, push, merge, or approve actions from loop state. Snapshots
+include `loop_summaries` by default and raise loop risk flags for failed gates,
+blocked or human-needed stages, exhausted budgets, and stale workflow surface
+bindings. Loop summaries omit full workflow goals and gate notes; detailed
+workflow memory remains opt-in, and moving to a new iteration clears prior gate
+results and stop reason unless replacements are supplied in the same request.
 Workspace, surface, agent, and agent-health rows expose
 `effective_project_cwd`, preferring the tracked agent `resume_cwd` over the
 workspace directory when they differ. `team.worker.health` includes

@@ -6,9 +6,9 @@ use forktty_core::{
     AgentSession, AgentSessionLifecycle, AgentStatus, BrowserCmdError, BrowserCommand, BrowserOp,
     CmdResult, FeedApprovalState, FeedEntry, FeedEntryType, FeedStore, JsonRpcRequest,
     JsonRpcResponse, LogLevel, NotificationItem, NotificationKind, ProgressEntry, SplitAxis,
-    StatusEntry, StatusHookMetadata, SurfaceKind, WorkflowEvidenceInput, WorkflowPlanStepInput,
-    WorkflowQuery, WorkflowReplayQuery, WorkflowState, WorkflowUpsert, WorkspaceModel,
-    WorkspaceSelector, MAX_BROWSER_URL_BYTES,
+    StatusEntry, StatusHookMetadata, SurfaceKind, WorkflowEvidenceInput, WorkflowLoopGateInput,
+    WorkflowLoopStateInput, WorkflowPlanStepInput, WorkflowQuery, WorkflowReplayQuery,
+    WorkflowState, WorkflowUpsert, WorkspaceModel, WorkspaceSelector, MAX_BROWSER_URL_BYTES,
 };
 use forktty_terminal::{
     spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
@@ -174,6 +174,7 @@ pub const METHODS: &[&str] = &[
     "workflow.evidence.add",
     "workflow.get",
     "workflow.list",
+    "workflow.loop.set",
     "workflow.plan.set",
     "workflow.replay",
     "workflow.upsert",
@@ -253,6 +254,7 @@ pub const METHODS: &[&str] = &[
     "workflow.evidence.add",
     "workflow.get",
     "workflow.list",
+    "workflow.loop.set",
     "workflow.plan.set",
     "workflow.replay",
     "workflow.upsert",
@@ -1288,6 +1290,7 @@ pub async fn dispatch(
         "workflow.list" => workflow_list(state, &params),
         "workflow.get" => workflow_get(state, &params),
         "workflow.upsert" => workflow_upsert(state, &params),
+        "workflow.loop.set" => workflow_loop_set(state, &params),
         "workflow.plan.set" => workflow_plan_set(state, &params),
         "workflow.evidence.add" => workflow_evidence_add(state, &params),
         "workflow.replay" => workflow_replay(state, &params),
@@ -2924,7 +2927,7 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
 
     let (terminal_tails, terminal_tail_errors) =
         context_snapshot_terminal_tails(state, &terminal_surface_ids, tail_lines, tail_max_bytes);
-    let (workflows, workflow_summaries) =
+    let (workflows, workflow_summaries, loop_summaries) =
         context_snapshot_workflows(state, &workspace_id, include_workflow_details)?;
     let (teams, team_summaries) =
         context_snapshot_team_state(state, &workspace_id, include_team_details)?;
@@ -2936,6 +2939,7 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
         terminal_tails: &terminal_tails,
         terminal_tail_errors: &terminal_tail_errors,
         workflow_summaries: &workflow_summaries,
+        loop_summaries: &loop_summaries,
         team_summaries: &team_summaries,
     });
 
@@ -2948,6 +2952,7 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
         "agent_health": agent_health,
         "workflows": workflows,
         "workflow_summaries": workflow_summaries,
+        "loop_summaries": loop_summaries,
         "teams": teams,
         "team_summaries": team_summaries,
         "feed": feed,
@@ -3044,9 +3049,9 @@ fn context_snapshot_workflows(
     state: &SocketAppState,
     workspace_id: &str,
     include_workflow_details: bool,
-) -> Result<(Value, Value), DispatchError> {
+) -> Result<(Value, Value, Value), DispatchError> {
     let Some(path) = state.workflow_store_path.as_deref() else {
-        return Ok((json!([]), json!([])));
+        return Ok((json!([]), json!([]), json!([])));
     };
     let store = forktty_core::load_workflows_from_path(path).map_err(workflow_error)?;
     let workflows = store
@@ -3059,9 +3064,24 @@ fn context_snapshot_workflows(
         })
         .into_iter()
         .collect::<Vec<_>>();
+    let current_surface_ids = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        model
+            .list_surfaces(Some(workspace_id))
+            .into_iter()
+            .map(|surface| surface.id)
+            .collect::<HashSet<_>>()
+    };
     let summaries = workflows
         .iter()
         .map(context_snapshot_workflow_summary_row)
+        .collect::<Vec<_>>();
+    let loop_summaries = workflows
+        .iter()
+        .filter_map(|workflow| context_snapshot_loop_summary_row(workflow, &current_surface_ids))
         .collect::<Vec<_>>();
     let workflows = if include_workflow_details {
         json!(workflows
@@ -3071,7 +3091,7 @@ fn context_snapshot_workflows(
     } else {
         json!([])
     };
-    Ok((workflows, json!(summaries)))
+    Ok((workflows, json!(summaries), json!(loop_summaries)))
 }
 
 fn context_snapshot_workflow_row(workflow: WorkflowState) -> Value {
@@ -3107,6 +3127,86 @@ fn context_snapshot_workflow_summary_row(workflow: &WorkflowState) -> Value {
         "evidence_total": workflow.evidence.len(),
         "consistency_warnings": warnings,
     })
+}
+
+fn context_snapshot_loop_summary_row(
+    workflow: &WorkflowState,
+    current_surface_ids: &HashSet<String>,
+) -> Option<Value> {
+    if !workflow_has_loop_state(workflow) {
+        return None;
+    }
+    let surface_present = workflow
+        .surface_id
+        .as_deref()
+        .map(|surface_id| current_surface_ids.contains(surface_id));
+    let stale_binding = surface_present == Some(false);
+    let gates_total = workflow.loop_gates.len();
+    let gates_passed = workflow
+        .loop_gates
+        .iter()
+        .filter(|gate| loop_gate_status_is_passed(&gate.status))
+        .count();
+    let gates_failed = workflow
+        .loop_gates
+        .iter()
+        .filter(|gate| loop_gate_status_is_failed(&gate.status))
+        .count();
+    let gates_running = workflow
+        .loop_gates
+        .iter()
+        .filter(|gate| loop_gate_status_is_running(&gate.status))
+        .count();
+    Some(json!({
+        "workflow_id": &workflow.id,
+        "workspace_id": &workflow.workspace_id,
+        "surface_id": &workflow.surface_id,
+        "surface_present": surface_present,
+        "stale_binding": stale_binding,
+        "mode": &workflow.mode,
+        "status": &workflow.status,
+        "recipe": &workflow.loop_recipe,
+        "stage": &workflow.loop_stage,
+        "iteration": workflow.loop_iteration,
+        "max_iterations": workflow.loop_max_iterations,
+        "stop_reason": &workflow.loop_stop_reason,
+        "updated_at_ms": workflow.loop_updated_at_ms.unwrap_or(workflow.updated_at_ms),
+        "gates_total": gates_total,
+        "gates_passed": gates_passed,
+        "gates_failed": gates_failed,
+        "gates_running": gates_running,
+        "gates_open": gates_total.saturating_sub(gates_passed + gates_failed),
+    }))
+}
+
+fn workflow_has_loop_state(workflow: &WorkflowState) -> bool {
+    workflow.loop_recipe.is_some()
+        || workflow.loop_stage.is_some()
+        || workflow.loop_iteration.is_some()
+        || workflow.loop_max_iterations.is_some()
+        || workflow.loop_stop_reason.is_some()
+        || !workflow.loop_gates.is_empty()
+}
+
+fn loop_gate_status_is_passed(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "passed" | "pass" | "done" | "success" | "succeeded" | "ok"
+    )
+}
+
+fn loop_gate_status_is_failed(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "failed" | "fail" | "error" | "errored" | "blocked"
+    )
+}
+
+fn loop_gate_status_is_running(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "running" | "working" | "in_progress" | "in-progress"
+    )
 }
 
 fn workflow_consistency_warnings(workflow: &WorkflowState) -> Vec<&'static str> {
@@ -3206,6 +3306,7 @@ struct ContextSnapshotRiskInputs<'a> {
     terminal_tails: &'a [Value],
     terminal_tail_errors: &'a [Value],
     workflow_summaries: &'a Value,
+    loop_summaries: &'a Value,
     team_summaries: &'a Value,
 }
 
@@ -3248,6 +3349,47 @@ fn context_snapshot_risk_flags(inputs: ContextSnapshotRiskInputs<'_>) -> Vec<&'s
     {
         flags.push("workflow_consistency_warning");
     }
+    if inputs.loop_summaries.as_array().is_some_and(|summaries| {
+        summaries.iter().any(|summary| {
+            summary
+                .get("gates_failed")
+                .and_then(Value::as_u64)
+                .is_some_and(|count| count > 0)
+        })
+    }) {
+        flags.push("loop_gate_failed");
+    }
+    if inputs
+        .loop_summaries
+        .as_array()
+        .is_some_and(|summaries| summaries.iter().any(loop_summary_needs_human))
+    {
+        flags.push("loop_needs_human");
+    }
+    if inputs
+        .loop_summaries
+        .as_array()
+        .is_some_and(|summaries| summaries.iter().any(loop_summary_blocked))
+    {
+        flags.push("loop_blocked");
+    }
+    if inputs.loop_summaries.as_array().is_some_and(|summaries| {
+        summaries
+            .iter()
+            .any(|summary| summary.get("stale_binding").and_then(Value::as_bool) == Some(true))
+    }) {
+        flags.push("loop_stale_binding");
+    }
+    if inputs.loop_summaries.as_array().is_some_and(|summaries| {
+        summaries.iter().any(|summary| {
+            summary
+                .get("stop_reason")
+                .and_then(Value::as_str)
+                .is_some_and(|reason| reason.eq_ignore_ascii_case("budget_exhausted"))
+        })
+    }) {
+        flags.push("loop_budget_exhausted");
+    }
     if !inputs.remotes.is_empty() {
         flags.push("remote_surface");
     }
@@ -3280,6 +3422,23 @@ fn context_snapshot_risk_flags(inputs: ContextSnapshotRiskInputs<'_>) -> Vec<&'s
         flags.push("permission_bypass");
     }
     flags
+}
+
+fn loop_summary_needs_human(summary: &Value) -> bool {
+    value_field_matches(summary, "stage", "needs_human")
+        || value_field_matches(summary, "stop_reason", "needs_human")
+}
+
+fn loop_summary_blocked(summary: &Value) -> bool {
+    value_field_matches(summary, "stage", "blocked")
+        || value_field_matches(summary, "stop_reason", "blocked")
+}
+
+fn value_field_matches(value: &Value, field: &str, expected: &str) -> bool {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .is_some_and(|actual| actual.eq_ignore_ascii_case(expected))
 }
 
 fn feed_entry_is_pending_approval(entry: &Value) -> bool {
@@ -4398,6 +4557,17 @@ fn workflow_upsert(state: &SocketAppState, params: &Value) -> Result<Value, Disp
     Ok(json!(workflow))
 }
 
+fn workflow_loop_set(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let workflow_id = required_workflow_id(params)?.to_string();
+    let input = workflow_loop_state_input(params)?;
+    let path = workflow_store_path(state)?;
+    let workflow = forktty_core::update_workflows_at_path(path, |store| {
+        store.set_loop_state(&workflow_id, input, forktty_core::workflow_now_ms())
+    })
+    .map_err(workflow_error)?;
+    Ok(json!(workflow))
+}
+
 fn workflow_plan_set(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let workflow_id = required_workflow_id(params)?.to_string();
     let steps = workflow_plan_steps(params)?;
@@ -4526,6 +4696,61 @@ fn workflow_evidence_input(params: &Value) -> Result<WorkflowEvidenceInput, Disp
         title,
         text,
         path,
+    })
+}
+
+fn workflow_loop_state_input(params: &Value) -> Result<WorkflowLoopStateInput, DispatchError> {
+    Ok(WorkflowLoopStateInput {
+        recipe: optional_non_blank_string_param(params, "recipe")?.map(str::to_string),
+        stage: optional_non_blank_string_param(params, "stage")?.map(str::to_string),
+        iteration: optional_u32_param(params, "iteration")?,
+        max_iterations: optional_u32_param(params, "max_iterations")?,
+        stop_reason: optional_non_blank_string_param(params, "stop_reason")?.map(str::to_string),
+        gates: workflow_loop_gates(params)?,
+    })
+}
+
+fn workflow_loop_gates(
+    params: &Value,
+) -> Result<Option<Vec<WorkflowLoopGateInput>>, DispatchError> {
+    let Some(value) = params.get("gates").or_else(|| params.get("loop_gates")) else {
+        return Ok(None);
+    };
+    let Some(items) = value.as_array() else {
+        return Err(DispatchError::InvalidParam(
+            "Invalid parameter gates: expected array".to_string(),
+        ));
+    };
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let Some(object) = item.as_object() else {
+                return Err(DispatchError::InvalidParam(format!(
+                    "Invalid parameter gates[{index}]: expected object"
+                )));
+            };
+            Ok(WorkflowLoopGateInput {
+                id: required_object_string(object, "id", "gates")?.to_string(),
+                kind: required_object_string(object, "kind", "gates")?.to_string(),
+                label: required_object_string(object, "label", "gates")?.to_string(),
+                status: required_object_string(object, "status", "gates")?.to_string(),
+                summary: optional_object_string(object, "summary", "gates")?.map(str::to_string),
+            })
+        })
+        .collect::<Result<Vec<_>, DispatchError>>()
+        .map(Some)
+}
+
+fn optional_u32_param(params: &Value, key: &'static str) -> Result<Option<u32>, DispatchError> {
+    let Some(value) = optional_u64_param(params, key)? else {
+        return Ok(None);
+    };
+    u32::try_from(value).map(Some).map_err(|_| {
+        DispatchError::InvalidParam(format!(
+            "Invalid parameter {key}: expected integer <= {}",
+            u32::MAX
+        ))
     })
 }
 
@@ -10533,6 +10758,17 @@ mod tests {
         let terminal_tails = [truncated_tail];
         let terminal_tail_errors = [json!({"surface_id": "surface-missing", "error": "not ready"})];
         let workflow_summaries = json!([{"consistency_warnings": ["running_with_completed_plan"]}]);
+        let loop_summaries = json!([
+            {
+                "gates_failed": 1,
+                "stage": "needs_human",
+            },
+            {
+                "stage": "blocked",
+                "stop_reason": "budget_exhausted",
+                "stale_binding": true,
+            }
+        ]);
         let team_summaries = json!([{"consistency_warnings": ["done_with_active_workers"]}]);
         let flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
             status: &status,
@@ -10542,6 +10778,7 @@ mod tests {
             terminal_tails: &terminal_tails,
             terminal_tail_errors: &terminal_tail_errors,
             workflow_summaries: &workflow_summaries,
+            loop_summaries: &loop_summaries,
             team_summaries: &team_summaries,
         });
 
@@ -10551,6 +10788,11 @@ mod tests {
             "terminal_tail_unavailable",
             "team_consistency_warning",
             "workflow_consistency_warning",
+            "loop_gate_failed",
+            "loop_needs_human",
+            "loop_blocked",
+            "loop_stale_binding",
+            "loop_budget_exhausted",
             "remote_surface",
             "pending_approval",
             "permission_bypass",
@@ -10567,6 +10809,7 @@ mod tests {
         let status = json!({"status": []});
         let agent_health = [json!({"permission_mode": "bypassPermissions"})];
         let workflow_summaries = json!([]);
+        let loop_summaries = json!([]);
         let team_summaries = json!([]);
         let flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
             status: &status,
@@ -10576,6 +10819,7 @@ mod tests {
             terminal_tails: &[],
             terminal_tail_errors: &[],
             workflow_summaries: &workflow_summaries,
+            loop_summaries: &loop_summaries,
             team_summaries: &team_summaries,
         });
 
@@ -10590,6 +10834,7 @@ mod tests {
         let terminal_tails = [];
         let terminal_tail_errors = [];
         let workflow_summaries = json!([]);
+        let loop_summaries = json!([]);
         let team_summaries = json!([]);
         let non_pending_feed = [
             json!({"type": "approval", "approval_state": "approved"}),
@@ -10606,6 +10851,7 @@ mod tests {
             terminal_tails: &terminal_tails,
             terminal_tail_errors: &terminal_tail_errors,
             workflow_summaries: &workflow_summaries,
+            loop_summaries: &loop_summaries,
             team_summaries: &team_summaries,
         });
         assert!(!flags.contains(&"pending_approval"));
@@ -10619,6 +10865,7 @@ mod tests {
             terminal_tails: &terminal_tails,
             terminal_tail_errors: &terminal_tail_errors,
             workflow_summaries: &workflow_summaries,
+            loop_summaries: &loop_summaries,
             team_summaries: &team_summaries,
         });
         assert!(flags.contains(&"pending_approval"));
@@ -13059,6 +13306,213 @@ mod tests {
             .as_array()
             .unwrap()
             .contains(&json!("workflow_consistency_warning")));
+    }
+
+    #[tokio::test]
+    async fn workflow_loop_set_updates_state_and_snapshot_loop_summaries() {
+        let (state, _) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        let state = state.with_workflow_store_path(dir.path().join("workflow-v1.json"));
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        let workflow = dispatch(
+            &state,
+            "workflow.upsert",
+            json!({
+                "workflow_id": "workflow-1",
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "status": "running",
+                "goal": "Review and verify"
+            }),
+        )
+        .await
+        .unwrap();
+        let workflow_id = workflow["id"].as_str().unwrap();
+
+        let updated = dispatch(
+            &state,
+            "workflow.loop.set",
+            json!({
+                "workflow_id": workflow_id,
+                "recipe": "review-fix-verify",
+                "stage": "verify",
+                "iteration": 2,
+                "max_iterations": 3,
+                "gates": [
+                    {
+                        "id": "fmt",
+                        "kind": "command",
+                        "label": "cargo fmt --all --check",
+                        "status": "passed",
+                        "summary": "formatting clean"
+                    },
+                    {
+                        "id": "review",
+                        "kind": "worker_review",
+                        "label": "Claude review",
+                        "status": "failed",
+                        "summary": "one blocker"
+                    }
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(updated["loop_recipe"], "review-fix-verify");
+        assert_eq!(updated["loop_stage"], "verify");
+        assert_eq!(updated["loop_iteration"], 2);
+        assert_eq!(updated["loop_max_iterations"], 3);
+        assert_eq!(updated["loop_gates"][1]["status"], "failed");
+
+        let snapshot = dispatch(
+            &state,
+            "context.snapshot",
+            json!({"workspace_id": workspace_id, "tail_lines": 0}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(snapshot["loop_summaries"][0]["workflow_id"], workflow_id);
+        assert_eq!(snapshot["loop_summaries"][0]["recipe"], "review-fix-verify");
+        assert_eq!(snapshot["loop_summaries"][0]["stage"], "verify");
+        assert_eq!(snapshot["loop_summaries"][0]["iteration"], 2);
+        assert_eq!(snapshot["loop_summaries"][0]["gates_total"], 2);
+        assert_eq!(snapshot["loop_summaries"][0]["gates_failed"], 1);
+        assert_eq!(snapshot["loop_summaries"][0].get("goal"), None);
+        assert!(snapshot["risk_flags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("loop_gate_failed")));
+    }
+
+    #[tokio::test]
+    async fn workflow_loop_set_rejects_invalid_loop_payloads() {
+        let (state, _) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        let state = state.with_workflow_store_path(dir.path().join("workflow-v1.json"));
+        let workflow = dispatch(
+            &state,
+            "workflow.upsert",
+            json!({
+                "workflow_id": "workflow-1",
+                "status": "running"
+            }),
+        )
+        .await
+        .unwrap();
+        let workflow_id = workflow["id"].as_str().unwrap();
+
+        let zero_max = dispatch(
+            &state,
+            "workflow.loop.set",
+            json!({"workflow_id": workflow_id, "max_iterations": 0}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(zero_max.code(), "invalid_param");
+        assert!(zero_max
+            .to_string()
+            .contains("loop max_iterations must be greater than 0"));
+
+        let duplicate_gate = dispatch(
+            &state,
+            "workflow.loop.set",
+            json!({
+                "workflow_id": workflow_id,
+                "gates": [
+                    {"id": "same", "kind": "command", "label": "one", "status": "pending"},
+                    {"id": "same", "kind": "command", "label": "two", "status": "pending"}
+                ]
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(duplicate_gate.code(), "invalid_param");
+        assert!(duplicate_gate
+            .to_string()
+            .contains("duplicate loop gate id"));
+
+        let bad_gates_shape = dispatch(
+            &state,
+            "workflow.loop.set",
+            json!({"workflow_id": workflow_id, "gates": "not-array"}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(bad_gates_shape.code(), "invalid_param");
+        assert!(bad_gates_shape
+            .to_string()
+            .contains("Invalid parameter gates"));
+    }
+
+    #[tokio::test]
+    async fn context_snapshot_loop_summaries_report_stale_surface_bindings() {
+        let (state, _) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        let state = state.with_workflow_store_path(dir.path().join("workflow-v1.json"));
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let stale_surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        let workflow = dispatch(
+            &state,
+            "workflow.upsert",
+            json!({
+                "workflow_id": "workflow-stale-surface",
+                "workspace_id": workspace_id,
+                "surface_id": stale_surface_id,
+                "status": "running"
+            }),
+        )
+        .await
+        .unwrap();
+        let workflow_id = workflow["id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "workflow.loop.set",
+            json!({
+                "workflow_id": workflow_id,
+                "recipe": "closed-loop",
+                "stage": "verify",
+                "iteration": 1,
+                "max_iterations": 3
+            }),
+        )
+        .await
+        .unwrap();
+
+        dispatch(
+            &state,
+            "surface.close",
+            json!({"surface_id": stale_surface_id}),
+        )
+        .await
+        .unwrap();
+
+        let snapshot = dispatch(
+            &state,
+            "context.snapshot",
+            json!({"workspace_id": workspace_id, "tail_lines": 0}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(snapshot["loop_summaries"][0]["workflow_id"], workflow_id);
+        assert_eq!(
+            snapshot["loop_summaries"][0]["surface_id"],
+            stale_surface_id
+        );
+        assert_eq!(snapshot["loop_summaries"][0]["surface_present"], false);
+        assert_eq!(snapshot["loop_summaries"][0]["stale_binding"], true);
+        assert!(snapshot["risk_flags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("loop_stale_binding")));
     }
 
     #[tokio::test]

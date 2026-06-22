@@ -1046,6 +1046,38 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 params,
             }
         }
+        "workflow_loop_set" => {
+            reject_unexpected(
+                args,
+                &[
+                    "workflow_id",
+                    "recipe",
+                    "stage",
+                    "iteration",
+                    "max_iterations",
+                    "stop_reason",
+                    "gates",
+                ],
+                name,
+            )?;
+            let mut params =
+                map_from_pairs([("workflow_id", required_non_blank(args, "workflow_id")?)]);
+            insert_optional_non_blank_param(args, &mut params, "recipe")?;
+            insert_optional_non_blank_param(args, &mut params, "stage")?;
+            insert_optional_u64_param(args, &mut params, "iteration")?;
+            insert_optional_u64_param(args, &mut params, "max_iterations")?;
+            insert_optional_non_blank_param(args, &mut params, "stop_reason")?;
+            if let Some(gates) = args.get("gates").cloned() {
+                if !gates.is_array() {
+                    return Err(ToolCallError::validation("gates must be an array"));
+                }
+                params.insert("gates".to_string(), gates);
+            }
+            SocketCall {
+                method: "workflow.loop.set",
+                params,
+            }
+        }
         "workflow_plan_set" => {
             reject_unexpected(args, &["workflow_id", "steps"], name)?;
             let mut params =
@@ -1677,6 +1709,7 @@ fn success_text(name: &str, result: &Value) -> String {
         "workflow_list" => "Listed ForkTTY workflows.".to_string(),
         "workflow_get" => "Read ForkTTY workflow state.".to_string(),
         "workflow_upsert" => "Updated ForkTTY workflow state.".to_string(),
+        "workflow_loop_set" => "Updated ForkTTY workflow loop state.".to_string(),
         "workflow_plan_set" => "Updated ForkTTY workflow plan.".to_string(),
         "workflow_evidence_add" => "Added ForkTTY workflow evidence.".to_string(),
         "workflow_replay" => "Replayed ForkTTY workflow events.".to_string(),
@@ -1790,7 +1823,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "context_snapshot",
             annotations: read_only_annotations(),
-            description: "Return a compact read-only situational snapshot for one ForkTTY workspace: workspace, pane tree, surfaces, status, agent health, compact workflow/team/feed/remote summaries, and per-surface plus aggregate-bounded untrusted terminal tails.",
+            description: "Return a compact read-only situational snapshot for one ForkTTY workspace: workspace, pane tree, surfaces, status, agent health, compact workflow/loop/team/feed/remote summaries, and per-surface plus aggregate-bounded untrusted terminal tails.",
             input_schema: object_schema(
                 &[],
                 json!({
@@ -2245,6 +2278,27 @@ fn tool_specs() -> Vec<ToolSpec> {
                     "status": string_prop("Workflow status, for example running, blocked, done, or active."),
                     "goal": string_prop("Current workflow goal."),
                     "memory": string_prop("Durable project/session memory for compaction recovery."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "workflow_loop_set",
+            annotations: mutating_annotations(false, false),
+            description: "Update bounded closed-loop state for a workflow: recipe, stage, iteration budget, stop reason, and compact gate statuses. Advancing to a new iteration clears prior gates and stop reason unless replacements are supplied. This records loop progress only; it does not run commands, launch agents, schedule background work, push, merge, or approve actions.",
+            input_schema: object_schema(
+                &["workflow_id"],
+                json!({
+                    "workflow_id": string_prop("Workflow id to update."),
+                    "recipe": string_prop("Loop recipe name, for example review-fix-verify."),
+                    "stage": string_prop("Current loop stage, for example discover, plan, execute, verify, iterate, done, blocked, or needs_human."),
+                    "iteration": integer_prop("Current loop iteration."),
+                    "max_iterations": integer_prop("Maximum loop iterations before the caller should stop."),
+                    "stop_reason": string_prop("Loop stop reason such as passed, failed, blocked, budget_exhausted, needs_human, or cancelled."),
+                    "gates": {
+                        "type": "array",
+                        "description": "Array of {id,kind,label,status,summary?} compact gate status objects.",
+                        "items": { "type": "object" },
+                    },
                 }),
             ),
         },
@@ -3116,6 +3170,31 @@ mod tests {
         .unwrap();
         assert_eq!(method, "workflow.plan.set");
         assert_eq!(params["steps"][0]["id"], "inspect");
+
+        let gates = json!([{
+            "id": "fmt",
+            "kind": "command",
+            "label": "cargo fmt --all --check",
+            "status": "passed",
+            "summary": "formatting clean"
+        }]);
+        let (method, params) = build_socket_call_for_test(
+            "workflow_loop_set",
+            json!({
+                "workflow_id": "workflow-1",
+                "recipe": "review-fix-verify",
+                "stage": "verify",
+                "iteration": 2,
+                "max_iterations": 3,
+                "gates": gates
+            }),
+        )
+        .unwrap();
+        assert_eq!(method, "workflow.loop.set");
+        assert_eq!(params["workflow_id"], "workflow-1");
+        assert_eq!(params["recipe"], "review-fix-verify");
+        assert_eq!(params["iteration"], 2);
+        assert_eq!(params["gates"][0]["id"], "fmt");
 
         let (method, params) = build_socket_call_for_test(
             "workflow_evidence_add",

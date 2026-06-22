@@ -116,6 +116,7 @@ Usage:
   forktty workflow-get <workflow-id> [--json]
   forktty workflow-upsert [--workflow-id <id>] [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--surface-id <id>] [--agent <agent>] [--session-id <id>] [--mode <mode>] [--status <status>] [--goal <text>] [--memory <text>] [--json]
   forktty workflow-plan-set <workflow-id> --steps-json <json-array> [--json]
+  forktty workflow-loop-set <workflow-id> [--recipe <text>] [--stage <text>] [--iteration <n>] [--max-iterations <n>] [--stop-reason <text>] [--gates-json <json-array>] [--json]
   forktty workflow-evidence-add <workflow-id> --kind <kind> --title <title> [--text <text>|--text-file <path>|--text-file -] [--evidence-id <id>] [--path <path>] [--json]
   forktty workflow-replay [--workflow-id <id>] [--query <text>] [--since-seq <n>] [--limit <n>] [--json]
   forktty log [message] [--message <message>] [--level info|warn|error]
@@ -218,6 +219,7 @@ ForkTTY workflow commands
   forktty workflow-get <workflow-id>
   forktty workflow-upsert [--workflow-id <id>] [workspace selectors] [--goal <text>] [--memory <text>]
   forktty workflow-plan-set <workflow-id> --steps-json <json-array>
+  forktty workflow-loop-set <workflow-id> [--recipe <text>] [--stage <text>] [--iteration <n>] [--max-iterations <n>] [--stop-reason <text>] [--gates-json <json-array>]
   forktty workflow-evidence-add <workflow-id> --kind <kind> --title <title> [--text <text>|--text-file <path>|--text-file -]
   forktty workflow-replay [--workflow-id <id>] [--query <text>] [--since-seq <n>]
 ";
@@ -234,6 +236,7 @@ ForkTTY examples
   forktty team watch review-team --stale-after-ms 120000 --limit 10
   forktty team finish review-team
   forktty workflows --query release --limit 5
+  forktty workflow-loop-set loop-runtime --stage verify --iteration 2 --max-iterations 4
 ";
 
 // Curated ergonomic command set, not every low-level socket alias.
@@ -259,6 +262,7 @@ const COMPLETION_COMMANDS: &[&str] = &[
     "workflows",
     "workflow-get",
     "workflow-upsert",
+    "workflow-loop-set",
     "tree",
     "top",
     "events",
@@ -1034,6 +1038,9 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "workflow-get" | "workflow:get" | "workflow.get" => handle_workflow_get(&context, args),
         "workflow-upsert" | "workflow:upsert" | "workflow.upsert" => {
             handle_workflow_upsert(&context, args)
+        }
+        "workflow-loop-set" | "workflow:loop:set" | "workflow.loop.set" | "loop-set" => {
+            handle_workflow_loop_set(&context, args)
         }
         "workflow-plan-set" | "workflow:plan-set" | "workflow.plan.set" => {
             handle_workflow_plan_set(&context, args)
@@ -5096,6 +5103,70 @@ fn handle_workflow_upsert(context: &CliContext, args: Vec<String>) -> CliResult<
     } else {
         write_stdout_line(&format!(
             "Updated workflow {}",
+            workflow_id_for_line(&result)
+        ))
+    }
+}
+
+fn handle_workflow_loop_set(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(
+        &parsed.options,
+        &[
+            "recipe",
+            "stage",
+            "iteration",
+            "max-iterations",
+            "stop-reason",
+            "gates-json",
+        ],
+        "workflow-loop-set",
+    )?;
+    let workflow_id =
+        single_required_positional(&parsed.positionals, "workflow-loop-set", "<workflow-id>")?;
+    let mut params = Map::new();
+    params.insert("workflow_id".to_string(), Value::String(workflow_id));
+    for (option, param) in [
+        ("recipe", "recipe"),
+        ("stage", "stage"),
+        ("stop-reason", "stop_reason"),
+    ] {
+        if let Some(value) =
+            non_blank_string_option(&parsed.options, option, &format!("--{option}"))?
+        {
+            params.insert(param.to_string(), Value::String(value.trim().to_string()));
+        }
+    }
+    if let Some(iteration) = parse_u64_option(&parsed.options, "iteration", "--iteration")? {
+        params.insert("iteration".to_string(), Value::Number(iteration.into()));
+    }
+    if let Some(max_iterations) =
+        parse_u64_option(&parsed.options, "max-iterations", "--max-iterations")?
+    {
+        params.insert(
+            "max_iterations".to_string(),
+            Value::Number(max_iterations.into()),
+        );
+    }
+    if let Some(gates_raw) = non_blank_string_option(&parsed.options, "gates-json", "--gates-json")?
+    {
+        let gates: Value = serde_json::from_str(gates_raw.trim())
+            .map_err(|err| CliError::new(format!("--gates-json must be valid JSON: {err}")))?;
+        if !gates.is_array() {
+            return Err(CliError::new("--gates-json must be a JSON array"));
+        }
+        params.insert("gates".to_string(), gates);
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        "workflow.loop.set",
+        Value::Object(params),
+    )?;
+    if context.json {
+        print_json(&result)
+    } else {
+        write_stdout_line(&format!(
+            "Updated workflow {} loop",
             workflow_id_for_line(&result)
         ))
     }
@@ -16933,13 +17004,22 @@ mod tests {
     fn completions_include_grouped_commands_and_subcommands() {
         let bash = completion_script_for_test("bash").unwrap();
         assert!(bash.contains("team"));
+        assert!(bash.contains("workflow-loop-set"));
         assert!(bash.contains("ask review watch finish"));
         assert!(bash.contains("summary explain watch"));
         assert!(bash.contains("bash zsh fish"));
 
         let fish = completion_script_for_test("fish").unwrap();
         assert!(fish.contains("__fish_seen_subcommand_from team"));
+        assert!(fish.contains("workflow-loop-set"));
         assert!(fish.contains("ask review watch finish"));
+    }
+
+    #[test]
+    fn workflow_loop_set_is_advertised_in_help_text() {
+        assert!(HELP_TEXT.contains("forktty workflow-loop-set <workflow-id>"));
+        assert!(WORKFLOW_HELP_TEXT.contains("workflow-loop-set <workflow-id>"));
+        assert!(EXAMPLES_TEXT.contains("forktty workflow-loop-set"));
     }
 
     #[test]
@@ -17130,6 +17210,53 @@ mod tests {
         assert_eq!(request["method"], "workflow.plan.set");
         assert_eq!(request["params"]["workflow_id"], "workflow-1");
         assert_eq!(request["params"]["steps"][0]["id"], "inspect");
+    }
+
+    #[test]
+    fn workflow_loop_set_requests_workflow_loop_set() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "id": "workflow-1",
+                        "loop_recipe": "review-fix-verify",
+                        "loop_stage": "verify",
+                        "loop_iteration": 2,
+                        "loop_max_iterations": 3,
+                        "loop_gates": [{"id": "fmt"}]
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_workflow_loop_set(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "workflow-1",
+                        "--recipe",
+                        "review-fix-verify",
+                        "--stage",
+                        "verify",
+                        "--iteration",
+                        "2",
+                        "--max-iterations",
+                        "3",
+                        "--gates-json",
+                        r#"[{"id":"fmt","kind":"command","label":"cargo fmt --all --check","status":"passed"}]"#,
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "workflow.loop.set");
+        assert_eq!(request["params"]["workflow_id"], "workflow-1");
+        assert_eq!(request["params"]["recipe"], "review-fix-verify");
+        assert_eq!(request["params"]["stage"], "verify");
+        assert_eq!(request["params"]["iteration"], 2);
+        assert_eq!(request["params"]["max_iterations"], 3);
+        assert_eq!(request["params"]["gates"][0]["id"], "fmt");
     }
 
     #[test]

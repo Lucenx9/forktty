@@ -41,6 +41,11 @@ For normal local code changes, read and edit the repo directly.
    opt-in via `include_workflow_details`; prefer `workflow_summaries` and
    follow up with `workflow_get` only when detailed durable memory or evidence
    is needed.
+   Use `loop_summaries` for closed-loop progress: they expose compact recipe,
+   stage, iteration budget, gate counts, stale surface bindings, and loop risk
+   flags without loading full workflow goals, memory, or gate notes. Treat a
+   new iteration as a fresh pass: if you advance the iteration, send new gates
+   and stop reason only when they describe that pass.
    Feed status/progress trace rows are compacted out by default; request
    `include_feed_trace` only when debugging tool-call/status churn. Treat
    workflow `consistency_warnings` and `workflow_consistency_warning` the same
@@ -110,8 +115,10 @@ Use mutating tools only for visible coordination:
   only for immediate cleanup of disposable worker panes launched by the current
   ForkTTY runtime's team tools, never for manually attached user panes or stale
   persisted launch records after restart.
-- `workflow_upsert`, `workflow_plan_set`, and workflow evidence tools preserve
-  compaction-resistant goal, plan, and proof state.
+- `workflow_upsert`, `workflow_plan_set`, `workflow_loop_set`, and workflow
+  evidence tools preserve compaction-resistant goal, plan, loop, gate, and proof
+  state. `workflow_loop_set` is state-only; it does not run commands, launch
+  workers, approve actions, push, merge, or schedule background work.
 
 Tool names in this skill are the ForkTTY MCP names. Use the provider-specific
 namespace or prefix when a host UI requires fully qualified tool names.
@@ -296,9 +303,20 @@ For long tasks, multi-agent work, or work that may survive context compaction:
 
 - Record goal, status, and durable memory with `workflow_upsert`.
 - Store a short plan with `workflow_plan_set` when there are multiple steps.
+- For closed loops, record the loop recipe, stage, iteration/max-iteration
+  budget, stop reason, and verification gates with `workflow_loop_set`.
+  Keep gate labels/summaries compact and treat `loop_gate_failed`,
+  `loop_needs_human`, `loop_blocked`, `loop_budget_exhausted`, and
+  `loop_stale_binding` risk flags as prompts to inspect state before
+  continuing.
 - Add concise evidence when meaningful: test commands, review verdicts, commit
   ids, URLs, or exact remaining blockers.
 - Update status when the work is done or genuinely blocked.
+
+Workflow loop state is not permission to keep acting indefinitely. Prefer
+closed loops with explicit stop conditions and human approval before commits,
+pushes, merges, destructive worktree actions, external sends, or hidden
+background execution.
 
 ## Provider Notes
 
