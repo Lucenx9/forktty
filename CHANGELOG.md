@@ -35,9 +35,9 @@ All notable changes to ForkTTY are documented here.
   `--tools read,grep,find,ls` unless explicit Pi tool args are supplied.
 - Team message dispatch now supports an explicit submit mode through socket
   `team.message.dispatch` (`submit: true`), MCP `team_message_dispatch`, and
-  CLI `forktty team-message-dispatch --submit`, sending Enter as a separate
-  terminal input after the queued text is delivered when the message does not
-  already end in carriage return.
+  CLI `forktty team-message-dispatch --submit`, appending a carriage-return
+  Enter to the dispatched terminal input when the message does not already end
+  in carriage return.
 
 ### Changed
 - `AGENTS.md` now reflects the current MCP/team/workflow/skill/AppImage
@@ -53,6 +53,9 @@ All notable changes to ForkTTY are documented here.
   Agent HUD and notification panel treatment.
 
 ### Fixed
+- Team message dispatch and worker shutdown submit mode now send the text plus
+  carriage-return Enter as one terminal input, avoiding intermittent cases where
+  agent TUIs accepted the pasted prompt but missed the separate submit input.
 - `team.worker.health` now reports `surface_present`,
   `surface_runtime_present`, `surface_ready`, and a `starting` final state for
   present but not-yet-ready worker runtimes, while still treating exited or

@@ -156,6 +156,7 @@ ForkTTY team commands
 High-level wrappers:
   forktty team ask <team-id> <worker-id> --agent <agent> --task-id <id> --prompt <text>
       Create/update the team, create the task, launch a fresh worker surface, assign the task, queue the prompt, and dispatch it.
+      Submit appends a carriage-return Enter to the same terminal input.
       Re-running ask/review launches another worker; use team-message-send + team-message-dispatch for follow-ups.
       Options: --role <role>, --title <title>, --goal <text>, --worktree-name <name>,
                --args <comma-list>, --submit[=true|false] (default: true; pass --submit=false to stage only).
@@ -178,6 +179,7 @@ Low-level aliases still exist:
   forktty team-worker-shutdown --close closes launch-owned disposable worker panes
   forktty team-message-send | team.message.send
   forktty team-message-dispatch | team.message.dispatch
+      With --submit, appends a carriage-return Enter to the same dispatched terminal input.
 ";
 
 const STATUS_HELP_TEXT: &str = "\

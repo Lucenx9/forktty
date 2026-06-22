@@ -2043,15 +2043,15 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "team_worker_shutdown",
             annotations: mutating_annotations(true, false),
-            description: "Request team worker shutdown by sending and submitting text by default, marking the worker shutdown_requested after delivery succeeds, and optionally closing launch-owned worker panes immediately.",
+            description: "Request team worker shutdown by sending shutdown text plus a submit Enter by default, marking the worker shutdown_requested after the terminal accepts the input, and optionally closing launch-owned worker panes immediately.",
             input_schema: object_schema(
                 &["team_id", "worker_id"],
                 json!({
                     "team_id": string_prop("Team id."),
                     "worker_id": string_prop("Worker id."),
                     "text": string_prop("Optional exact shutdown request text."),
-                    "submit": boolean_prop("Also submit the shutdown text. Defaults to true; set false to stage text without Enter."),
-                    "close_surface": boolean_prop("Immediately close the worker surface after shutdown text is delivered and submitted. Defaults to false and only works for surfaces created by team_worker_launch."),
+                    "submit": boolean_prop("Append a carriage-return Enter to the shutdown terminal input. Defaults to true; set false to stage text without Enter."),
+                    "close_surface": boolean_prop("Immediately close the worker surface after shutdown text is accepted by the terminal. Defaults to false and only works for surfaces created by team_worker_launch."),
                 }),
             ),
         },
@@ -2091,14 +2091,14 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "team_message_dispatch",
             annotations: mutating_annotations_with_open_world(true, false, true),
-            description: "Send a queued ForkTTY team message to a worker terminal pane and acknowledge it only after the terminal accepts the text.",
+            description: "Send a queued ForkTTY team message to a worker terminal pane and acknowledge it only after the terminal accepts the dispatched input.",
             input_schema: object_schema(
                 &["team_id", "message_id"],
                 json!({
                     "team_id": string_prop("Team id."),
                     "message_id": string_prop("Message id."),
                     "worker_id": string_prop("Required when dispatching a team-wide message."),
-                    "submit": boolean_prop("Also send Enter after the message text. Defaults to false."),
+                    "submit": boolean_prop("Append a carriage-return Enter to the dispatched terminal input. Defaults to false."),
                 }),
             ),
         },

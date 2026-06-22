@@ -112,11 +112,13 @@ namespace or prefix when a host UI requires fully qualified tool names.
 2. Confirm the target is the intended pane, worker, provider, and cwd.
 3. Prefer team mailbox flow for worker prompts: `team_message_send`, then
    `team_message_dispatch`. Use the dispatch `submit` option only when the
-   prompt is ready to run; ForkTTY sends Enter as separate terminal input
-   unless the message body already ends in carriage return. Do not rely on a
-   trailing LF as equivalent to pressing Enter in full-screen agent TUIs.
-4. If text delivery succeeds but submit/Enter fails, do not blindly retry.
-   Inspect the pane first; the prompt may already be in the worker composer.
+   prompt is ready to run; ForkTTY appends a carriage-return Enter to the same
+   terminal input unless the message body already ends in carriage return. Do
+   not rely on a trailing LF as equivalent to pressing Enter in full-screen
+   agent TUIs.
+4. If delivery succeeds but the worker does not start, inspect the pane before
+   retrying; the target TUI may still be staging input or waiting for a
+   provider-specific confirmation.
 5. Do not paste secrets, destructive shell commands, or unreviewed terminal
    output into another pane.
 

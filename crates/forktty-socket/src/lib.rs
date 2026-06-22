@@ -48,8 +48,6 @@ const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 /// only fires on idle or slow-loris connections that would otherwise hold one
 /// of the [`MAX_SOCKET_CONNECTIONS`] permits indefinitely.
 const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(30);
-/// Give bracketed-paste-aware agent TUIs a short handoff window before Enter.
-const TEAM_MESSAGE_SUBMIT_ENTER_DELAY: Duration = Duration::from_millis(75);
 const TEAM_MESSAGE_SURFACE_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const TEAM_MESSAGE_SURFACE_READY_TIMEOUT: Duration = Duration::from_secs(10);
 static TEAM_MESSAGE_DISPATCH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
@@ -1423,17 +1421,11 @@ pub async fn dispatch(
             } else {
                 team_worker_surface_id(state, &team_id, &worker_id)?
             };
+            let text = terminal_text_with_submit_enter(&text, submit);
             state
                 .terminal
                 .send_text(&surface_id, &text)
                 .map_err(DispatchError::from)?;
-            if submit && !text.ends_with('\r') {
-                tokio::time::sleep(TEAM_MESSAGE_SUBMIT_ENTER_DELAY).await;
-                state
-                    .terminal
-                    .send_enter(&surface_id)
-                    .map_err(DispatchError::from)?;
-            }
             let worker = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
                 store.request_worker_shutdown(
                     forktty_core::TeamWorkerAction { team_id, worker_id },
@@ -5645,15 +5637,20 @@ async fn dispatch_team_message_text(
     // cannot block unrelated dispatches indefinitely.
     let _dispatch_guard = team_message_dispatch_lock().lock().await;
     show_team_message_surface(state, surface_id)?;
-    send_team_message_body_when_ready(state, surface_id, body).await?;
-    if submit && !body.ends_with('\r') {
-        tokio::time::sleep(TEAM_MESSAGE_SUBMIT_ENTER_DELAY).await;
-        state
-            .terminal
-            .send_enter(surface_id)
-            .map_err(DispatchError::from)?;
-    }
+    let text = terminal_text_with_submit_enter(body, submit);
+    send_team_message_body_when_ready(state, surface_id, &text).await?;
     Ok(())
+}
+
+fn terminal_text_with_submit_enter(text: &str, submit: bool) -> String {
+    if submit && !text.ends_with('\r') {
+        let mut submitted = String::with_capacity(text.len() + 1);
+        submitted.push_str(text);
+        submitted.push('\r');
+        submitted
+    } else {
+        text.to_string()
+    }
 }
 
 fn team_message_dispatch_lock() -> &'static tokio::sync::Mutex<()> {
@@ -10338,8 +10335,7 @@ mod tests {
             vec![
                 "review this\r".to_string(),
                 "ping\r".to_string(),
-                "stop".to_string(),
-                "\r".to_string()
+                "stop\r".to_string()
             ]
         );
 
@@ -11183,13 +11179,10 @@ mod tests {
             backend.sent_text(surface_id).unwrap(),
             vec![
                 "paste only".to_string(),
-                "run status".to_string(),
-                "\r".to_string(),
+                "run status\r".to_string(),
                 "already entered\r".to_string(),
-                "multi-line prompt\n".to_string(),
-                "\r".to_string(),
-                "broadcast".to_string(),
-                "\r".to_string()
+                "multi-line prompt\n\r".to_string(),
+                "broadcast\r".to_string()
             ]
         );
     }
@@ -11480,7 +11473,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn team_message_dispatch_submit_does_not_ack_when_enter_fails() {
+    async fn team_message_dispatch_submit_does_not_call_separate_enter() {
         let model = Arc::new(Mutex::new(WorkspaceModel::new()));
         let backend = Arc::new(FailingEnterBackend::default());
         let mut state = SocketAppState::new(
@@ -11533,24 +11526,25 @@ mod tests {
         .await
         .unwrap();
 
-        let err = dispatch(
+        let result = dispatch(
             &state,
             "team.message.dispatch",
             json!({"team_id": "team-1", "message_id": "msg-submit", "submit": true}),
         )
         .await
-        .unwrap_err();
-        assert_eq!(err.code(), "error");
+        .unwrap();
+        assert_eq!(result["submitted"], true);
+        assert_eq!(result["message"]["delivered"], true);
         assert_eq!(
             backend.sent_text(surface_id).unwrap(),
-            vec!["run status".to_string()]
+            vec!["run status\r".to_string()]
         );
 
         let team = dispatch(&state, "team.get", json!({"team_id": "team-1"}))
             .await
             .unwrap();
-        assert_eq!(team["messages"][0]["delivered"], false);
-        assert_eq!(team["messages"][0]["acknowledged_at_ms"], 0);
+        assert_eq!(team["messages"][0]["delivered"], true);
+        assert!(team["messages"][0]["acknowledged_at_ms"].as_u64().unwrap() > 0);
     }
 
     #[tokio::test]

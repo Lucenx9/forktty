@@ -303,8 +303,9 @@ forktty events
 `forktty team ask` and `forktty team review` compose the existing team socket
 methods for common coordination flows: create/update the team, create the task,
 launch a fresh worker surface, assign the task after launch, queue the prompt,
-and dispatch it. Submit mode sends an explicit terminal Enter unless the queued
-message already ends in carriage return. Re-run them to launch a new worker;
+and dispatch it. Submit mode appends a carriage-return Enter to the same
+terminal input unless the queued message already ends in carriage return.
+Re-run them to launch a new worker;
 use `team-message-send` plus `team-message-dispatch` for follow-up prompts to
 an existing worker. Context snapshots include compact `team_summaries` rows so
 leaders can scan worker/task/message counts without first calling
@@ -326,7 +327,8 @@ workspace directory when they differ. `team.worker.health` includes
 `surface_missing`, or `stale` so cleanup decisions do not require interpreting
 raw worker fields; a worker surface is live only when it still exists in the
 workspace model and the terminal backend still reports a ready runtime.
-`team.worker.shutdown` submits shutdown text by default; its `close_surface`
+`team.worker.shutdown` appends a carriage-return Enter to shutdown text by
+default; its `close_surface`
 option, exposed by CLI `forktty team-worker-shutdown --close`, immediately
 closes only surfaces that ForkTTY created through `team.worker.launch`, not
 manually attached user panes.
