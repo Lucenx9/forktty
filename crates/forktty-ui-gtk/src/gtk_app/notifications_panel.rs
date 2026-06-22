@@ -26,17 +26,63 @@ pub(super) fn notification_target_exists(
         })
 }
 
-pub(super) fn latest_openable_notification(state: &SocketAppState) -> Option<NotificationItem> {
-    let notifications = state
+pub(super) fn latest_openable_notification_from(
+    state: &SocketAppState,
+    notifications: Vec<NotificationItem>,
+) -> Option<NotificationItem> {
+    let mut openable = notifications
+        .into_iter()
+        .enumerate()
+        .filter(|(_, notification)| notification_target_exists(state, notification))
+        .collect::<Vec<_>>();
+    openable.sort_by(|a, b| {
+        let (a_index, a_notification) = a;
+        let (b_index, b_notification) = b;
+        notification_jump_priority(b_notification)
+            .cmp(&notification_jump_priority(a_notification))
+            .then_with(|| {
+                b_notification
+                    .created_at_ms
+                    .cmp(&a_notification.created_at_ms)
+            })
+            .then_with(|| b_index.cmp(a_index))
+    });
+    openable
+        .into_iter()
+        .next()
+        .map(|(_, notification)| notification)
+}
+
+pub(super) fn latest_openable_notification_for_panel_click(
+    state: &SocketAppState,
+    panel_notifications: &[NotificationItem],
+) -> Option<NotificationItem> {
+    let current_notifications = state
         .model
         .lock()
         .ok()
         .map(|model| model.list_notifications())
         .unwrap_or_default();
-    notifications
-        .into_iter()
-        .rev()
-        .find(|notification| notification_target_exists(state, notification))
+    let current_ids = current_notifications
+        .iter()
+        .map(|notification| notification.id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let panel_notifications = panel_notifications
+        .iter()
+        .filter(|notification| current_ids.contains(notification.id.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    latest_openable_notification_from(state, panel_notifications)
+        .or_else(|| latest_openable_notification_from(state, current_notifications))
+}
+
+fn notification_jump_priority(notification: &NotificationItem) -> u8 {
+    match (notification.read, notification.kind) {
+        (false, NotificationKind::Prompt) => 3,
+        (false, _) => 2,
+        (true, NotificationKind::Prompt) => 1,
+        (true, _) => 0,
+    }
 }
 
 pub(super) fn notification_count_label(count: usize) -> String {
@@ -118,8 +164,10 @@ pub(super) fn notification_panel_rows(
                 } else {
                     (2, "History")
                 };
+            let unread_priority = usize::from(notification.read);
             (
                 priority,
+                unread_priority,
                 index,
                 NotificationPanelRow {
                     notification: notification.clone(),
@@ -130,8 +178,12 @@ pub(super) fn notification_panel_rows(
             )
         })
         .collect::<Vec<_>>();
-    rows.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| b.1.cmp(&a.1)));
-    rows.into_iter().map(|(_, _, row)| row).collect()
+    rows.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.cmp(&b.1))
+            .then_with(|| b.2.cmp(&a.2))
+    });
+    rows.into_iter().map(|(_, _, _, row)| row).collect()
 }
 
 pub(super) fn notification_panel_section_counts(
@@ -763,8 +815,12 @@ pub(super) fn show_notification_panel(
         let controller_for_jump = controller.clone();
         let dialog_for_jump = dialog.clone();
         let jump_for_click = jump.clone();
+        let notifications_for_jump = notifications.clone();
         jump.connect_clicked(move |_| {
-            let Some(notification) = latest_openable_notification(&state_for_jump) else {
+            let Some(notification) = latest_openable_notification_for_panel_click(
+                &state_for_jump,
+                &notifications_for_jump,
+            ) else {
                 jump_for_click.set_sensitive(false);
                 return;
             };

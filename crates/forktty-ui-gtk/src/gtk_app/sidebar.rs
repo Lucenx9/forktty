@@ -1,5 +1,6 @@
 use super::*;
 use std::collections::BTreeSet;
+use std::path::Path;
 
 pub(super) struct SidebarWorkspaceRow {
     workspace: forktty_core::Workspace,
@@ -20,8 +21,8 @@ pub(super) struct SidebarSnapshot {
     rows: Vec<SidebarWorkspaceRow>,
     active_workspace_name: Option<String>,
     active_status_label: Option<String>,
-    active_full_path: Option<String>,
-    active_pane_label: Option<String>,
+    pub(super) active_full_path: Option<String>,
+    pub(super) active_pane_label: Option<String>,
     signature: String,
 }
 
@@ -587,7 +588,10 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
                 None
             }
         });
-        let meta = workspace_meta_line(&workspace, ssh_host.as_deref());
+        let agent_project_cwd = model
+            .surface(&workspace.focused_surface_id)
+            .and_then(surface_agent_resume_cwd);
+        let meta = workspace_meta_line(&workspace, ssh_host.as_deref(), agent_project_cwd);
         rows.push(SidebarWorkspaceRow {
             workspace,
             meta,
@@ -604,14 +608,18 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
     let active_status_label = active_workspace.map(|workspace| {
         let cwd = model
             .surface(&workspace.focused_surface_id)
-            .map(|surface| compact_path(&surface.cwd))
+            .map(|surface| compact_path(surface_effective_project_cwd(surface)))
             .unwrap_or_else(|| compact_path(&workspace.working_dir));
         format!("{} · {}", workspace.name, cwd)
     });
     let active_full_path = active_workspace.map(|workspace| {
         model
             .surface(&workspace.focused_surface_id)
-            .map(|surface| surface.cwd.to_string_lossy().to_string())
+            .map(|surface| {
+                surface_effective_project_cwd(surface)
+                    .to_string_lossy()
+                    .to_string()
+            })
             .unwrap_or_else(|| workspace.working_dir.to_string_lossy().to_string())
     });
     let active_pane_label = active_workspace.and_then(|workspace| {
@@ -624,15 +632,12 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
         let title = surface
             .map(surface_title)
             .unwrap_or_else(|| "Terminal".to_string());
-        let compact_cwd = surface
-            .map(|surface| compact_path(&surface.cwd))
-            .unwrap_or_else(|| compact_path(&workspace.working_dir));
-        let full_cwd = surface
-            .map(|surface| surface.cwd.to_string_lossy().to_string())
-            .unwrap_or_else(|| workspace.working_dir.to_string_lossy().to_string());
-        let title_is_cwd_echo = title == compact_cwd.as_str()
-            || title == full_cwd.as_str()
-            || full_cwd.ends_with(&format!("/{title}"));
+        let title_is_cwd_echo = surface
+            .map(|surface| {
+                title_matches_path_echo(&title, surface_effective_project_cwd(surface))
+                    || title_matches_path_echo(&title, &surface.cwd)
+            })
+            .unwrap_or_else(|| title_matches_path_echo(&title, &workspace.working_dir));
         if pane_count <= 1 {
             // With a single pane the "Pane 1/1" prefix is noise; the cwd is
             // already shown in status_location. Only surface a distinct title.
@@ -684,6 +689,7 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
 pub(super) fn workspace_meta_line(
     workspace: &forktty_core::Workspace,
     ssh_host: Option<&str>,
+    effective_project_cwd: Option<&Path>,
 ) -> String {
     let mut parts = Vec::new();
     if let Some(host) = ssh_host {
@@ -700,7 +706,9 @@ pub(super) fn workspace_meta_line(
     if let Some(pr) = workspace.pr.as_ref() {
         parts.push(pr.summary());
     }
-    parts.push(compact_path(&workspace.working_dir));
+    parts.push(compact_path(
+        effective_project_cwd.unwrap_or(workspace.working_dir.as_path()),
+    ));
     if !workspace.listening_ports.is_empty() {
         let ports = workspace
             .listening_ports
@@ -711,6 +719,20 @@ pub(super) fn workspace_meta_line(
         parts.push(ports);
     }
     parts.join(" · ")
+}
+
+pub(super) fn surface_effective_project_cwd(surface: &forktty_core::Surface) -> &Path {
+    surface_agent_resume_cwd(surface).unwrap_or(surface.cwd.as_path())
+}
+
+pub(super) fn surface_agent_resume_cwd(surface: &forktty_core::Surface) -> Option<&Path> {
+    surface.agent_session.as_ref()?.resume_cwd.as_deref()
+}
+
+fn title_matches_path_echo(title: &str, path: &Path) -> bool {
+    let compact = compact_path(path);
+    let full = path.to_string_lossy();
+    title == compact.as_str() || title == full.as_ref() || full.ends_with(&format!("/{title}"))
 }
 
 pub(super) fn select_sidebar_workspace(
@@ -910,8 +932,8 @@ pub(super) fn workspace_status_badge(
 
     if statuses.iter().any(status_entry_suggests_running) {
         return Some(WorkspaceStatusBadge {
-            label: "Running",
-            tooltip: "Process running",
+            label: "Working",
+            tooltip: "Process working",
             class_name: "running",
         });
     }
@@ -1153,7 +1175,8 @@ pub(super) fn format_metadata_summary(
     }
     let mut parts = statuses
         .iter()
-        .map(|status| format!("{}: {}", status.label, status.value))
+        .filter(|status| !status_entry_is_mode_indicator(status))
+        .map(format_status_summary_part)
         .collect::<Vec<_>>();
     parts.extend(progress.iter().map(|progress| {
         let total = progress.total.unwrap_or(100.0);
@@ -1168,4 +1191,27 @@ pub(super) fn format_metadata_summary(
         parts.push(format!("{:?}: {}", log.level, log.message));
     }
     parts.join("  ·  ")
+}
+
+fn format_status_summary_part(status: &StatusEntry) -> String {
+    let value = if managed_agent_alias_from_metadata_key(&status.key).is_some() {
+        if status_entry_suggests_needs_input(status) {
+            "Needs input".to_string()
+        } else if status_entry_suggests_starting(status) {
+            "Starting".to_string()
+        } else if status_entry_suggests_error(status) {
+            "Problem".to_string()
+        } else if status_entry_suggests_surface_missing(status) {
+            "Missing".to_string()
+        } else if status_entry_suggests_exited(status) {
+            "Done".to_string()
+        } else if status_entry_suggests_running(status) {
+            "Working".to_string()
+        } else {
+            status.value.clone()
+        }
+    } else {
+        status.value.clone()
+    };
+    format!("{}: {}", status.label, value)
 }

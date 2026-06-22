@@ -3635,7 +3635,41 @@ fn run_team_ask_flow(context: &CliContext, options: TeamAskOptions) -> CliResult
         "message": message,
         "dispatch": dispatch,
     });
-    print_result_or_json(context, "Team worker prompt dispatched", result)
+    print_result_or_json(context, format_team_ask_flow_line(&result), result)
+}
+
+fn format_team_ask_flow_line(result: &Value) -> String {
+    let launch = result.get("worker").unwrap_or(&Value::Null);
+    let worker = launch.get("worker").unwrap_or(launch);
+    let launch_surface = launch.get("surface").unwrap_or(&Value::Null);
+    let task = result.get("task").unwrap_or(&Value::Null);
+    let dispatch = result.get("dispatch").unwrap_or(&Value::Null);
+    let worker_id = safe_string_field(worker, "id").unwrap_or_else(|| "(worker)".to_string());
+    let agent = launch
+        .get("selection")
+        .and_then(|selection| safe_string_field(selection, "selected_agent"))
+        .or_else(|| safe_string_field(worker, "agent"))
+        .map(|agent| format!(" agent {agent}"))
+        .unwrap_or_default();
+    let task_id = safe_string_field(task, "id")
+        .or_else(|| safe_string_field(worker, "assigned_task_id"))
+        .map(|task| format!(" task {task}"))
+        .unwrap_or_default();
+    let surface_id = safe_string_field(dispatch, "surface_id")
+        .or_else(|| safe_string_field(worker, "surface_id"))
+        .or_else(|| safe_string_field(launch_surface, "id"))
+        .map(|surface| format!(" surface {surface}"))
+        .unwrap_or_default();
+    let submit_state = if dispatch
+        .get("submitted")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        "submitted"
+    } else {
+        "dispatched"
+    };
+    format!("Team prompt {submit_state} to {worker_id}{agent}{task_id}{surface_id}")
 }
 
 fn send_team_flow_request(
@@ -4457,6 +4491,20 @@ fn format_team_worker_launch_line(result: &Value) -> String {
     let surface = result.get("surface").unwrap_or(&Value::Null);
     let worker_id = safe_string_field(worker, "id").unwrap_or_else(|| "(worker)".to_string());
     let surface_id = safe_string_field(surface, "id").unwrap_or_else(|| "(surface)".to_string());
+    let agent = safe_string_field(worker, "agent")
+        .or_else(|| {
+            result
+                .get("selection")
+                .and_then(|selection| safe_string_field(selection, "selected_agent"))
+        })
+        .map(|agent| format!(" agent {agent}"))
+        .unwrap_or_default();
+    let role = safe_string_field(worker, "role")
+        .map(|role| format!(" role {role}"))
+        .unwrap_or_default();
+    let task = safe_string_field(worker, "assigned_task_id")
+        .map(|task| format!(" task {task}"))
+        .unwrap_or_default();
     let argv = result
         .get("argv")
         .and_then(Value::as_array)
@@ -4484,7 +4532,7 @@ fn format_team_worker_launch_line(result: &Value) -> String {
             })
         })
         .unwrap_or_default();
-    format!("Launched worker {worker_id} in {surface_id}: {argv}{selection}")
+    format!("Launched worker {worker_id}{agent}{role}{task} in {surface_id}: {argv}{selection}")
 }
 
 fn format_team_worker_health_line(worker: &Value) -> String {
@@ -16151,6 +16199,30 @@ mod tests {
     }
 
     #[test]
+    fn team_worker_launch_formatter_surfaces_auto_selection_and_task_context() {
+        let line = format_team_worker_launch_line(&json!({
+            "surface": {"id": "surface-2"},
+            "worker": {
+                "id": "worker-2",
+                "agent": "pi",
+                "role": "reviewer",
+                "assigned_task_id": "task-1"
+            },
+            "argv": ["pi", "--readonly"],
+            "selection": {
+                "requested_agent": "auto",
+                "selected_agent": "pi",
+                "reason": "first available provider"
+            }
+        }));
+
+        assert_eq!(
+            line,
+            "Launched worker worker-2 agent pi role reviewer task task-1 in surface-2: pi --readonly selected pi (first available provider)"
+        );
+    }
+
+    #[test]
     fn team_worker_health_requests_team_worker_health() {
         let request = with_socket_response(
             |req| json!({"id": req["id"], "ok": true, "result": {"workers": []}}).to_string(),
@@ -16648,6 +16720,54 @@ mod tests {
         assert_eq!(requests[3]["params"]["assigned_worker_id"], "worker-1");
         assert_eq!(requests[3]["params"]["status"], "running");
         assert_eq!(requests[5]["params"]["submit"], true);
+    }
+
+    #[test]
+    fn team_ask_flow_formatter_reports_submission_target() {
+        let line = format_team_ask_flow_line(&json!({
+            "worker": {
+                "worker": {
+                    "id": "worker-1",
+                    "agent": "claude"
+                },
+                "surface": {"id": "surface-2"}
+            },
+            "task": {"id": "task-1"},
+            "dispatch": {
+                "submitted": true
+            }
+        }));
+
+        assert_eq!(
+            line,
+            "Team prompt submitted to worker-1 agent claude task task-1 surface surface-2"
+        );
+    }
+
+    #[test]
+    fn team_ask_flow_formatter_reports_selected_agent_and_assigned_task() {
+        let line = format_team_ask_flow_line(&json!({
+            "worker": {
+                "worker": {
+                    "id": "worker-1",
+                    "agent": "auto",
+                    "assigned_task_id": "task-1"
+                },
+                "surface": {"id": "surface-2"},
+                "selection": {
+                    "requested_agent": "auto",
+                    "selected_agent": "pi"
+                }
+            },
+            "dispatch": {
+                "submitted": false
+            }
+        }));
+
+        assert_eq!(
+            line,
+            "Team prompt dispatched to worker-1 agent pi task task-1 surface surface-2"
+        );
     }
 
     #[test]

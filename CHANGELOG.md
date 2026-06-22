@@ -77,6 +77,12 @@ All notable changes to ForkTTY are documented here.
   rows show the current pane, group lifecycles, surface risky permission modes,
   compact ended sessions, calmer status chips, compact risky permission labels,
   and inline terminal previews.
+- Agent-oriented workspace chrome now uses more human scan labels and targets:
+  running agent rows/badges read as Working, ended rows read as Done, sidebar
+  metadata suppresses standing permission-mode noise, workspace paths prefer a
+  tracked agent `resume_cwd` when it differs from the launch directory,
+  notification jump prioritizes unread prompts, and high-level team CLI output
+  reports the worker, task, surface, provider, and submit state.
 - GTK chrome micro-polish now aligns workspace badges, pane action hover/focus
   states, sidebar actions, status shortcuts, and pane hairlines with the quieter
   Agent HUD and notification panel treatment.

@@ -310,7 +310,9 @@ launch a fresh worker surface, assign the task after launch, queue the prompt,
 and dispatch it. Submit mode uses provider-aware terminal input: most workers
 receive text plus carriage-return Enter in one write, while Claude receives
 the text, a short settle, and a separate Enter so its TUI starts the staged
-prompt reliably.
+prompt reliably. Human CLI output names the worker, selected provider when
+known, task, target surface, and whether the prompt was dispatched or submitted
+so a leader can tell which visible pane to monitor without opening JSON.
 Re-run them to launch a new worker;
 use `team-message-send` plus `team-message-dispatch` for follow-up prompts to
 an existing worker. Context snapshots include compact `team_summaries` rows so
@@ -347,7 +349,10 @@ workflow memory remains opt-in, and moving to a new iteration clears prior gate
 results and stop reason unless replacements are supplied in the same request.
 Workspace, surface, agent, and agent-health rows expose
 `effective_project_cwd`, preferring the tracked agent `resume_cwd` over the
-workspace directory when they differ. `team.worker.health` includes
+workspace directory when they differ; the GTK sidebar uses the same effective
+path for a focused tracked agent so a workspace launched from `~` can still
+display the project directory where the agent is actually working.
+`team.worker.health` includes
 `surface_present`, `surface_runtime_present`, `surface_ready`, and a derived
 `final_state` such as `shutdown_requested`, `closed`, `starting`,
 `surface_missing`, or `stale` so cleanup decisions do not require interpreting
@@ -368,10 +373,11 @@ agent lifecycle with bounded timeout/interval values through short
 `context.snapshot` reads and no terminal text reads.
 
 The titlebar Agent HUD shows persisted agent sessions across workspaces, highlights
-sessions that need input, and can focus or resume a tracked agent. `forktty agents`,
-`forktty agent-health`, and `forktty statusline` include the
-agent lifecycle (`running`, `idle`, `needs_input`, `ended`, or `unknown`) when
-a provider session id has been persisted; hook events drive the live state, and
+sessions that need input, and can focus or resume a tracked agent. The GTK HUD
+and sidebar collapse raw lifecycle values into scan-friendly labels such as
+Working, Needs input, Done, and Idle; the socket/CLI surfaces keep the raw
+lifecycle values (`running`, `idle`, `needs_input`, `ended`, or `unknown`) when
+a provider session id has been persisted. Hook events drive the live state, and
 terminal child exit marks attached sessions `ended`. `forktty agents` and
 `forktty agent-health` also expose persisted `resume_cwd`, `last_activity_ms`,
 `source`, response `observed_at_ms`, and nullable `age_ms` so delayed
@@ -578,7 +584,7 @@ the same local socket pipeline. Manual hook-event commands can pass
 - Agent HUD in the GTK titlebar for lifecycle, last activity, attention, focus, and resume across workspaces.
 - Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees. Setup hooks are advisory; teardown hook failures or teardown-created dirty state block removal.
 - Session restore for workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata.
-- Prompt-aware notifications from ForkTTY hooks and terminal events, bounded visible prompt fallback, Ghostty bell, and hook/socket events.
+- Prompt-aware notifications from ForkTTY hooks and terminal events, bounded visible prompt fallback, Ghostty bell, and hook/socket events. The notification panel groups prompts/current-workspace/history and its latest-target action prioritizes unread prompts before lower-urgency history.
 - Source-only experimental WebKitGTK6 browser panes (behind the `browser` feature) with scriptable snapshot/click/fill/eval verbs, per-profile persistent WebKit sessions, profile CRUD, history/bookmark socket plus CLI access, and history/bookmark import from local Firefox/Chromium-family profiles.
 - Bounded config/session/socket handling and local-only privacy defaults.
 

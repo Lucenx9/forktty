@@ -773,7 +773,7 @@ fn closed_surface_notification_is_not_openable() {
         &surface_notification
     ));
     assert_eq!(
-        latest_openable_notification(&state)
+        latest_openable_notification_for_panel_click(&state, &[])
             .expect("workspace notification should remain openable")
             .id,
         workspace_notification.id
@@ -882,6 +882,225 @@ fn notification_open_latest_requires_multiple_openable_notifications() {
 }
 
 #[test]
+fn latest_openable_notification_prefers_unread_prompts() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (read_prompt, unread_prompt) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", "/tmp/project");
+        let read_prompt = model.create_notification(
+            "Read prompt",
+            "Older prompt",
+            NotificationKind::Prompt,
+            Some(workspace.id.clone()),
+            Some(workspace.focused_surface_id.clone()),
+        );
+        model.mark_notifications_read();
+        let unread_prompt = model.create_notification(
+            "Unread prompt",
+            "Needs action",
+            NotificationKind::Prompt,
+            Some(workspace.id.clone()),
+            Some(workspace.focused_surface_id.clone()),
+        );
+        let _newest_info = model.create_notification(
+            "Newest info",
+            "Less urgent",
+            NotificationKind::Info,
+            Some(workspace.id),
+            None,
+        );
+        assert!(!read_prompt.read);
+        (read_prompt, unread_prompt)
+    };
+
+    assert_eq!(
+        latest_openable_notification_for_panel_click(&state, &[])
+            .expect("openable prompt")
+            .id,
+        unread_prompt.id
+    );
+    assert_ne!(
+        latest_openable_notification_for_panel_click(&state, &[])
+            .expect("openable prompt")
+            .id,
+        read_prompt.id
+    );
+}
+
+#[test]
+fn latest_openable_notification_breaks_timestamp_ties_by_insertion_order() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (first, second, mut notifications) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", "/tmp/project");
+        let first = model.create_notification(
+            "First",
+            "Older inserted row",
+            NotificationKind::Info,
+            Some(workspace.id.clone()),
+            None,
+        );
+        let second = model.create_notification(
+            "Second",
+            "Newer inserted row",
+            NotificationKind::Info,
+            Some(workspace.id),
+            None,
+        );
+        (first, second, model.list_notifications())
+    };
+    for notification in &mut notifications {
+        notification.created_at_ms = 1_000;
+    }
+
+    assert_eq!(
+        latest_openable_notification_from(&state, notifications)
+            .expect("openable notification")
+            .id,
+        second.id
+    );
+    assert_ne!(
+        latest_openable_notification_for_panel_click(&state, &[])
+            .expect("openable notification")
+            .id,
+        first.id
+    );
+}
+
+#[test]
+fn panel_latest_openable_preserves_unread_snapshot_after_mark_read() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (unread_prompt, read_prompt, mut panel_notifications) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", "/tmp/project");
+        let unread_prompt = model.create_notification(
+            "Unread prompt",
+            "Needs action",
+            NotificationKind::Prompt,
+            Some(workspace.id.clone()),
+            Some(workspace.focused_surface_id.clone()),
+        );
+        let read_prompt = model.create_notification(
+            "Read prompt",
+            "Newer prompt history",
+            NotificationKind::Prompt,
+            Some(workspace.id),
+            Some(workspace.focused_surface_id),
+        );
+        let mut panel_notifications = model.list_notifications();
+        for notification in &mut panel_notifications {
+            notification.read = notification.id == read_prompt.id;
+        }
+        model.mark_notifications_read();
+        (unread_prompt, read_prompt, panel_notifications)
+    };
+    for notification in &mut panel_notifications {
+        notification.created_at_ms = if notification.id == unread_prompt.id {
+            1_000
+        } else {
+            2_000
+        };
+    }
+
+    assert_eq!(
+        latest_openable_notification_for_panel_click(&state, &panel_notifications)
+            .expect("openable notification")
+            .id,
+        unread_prompt.id
+    );
+    assert_ne!(
+        latest_openable_notification_for_panel_click(&state, &[])
+            .expect("openable notification")
+            .id,
+        unread_prompt.id
+    );
+    assert_eq!(
+        latest_openable_notification_for_panel_click(&state, &[])
+            .expect("openable notification")
+            .id,
+        read_prompt.id
+    );
+}
+
+#[test]
+fn panel_latest_openable_ignores_dismissed_snapshot_items() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (dismissed_prompt, fallback_prompt, panel_notifications) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", "/tmp/project");
+        let dismissed_prompt = model.create_notification(
+            "Dismissed prompt",
+            "Should not be opened",
+            NotificationKind::Prompt,
+            Some(workspace.id.clone()),
+            Some(workspace.focused_surface_id.clone()),
+        );
+        let fallback_prompt = model.create_notification(
+            "Fallback prompt",
+            "Still current",
+            NotificationKind::Prompt,
+            Some(workspace.id),
+            Some(workspace.focused_surface_id),
+        );
+        let mut panel_notifications = model.list_notifications();
+        for notification in &mut panel_notifications {
+            notification.created_at_ms = if notification.id == dismissed_prompt.id {
+                2_000
+            } else {
+                1_000
+            };
+        }
+        assert!(model.dismiss_notification(&dismissed_prompt.id));
+        (dismissed_prompt, fallback_prompt, panel_notifications)
+    };
+
+    assert_eq!(
+        latest_openable_notification_for_panel_click(&state, &panel_notifications)
+            .expect("openable notification")
+            .id,
+        fallback_prompt.id
+    );
+    assert_ne!(
+        latest_openable_notification_for_panel_click(&state, &panel_notifications)
+            .expect("openable notification")
+            .id,
+        dismissed_prompt.id
+    );
+}
+
+#[test]
 fn notification_panel_rows_prioritize_prompts_and_current_workspace() {
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
@@ -892,7 +1111,7 @@ fn notification_panel_rows_prioritize_prompts_and_current_workspace() {
         PathBuf::from("/tmp/forktty.sock"),
     )
     .with_notification_dispatch(false);
-    let (current_info, other_prompt, stale_prompt) = {
+    let (current_info, other_prompt, stale_prompt, unread_current_info) = {
         let mut model = model.lock().unwrap();
         let other = model.create_workspace("other", "/tmp/other");
         let other_surface = other.focused_surface_id.clone();
@@ -908,6 +1127,7 @@ fn notification_panel_rows_prioritize_prompts_and_current_workspace() {
             Some(current.id.clone()),
             None,
         );
+        model.mark_notifications_read();
         let other_prompt = model.create_notification(
             "Other prompt",
             "Needs input elsewhere",
@@ -923,7 +1143,19 @@ fn notification_panel_rows_prioritize_prompts_and_current_workspace() {
             Some(stale_surface.clone()),
         );
         model.close_surface(&stale_surface).unwrap();
-        (current_info, other_prompt, stale_prompt)
+        let unread_current_info = model.create_notification(
+            "Unread current info",
+            "Newest current workspace update",
+            NotificationKind::Info,
+            Some(current.id.clone()),
+            None,
+        );
+        (
+            current_info,
+            other_prompt,
+            stale_prompt,
+            unread_current_info,
+        )
     };
     let notifications = model.lock().unwrap().list_notifications();
 
@@ -935,16 +1167,18 @@ fn notification_panel_rows_prioritize_prompts_and_current_workspace() {
             .collect::<Vec<_>>(),
         vec![
             other_prompt.id.as_str(),
+            unread_current_info.id.as_str(),
             current_info.id.as_str(),
             stale_prompt.id.as_str()
         ]
     );
     assert_eq!(rows[0].section_label, "Needs action");
     assert_eq!(rows[1].section_label, "This workspace");
-    assert_eq!(rows[2].section_label, "History");
+    assert_eq!(rows[2].section_label, "This workspace");
+    assert_eq!(rows[3].section_label, "History");
     let counts = notification_panel_section_counts(&rows);
     assert_eq!(counts.get("Needs action"), Some(&1));
-    assert_eq!(counts.get("This workspace"), Some(&1));
+    assert_eq!(counts.get("This workspace"), Some(&2));
     assert_eq!(counts.get("History"), Some(&1));
 }
 
@@ -1385,6 +1619,7 @@ fn agent_hud_ended_rows_are_compact_done_rows() {
 
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].section_label, "Done");
+    assert_eq!(rows[0].lifecycle_label, "Done");
     assert!(rows[0].compact);
     assert!(rows[0].can_resume);
 }
@@ -1408,6 +1643,7 @@ fn agent_hud_risky_permission_modes_use_pills_outside_needs_input() {
     let rows = agent_hud_rows(&model, 1_700_000_300_000);
 
     assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].lifecycle_label, "Working");
     assert!(!rows[0].needs_input);
     assert!(rows[0].permission_mode_risky);
     assert_eq!(
@@ -1436,6 +1672,7 @@ fn agent_hud_safe_permission_modes_remain_meta_outside_needs_input() {
     let rows = agent_hud_rows(&model, 1_700_000_300_000);
 
     assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].lifecycle_label, "Working");
     assert!(!rows[0].permission_mode_risky);
     assert_eq!(agent_permission_pill_label(&rows[0]), None);
     assert!(agent_meta_line(&rows[0]).contains("mode dontAsk"));
@@ -3150,8 +3387,80 @@ fn sidebar_badge_ignores_stale_surface_exit_status() {
 
     let badge = workspace_status_badge(&workspace, &[stale_exit, running], &[], None).unwrap();
 
-    assert_eq!(badge.label, "Running");
+    assert_eq!(badge.label, "Working");
     assert_eq!(badge.class_name, "running");
+}
+
+#[test]
+fn workspace_meta_line_prefers_agent_resume_cwd_for_visible_project() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/home/simone");
+    let surface_id = workspace.focused_surface_id.clone();
+    assert!(model.set_surface_agent_session(
+        &surface_id,
+        forktty_core::AgentKind::Codex,
+        "codex-session",
+    ));
+    assert!(model
+        .set_surface_agent_session_resume_cwd(&surface_id, PathBuf::from("/home/simone/forktty"),));
+    let workspace = model.list_workspaces().remove(0);
+    let surface = model.surface(&surface_id).unwrap();
+
+    let meta = workspace_meta_line(
+        &workspace,
+        None,
+        Some(surface_effective_project_cwd(surface)),
+    );
+
+    assert!(meta.contains("~/forktty"), "{meta}");
+    assert!(!meta.ends_with("~"), "{meta}");
+}
+
+#[test]
+fn workspace_meta_line_keeps_workspace_root_without_agent_resume_cwd() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp/project");
+    let surface_id = workspace.focused_surface_id.clone();
+    assert!(model.set_surface_cwd(&surface_id, PathBuf::from("/tmp/project/subdir")));
+    let workspace = model.list_workspaces().remove(0);
+    let surface = model.surface(&surface_id).unwrap();
+
+    let meta = workspace_meta_line(&workspace, None, surface_agent_resume_cwd(surface));
+
+    assert!(meta.ends_with("/tmp/project"), "{meta}");
+    assert!(!meta.contains("subdir"), "{meta}");
+}
+
+#[test]
+fn sidebar_snapshot_hides_launch_cwd_title_when_effective_cwd_differs() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", "/tmp");
+        let surface_id = workspace.focused_surface_id;
+        assert!(model.set_surface_title(&surface_id, "/tmp".to_string()));
+        assert!(model.set_surface_agent_session(
+            &surface_id,
+            forktty_core::AgentKind::Codex,
+            "codex-session",
+        ));
+        assert!(
+            model.set_surface_agent_session_resume_cwd(&surface_id, PathBuf::from("/tmp/forktty"),)
+        );
+    }
+
+    let snapshot = sidebar_snapshot(&state);
+
+    assert_eq!(snapshot.active_full_path.as_deref(), Some("/tmp/forktty"));
+    assert_eq!(snapshot.active_pane_label, None);
 }
 
 #[test]
@@ -3253,7 +3562,7 @@ fn sidebar_activity_summary_ignores_inactive_agent_metadata() {
     assert!(progress.is_empty());
     assert_eq!(
         format_workspace_activity_summary(&statuses, &progress, None, None),
-        "Codex: Running Bash"
+        "Codex: Working"
     );
 }
 
@@ -3327,7 +3636,7 @@ fn sidebar_badge_ignores_permission_mode_pills() {
     )
     .unwrap();
 
-    assert_eq!(badge.label, "Running");
+    assert_eq!(badge.label, "Working");
     assert_eq!(badge.class_name, "running");
 }
 

@@ -1238,11 +1238,11 @@ fn lifecycle_presentation(
 ) -> (&'static str, &'static str, u8) {
     match lifecycle {
         forktty_core::AgentSessionLifecycle::NeedsInput => ("Needs input", "needs-input", 0),
-        forktty_core::AgentSessionLifecycle::Running => ("Running", "running", 1),
+        forktty_core::AgentSessionLifecycle::Running => ("Working", "running", 1),
         forktty_core::AgentSessionLifecycle::Idle => ("Idle", "idle", 2),
         forktty_core::AgentSessionLifecycle::Suspended => ("Suspended", "suspended", 3),
         forktty_core::AgentSessionLifecycle::Unknown => ("Unknown", "unknown", 4),
-        forktty_core::AgentSessionLifecycle::Ended => ("Ended", "ended", 5),
+        forktty_core::AgentSessionLifecycle::Ended => ("Done", "ended", 5),
     }
 }
 
