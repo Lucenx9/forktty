@@ -253,6 +253,10 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "workflow-plan-set"
             | "workflow:plan-set"
             | "workflow.plan.set"
+            | "workflow-loop-set"
+            | "workflow:loop:set"
+            | "workflow.loop.set"
+            | "loop-set"
             | "workflow-evidence-add"
             | "workflow:evidence-add"
             | "workflow.evidence.add"
@@ -1760,6 +1764,10 @@ mod tests {
         assert!(is_socket_cli_command("context.snapshot"));
         assert!(is_socket_cli_command("examples"));
         assert!(is_socket_cli_command("completions"));
+        assert!(is_socket_cli_command("workflow-loop-set"));
+        assert!(is_socket_cli_command("workflow:loop:set"));
+        assert!(is_socket_cli_command("workflow.loop.set"));
+        assert!(is_socket_cli_command("loop-set"));
         assert!(!is_socket_cli_command("explode"));
     }
 

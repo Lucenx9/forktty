@@ -88,6 +88,9 @@ All notable changes to ForkTTY are documented here.
 - Workflow loop iteration updates now clear prior gate results and stop reasons
   unless the same request supplies replacements, preventing stale failed gates
   from carrying into a new verification pass.
+- CLI routing now recognizes `forktty workflow-loop-set` and its socket-style
+  aliases, so the documented wrapper reaches `workflow.loop.set` instead of
+  being rejected as an unknown argument.
 - `team.summary` now flags active teams that have no active workers, open tasks,
   or pending messages as `active_without_open_work`, so stale orchestration
   records are visible before an agent mistakes them for still-running work.
