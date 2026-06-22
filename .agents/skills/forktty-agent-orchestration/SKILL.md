@@ -102,12 +102,14 @@ Use mutating tools only for visible coordination:
 - `team_message_send` queues a message; `team_message_dispatch` sends it to the
   worker pane and acknowledges only after delivery succeeds.
 - `team_finish` verifies open tasks, pending messages, and live-looking worker
-  final states, optionally closes only launch-owned disposable worker panes, and
-  marks the team done. Prefer a dry-run before finalizing non-trivial work.
+  final states, optionally closes only current-runtime launch-owned disposable
+  worker panes, and marks the team done. Prefer a dry-run before finalizing
+  non-trivial work.
 - `team_worker_nudge` and `team_worker_shutdown` send explicit text requests to
   a worker pane. Shutdown submits the request by default; use `close_surface`
-  only for immediate cleanup of disposable worker panes launched by ForkTTY team
-  tools, never for manually attached user panes.
+  only for immediate cleanup of disposable worker panes launched by the current
+  ForkTTY runtime's team tools, never for manually attached user panes or stale
+  persisted launch records after restart.
 - `workflow_upsert`, `workflow_plan_set`, and workflow evidence tools preserve
   compaction-resistant goal, plan, and proof state.
 
@@ -154,8 +156,9 @@ or parallel workers:
    workers, not while coherent work is active.
 6. Mark tasks done/blocked with evidence. When all work is reconciled, run
    `team_finish` or `forktty team finish --dry-run` first; then finalize with
-   `--close-workers` only for disposable workers launched by ForkTTY team tools.
-   Use `--force` only after reviewing `team_summary` and `team_worker_health`.
+   `--close-workers` only for disposable workers launched by the current ForkTTY
+   runtime's team tools. Use `--force` only after reviewing `team_summary` and
+   `team_worker_health`.
 
 Workers must not create, fork, steer, rename, archive, or delegate to other
 workers unless the user explicitly grants that permission.

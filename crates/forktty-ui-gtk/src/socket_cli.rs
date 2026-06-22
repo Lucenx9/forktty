@@ -33,6 +33,7 @@ const AGENT_SKILL_MD: &str =
 const AGENT_SKILL_OPENAI_YAML: &str =
     include_str!("../../../.agents/skills/forktty-agent-orchestration/agents/openai.yaml");
 const MAX_HOOK_CONFIG_SIZE_BYTES: u64 = 1024 * 1024;
+const MAX_AGENT_SKILL_FILE_BYTES: u64 = MAX_HOOK_CONFIG_SIZE_BYTES;
 // MCP registration edits third-party files that grow on their own —
 // ~/.claude.json in particular carries per-project state and routinely
 // exceeds 1 MiB — so it gets a larger budget than ForkTTY-owned hook configs.
@@ -170,13 +171,13 @@ High-level wrappers:
       Read team.summary, team.worker.health, team.inbox, and team.events together.
 
   forktty team finish <team-id> [--dry-run] [--close-workers] [--force]
-      Verify team state, optionally close launch-owned workers, and mark the team done.
+      Verify team state, optionally close current-runtime launch-owned workers, and mark the team done.
 
 Low-level aliases still exist:
   forktty teams | team-list | team:list | team.list
   forktty team-get | team:get | team.get
   forktty team-worker-launch | team.worker.launch
-  forktty team-worker-shutdown --close closes launch-owned disposable worker panes
+  forktty team-worker-shutdown --close closes current-runtime launch-owned disposable worker panes
   forktty team-message-send | team.message.send
   forktty team-message-dispatch | team.message.dispatch
       With --submit, uses provider-aware terminal input.
@@ -7756,39 +7757,35 @@ fn build_mcp_remove_plan(spec: &'static McpAgentSpec) -> CliResult<McpRemovePlan
 
 fn build_skill_setup_plan(spec: &'static SkillTargetSpec) -> CliResult<SkillSetupPlan> {
     let skill_dir = (spec.skill_dir)();
-    let existing = read_managed_skill_dir(&skill_dir)?;
     let skill_path = skill_dir.join("SKILL.md");
     let metadata_path = skill_dir.join("agents").join("openai.yaml");
-    let existing_metadata = if existing.is_some() {
-        read_text_config(&metadata_path, "agent skill metadata")?
-    } else {
-        None
-    };
     let files = vec![
         (skill_path, AGENT_SKILL_MD.to_string()),
         (metadata_path, AGENT_SKILL_OPENAI_YAML.to_string()),
     ];
     let source_checksum = skill_content_checksum(AGENT_SKILL_MD, Some(AGENT_SKILL_OPENAI_YAML));
-    let installed_checksum = existing
-        .as_deref()
-        .map(|skill| skill_content_checksum(skill, existing_metadata.as_deref()))
-        .unwrap_or_default();
-    let changed = existing.as_deref() != Some(AGENT_SKILL_MD)
-        || existing_metadata.as_deref() != Some(AGENT_SKILL_OPENAI_YAML);
-    let status = if existing.is_none() {
-        "missing"
-    } else if changed {
-        "update_available"
-    } else {
-        "up_to_date"
-    };
+    let (status, installed_checksum, _) =
+        skill_target_status(&skill_dir, &source_checksum, spec.key);
+    if status == "unmanaged" {
+        return Err(CliError::new(format!(
+            "skills: refusing to overwrite unmanaged skill at {}",
+            skill_dir.display()
+        )));
+    }
+    if status == "invalid" && installed_checksum.is_none() {
+        return Err(CliError::new(format!(
+            "skills: refusing to overwrite invalid skill at {} because the ForkTTY-managed marker could not be verified",
+            skill_dir.display()
+        )));
+    }
+    let changed = status != "up_to_date";
     Ok(SkillSetupPlan {
         spec,
         skill_dir,
         changed,
         status,
         source_checksum,
-        installed_checksum,
+        installed_checksum: installed_checksum.unwrap_or_default(),
         repair_command: changed.then(|| format!("forktty skills setup {}", spec.key)),
         files,
     })
@@ -7850,19 +7847,21 @@ fn skill_target_status(
     target: &str,
 ) -> (&'static str, Option<String>, Option<String>) {
     let repair = || Some(format!("forktty skills setup {target}"));
+    let unrepairable_invalid = || ("invalid", None, None);
     let meta = match fs::symlink_metadata(skill_dir) {
         Ok(meta) => meta,
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
             return ("missing", None, repair());
         }
-        Err(_) => return ("invalid", None, repair()),
+        Err(_) => return unrepairable_invalid(),
     };
     if meta.file_type().is_symlink() || !meta.is_dir() {
-        return ("invalid", None, repair());
+        return unrepairable_invalid();
     }
-    let skill = match fs::read_to_string(skill_dir.join("SKILL.md")) {
-        Ok(skill) => skill,
-        Err(_) => return ("invalid", None, repair()),
+    let skill_path = skill_dir.join("SKILL.md");
+    let skill = match read_managed_skill_file_for_doctor(&skill_path, "agent skill") {
+        Ok(Some(skill)) => skill,
+        Ok(None) | Err(_) => return unrepairable_invalid(),
     };
     if !skill.contains(AGENT_SKILL_MARKER) {
         return (
@@ -7871,13 +7870,85 @@ fn skill_target_status(
             None,
         );
     }
-    let metadata = fs::read_to_string(skill_dir.join("agents").join("openai.yaml")).ok();
+    let metadata_dir = skill_dir.join("agents");
+    if let Err(_err) = validate_managed_skill_metadata_dir_for_doctor(&metadata_dir) {
+        return (
+            "invalid",
+            Some(skill_content_checksum(&skill, None)),
+            repair(),
+        );
+    }
+    let metadata_path = metadata_dir.join("openai.yaml");
+    let metadata = match read_managed_skill_file_for_doctor(&metadata_path, "agent skill metadata")
+    {
+        Ok(metadata) => metadata,
+        Err(_) => {
+            return (
+                "invalid",
+                Some(skill_content_checksum(&skill, None)),
+                repair(),
+            );
+        }
+    };
     let installed_checksum = skill_content_checksum(&skill, metadata.as_deref());
     if installed_checksum == source_checksum {
         ("up_to_date", Some(installed_checksum), None)
     } else {
         ("update_available", Some(installed_checksum), repair())
     }
+}
+
+fn validate_managed_skill_metadata_dir_for_doctor(path: &Path) -> CliResult<()> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err.into()),
+    };
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Err(CliError::new(format!(
+            "agent skill metadata directory exists but is not a directory: {}",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn read_managed_skill_file_for_doctor(path: &Path, label: &str) -> CliResult<Option<String>> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+    if meta.file_type().is_symlink() || !meta.is_file() {
+        return Err(CliError::new(format!(
+            "{label} exists but is not a regular file"
+        )));
+    }
+    let file = File::open(path)?;
+    let stat = file.metadata()?;
+    if !stat.is_file() {
+        return Err(CliError::new(format!(
+            "{label} exists but is not a regular file"
+        )));
+    }
+    if stat.len() > MAX_AGENT_SKILL_FILE_BYTES {
+        return Err(CliError::new(format!(
+            "{label} is too large ({} bytes; max {} bytes)",
+            stat.len(),
+            MAX_AGENT_SKILL_FILE_BYTES
+        )));
+    }
+    let mut text = String::new();
+    let mut limited = file.take(MAX_AGENT_SKILL_FILE_BYTES + 1);
+    limited.read_to_string(&mut text)?;
+    if text.len() as u64 > MAX_AGENT_SKILL_FILE_BYTES {
+        return Err(CliError::new(format!(
+            "{label} is too large ({} bytes; max {} bytes)",
+            text.len(),
+            MAX_AGENT_SKILL_FILE_BYTES
+        )));
+    }
+    Ok(Some(text))
 }
 
 fn skill_content_checksum(skill: &str, metadata: Option<&str>) -> String {
@@ -9226,8 +9297,10 @@ fn backup_file(path: &Path) -> CliResult<Option<PathBuf>> {
 }
 
 fn backup_skill_dir(path: &Path) -> CliResult<Option<PathBuf>> {
-    if !path.exists() {
-        return Ok(None);
+    match fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
     }
     loop {
         let backup = path.with_file_name(format!(
@@ -13910,6 +13983,181 @@ mod tests {
                 report["skillDirs"]["agents"]["repairCommand"],
                 "forktty skills setup agents"
             );
+        });
+    }
+
+    #[test]
+    fn doctor_reports_symlinked_skill_file_as_unrepairable_invalid() {
+        let home = tempfile::tempdir().unwrap();
+        let home_s = home.path().to_string_lossy().to_string();
+
+        with_env(&[("HOME", Some(home_s.as_str()))], || {
+            let skill_dir = agent_skills_dir();
+            fs::create_dir_all(skill_dir.join("agents")).unwrap();
+            let target = home.path().join("external-skill.md");
+            fs::write(&target, AGENT_SKILL_MD).unwrap();
+            std::os::unix::fs::symlink(&target, skill_dir.join("SKILL.md")).unwrap();
+            fs::write(
+                skill_dir.join("agents").join("openai.yaml"),
+                AGENT_SKILL_OPENAI_YAML,
+            )
+            .unwrap();
+
+            let report = build_socket_doctor_report(&test_context());
+
+            assert_eq!(report["skillDirs"]["agents"]["status"], "invalid");
+            assert!(report["skillDirs"]["agents"]["repairCommand"].is_null());
+        });
+    }
+
+    #[test]
+    fn skill_setup_refuses_symlinked_skill_file_without_verified_marker() {
+        let home = tempfile::tempdir().unwrap();
+        let home_s = home.path().to_string_lossy().to_string();
+
+        with_env(&[("HOME", Some(home_s.as_str()))], || {
+            let context = test_context();
+            let skill_dir = agent_skills_dir();
+            fs::create_dir_all(skill_dir.join("agents")).unwrap();
+            let target = home.path().join("external-skill.md");
+            fs::write(&target, AGENT_SKILL_MD).unwrap();
+            std::os::unix::fs::symlink(&target, skill_dir.join("SKILL.md")).unwrap();
+            fs::write(
+                skill_dir.join("agents").join("openai.yaml"),
+                AGENT_SKILL_OPENAI_YAML,
+            )
+            .unwrap();
+
+            let spec = supported_skill_targets(&strings(&["agents"])).unwrap()[0];
+            let error = match build_skill_setup_plan(spec) {
+                Ok(_) => panic!("expected symlinked SKILL.md to be refused"),
+                Err(error) => error,
+            };
+            assert!(error
+                .message
+                .contains("ForkTTY-managed marker could not be verified"));
+
+            let error = handle_skills_setup(&context, strings(&["agents"])).unwrap_err();
+            assert!(error
+                .message
+                .contains("ForkTTY-managed marker could not be verified"));
+
+            let report = build_socket_doctor_report(&context);
+            assert_eq!(report["skillDirs"]["agents"]["status"], "invalid");
+            assert!(report["skillDirs"]["agents"]["repairCommand"].is_null());
+        });
+    }
+
+    #[test]
+    fn skill_setup_repairs_invalid_metadata_after_verified_marker() {
+        let home = tempfile::tempdir().unwrap();
+        let home_s = home.path().to_string_lossy().to_string();
+
+        with_env(&[("HOME", Some(home_s.as_str()))], || {
+            let context = test_context();
+            let skill_dir = agent_skills_dir();
+            fs::create_dir_all(skill_dir.join("agents")).unwrap();
+            fs::write(skill_dir.join("SKILL.md"), AGENT_SKILL_MD).unwrap();
+            let target = home.path().join("external-openai.yaml");
+            fs::write(&target, AGENT_SKILL_OPENAI_YAML).unwrap();
+            std::os::unix::fs::symlink(&target, skill_dir.join("agents").join("openai.yaml"))
+                .unwrap();
+
+            let spec = supported_skill_targets(&strings(&["agents"])).unwrap()[0];
+            let plan = build_skill_setup_plan(spec).unwrap();
+            assert_eq!(plan.status, "invalid");
+            assert!(plan.changed);
+
+            handle_skills_setup(&context, strings(&["agents"])).unwrap();
+
+            let metadata =
+                fs::symlink_metadata(skill_dir.join("agents").join("openai.yaml")).unwrap();
+            assert!(metadata.is_file());
+            assert!(!metadata.file_type().is_symlink());
+            assert_eq!(
+                backup_count(
+                    skill_dir.parent().unwrap(),
+                    "forktty-agent-orchestration.bak-"
+                ),
+                1
+            );
+            let report = build_socket_doctor_report(&context);
+            assert_eq!(report["skillDirs"]["agents"]["status"], "up_to_date");
+        });
+    }
+
+    #[test]
+    fn skill_setup_repairs_symlinked_metadata_dir_after_verified_marker() {
+        let home = tempfile::tempdir().unwrap();
+        let home_s = home.path().to_string_lossy().to_string();
+
+        with_env(&[("HOME", Some(home_s.as_str()))], || {
+            let context = test_context();
+            let skill_dir = agent_skills_dir();
+            fs::create_dir_all(&skill_dir).unwrap();
+            fs::write(skill_dir.join("SKILL.md"), AGENT_SKILL_MD).unwrap();
+            let target = home.path().join("external-agents");
+            fs::create_dir_all(&target).unwrap();
+            fs::write(target.join("openai.yaml"), AGENT_SKILL_OPENAI_YAML).unwrap();
+            std::os::unix::fs::symlink(&target, skill_dir.join("agents")).unwrap();
+
+            let report = build_socket_doctor_report(&context);
+            assert_eq!(report["skillDirs"]["agents"]["status"], "invalid");
+            assert_eq!(
+                report["skillDirs"]["agents"]["repairCommand"],
+                "forktty skills setup agents"
+            );
+
+            let spec = supported_skill_targets(&strings(&["agents"])).unwrap()[0];
+            let plan = build_skill_setup_plan(spec).unwrap();
+            assert_eq!(plan.status, "invalid");
+            assert!(plan.changed);
+
+            handle_skills_setup(&context, strings(&["agents"])).unwrap();
+
+            let metadata_dir = fs::symlink_metadata(skill_dir.join("agents")).unwrap();
+            assert!(metadata_dir.is_dir());
+            assert!(!metadata_dir.file_type().is_symlink());
+            let metadata =
+                fs::symlink_metadata(skill_dir.join("agents").join("openai.yaml")).unwrap();
+            assert!(metadata.is_file());
+            assert!(!metadata.file_type().is_symlink());
+            let report = build_socket_doctor_report(&context);
+            assert_eq!(report["skillDirs"]["agents"]["status"], "up_to_date");
+        });
+    }
+
+    #[test]
+    fn skill_setup_refuses_symlinked_skill_directory_without_verified_marker() {
+        let home = tempfile::tempdir().unwrap();
+        let home_s = home.path().to_string_lossy().to_string();
+
+        with_env(&[("HOME", Some(home_s.as_str()))], || {
+            let context = test_context();
+            let skill_dir = agent_skills_dir();
+            fs::create_dir_all(skill_dir.parent().unwrap()).unwrap();
+            let target = home.path().join("external-skill-dir");
+            std::os::unix::fs::symlink(&target, &skill_dir).unwrap();
+
+            let spec = supported_skill_targets(&strings(&["agents"])).unwrap()[0];
+            let error = match build_skill_setup_plan(spec) {
+                Ok(_) => panic!("expected symlinked skill directory to be refused"),
+                Err(error) => error,
+            };
+            assert!(error
+                .message
+                .contains("ForkTTY-managed marker could not be verified"));
+
+            let error = handle_skills_setup(&context, strings(&["agents"])).unwrap_err();
+            assert!(error
+                .message
+                .contains("ForkTTY-managed marker could not be verified"));
+
+            let skill_dir_meta = fs::symlink_metadata(&skill_dir).unwrap();
+            assert!(skill_dir_meta.file_type().is_symlink());
+            let report = build_socket_doctor_report(&context);
+            assert_eq!(report["skillDirs"]["agents"]["status"], "invalid");
+            assert!(report["skillDirs"]["agents"]["repairCommand"].is_null());
         });
     }
 

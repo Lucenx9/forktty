@@ -1988,13 +1988,13 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "team_finish",
             annotations: mutating_annotations(true, false),
-            description: "Finalize a ForkTTY team after verifying summary and worker health. Supports dry-run planning and optional cleanup of launch-owned worker panes.",
+            description: "Finalize a ForkTTY team after verifying summary and worker health. Supports dry-run planning and optional cleanup of current-runtime launch-owned worker panes.",
             input_schema: object_schema(
                 &["team_id"],
                 json!({
                     "team_id": string_prop("Team id."),
                     "dry_run": boolean_prop("Return the finish plan without mutating team state or closing panes."),
-                    "close_workers": boolean_prop("Request shutdown and close launch-owned worker panes before marking the team done."),
+                    "close_workers": boolean_prop("Request shutdown and close current-runtime launch-owned worker panes before marking the team done."),
                     "force": boolean_prop("Proceed despite open tasks, pending messages, active workers, or cleanup errors after explicit review."),
                 }),
             ),
@@ -2076,7 +2076,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "team_worker_shutdown",
             annotations: mutating_annotations(true, false),
-            description: "Request team worker shutdown with provider-aware submit behavior by default, including a short settle before Claude Enter, mark the worker shutdown_requested after the terminal accepts the input, and optionally close launch-owned worker panes immediately.",
+            description: "Request team worker shutdown with provider-aware submit behavior by default, including a short settle before Claude Enter, mark the worker shutdown_requested after the terminal accepts the input, and optionally close current-runtime launch-owned worker panes immediately.",
             input_schema: object_schema(
                 &["team_id", "worker_id"],
                 json!({
@@ -2084,7 +2084,7 @@ fn tool_specs() -> Vec<ToolSpec> {
                     "worker_id": string_prop("Worker id."),
                     "text": string_prop("Optional exact shutdown request text."),
                     "submit": boolean_prop("Use provider-aware submit behavior for the shutdown terminal input, including a short settle before Claude Enter. Defaults to true; set false to stage text without Enter."),
-                    "close_surface": boolean_prop("Immediately close the worker surface after shutdown text is accepted by the terminal. Defaults to false and only works for surfaces created by team_worker_launch."),
+                    "close_surface": boolean_prop("Immediately close the worker surface after shutdown text is accepted by the terminal. Defaults to false and only works for surfaces created by team_worker_launch in the current ForkTTY runtime."),
                 }),
             ),
         },

@@ -39,9 +39,9 @@ All notable changes to ForkTTY are documented here.
   Enter to the dispatched terminal input when the message does not already end
   in carriage return.
 - Socket/MCP/CLI automation now includes `team.finish` / `team_finish` /
-  `forktty team finish` to verify team state, optionally close launch-owned
-  disposable worker panes, normalize missing worker surfaces, and mark the team
-  done in one finalization step.
+  `forktty team finish` to verify team state, optionally close current-runtime
+  launch-owned disposable worker panes, normalize missing worker surfaces, and
+  mark the team done in one finalization step.
 
 ### Changed
 - `AGENTS.md` now reflects the current MCP/team/workflow/skill/AppImage
@@ -93,9 +93,14 @@ All notable changes to ForkTTY are documented here.
 - `team.worker.shutdown`, MCP `team_worker_shutdown`, and CLI
   `forktty team-worker-shutdown` now submit shutdown text by default, so custom
   shutdown messages no longer sit unexecuted in full-screen agent composers.
-  They also support an explicit close option for surfaces created by
-  `team.worker.launch`, giving team leaders a safe way to immediately close
-  disposable worker panes without closing manually attached surfaces.
+  They also support an explicit close option for surfaces created by the current
+  ForkTTY runtime through `team.worker.launch`, giving team leaders a safe way
+  to immediately close disposable worker panes without closing manually attached
+  surfaces.
+- `team.worker.shutdown` with close-surface cleanup now requires proof that the
+  target worker surface was launched by the current ForkTTY runtime, preventing
+  stale persisted team records from closing an unrelated pane whose surface id
+  was reused after restart.
 - `system.identify`, MCP `identify`, and `forktty identify` now treat ForkTTY
   pane environment ids as caller context rather than mandatory target selectors,
   so stale `FORKTTY_SURFACE_ID` values no longer make the compact identify read
@@ -143,6 +148,12 @@ All notable changes to ForkTTY are documented here.
   were queued for a newly launched but hidden worker tab.
 - `forktty skills setup` and `forktty skills remove` now route through the
   top-level CLI parser instead of being rejected as unknown arguments.
+- `forktty --json doctor` now inspects managed skill files through bounded
+  regular-file reads and reports symlinked, non-regular, or oversized managed
+  skill components as invalid instead of following or opening them directly;
+  `forktty skills setup` repairs invalid managed copies only after verifying the
+  ForkTTY-managed marker and otherwise refuses to overwrite unverified skill
+  directories or `SKILL.md` entries.
 - Team-wide message dispatch with an explicit worker target now marks the
   message delivered after the terminal accepts the text and optional submit
   input.

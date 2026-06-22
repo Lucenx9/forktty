@@ -321,9 +321,9 @@ team has no open work left. Snapshots raise `team_consistency_warning` in
 performs the finalization preflight in one step: `--dry-run` shows the planned
 actions, blockers, and cleanup errors without mutation; non-dry-run
 finalization blocks on open tasks, pending messages, or live-looking workers
-unless `--force` is supplied, closes only launch-owned disposable worker panes
-with `--close-workers`, normalizes missing worker surfaces as closed, and marks
-the team done.
+unless `--force` is supplied, closes only current-runtime launch-owned
+disposable worker panes with `--close-workers`, normalizes missing worker
+surfaces as closed, and marks the team done.
 Context snapshots also include compact `workflow_summaries` rows. Full workflow
 records with durable memory, plan steps, and evidence are included only when
 `context.snapshot` receives `include_workflow_details: true`. Workflow summary
@@ -343,8 +343,9 @@ workspace model and the terminal backend still reports a ready runtime.
 `team.worker.shutdown` uses the same provider-aware submit behavior by default;
 its `close_surface`
 option, exposed by CLI `forktty team-worker-shutdown --close`, immediately
-closes only surfaces that ForkTTY created through `team.worker.launch`, not
-manually attached user panes.
+closes only surfaces that this ForkTTY runtime created through
+`team.worker.launch`, not manually attached user panes or stale persisted launch
+records after restart.
 For smaller control loops, `system.identify`/`forktty identify` returns the
 canonical target workspace/surface, caller id validation, current agent binding,
 and `effective_project_cwd`. ForkTTY pane environment ids are treated as caller

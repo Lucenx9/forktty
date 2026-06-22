@@ -452,6 +452,7 @@ pub struct SocketAppState {
     pub browser_cmd: Option<async_channel::Sender<BrowserCommand>>,
     feed_store: Arc<Mutex<Option<FeedStore>>>,
     hook_session_targets: Arc<Mutex<HookSessionTargets>>,
+    team_launch_owned_surfaces: Arc<Mutex<HashSet<TeamLaunchOwnedSurface>>>,
 }
 
 impl SocketAppState {
@@ -479,6 +480,7 @@ impl SocketAppState {
             browser_cmd: None,
             feed_store: Arc::new(Mutex::new(None)),
             hook_session_targets: Arc::new(Mutex::new(HookSessionTargets::default())),
+            team_launch_owned_surfaces: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -540,6 +542,13 @@ impl SocketAppState {
             eprintln!("forktty feed history dismiss update failed: {err}");
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct TeamLaunchOwnedSurface {
+    team_id: String,
+    worker_id: String,
+    surface_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1387,6 +1396,9 @@ pub async fn dispatch(
                 worktree_name,
                 assigned_task_id,
             };
+            let launch_team_id = launch.team_id.clone();
+            let launch_worker_id = launch.worker_id.clone();
+            let launch_surface_id = launch.surface_id.clone();
             let worker =
                 match forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
                     store.launch_worker(launch, forktty_core::team_now_ms())
@@ -1398,6 +1410,12 @@ pub async fn dispatch(
                         return Err(DispatchError::from(err));
                     }
                 };
+            remember_team_launch_owned_surface(
+                state,
+                &launch_team_id,
+                &launch_worker_id,
+                &launch_surface_id,
+            )?;
             let argv = std::iter::once(program).chain(args).collect::<Vec<_>>();
             Ok(json!({
                 "surface": surface,
@@ -5301,6 +5319,7 @@ fn evict_hook_session_targets_for_surface(
         .lock()
         .map_err(|_| "Lock poisoned".to_string())?
         .remove_surface(surface_id);
+    forget_team_launch_owned_surface_for_surface(state, surface_id)?;
     Ok(())
 }
 
@@ -5315,6 +5334,8 @@ fn evict_hook_session_targets_for_surfaces(
     for surface_id in surface_ids {
         targets.remove_surface(surface_id);
     }
+    drop(targets);
+    forget_team_launch_owned_surfaces_for_surfaces(state, surface_ids)?;
     Ok(())
 }
 
@@ -6107,7 +6128,78 @@ fn team_worker_launch_owned_surface_id(
         ));
     }
     ensure_model_surface_exists(state, &surface_id)?;
+    if !is_current_team_launch_owned_surface(state, team_id, worker_id, &surface_id)? {
+        return Err(DispatchError::PreconditionFailed(
+            "team worker surface is not launch-owned in this ForkTTY runtime".to_string(),
+        ));
+    }
     Ok(surface_id)
+}
+
+fn remember_team_launch_owned_surface(
+    state: &SocketAppState,
+    team_id: &str,
+    worker_id: &str,
+    surface_id: &str,
+) -> Result<(), DispatchError> {
+    state
+        .team_launch_owned_surfaces
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?
+        .insert(TeamLaunchOwnedSurface {
+            team_id: team_id.to_string(),
+            worker_id: worker_id.to_string(),
+            surface_id: surface_id.to_string(),
+        });
+    Ok(())
+}
+
+fn is_current_team_launch_owned_surface(
+    state: &SocketAppState,
+    team_id: &str,
+    worker_id: &str,
+    surface_id: &str,
+) -> Result<bool, DispatchError> {
+    Ok(state
+        .team_launch_owned_surfaces
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?
+        .contains(&TeamLaunchOwnedSurface {
+            team_id: team_id.to_string(),
+            worker_id: worker_id.to_string(),
+            surface_id: surface_id.to_string(),
+        }))
+}
+
+fn forget_team_launch_owned_surface_for_surface(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> Result<(), DispatchError> {
+    state
+        .team_launch_owned_surfaces
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?
+        .retain(|owned| owned.surface_id != surface_id);
+    Ok(())
+}
+
+fn forget_team_launch_owned_surfaces_for_surfaces(
+    state: &SocketAppState,
+    surface_ids: &[String],
+) -> Result<(), DispatchError> {
+    if surface_ids.is_empty() {
+        return Ok(());
+    }
+    let surface_ids = surface_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    state
+        .team_launch_owned_surfaces
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?
+        .retain(|owned| !surface_ids.contains(owned.surface_id.as_str()));
+    Ok(())
 }
 
 fn team_message_dispatch_target(
@@ -11244,6 +11336,62 @@ mod tests {
         let model = state.model.lock().unwrap();
         assert!(model.surface(&manual_surface_id).is_some());
         assert!(model.surface(&launched_surface_id).is_some());
+    }
+
+    #[tokio::test]
+    async fn team_worker_shutdown_rejects_close_for_persisted_launch_without_runtime_ownership() {
+        let (mut state, backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let (workspace_id, surface_id) = {
+            let model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            (workspace.id.clone(), workspace.focused_surface_id.clone())
+        };
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "name": "Stale Runtime Ownership",
+                "workspace_id": workspace_id,
+            }),
+        )
+        .await
+        .unwrap();
+        forktty_core::update_teams_at_path(state.team_store_path.as_ref().unwrap(), |store| {
+            store.launch_worker(
+                forktty_core::TeamWorkerLaunch {
+                    team_id: "team-1".to_string(),
+                    worker_id: "worker-1".to_string(),
+                    role: None,
+                    agent: "codex".to_string(),
+                    surface_id: surface_id.clone(),
+                    worktree_name: None,
+                    assigned_task_id: None,
+                },
+                forktty_core::team_now_ms(),
+            )
+        })
+        .unwrap();
+
+        let err = dispatch(
+            &state,
+            "team.worker.shutdown",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "text": "stop now",
+                "close_surface": true,
+            }),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.code(), "precondition_failed");
+        assert!(backend.sent_text(&surface_id).unwrap().is_empty());
+        assert!(state.model.lock().unwrap().surface(&surface_id).is_some());
     }
 
     #[tokio::test]
