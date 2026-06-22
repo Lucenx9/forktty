@@ -145,6 +145,7 @@ pub const METHODS: &[&str] = &[
     "system.ping",
     "system.top",
     "team.events",
+    "team.finish",
     "team.get",
     "team.inbox",
     "team.list",
@@ -223,6 +224,7 @@ pub const METHODS: &[&str] = &[
     "system.ping",
     "system.top",
     "team.events",
+    "team.finish",
     "team.get",
     "team.inbox",
     "team.list",
@@ -1291,6 +1293,7 @@ pub async fn dispatch(
             .map_err(DispatchError::from)?;
             Ok(json!(team))
         }
+        "team.finish" => team_finish(state, &params).await,
         "team.worker.upsert" => {
             validate_optional_surface_id(state, &params, "surface_id")?;
             validate_optional_worktree_name(&params)?;
@@ -5956,6 +5959,279 @@ fn team_message_dispatch_target(
     Ok((surface_id, worker_id.to_string(), message.body.clone()))
 }
 
+async fn team_finish(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let team_id = required_trimmed_string(params, "team_id")?.to_string();
+    let dry_run = optional_bool_param(params, "dry_run")?.unwrap_or(false);
+    let close_workers = optional_bool_param(params, "close_workers")?.unwrap_or(false);
+    let force = optional_bool_param(params, "force")?.unwrap_or(false);
+    let store =
+        forktty_core::load_teams_from_path(team_store_path(state)?).map_err(DispatchError::from)?;
+    let team = store
+        .get(&team_id)
+        .ok_or(DispatchError::NotFound("team".to_string()))?;
+    let summary_before = json!(store.summary(&team_id).map_err(DispatchError::from)?);
+    let health_before = team_worker_health_rows(state, &team, DEFAULT_TEAM_WORKER_STALE_MS)?;
+    let finish_actions = team_finish_actions(&health_before, close_workers);
+    let active_workers = team_finish_active_workers(&health_before);
+    let mut blockers = Vec::new();
+    if summary_u64(&summary_before, "tasks_open") > 0 {
+        blockers.push("open_tasks");
+    }
+    if summary_u64(&summary_before, "messages_pending") > 0 {
+        blockers.push("pending_messages");
+    }
+    if !active_workers.is_empty() && !close_workers {
+        blockers.push("active_workers");
+    }
+
+    let mut close_targets = Vec::new();
+    let mut cleanup_errors = Vec::new();
+    if close_workers {
+        let planned_shutdown_worker_ids = finish_actions
+            .iter()
+            .filter(|action| {
+                action.get("action").and_then(Value::as_str) == Some("shutdown_worker")
+            })
+            .filter_map(|action| {
+                action
+                    .get("worker_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect::<HashSet<_>>();
+        for worker_id in active_workers
+            .iter()
+            .filter(|worker_id| !planned_shutdown_worker_ids.contains(*worker_id))
+        {
+            cleanup_errors.push(json!({
+                "worker_id": worker_id,
+                "error": "active worker has no launch-owned surface to close",
+            }));
+        }
+        for action in finish_actions.iter().filter(|action| {
+            action.get("action").and_then(Value::as_str) == Some("shutdown_worker")
+        }) {
+            let worker_id = action
+                .get("worker_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            match team_worker_launch_owned_surface_id(state, &team_id, worker_id) {
+                Ok(surface_id) => close_targets.push((worker_id.to_string(), surface_id)),
+                Err(err) => cleanup_errors.push(json!({
+                    "worker_id": worker_id,
+                    "error": err.to_string(),
+                })),
+            }
+        }
+    }
+
+    if dry_run {
+        return Ok(json!({
+            "team_id": team_id,
+            "dry_run": true,
+            "finished": false,
+            "close_workers": close_workers,
+            "force": force,
+            "summary_before": summary_before,
+            "worker_health_before": health_before,
+            "actions": finish_actions,
+            "blockers": blockers,
+            "cleanup_errors": cleanup_errors,
+        }));
+    }
+    if !force && !blockers.is_empty() {
+        return Err(DispatchError::PreconditionFailed(format!(
+            "team.finish blocked by {}; use force after reviewing team.summary and team.worker.health",
+            blockers.join(",")
+        )));
+    }
+    if !force && !cleanup_errors.is_empty() {
+        return Err(DispatchError::PreconditionFailed(format!(
+            "team.finish cannot close all workers: {}",
+            cleanup_errors
+                .iter()
+                .filter_map(|error| error.get("error").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )));
+    }
+
+    let mut closed = Vec::new();
+    for action in finish_actions
+        .iter()
+        .filter(|action| action.get("action").and_then(Value::as_str) == Some("mark_worker_closed"))
+    {
+        let Some(worker_id) = action.get("worker_id").and_then(Value::as_str) else {
+            continue;
+        };
+        let worker_id_for_store = worker_id.to_string();
+        let team_id_for_store = team_id.clone();
+        forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
+            store.upsert_worker(
+                forktty_core::TeamWorkerUpsert {
+                    team_id: team_id_for_store,
+                    worker_id: worker_id_for_store,
+                    role: None,
+                    agent: None,
+                    surface_id: None,
+                    worktree_name: None,
+                    status: Some("closed".to_string()),
+                    assigned_task_id: None,
+                },
+                forktty_core::team_now_ms(),
+            )
+        })
+        .map_err(DispatchError::from)?;
+    }
+    for (worker_id, surface_id) in close_targets {
+        let text =
+            terminal_text_with_submit_enter("Team finished by leader. You can stop now.", true);
+        state
+            .terminal
+            .send_text(&surface_id, &text)
+            .map_err(DispatchError::from)?;
+        let worker_id_for_store = worker_id.clone();
+        let team_id_for_store = team_id.clone();
+        let worker = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
+            store.request_worker_shutdown(
+                forktty_core::TeamWorkerAction {
+                    team_id: team_id_for_store,
+                    worker_id: worker_id_for_store,
+                },
+                forktty_core::team_now_ms(),
+            )
+        })
+        .map_err(DispatchError::from)?;
+        let closed_surface = close_surface_request(state, &surface_id).await?;
+        closed.push(json!({
+            "worker_id": worker_id,
+            "surface_id": surface_id,
+            "worker": worker,
+            "closed": closed_surface,
+        }));
+    }
+
+    let team_id_for_store = team_id.clone();
+    let team = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
+        store.upsert_team(
+            forktty_core::TeamUpsert {
+                team_id: team_id_for_store,
+                workspace_id: None,
+                leader_surface_id: None,
+                name: None,
+                status: Some("done".to_string()),
+                goal: None,
+            },
+            forktty_core::team_now_ms(),
+        )
+    })
+    .map_err(DispatchError::from)?;
+    let store =
+        forktty_core::load_teams_from_path(team_store_path(state)?).map_err(DispatchError::from)?;
+    let summary_after = json!(store.summary(&team_id).map_err(DispatchError::from)?);
+    let team_after = store
+        .get(&team_id)
+        .ok_or(DispatchError::NotFound("team".to_string()))?;
+    let health_after = team_worker_health_rows(state, &team_after, DEFAULT_TEAM_WORKER_STALE_MS)?;
+    Ok(json!({
+        "team_id": team_id,
+        "dry_run": false,
+        "finished": true,
+        "close_workers": close_workers,
+        "force": force,
+        "summary_before": summary_before,
+        "worker_health_before": health_before,
+        "actions": finish_actions,
+        "blockers": blockers,
+        "cleanup_errors": cleanup_errors,
+        "closed": closed,
+        "team": team,
+        "summary_after": summary_after,
+        "worker_health_after": health_after,
+    }))
+}
+
+fn summary_u64(summary: &Value, key: &str) -> u64 {
+    summary.get(key).and_then(Value::as_u64).unwrap_or(0)
+}
+
+fn team_finish_actions(health: &Value, close_workers: bool) -> Vec<Value> {
+    let mut actions = vec![json!({"action": "mark_team_done"})];
+    for worker in health
+        .get("workers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if worker.get("final_state").and_then(Value::as_str) != Some("surface_missing") {
+            continue;
+        }
+        if matches!(
+            worker.get("status").and_then(Value::as_str),
+            Some("closed" | "done")
+        ) {
+            continue;
+        }
+        let Some(worker_id) = worker.get("worker_id").and_then(Value::as_str) else {
+            continue;
+        };
+        actions.push(json!({
+            "action": "mark_worker_closed",
+            "worker_id": worker_id,
+            "reason": "surface_missing",
+        }));
+    }
+    if close_workers {
+        for worker in health
+            .get("workers")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if matches!(
+                worker.get("final_state").and_then(Value::as_str),
+                Some("closed" | "surface_missing")
+            ) {
+                continue;
+            }
+            let Some(worker_id) = worker.get("worker_id").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(surface_id) = worker.get("surface_id").and_then(Value::as_str) else {
+                continue;
+            };
+            actions.push(json!({
+                "action": "shutdown_worker",
+                "worker_id": worker_id,
+                "surface_id": surface_id,
+                "close_surface": true,
+            }));
+        }
+    }
+    actions
+}
+
+fn team_finish_active_workers(health: &Value) -> Vec<String> {
+    health
+        .get("workers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|worker| {
+            matches!(
+                worker.get("final_state").and_then(Value::as_str),
+                Some("running" | "needs_input" | "starting" | "stale" | "shutdown_requested")
+            )
+        })
+        .filter_map(|worker| {
+            worker
+                .get("worker_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect()
+}
+
 fn team_worker_health_rows(
     state: &SocketAppState,
     team: &forktty_core::TeamState,
@@ -6072,6 +6348,9 @@ fn team_worker_final_state(
     }
     if surface_starting {
         return "starting";
+    }
+    if matches!(worker.status.as_str(), "done" | "closed") && surface_missing {
+        return "closed";
     }
     if surface_missing {
         return "surface_missing";
@@ -10614,6 +10893,315 @@ mod tests {
         .unwrap();
         assert_eq!(health["workers"][0]["lifecycle"], "active");
         assert_eq!(health["workers"][0]["final_state"], "running");
+    }
+
+    #[tokio::test]
+    async fn team_finish_marks_quiescent_active_team_done() {
+        let (mut state, _backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspace[0]["id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "workspace_id": workspace_id,
+                "status": "active"
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.task.upsert",
+            json!({
+                "team_id": "team-1",
+                "task_id": "task-1",
+                "title": "Review",
+                "status": "done"
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+                "status": "shutdown_requested",
+                "assigned_task_id": "task-1"
+            }),
+        )
+        .await
+        .unwrap();
+        let before = dispatch(&state, "team.summary", json!({"team_id": "team-1"}))
+            .await
+            .unwrap();
+        assert_eq!(
+            before["consistency_warnings"],
+            json!(["active_without_open_work"])
+        );
+
+        let finished = dispatch(&state, "team.finish", json!({"team_id": "team-1"}))
+            .await
+            .unwrap();
+
+        assert_eq!(finished["finished"], true);
+        assert_eq!(finished["summary_before"]["status"], "active");
+        assert_eq!(
+            finished["summary_before"]["consistency_warnings"],
+            json!(["active_without_open_work"])
+        );
+        assert_eq!(finished["summary_after"]["status"], "done");
+        assert_eq!(finished["summary_after"]["consistency_warnings"], json!([]));
+        let summary = dispatch(&state, "team.summary", json!({"team_id": "team-1"}))
+            .await
+            .unwrap();
+        assert_eq!(summary["status"], "done");
+    }
+
+    #[tokio::test]
+    async fn team_finish_dry_run_reports_blockers_without_mutating() {
+        let (mut state, _backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspace[0]["id"].as_str().unwrap();
+        let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "workspace_id": workspace_id,
+                "status": "active"
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.task.upsert",
+            json!({
+                "team_id": "team-1",
+                "task_id": "task-1",
+                "title": "Review",
+                "status": "open"
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "surface_id": surface_id,
+                "status": "running",
+                "assigned_task_id": "task-1"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let dry_run = dispatch(
+            &state,
+            "team.finish",
+            json!({"team_id": "team-1", "dry_run": true}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(dry_run["dry_run"], true);
+        assert_eq!(dry_run["finished"], false);
+        assert_eq!(dry_run["blockers"], json!(["open_tasks", "active_workers"]));
+        assert_eq!(dry_run["summary_before"]["status"], "active");
+        assert_eq!(dry_run["summary_before"]["tasks_open"], 1);
+        let summary = dispatch(&state, "team.summary", json!({"team_id": "team-1"}))
+            .await
+            .unwrap();
+        assert_eq!(summary["status"], "active");
+        assert_eq!(summary["tasks_open"], 1);
+    }
+
+    #[tokio::test]
+    async fn team_finish_can_close_launch_owned_workers() {
+        let (mut state, backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspace[0]["id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "workspace_id": workspace_id,
+                "status": "active"
+            }),
+        )
+        .await
+        .unwrap();
+        let launched = dispatch(
+            &state,
+            "team.worker.launch",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+                "status": "running"
+            }),
+        )
+        .await
+        .unwrap();
+        let surface_id = launched["surface"]["id"].as_str().unwrap().to_string();
+
+        let finished = dispatch(
+            &state,
+            "team.finish",
+            json!({"team_id": "team-1", "close_workers": true}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(finished["finished"], true);
+        assert_eq!(finished["closed"].as_array().unwrap().len(), 1);
+        assert_eq!(finished["summary_after"]["status"], "done");
+        assert_eq!(
+            finished["worker_health_after"]["workers"][0]["final_state"],
+            "closed"
+        );
+        assert!(backend.sent_text(&surface_id).is_err());
+    }
+
+    #[tokio::test]
+    async fn team_finish_close_workers_reports_uncloseable_active_worker() {
+        let (mut state, _backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspace[0]["id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "workspace_id": workspace_id,
+                "status": "active"
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "status": "running"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let dry_run = dispatch(
+            &state,
+            "team.finish",
+            json!({"team_id": "team-1", "close_workers": true, "dry_run": true}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(dry_run["blockers"], json!([]));
+        assert_eq!(dry_run["cleanup_errors"].as_array().unwrap().len(), 1);
+        assert_eq!(dry_run["cleanup_errors"][0]["worker_id"], "worker-1");
+        assert!(dry_run["cleanup_errors"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("no launch-owned surface"));
+
+        let error = dispatch(
+            &state,
+            "team.finish",
+            json!({"team_id": "team-1", "close_workers": true}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), "precondition_failed");
+        assert!(error
+            .to_string()
+            .contains("team.finish cannot close all workers"));
+    }
+
+    #[tokio::test]
+    async fn team_finish_marks_missing_worker_surface_closed_without_force() {
+        let (mut state, backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspace[0]["id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "workspace_id": workspace_id,
+                "status": "active"
+            }),
+        )
+        .await
+        .unwrap();
+        let launched = dispatch(
+            &state,
+            "team.worker.launch",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex"
+            }),
+        )
+        .await
+        .unwrap();
+        let surface_id = launched["surface"]["id"].as_str().unwrap();
+        backend.close(surface_id).unwrap();
+
+        let health = dispatch(
+            &state,
+            "team.worker.health",
+            json!({"team_id": "team-1", "stale_after_ms": 1_000_000}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(health["workers"][0]["status"], "running");
+        assert_eq!(health["workers"][0]["final_state"], "surface_missing");
+
+        let finished = dispatch(&state, "team.finish", json!({"team_id": "team-1"}))
+            .await
+            .unwrap();
+
+        assert_eq!(finished["finished"], true);
+        assert!(finished["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action["action"] == "mark_worker_closed"));
+        assert_eq!(finished["team"]["workers"][0]["status"], "closed");
+        assert_eq!(finished["summary_after"]["status"], "done");
+        assert_eq!(finished["summary_after"]["workers_active"], 0);
+        assert_eq!(finished["summary_after"]["consistency_warnings"], json!([]));
+        assert_eq!(
+            finished["worker_health_after"]["workers"][0]["final_state"],
+            "closed"
+        );
     }
 
     #[tokio::test]

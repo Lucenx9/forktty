@@ -291,7 +291,8 @@ forktty context-snapshot --workspace-name main --tail-lines 0 --json
 forktty team ask review-team claude-review --agent claude --task-id review-head --prompt "Review HEAD read-only" --submit
 forktty team review review-team claude-review --agent claude --task-id review-head --commit HEAD --submit
 forktty team watch review-team --stale-after-ms 120000 --limit 10
-forktty team finish review-team
+forktty team finish review-team --dry-run
+forktty team finish review-team --close-workers
 forktty examples
 forktty completions bash
 forktty log --level warn "Waiting for reviewer input"
@@ -312,8 +313,15 @@ leaders can scan worker/task/message counts without first calling
 `team.summary` for each team; full team records with mailbox message bodies are
 included only when `context.snapshot` receives `include_team_details: true`.
 `team_summaries` rows include `consistency_warnings` when a team marked `done`
-still has active workers, open tasks, or pending messages, and snapshots raise
-`team_consistency_warning` in `risk_flags` for the same condition.
+still has active workers, open tasks, or pending messages, or when an `active`
+team has no open work left. Snapshots raise `team_consistency_warning` in
+`risk_flags` for the same condition. `forktty team finish` / `team.finish`
+performs the finalization preflight in one step: `--dry-run` shows the planned
+actions, blockers, and cleanup errors without mutation; non-dry-run
+finalization blocks on open tasks, pending messages, or live-looking workers
+unless `--force` is supplied, closes only launch-owned disposable worker panes
+with `--close-workers`, normalizes missing worker surfaces as closed, and marks
+the team done.
 Workflow rows in `context.snapshot` also include `consistency_warnings`, with
 `workflow_consistency_warning` in `risk_flags` when a running workflow has a
 completed plan or a terminal workflow still has open steps. Snapshot feed rows

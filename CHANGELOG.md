@@ -38,6 +38,10 @@ All notable changes to ForkTTY are documented here.
   CLI `forktty team-message-dispatch --submit`, appending a carriage-return
   Enter to the dispatched terminal input when the message does not already end
   in carriage return.
+- Socket/MCP/CLI automation now includes `team.finish` / `team_finish` /
+  `forktty team finish` to verify team state, optionally close launch-owned
+  disposable worker panes, normalize missing worker surfaces, and mark the team
+  done in one finalization step.
 
 ### Changed
 - `AGENTS.md` now reflects the current MCP/team/workflow/skill/AppImage
@@ -56,6 +60,9 @@ All notable changes to ForkTTY are documented here.
 - Team message dispatch and worker shutdown submit mode now send the text plus
   carriage-return Enter as one terminal input, avoiding intermittent cases where
   agent TUIs accepted the pasted prompt but missed the separate submit input.
+- `team.summary` now flags active teams that have no active workers, open tasks,
+  or pending messages as `active_without_open_work`, so stale orchestration
+  records are visible before an agent mistakes them for still-running work.
 - `team.worker.health` now reports `surface_present`,
   `surface_runtime_present`, `surface_ready`, and a `starting` final state for
   present but not-yet-ready worker runtimes, while still treating exited or

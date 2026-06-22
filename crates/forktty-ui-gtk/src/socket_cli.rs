@@ -78,7 +78,7 @@ Usage:
   forktty team ask <team-id> <worker-id> --agent <agent> --task-id <id> --prompt <text>
   forktty team review <team-id> <worker-id> --agent <agent> --task-id <id> [--commit <rev>]
   forktty team watch <team-id> [--stale-after-ms <ms>] [--limit <n>] [--json]
-  forktty team finish <team-id> [--json]
+  forktty team finish <team-id> [--dry-run] [--close-workers] [--force] [--json]
   forktty split-surface [--surface-id <id>] [--axis horizontal|vertical]
   forktty focus-surface <surface-id>
   forktty close-surface <surface-id>
@@ -169,8 +169,8 @@ High-level wrappers:
   forktty team watch <team-id> [--stale-after-ms <ms>] [--limit <n>] [--include-delivered]
       Read team.summary, team.worker.health, team.inbox, and team.events together.
 
-  forktty team finish <team-id>
-      Mark the team done via team.upsert.
+  forktty team finish <team-id> [--dry-run] [--close-workers] [--force]
+      Verify team state, optionally close launch-owned workers, and mark the team done.
 
 Low-level aliases still exist:
   forktty teams | team-list | team:list | team.list
@@ -3345,15 +3345,46 @@ fn handle_team_watch(context: &CliContext, args: Vec<String>) -> CliResult<()> {
 }
 
 fn handle_team_finish(context: &CliContext, args: Vec<String>) -> CliResult<()> {
-    let parsed = parse_flags(args, &[]);
-    reject_unknown_options(&parsed.options, &[], "team finish")?;
-    let positionals = required_positionals(&parsed.positionals, "team finish", &["team-id"])?;
-    let result = send_socket_request(
-        &context.socket_path,
-        "team.upsert",
-        json!({"team_id": positionals[0], "status": "done"}),
+    let parsed = parse_flags(args, &["dry-run", "close-workers", "force"]);
+    reject_unknown_options(
+        &parsed.options,
+        &["dry-run", "close-workers", "force"],
+        "team finish",
     )?;
-    print_result_or_json(context, format_team_line(&result), result)
+    let positionals = required_positionals(&parsed.positionals, "team finish", &["team-id"])?;
+    let mut params = Map::new();
+    params.insert("team_id".to_string(), Value::String(positionals[0].clone()));
+    match bool_option(&parsed.options, "dry-run") {
+        Some(true) => {
+            params.insert("dry_run".to_string(), Value::Bool(true));
+        }
+        Some(false) => {}
+        None => {
+            return Err(CliError::new(
+                "team finish: --dry-run expects true or false",
+            ))
+        }
+    }
+    match bool_option(&parsed.options, "close-workers") {
+        Some(true) => {
+            params.insert("close_workers".to_string(), Value::Bool(true));
+        }
+        Some(false) => {}
+        None => {
+            return Err(CliError::new(
+                "team finish: --close-workers expects true or false",
+            ));
+        }
+    }
+    match bool_option(&parsed.options, "force") {
+        Some(true) => {
+            params.insert("force".to_string(), Value::Bool(true));
+        }
+        Some(false) => {}
+        None => return Err(CliError::new("team finish: --force expects true or false")),
+    }
+    let result = send_socket_request(&context.socket_path, "team.finish", Value::Object(params))?;
+    print_result_or_json(context, format_team_finish_line(&result), result)
 }
 
 fn run_team_ask_flow(context: &CliContext, options: TeamAskOptions) -> CliResult<()> {
@@ -4443,6 +4474,39 @@ fn format_team_summary_line(summary: &Value) -> String {
     format!(
         "{team_id} {status} workers {workers_active}/{workers_total} tasks {tasks_open}/{tasks_total} pending {messages_pending} last_event {last_event_seq}"
     )
+}
+
+fn format_team_finish_line(result: &Value) -> String {
+    let team_id = safe_string_field(result, "team_id").unwrap_or_else(|| "(team)".to_string());
+    let summary = result
+        .get("summary_after")
+        .or_else(|| result.get("summary_before"))
+        .unwrap_or(&Value::Null);
+    let status = safe_string_field(summary, "status").unwrap_or_else(|| {
+        if result
+            .get("finished")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            "done".to_string()
+        } else {
+            "active".to_string()
+        }
+    });
+    let action_count = result
+        .get("actions")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    if result
+        .get("dry_run")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        format!("team {team_id} finish dry-run status {status} actions {action_count}")
+    } else {
+        format!("team {team_id} finished status {status} actions {action_count}")
+    }
 }
 
 fn format_team_event_line(event: &Value) -> String {
@@ -16192,13 +16256,13 @@ mod tests {
     }
 
     #[test]
-    fn team_finish_marks_team_done() {
+    fn team_finish_requests_verified_finish_method() {
         let request = with_socket_response(
             |req| {
                 json!({
                     "id": req["id"],
                     "ok": true,
-                    "result": {"id": "team-1", "status": "done"},
+                    "result": {"team_id": "team-1", "finished": true},
                 })
                 .to_string()
             },
@@ -16206,9 +16270,40 @@ mod tests {
                 handle_team(&ctx_for(socket_path), strings(&["finish", "team-1"])).unwrap();
             },
         );
-        assert_eq!(request["method"], "team.upsert");
+        assert_eq!(request["method"], "team.finish");
         assert_eq!(request["params"]["team_id"], "team-1");
-        assert_eq!(request["params"]["status"], "done");
+    }
+
+    #[test]
+    fn team_finish_passes_cleanup_options() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {"team_id": "team-1", "finished": false, "dry_run": true},
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_team(
+                    &ctx_for(socket_path),
+                    strings(&[
+                        "finish",
+                        "team-1",
+                        "--dry-run",
+                        "--close-workers",
+                        "--force",
+                    ]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "team.finish");
+        assert_eq!(request["params"]["team_id"], "team-1");
+        assert_eq!(request["params"]["dry_run"], true);
+        assert_eq!(request["params"]["close_workers"], true);
+        assert_eq!(request["params"]["force"], true);
     }
 
     #[test]

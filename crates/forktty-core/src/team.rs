@@ -842,6 +842,13 @@ impl TeamStoreData {
             if messages_pending > 0 {
                 consistency_warnings.push("done_with_pending_messages".to_string());
             }
+        } else if matches!(team.status.as_str(), "active" | "running" | "working")
+            && workers_active == 0
+            && tasks_open == 0
+            && messages_pending == 0
+            && (!team.workers.is_empty() || !team.tasks.is_empty() || !team.messages.is_empty())
+        {
+            consistency_warnings.push("active_without_open_work".to_string());
         }
         Ok(TeamSummary {
             team_id: team.id.clone(),
@@ -1292,7 +1299,7 @@ mod tests {
                     status: Some("open".to_string()),
                     detail: Some("control plane".to_string()),
                     depends_on: Some(Vec::new()),
-                    assigned_worker_id: Some("worker-1".to_string()),
+                    assigned_worker_id: None,
                 },
                 3,
             )
@@ -1393,6 +1400,63 @@ mod tests {
                 .unwrap()
                 .len(),
             8
+        );
+    }
+
+    #[test]
+    fn summary_warns_when_active_team_has_no_open_work() {
+        let mut store = TeamStoreData::default();
+        store
+            .upsert_team(
+                TeamUpsert {
+                    team_id: "team-1".to_string(),
+                    workspace_id: None,
+                    leader_surface_id: None,
+                    name: None,
+                    status: Some("active".to_string()),
+                    goal: None,
+                },
+                1,
+            )
+            .unwrap();
+        store
+            .upsert_task(
+                TeamTaskUpsert {
+                    team_id: "team-1".to_string(),
+                    task_id: "task-1".to_string(),
+                    title: Some("Review".to_string()),
+                    status: Some("done".to_string()),
+                    detail: None,
+                    depends_on: None,
+                    assigned_worker_id: None,
+                },
+                2,
+            )
+            .unwrap();
+        store
+            .upsert_worker(
+                TeamWorkerUpsert {
+                    team_id: "team-1".to_string(),
+                    worker_id: "worker-1".to_string(),
+                    role: Some("review".to_string()),
+                    agent: Some("codex".to_string()),
+                    surface_id: None,
+                    worktree_name: None,
+                    status: Some("shutdown_requested".to_string()),
+                    assigned_task_id: Some("task-1".to_string()),
+                },
+                3,
+            )
+            .unwrap();
+
+        let summary = store.summary("team-1").unwrap();
+
+        assert_eq!(summary.workers_active, 0);
+        assert_eq!(summary.tasks_open, 0);
+        assert_eq!(summary.messages_pending, 0);
+        assert_eq!(
+            summary.consistency_warnings,
+            vec!["active_without_open_work".to_string()]
         );
     }
 

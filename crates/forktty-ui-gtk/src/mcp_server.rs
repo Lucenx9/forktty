@@ -701,6 +701,21 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 params,
             }
         }
+        "team_finish" => {
+            reject_unexpected(
+                args,
+                &["team_id", "dry_run", "close_workers", "force"],
+                name,
+            )?;
+            let mut params = map_from_pairs([("team_id", required_non_blank(args, "team_id")?)]);
+            insert_optional_bool_param(args, &mut params, "dry_run")?;
+            insert_optional_bool_param(args, &mut params, "close_workers")?;
+            insert_optional_bool_param(args, &mut params, "force")?;
+            SocketCall {
+                method: "team.finish",
+                params,
+            }
+        }
         "team_worker_upsert" => {
             reject_unexpected(
                 args,
@@ -1639,6 +1654,7 @@ fn success_text(name: &str, result: &Value) -> String {
         "team_list" => "Listed ForkTTY teams.".to_string(),
         "team_get" => "Read ForkTTY team state.".to_string(),
         "team_upsert" => "Updated ForkTTY team state.".to_string(),
+        "team_finish" => "Finalized ForkTTY team state.".to_string(),
         "team_worker_upsert" => "Updated ForkTTY team worker state.".to_string(),
         "team_worker_heartbeat" => "Recorded ForkTTY team worker heartbeat.".to_string(),
         "team_worker_launch" => "Launched ForkTTY team worker pane.".to_string(),
@@ -1963,6 +1979,20 @@ fn tool_specs() -> Vec<ToolSpec> {
                     "name": string_prop("Human team name."),
                     "status": string_prop("Team status, for example active, paused, or done."),
                     "goal": string_prop("Team goal or brief."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "team_finish",
+            annotations: mutating_annotations(true, false),
+            description: "Finalize a ForkTTY team after verifying summary and worker health. Supports dry-run planning and optional cleanup of launch-owned worker panes.",
+            input_schema: object_schema(
+                &["team_id"],
+                json!({
+                    "team_id": string_prop("Team id."),
+                    "dry_run": boolean_prop("Return the finish plan without mutating team state or closing panes."),
+                    "close_workers": boolean_prop("Request shutdown and close launch-owned worker panes before marking the team done."),
+                    "force": boolean_prop("Proceed despite open tasks, pending messages, active workers, or cleanup errors after explicit review."),
                 }),
             ),
         },
@@ -2878,6 +2908,22 @@ mod tests {
         .unwrap();
         assert_eq!(method, "team.worker.nudge");
         assert_eq!(params["text"], "ping\r");
+
+        let (method, params) = build_socket_call_for_test(
+            "team_finish",
+            json!({
+                "team_id": "team-1",
+                "dry_run": true,
+                "close_workers": true,
+                "force": true,
+            }),
+        )
+        .unwrap();
+        assert_eq!(method, "team.finish");
+        assert_eq!(params["team_id"], "team-1");
+        assert_eq!(params["dry_run"], true);
+        assert_eq!(params["close_workers"], true);
+        assert_eq!(params["force"], true);
 
         let (method, params) = build_socket_call_for_test(
             "team_worker_shutdown",
