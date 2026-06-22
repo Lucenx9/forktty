@@ -215,22 +215,30 @@ fn is_socket_cli_command(command: &str) -> bool {
             | "surface:capture-tail"
             | "worktree-list"
             | "worktree:list"
+            | "worktree.list"
             | "worktree-status"
             | "worktree:status"
+            | "worktree.status"
             | "worktree-create"
             | "worktree:create"
+            | "worktree.create"
             | "worktree-attach"
             | "worktree:attach"
+            | "worktree.attach"
             | "worktree-remove"
             | "worktree:remove"
+            | "worktree.remove"
             | "worktree-merge"
             | "worktree:merge"
+            | "worktree.merge"
             | "actions"
             | "project-actions"
             | "project:action:list"
+            | "project.action.list"
             | "action-run"
             | "project-action-run"
             | "project:action:run"
+            | "project.action.run"
             | "set-status"
             | "list-status"
             | "clear-status"
@@ -1831,9 +1839,11 @@ mod tests {
             "actions",
             "project-actions",
             "project:action:list",
+            "project.action.list",
             "action-run",
             "project-action-run",
             "project:action:run",
+            "project.action.run",
             "top",
         ] {
             assert!(is_socket_cli_command(command), "{command}");
@@ -1943,6 +1953,32 @@ mod tests {
             parse::<_, &str>(["forktty", "tree"]),
             CliAction::SocketCli(vec![OsString::from("tree")])
         );
+    }
+
+    #[test]
+    fn worktree_method_aliases_are_recognized_as_socket_cli_commands() {
+        for command in [
+            "worktree-list",
+            "worktree:list",
+            "worktree.list",
+            "worktree-status",
+            "worktree:status",
+            "worktree.status",
+            "worktree-create",
+            "worktree:create",
+            "worktree.create",
+            "worktree-attach",
+            "worktree:attach",
+            "worktree.attach",
+            "worktree-remove",
+            "worktree:remove",
+            "worktree.remove",
+            "worktree-merge",
+            "worktree:merge",
+            "worktree.merge",
+        ] {
+            assert!(is_socket_cli_command(command), "{command}");
+        }
     }
 
     #[test]

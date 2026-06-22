@@ -95,6 +95,9 @@ All notable changes to ForkTTY are documented here.
   an open surface's effective project cwd, so agent sessions resumed in a repo
   still pass the open-workspace boundary even when the visible workspace root is
   the user's home directory.
+- CLI routing now accepts socket-style `worktree.*` and `project.action.*`
+  aliases in addition to the documented dash/colon forms, keeping low-level
+  worktree and project-action wrappers consistent with other socket methods.
 - `team.summary` now flags active teams that have no active workers, open tasks,
   or pending messages as `active_without_open_work`, so stale orchestration
   records are visible before an agent mistakes them for still-running work.

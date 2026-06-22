@@ -1004,20 +1004,26 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         "top" => handle_top(&context, args),
         "remotes" | "remote-list" | "remote:list" | "remote.list" => handle_remotes(&context, args),
         "remote-status" | "remote:status" | "remote.status" => handle_remote_status(&context, args),
-        "worktree-list" | "worktree:list" => handle_worktree_list(&context, args),
-        "worktree-status" | "worktree:status" => handle_worktree_status(&context, args),
-        "worktree-create" | "worktree:create" => {
+        "worktree-list" | "worktree:list" | "worktree.list" => handle_worktree_list(&context, args),
+        "worktree-status" | "worktree:status" | "worktree.status" => {
+            handle_worktree_status(&context, args)
+        }
+        "worktree-create" | "worktree:create" | "worktree.create" => {
             handle_worktree_open(&context, args, "worktree.create", "worktree-create")
         }
-        "worktree-attach" | "worktree:attach" => {
+        "worktree-attach" | "worktree:attach" | "worktree.attach" => {
             handle_worktree_open(&context, args, "worktree.attach", "worktree-attach")
         }
-        "worktree-remove" | "worktree:remove" => handle_worktree_remove(&context, args),
-        "worktree-merge" | "worktree:merge" => handle_worktree_merge(&context, args),
-        "actions" | "project-actions" | "project:action:list" => {
+        "worktree-remove" | "worktree:remove" | "worktree.remove" => {
+            handle_worktree_remove(&context, args)
+        }
+        "worktree-merge" | "worktree:merge" | "worktree.merge" => {
+            handle_worktree_merge(&context, args)
+        }
+        "actions" | "project-actions" | "project:action:list" | "project.action.list" => {
             handle_project_action_list(&context, args)
         }
-        "action-run" | "project-action-run" | "project:action:run" => {
+        "action-run" | "project-action-run" | "project:action:run" | "project.action.run" => {
             handle_project_action_run(&context, args)
         }
         "set-status" => handle_set_status(&context, args),
