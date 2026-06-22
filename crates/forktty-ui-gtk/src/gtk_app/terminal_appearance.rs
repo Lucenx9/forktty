@@ -551,17 +551,9 @@ pub(super) enum GhosttyColorScheme {
 }
 
 pub(super) fn ghostty_terminal_appearance_for_config(
-    config: &config::AppConfig,
+    _config: &config::AppConfig,
 ) -> GhosttyTerminalAppearance {
-    ghostty_terminal_appearance(ghostty_color_scheme_for_config(config))
-}
-
-fn ghostty_color_scheme_for_config(config: &config::AppConfig) -> GhosttyColorScheme {
-    if config.general.theme_source.eq_ignore_ascii_case("light") {
-        GhosttyColorScheme::Light
-    } else {
-        GhosttyColorScheme::Dark
-    }
+    ghostty_terminal_appearance(GhosttyColorScheme::Dark)
 }
 
 #[cfg(test)]

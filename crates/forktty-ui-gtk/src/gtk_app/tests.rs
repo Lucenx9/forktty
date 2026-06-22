@@ -4433,12 +4433,7 @@ fn terminal_zoom_font_uses_default_at_reset_and_clamps_steps() {
 #[test]
 fn terminal_theme_system_uses_dark_palette() {
     let mut config = config::AppConfig::default();
-    config.general.theme_source = "light".to_string();
     config.appearance.terminal_theme = config::TERMINAL_THEME_SYSTEM.to_string();
-
-    assert_eq!(terminal_colors_for_config(&config).background, "#181818");
-
-    config.general.theme_source = "dark".to_string();
 
     assert_eq!(terminal_colors_for_config(&config).background, "#181818");
 }
@@ -4446,7 +4441,6 @@ fn terminal_theme_system_uses_dark_palette() {
 #[test]
 fn legacy_terminal_theme_config_is_ignored() {
     let mut config = config::AppConfig::default();
-    config.general.theme_source = "light".to_string();
     config.appearance.terminal_theme = config::TERMINAL_THEME_DRACULA.to_string();
 
     assert_eq!(terminal_colors_for_config(&config).background, "#181818");

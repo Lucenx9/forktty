@@ -55,6 +55,9 @@ All notable changes to ForkTTY are documented here.
   and considered candidates.
 
 ### Changed
+- ForkTTY config no longer emits the obsolete `general.theme_source` key;
+  existing files that still contain it continue to load, and terminal theme
+  preferences remain owned by Ghostty config.
 - `AGENTS.md` now reflects the current MCP/team/workflow/skill/AppImage
   maintenance flow, including final-binary skill checksum verification.
 - Agent HUD rows now show a compact workflow loop chip when a visible agent

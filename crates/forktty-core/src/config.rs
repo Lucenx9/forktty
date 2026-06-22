@@ -49,8 +49,6 @@ pub struct AppConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GeneralConfig {
-    #[serde(default = "default_theme_source")]
-    pub theme_source: String,
     #[serde(default = "default_shell")]
     pub shell: String,
     #[serde(default = "default_worktree_layout")]
@@ -155,7 +153,6 @@ static CONFIG_UPDATE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
-            theme_source: default_theme_source(),
             shell: default_shell(),
             worktree_layout: default_worktree_layout(),
             enable_pr_lookup: false,
@@ -490,11 +487,6 @@ pub fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
             "general.shell must be an absolute path to an executable file: {shell}"
         )));
     }
-    if config.general.theme_source.as_str() != "dark" {
-        return Err(ConfigError::Invalid(
-            "general.theme_source must be 'dark'".to_string(),
-        ));
-    }
     if !matches!(
         config.general.worktree_layout.as_str(),
         "nested" | "sibling" | "outer-nested"
@@ -559,8 +551,6 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
     } else {
         config.general.shell = shell.to_string();
     }
-    config.general.theme_source = normalize_config_choice(&config.general.theme_source, &["dark"])
-        .unwrap_or_else(default_theme_source);
     config.general.worktree_layout = normalize_config_choice(
         &config.general.worktree_layout,
         &["nested", "sibling", "outer-nested"],
@@ -914,9 +904,6 @@ pub fn format_config_recovery_warning(recovery: &ConfigRecovery) -> String {
     }
 }
 
-fn default_theme_source() -> String {
-    "dark".to_string()
-}
 fn default_shell() -> String {
     default_shell_from_env(std::env::var("SHELL").ok())
 }
@@ -1278,17 +1265,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_config_rejects_invalid_theme_source() {
-        let mut config = AppConfig::default();
-        config.general.shell = dummy_executable_path();
-        config.general.theme_source = "light".to_string();
-        let err = validate_config(&config).unwrap_err();
-        assert!(err
-            .to_string()
-            .contains("general.theme_source must be 'dark'"));
-    }
-
-    #[test]
     fn validate_config_rejects_invalid_worktree_layout() {
         let mut config = AppConfig::default();
         config.general.shell = dummy_executable_path();
@@ -1441,7 +1417,6 @@ mod tests {
             r#"
             [general]
             shell = "/bin/sh"
-            theme_source = " Dark "
             worktree_layout = " SIBLING "
             enable_pr_lookup = true
 
@@ -1456,7 +1431,6 @@ mod tests {
 
         let config = load_config_from_path(&path).unwrap();
 
-        assert_eq!(config.general.theme_source, "dark");
         assert_eq!(config.general.worktree_layout, "sibling");
         assert!(config.general.enable_pr_lookup);
         assert_eq!(config.appearance.sidebar_position, "right");
@@ -1531,18 +1505,7 @@ mod tests {
     }
 
     #[test]
-    fn saved_config_rejects_invalid_theme_source() {
-        let mut config = AppConfig::default();
-        config.general.shell = "/bin/sh".to_string();
-        config.general.theme_source = "purple".to_string();
-
-        let error = validate_config(&config).unwrap_err();
-
-        assert!(error.to_string().contains("theme_source"));
-    }
-
-    #[test]
-    fn loaded_config_normalizes_legacy_light_theme_to_dark() {
+    fn loaded_config_accepts_legacy_theme_source() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         fs::write(
@@ -1557,7 +1520,28 @@ mod tests {
 
         let config = load_config_from_path(&path).unwrap();
 
-        assert_eq!(config.general.theme_source, "dark");
+        assert_eq!(config.general.shell, "/bin/sh");
+    }
+
+    #[test]
+    fn saved_config_omits_legacy_theme_source_from_loaded_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+            [general]
+            theme_source = "dark"
+            shell = "/bin/sh"
+            "#,
+        )
+        .unwrap();
+
+        let config = load_config_from_path(&path).unwrap();
+        save_config_to_path(&path, &config).unwrap();
+        let saved = fs::read_to_string(&path).unwrap();
+
+        assert!(!saved.contains("theme_source"));
     }
 
     #[test]

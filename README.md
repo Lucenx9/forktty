@@ -588,7 +588,6 @@ editing this file or your login shell environment.
 
 ```toml
 [general]
-theme_source = "dark"
 shell = "/bin/bash"
 worktree_layout = "nested" # "nested", "sibling", or "outer-nested"
 enable_pr_lookup = false
