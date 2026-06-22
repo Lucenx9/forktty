@@ -14,8 +14,8 @@ All notable changes to ForkTTY are documented here.
   ForkTTY MCP, hooks, context snapshots, and team workers.
 - Socket `context.snapshot` and MCP `context_snapshot` now provide a compact
   read-only workspace snapshot with pane/surface state, status, agent health,
-  workflow/team/feed/remote summaries, compact team aggregate rows, and bounded
-  untrusted terminal tails.
+  compact workflow/team/feed/remote summaries, and bounded untrusted terminal
+  tails. Full workflow and team records are opt-in.
 - `system.capabilities` now advertises a provider capability matrix for the
   supported team/resume providers (`codex`, `claude`, `pi`, `opencode`, and
   `antigravity`) so socket and MCP clients do not need to infer provider support
@@ -57,9 +57,10 @@ All notable changes to ForkTTY are documented here.
   Agent HUD and notification panel treatment.
 
 ### Fixed
-- Team message dispatch and worker shutdown submit mode now send the text plus
-  carriage-return Enter as one terminal input, avoiding intermittent cases where
-  agent TUIs accepted the pasted prompt but missed the separate submit input.
+- Team message dispatch and worker shutdown submit mode now use
+  provider-aware input: Claude receives staged text, a short settle, and a
+  separate Enter, while other providers keep text plus carriage-return Enter in
+  one terminal input.
 - `team.summary` now flags active teams that have no active workers, open tasks,
   or pending messages as `active_without_open_work`, so stale orchestration
   records are visible before an agent mistakes them for still-running work.
@@ -134,9 +135,9 @@ All notable changes to ForkTTY are documented here.
 - Codex MCP setup/removal now reads `$CODEX_HOME/config.toml` and
   `~/.codex/config.toml` with the MCP config size limit, not the smaller hook
   config limit.
-- Team message dispatch submit mode now still sends the separate Enter input
-  for LF-terminated prompt text, fixing full-screen agent TUIs where a pasted
-  newline is not equivalent to pressing Enter.
+- Team message dispatch submit mode now treats LF-terminated prompt text as
+  still requiring explicit submit input, fixing full-screen agent TUIs where a
+  pasted newline is not equivalent to pressing Enter.
 - MCP `team_message_dispatch` is now annotated as destructive and open-world,
   matching that it can type into an agent pane and optionally submit input.
 - Command safety now rejects BusyBox shell applet trampolines such as

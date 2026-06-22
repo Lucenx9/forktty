@@ -50,6 +50,10 @@ const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const TEAM_MESSAGE_SURFACE_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const TEAM_MESSAGE_SURFACE_READY_TIMEOUT: Duration = Duration::from_secs(10);
+/// When a provider needs Enter as a distinct submit action, avoid issuing it
+/// in the same scheduler turn as the prompt body so embedded PTYs are less
+/// likely to coalesce the writes into one paste-like input chunk.
+const TEAM_SEPARATE_SUBMIT_ENTER_SETTLE: Duration = Duration::from_millis(50);
 static TEAM_MESSAGE_DISPATCH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 /// Buffered events per subscriber before a slow client gets a `Lagged` notice.
 const EVENTS_CHANNEL_CAPACITY: usize = 256;
@@ -1424,11 +1428,16 @@ pub async fn dispatch(
             } else {
                 team_worker_surface_id(state, &team_id, &worker_id)?
             };
-            let text = terminal_text_with_submit_enter(&text, submit);
+            let agent = team_worker_agent(state, &team_id, &worker_id)?;
+            let (text, separate_enter) =
+                terminal_text_and_separate_enter(&text, submit, agent.as_deref());
             state
                 .terminal
                 .send_text(&surface_id, &text)
                 .map_err(DispatchError::from)?;
+            if separate_enter {
+                send_team_submit_enter_after_settle(state, &surface_id).await?;
+            }
             let worker = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
                 store.request_worker_shutdown(
                     forktty_core::TeamWorkerAction { team_id, worker_id },
@@ -1490,9 +1499,9 @@ pub async fn dispatch(
             let worker_id =
                 optional_non_blank_string_param(&params, "worker_id")?.map(str::to_string);
             let submit = optional_bool_param(&params, "submit")?.unwrap_or(false);
-            let (surface_id, resolved_worker_id, text) =
+            let (surface_id, resolved_worker_id, text, agent) =
                 team_message_dispatch_target(state, &team_id, &message_id, worker_id.as_deref())?;
-            dispatch_team_message_text(state, &surface_id, &text, submit).await?;
+            dispatch_team_message_text(state, &surface_id, &text, submit, agent.as_deref()).await?;
             let message = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
                 store.ack_message(
                     forktty_core::TeamMessageAck {
@@ -2783,6 +2792,8 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
     let tail_max_bytes = context_snapshot_tail_max_bytes_from_params(params)?;
     let include_team_details =
         optional_bool_param(params, "include_team_details")?.unwrap_or(false);
+    let include_workflow_details =
+        optional_bool_param(params, "include_workflow_details")?.unwrap_or(false);
     let include_feed_trace = optional_bool_param(params, "include_feed_trace")?.unwrap_or(false);
     let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
     let now_ms = current_unix_epoch_ms();
@@ -2867,7 +2878,8 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
 
     let (terminal_tails, terminal_tail_errors) =
         context_snapshot_terminal_tails(state, &terminal_surface_ids, tail_lines, tail_max_bytes);
-    let workflows = context_snapshot_workflows(state, &workspace_id)?;
+    let (workflows, workflow_summaries) =
+        context_snapshot_workflows(state, &workspace_id, include_workflow_details)?;
     let (teams, team_summaries) =
         context_snapshot_team_state(state, &workspace_id, include_team_details)?;
     let risk_flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
@@ -2877,7 +2889,7 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
         remotes: &remotes,
         terminal_tails: &terminal_tails,
         terminal_tail_errors: &terminal_tail_errors,
-        workflows: &workflows,
+        workflow_summaries: &workflow_summaries,
         team_summaries: &team_summaries,
     });
 
@@ -2889,6 +2901,7 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
         "agents": agents,
         "agent_health": agent_health,
         "workflows": workflows,
+        "workflow_summaries": workflow_summaries,
         "teams": teams,
         "team_summaries": team_summaries,
         "feed": feed,
@@ -2984,9 +2997,10 @@ fn context_snapshot_terminal_tails(
 fn context_snapshot_workflows(
     state: &SocketAppState,
     workspace_id: &str,
-) -> Result<Value, DispatchError> {
+    include_workflow_details: bool,
+) -> Result<(Value, Value), DispatchError> {
     let Some(path) = state.workflow_store_path.as_deref() else {
-        return Ok(json!([]));
+        return Ok((json!([]), json!([])));
     };
     let store = forktty_core::load_workflows_from_path(path).map_err(workflow_error)?;
     let workflows = store
@@ -2998,9 +3012,20 @@ fn context_snapshot_workflows(
             limit: Some(20),
         })
         .into_iter()
-        .map(context_snapshot_workflow_row)
         .collect::<Vec<_>>();
-    Ok(json!(workflows))
+    let summaries = workflows
+        .iter()
+        .map(context_snapshot_workflow_summary_row)
+        .collect::<Vec<_>>();
+    let workflows = if include_workflow_details {
+        json!(workflows
+            .into_iter()
+            .map(context_snapshot_workflow_row)
+            .collect::<Vec<_>>())
+    } else {
+        json!([])
+    };
+    Ok((workflows, json!(summaries)))
 }
 
 fn context_snapshot_workflow_row(workflow: WorkflowState) -> Value {
@@ -3010,6 +3035,32 @@ fn context_snapshot_workflow_row(workflow: WorkflowState) -> Value {
         object.insert("consistency_warnings".to_string(), json!(warnings));
     }
     value
+}
+
+fn context_snapshot_workflow_summary_row(workflow: &WorkflowState) -> Value {
+    let warnings = workflow_consistency_warnings(workflow);
+    let plan_steps_total = workflow.plan.len();
+    let plan_steps_open = workflow
+        .plan
+        .iter()
+        .filter(|step| !workflow_plan_step_status_is_terminal(&step.status))
+        .count();
+    json!({
+        "id": &workflow.id,
+        "workspace_id": &workflow.workspace_id,
+        "surface_id": &workflow.surface_id,
+        "agent": &workflow.agent,
+        "session_id": &workflow.session_id,
+        "mode": &workflow.mode,
+        "status": &workflow.status,
+        "goal": &workflow.goal,
+        "created_at_ms": workflow.created_at_ms,
+        "updated_at_ms": workflow.updated_at_ms,
+        "plan_steps_total": plan_steps_total,
+        "plan_steps_open": plan_steps_open,
+        "evidence_total": workflow.evidence.len(),
+        "consistency_warnings": warnings,
+    })
 }
 
 fn workflow_consistency_warnings(workflow: &WorkflowState) -> Vec<&'static str> {
@@ -3108,7 +3159,7 @@ struct ContextSnapshotRiskInputs<'a> {
     remotes: &'a [Value],
     terminal_tails: &'a [Value],
     terminal_tail_errors: &'a [Value],
-    workflows: &'a Value,
+    workflow_summaries: &'a Value,
     team_summaries: &'a Value,
 }
 
@@ -3137,14 +3188,18 @@ fn context_snapshot_risk_flags(inputs: ContextSnapshotRiskInputs<'_>) -> Vec<&'s
     }) {
         flags.push("team_consistency_warning");
     }
-    if inputs.workflows.as_array().is_some_and(|workflows| {
-        workflows.iter().any(|workflow| {
-            workflow
-                .get("consistency_warnings")
-                .and_then(Value::as_array)
-                .is_some_and(|warnings| !warnings.is_empty())
+    if inputs
+        .workflow_summaries
+        .as_array()
+        .is_some_and(|summaries| {
+            summaries.iter().any(|summary| {
+                summary
+                    .get("consistency_warnings")
+                    .and_then(Value::as_array)
+                    .is_some_and(|warnings| !warnings.is_empty())
+            })
         })
-    }) {
+    {
         flags.push("workflow_consistency_warning");
     }
     if !inputs.remotes.is_empty() {
@@ -5634,15 +5689,30 @@ async fn dispatch_team_message_text(
     surface_id: &str,
     body: &str,
     submit: bool,
+    agent: Option<&str>,
 ) -> Result<(), DispatchError> {
     // Team dispatches are serialized because GTK can only foreground one
     // worker surface at a time. Keep the wait bounded so a never-ready surface
     // cannot block unrelated dispatches indefinitely.
     let _dispatch_guard = team_message_dispatch_lock().lock().await;
     show_team_message_surface(state, surface_id)?;
-    let text = terminal_text_with_submit_enter(body, submit);
+    let (text, separate_enter) = terminal_text_and_separate_enter(body, submit, agent);
     send_team_message_body_when_ready(state, surface_id, &text).await?;
+    if separate_enter {
+        send_team_submit_enter_after_settle(state, surface_id).await?;
+    }
     Ok(())
+}
+
+async fn send_team_submit_enter_after_settle(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> Result<(), DispatchError> {
+    tokio::time::sleep(TEAM_SEPARATE_SUBMIT_ENTER_SETTLE).await;
+    state
+        .terminal
+        .send_enter(surface_id)
+        .map_err(DispatchError::from)
 }
 
 fn terminal_text_with_submit_enter(text: &str, submit: bool) -> String {
@@ -5654,6 +5724,29 @@ fn terminal_text_with_submit_enter(text: &str, submit: bool) -> String {
     } else {
         text.to_string()
     }
+}
+
+fn terminal_text_and_separate_enter(
+    text: &str,
+    submit: bool,
+    agent: Option<&str>,
+) -> (String, bool) {
+    if submit && !text.ends_with('\r') && agent_uses_separate_submit_enter(agent) {
+        (text.to_string(), true)
+    } else {
+        (terminal_text_with_submit_enter(text, submit), false)
+    }
+}
+
+fn agent_uses_separate_submit_enter(agent: Option<&str>) -> bool {
+    matches!(
+        agent
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "claude" | "claude_code" | "claude-code"
+    )
 }
 
 fn team_message_dispatch_lock() -> &'static tokio::sync::Mutex<()> {
@@ -5915,7 +6008,7 @@ fn team_message_dispatch_target(
     team_id: &str,
     message_id: &str,
     worker_id: Option<&str>,
-) -> Result<(String, String, String), DispatchError> {
+) -> Result<(String, String, String, Option<String>), DispatchError> {
     let store =
         forktty_core::load_teams_from_path(team_store_path(state)?).map_err(DispatchError::from)?;
     let team = store
@@ -5955,8 +6048,32 @@ fn team_message_dispatch_target(
     let surface_id = worker.surface_id.clone().ok_or_else(|| {
         DispatchError::PreconditionFailed("team worker has no surface_id".to_string())
     })?;
+    let agent = worker.agent.clone();
     ensure_model_surface_exists(state, &surface_id)?;
-    Ok((surface_id, worker_id.to_string(), message.body.clone()))
+    Ok((
+        surface_id,
+        worker_id.to_string(),
+        message.body.clone(),
+        agent,
+    ))
+}
+
+fn team_worker_agent(
+    state: &SocketAppState,
+    team_id: &str,
+    worker_id: &str,
+) -> Result<Option<String>, DispatchError> {
+    let store =
+        forktty_core::load_teams_from_path(team_store_path(state)?).map_err(DispatchError::from)?;
+    let team = store
+        .get(team_id)
+        .ok_or(DispatchError::NotFound("team".to_string()))?;
+    let worker = team
+        .workers
+        .iter()
+        .find(|worker| worker.id == worker_id)
+        .ok_or(DispatchError::NotFound("worker".to_string()))?;
+    Ok(worker.agent.clone())
 }
 
 async fn team_finish(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
@@ -9031,6 +9148,61 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Default)]
+    struct RecordingEnterBackend {
+        inner: HeadlessTerminalBackend,
+        entered_surfaces: Mutex<Vec<String>>,
+    }
+
+    impl RecordingEnterBackend {
+        fn sent_text(&self, surface_id: &str) -> Result<Vec<String>, TerminalError> {
+            self.inner.sent_text(surface_id)
+        }
+
+        fn entered_surfaces(&self) -> Vec<String> {
+            self.entered_surfaces.lock().unwrap().clone()
+        }
+    }
+
+    impl TerminalBackend for RecordingEnterBackend {
+        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+            self.inner.spawn(request)
+        }
+
+        fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
+            self.inner.send_text(surface_id, text)
+        }
+
+        fn send_enter(&self, surface_id: &str) -> Result<(), TerminalError> {
+            self.entered_surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .push(surface_id.to_string());
+            Ok(())
+        }
+
+        fn read_text(
+            &self,
+            surface_id: &str,
+            capture: TerminalTextCapture,
+            max_bytes: usize,
+        ) -> Result<TerminalTextSnapshot, TerminalError> {
+            self.inner.read_text(surface_id, capture, max_bytes)
+        }
+
+        fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
+            self.inner.resize(surface_id, cols, rows)
+        }
+
+        fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+            self.inner.close(surface_id)
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            self.inner.surfaces()
+        }
+    }
+
     #[derive(Debug)]
     struct SpawnFailsCloseSucceedsBackend {
         surfaces: Mutex<BTreeMap<String, TerminalSurfaceState>>,
@@ -10161,7 +10333,7 @@ mod tests {
         let remotes = [json!({"surface_id": "surface-ssh", "kind": "ssh"})];
         let terminal_tails = [truncated_tail];
         let terminal_tail_errors = [json!({"surface_id": "surface-missing", "error": "not ready"})];
-        let workflows = json!([{"consistency_warnings": ["running_with_completed_plan"]}]);
+        let workflow_summaries = json!([{"consistency_warnings": ["running_with_completed_plan"]}]);
         let team_summaries = json!([{"consistency_warnings": ["done_with_active_workers"]}]);
         let flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
             status: &status,
@@ -10170,7 +10342,7 @@ mod tests {
             remotes: &remotes,
             terminal_tails: &terminal_tails,
             terminal_tail_errors: &terminal_tail_errors,
-            workflows: &workflows,
+            workflow_summaries: &workflow_summaries,
             team_summaries: &team_summaries,
         });
 
@@ -10195,7 +10367,7 @@ mod tests {
     fn context_snapshot_review_gap_permission_bypass_reads_agent_health() {
         let status = json!({"status": []});
         let agent_health = [json!({"permission_mode": "bypassPermissions"})];
-        let workflows = json!([]);
+        let workflow_summaries = json!([]);
         let team_summaries = json!([]);
         let flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
             status: &status,
@@ -10204,7 +10376,7 @@ mod tests {
             remotes: &[],
             terminal_tails: &[],
             terminal_tail_errors: &[],
-            workflows: &workflows,
+            workflow_summaries: &workflow_summaries,
             team_summaries: &team_summaries,
         });
 
@@ -12136,6 +12308,135 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn team_message_dispatch_submit_uses_separate_enter_for_claude() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(RecordingEnterBackend::default());
+        let mut state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        state.workflow_store_path = None;
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "leader_surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "claude",
+                "surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.message.send",
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-submit",
+                "from": "leader",
+                "to_worker_id": "worker-1",
+                "body": "run status"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let result = dispatch(
+            &state,
+            "team.message.dispatch",
+            json!({"team_id": "team-1", "message_id": "msg-submit", "submit": true}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["submitted"], true);
+        assert_eq!(result["message"]["delivered"], true);
+        assert_eq!(
+            backend.sent_text(surface_id).unwrap(),
+            vec!["run status".to_string()]
+        );
+        assert_eq!(backend.entered_surfaces(), vec![surface_id.to_string()]);
+    }
+
+    #[tokio::test]
+    async fn team_worker_shutdown_submit_uses_separate_enter_for_claude() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(RecordingEnterBackend::default());
+        let mut state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        state.workflow_store_path = None;
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "leader_surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "claude",
+                "surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+
+        let result = dispatch(
+            &state,
+            "team.worker.shutdown",
+            json!({"team_id": "team-1", "worker_id": "worker-1", "text": "stop"}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["submitted"], true);
+        assert_eq!(result["worker"]["status"], "shutdown_requested");
+        assert_eq!(
+            backend.sent_text(surface_id).unwrap(),
+            vec!["stop".to_string()]
+        );
+        assert_eq!(backend.entered_surfaces(), vec![surface_id.to_string()]);
+    }
+
+    #[tokio::test]
     async fn team_upsert_rejects_leader_surface_from_another_workspace() {
         let (mut state, _backend) = test_state();
         let dir = tempfile::tempdir().unwrap();
@@ -12268,7 +12569,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn context_snapshot_reports_workflow_consistency_warnings() {
+    async fn context_snapshot_compacts_workflows_by_default_and_expands_on_request() {
         let (state, _) = test_state();
         let dir = tempfile::tempdir().unwrap();
         let state = state.with_workflow_store_path(dir.path().join("workflow-v1.json"));
@@ -12284,7 +12585,8 @@ mod tests {
                 "workspace_id": workspace_id,
                 "surface_id": surface_id,
                 "status": "running",
-                "goal": "Review policy"
+                "goal": "Review policy",
+                "memory": "Large durable workflow memory that should not ride along in compact context snapshots"
             }),
         )
         .await
@@ -12303,6 +12605,19 @@ mod tests {
         )
         .await
         .unwrap();
+        dispatch(
+            &state,
+            "workflow.evidence.add",
+            json!({
+                "workflow_id": workflow_id,
+                "evidence_id": "evidence-1",
+                "kind": "review",
+                "title": "Review details",
+                "text": "Large evidence body that should be opt-in"
+            }),
+        )
+        .await
+        .unwrap();
 
         let snapshot = dispatch(
             &state,
@@ -12312,11 +12627,54 @@ mod tests {
         .await
         .unwrap();
 
+        assert_eq!(snapshot["workflows"].as_array().unwrap().len(), 0);
+        assert_eq!(snapshot["workflow_summaries"][0]["id"], "workflow-1");
+        assert_eq!(snapshot["workflow_summaries"][0]["status"], "running");
+        assert_eq!(snapshot["workflow_summaries"][0]["plan_steps_total"], 2);
+        assert_eq!(snapshot["workflow_summaries"][0]["plan_steps_open"], 0);
+        assert_eq!(snapshot["workflow_summaries"][0]["evidence_total"], 1);
         assert_eq!(
-            snapshot["workflows"][0]["consistency_warnings"],
+            snapshot["workflow_summaries"][0]["consistency_warnings"],
             json!(["running_with_completed_plan"])
         );
+        assert!(snapshot["workflow_summaries"][0].get("memory").is_none());
+        assert!(snapshot["workflow_summaries"][0].get("plan").is_none());
+        assert!(snapshot["workflow_summaries"][0].get("evidence").is_none());
         assert!(snapshot["risk_flags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("workflow_consistency_warning")));
+
+        let detailed = dispatch(
+            &state,
+            "context.snapshot",
+            json!({
+                "workspace_id": workspace_id,
+                "tail_lines": 0,
+                "include_workflow_details": true
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            detailed["workflows"][0]["memory"],
+            "Large durable workflow memory that should not ride along in compact context snapshots"
+        );
+        assert_eq!(
+            detailed["workflows"][0]["plan"].as_array().unwrap().len(),
+            2
+        );
+        assert_eq!(
+            detailed["workflows"][0]["evidence"][0]["text"],
+            "Large evidence body that should be opt-in"
+        );
+        assert_eq!(
+            detailed["workflows"][0]["consistency_warnings"],
+            json!(["running_with_completed_plan"])
+        );
+        assert_eq!(detailed["workflow_summaries"][0]["id"], "workflow-1");
+        assert!(detailed["risk_flags"]
             .as_array()
             .unwrap()
             .contains(&json!("workflow_consistency_warning")));

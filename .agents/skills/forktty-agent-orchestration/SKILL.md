@@ -29,13 +29,18 @@ For normal local code changes, read and edit the repo directly.
    pane or launching/reviewing an agent.
 3. Prefer `context_snapshot` when a broader situation view is needed. It gives the compact workspace
    view, agent status with source/age/lifecycle-evidence metadata,
-   team/workflow/feed summaries plus compact `team_summaries`, risk flags, and
-   bounded terminal tails in one read-only call.
+   compact workflow/team/feed summaries plus `workflow_summaries` and
+   `team_summaries`, risk flags, and bounded terminal tails in one read-only
+   call.
    Full team records, including mailbox message bodies, are opt-in via
    `include_team_details`; prefer `team_summaries` and follow up with
    `team_get` only when detailed worker/task/message state is needed. Treat
    `consistency_warnings` and the `team_consistency_warning` risk flag as
    prompts to inspect the affected team before deciding it is finished.
+   Full workflow records, including memory, plan steps, and evidence, are
+   opt-in via `include_workflow_details`; prefer `workflow_summaries` and
+   follow up with `workflow_get` only when detailed durable memory or evidence
+   is needed.
    Feed status/progress trace rows are compacted out by default; request
    `include_feed_trace` only when debugging tool-call/status churn. Treat
    workflow `consistency_warnings` and `workflow_consistency_warning` the same
@@ -115,10 +120,10 @@ namespace or prefix when a host UI requires fully qualified tool names.
 2. Confirm the target is the intended pane, worker, provider, and cwd.
 3. Prefer team mailbox flow for worker prompts: `team_message_send`, then
    `team_message_dispatch`. Use the dispatch `submit` option only when the
-   prompt is ready to run; ForkTTY appends a carriage-return Enter to the same
-   terminal input unless the message body already ends in carriage return. Do
-   not rely on a trailing LF as equivalent to pressing Enter in full-screen
-   agent TUIs.
+   prompt is ready to run; ForkTTY uses provider-aware terminal submit
+   behavior, including a short settle before the separate Enter for Claude TUIs
+   and one text+CR write for providers that accept it reliably. Do not rely on
+   a trailing LF as equivalent to pressing Enter in full-screen agent TUIs.
 4. If delivery succeeds but the worker does not start, inspect the pane before
    retrying; the target TUI may still be staging input or waiting for a
    provider-specific confirmation.

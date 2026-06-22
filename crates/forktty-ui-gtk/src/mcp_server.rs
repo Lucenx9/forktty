@@ -448,6 +448,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                     "tail_lines",
                     "tail_max_bytes",
                     "include_team_details",
+                    "include_workflow_details",
                     "include_feed_trace",
                 ],
                 name,
@@ -457,6 +458,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             insert_optional_u64_param(args, &mut params, "tail_lines")?;
             insert_optional_u64_param(args, &mut params, "tail_max_bytes")?;
             insert_optional_bool_param(args, &mut params, "include_team_details")?;
+            insert_optional_bool_param(args, &mut params, "include_workflow_details")?;
             insert_optional_bool_param(args, &mut params, "include_feed_trace")?;
             SocketCall {
                 method: "context.snapshot",
@@ -1788,7 +1790,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "context_snapshot",
             annotations: read_only_annotations(),
-            description: "Return a compact read-only situational snapshot for one ForkTTY workspace: workspace, pane tree, surfaces, status, agent health, workflow/team/feed/remote summaries, compact team aggregate rows, and per-surface plus aggregate-bounded untrusted terminal tails.",
+            description: "Return a compact read-only situational snapshot for one ForkTTY workspace: workspace, pane tree, surfaces, status, agent health, compact workflow/team/feed/remote summaries, and per-surface plus aggregate-bounded untrusted terminal tails.",
             input_schema: object_schema(
                 &[],
                 json!({
@@ -1799,6 +1801,7 @@ fn tool_specs() -> Vec<ToolSpec> {
                     "tail_lines": integer_prop("Terminal tail lines per terminal surface; 0 disables terminal text. Defaults to a compact bounded tail."),
                     "tail_max_bytes": integer_prop("Maximum UTF-8 bytes per terminal tail; socket also enforces aggregate surface and byte upper bounds."),
                     "include_team_details": boolean_prop("Include full team records with workers, tasks, and mailbox messages. Defaults to false; use team_summaries for compact monitoring."),
+                    "include_workflow_details": boolean_prop("Include full workflow records with memory, plan steps, and evidence. Defaults to false; use workflow_summaries for compact monitoring."),
                     "include_feed_trace": boolean_prop("Include status/progress trace rows in the feed. Defaults to false; compact snapshots keep semantic notifications and approvals."),
                 }),
             ),
@@ -2073,14 +2076,14 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "team_worker_shutdown",
             annotations: mutating_annotations(true, false),
-            description: "Request team worker shutdown by sending shutdown text plus a submit Enter by default, marking the worker shutdown_requested after the terminal accepts the input, and optionally closing launch-owned worker panes immediately.",
+            description: "Request team worker shutdown with provider-aware submit behavior by default, including a short settle before Claude Enter, mark the worker shutdown_requested after the terminal accepts the input, and optionally close launch-owned worker panes immediately.",
             input_schema: object_schema(
                 &["team_id", "worker_id"],
                 json!({
                     "team_id": string_prop("Team id."),
                     "worker_id": string_prop("Worker id."),
                     "text": string_prop("Optional exact shutdown request text."),
-                    "submit": boolean_prop("Append a carriage-return Enter to the shutdown terminal input. Defaults to true; set false to stage text without Enter."),
+                    "submit": boolean_prop("Use provider-aware submit behavior for the shutdown terminal input, including a short settle before Claude Enter. Defaults to true; set false to stage text without Enter."),
                     "close_surface": boolean_prop("Immediately close the worker surface after shutdown text is accepted by the terminal. Defaults to false and only works for surfaces created by team_worker_launch."),
                 }),
             ),
@@ -2128,7 +2131,7 @@ fn tool_specs() -> Vec<ToolSpec> {
                     "team_id": string_prop("Team id."),
                     "message_id": string_prop("Message id."),
                     "worker_id": string_prop("Required when dispatching a team-wide message."),
-                    "submit": boolean_prop("Append a carriage-return Enter to the dispatched terminal input. Defaults to false."),
+                    "submit": boolean_prop("Use provider-aware submit behavior for the dispatched terminal input, including a short settle before Claude Enter. Defaults to false."),
                 }),
             ),
         },
@@ -3008,6 +3011,7 @@ mod tests {
                 "tail_lines": 20,
                 "tail_max_bytes": 4096,
                 "include_team_details": true,
+                "include_workflow_details": true,
                 "include_feed_trace": true
             }),
         )
@@ -3018,6 +3022,7 @@ mod tests {
         assert_eq!(params["tail_lines"], 20);
         assert_eq!(params["tail_max_bytes"], 4096);
         assert_eq!(params["include_team_details"], true);
+        assert_eq!(params["include_workflow_details"], true);
         assert_eq!(params["include_feed_trace"], true);
     }
 

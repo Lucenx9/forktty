@@ -108,7 +108,7 @@ Usage:
   forktty statusline [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--json]
   forktty status explain [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>|--surface-id <id>]
   forktty status watch [--count <n>] [--interval-ms <ms>] [workspace selectors]
-  forktty context-snapshot [workspace selectors] [--surface-id <id>] [--tail-lines <n>] [--include-team-details] [--include-feed-trace]
+  forktty context-snapshot [workspace selectors] [--surface-id <id>] [--tail-lines <n>] [--include-team-details] [--include-workflow-details] [--include-feed-trace]
   forktty feed [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--limit <n>] [--json]
   forktty feed respond <approval-id> --decision approve|deny [--json]
   forktty workflows [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--surface-id <id>] [--session-id <id>] [--query <text>] [--limit <n>] [--json]
@@ -156,7 +156,7 @@ ForkTTY team commands
 High-level wrappers:
   forktty team ask <team-id> <worker-id> --agent <agent> --task-id <id> --prompt <text>
       Create/update the team, create the task, launch a fresh worker surface, assign the task, queue the prompt, and dispatch it.
-      Submit appends a carriage-return Enter to the same terminal input.
+      Submit uses provider-aware terminal input; Claude gets text, a short settle, then Enter.
       Re-running ask/review launches another worker; use team-message-send + team-message-dispatch for follow-ups.
       Options: --role <role>, --title <title>, --goal <text>, --worktree-name <name>,
                --args <comma-list>, --submit[=true|false] (default: true; pass --submit=false to stage only).
@@ -179,7 +179,7 @@ Low-level aliases still exist:
   forktty team-worker-shutdown --close closes launch-owned disposable worker panes
   forktty team-message-send | team.message.send
   forktty team-message-dispatch | team.message.dispatch
-      With --submit, appends a carriage-return Enter to the same dispatched terminal input.
+      With --submit, uses provider-aware terminal input.
 ";
 
 const STATUS_HELP_TEXT: &str = "\
@@ -194,7 +194,7 @@ ForkTTY status commands
   forktty status watch [workspace selectors] [--surface-id <id>] [--count <n>] [--interval-ms <ms>]
       Re-run status explain output. Omit --count to watch until interrupted; interval must be greater than 0.
 
-  forktty context-snapshot [workspace selectors] [--surface-id <id>] [--tail-lines <n>] [--tail-max-bytes <n>] [--include-team-details] [--include-feed-trace]
+  forktty context-snapshot [workspace selectors] [--surface-id <id>] [--tail-lines <n>] [--tail-max-bytes <n>] [--include-team-details] [--include-workflow-details] [--include-feed-trace]
       Direct CLI alias for the context.snapshot socket/MCP method.
 ";
 
@@ -4632,6 +4632,7 @@ fn context_snapshot_params(args: Vec<String>, command: &str) -> CliResult<Map<St
             "tail-lines",
             "tail-max-bytes",
             "include-team-details",
+            "include-workflow-details",
             "include-feed-trace",
         ],
         command,
@@ -4672,6 +4673,12 @@ fn context_snapshot_params_from_options(
         options,
         "include-team-details",
         "include_team_details",
+    )?;
+    insert_optional_cli_bool_param(
+        &mut params,
+        options,
+        "include-workflow-details",
+        "include_workflow_details",
     )?;
     insert_optional_cli_bool_param(
         &mut params,
@@ -12239,18 +12246,24 @@ mod tests {
                 "--surface-id".to_string(),
                 "surface-1".to_string(),
                 "--include-team-details".to_string(),
+                "--include-workflow-details".to_string(),
                 "--include-feed-trace".to_string(),
             ],
             "context-snapshot",
         )
         .unwrap();
         assert_eq!(snapshot_params["include_team_details"], Value::Bool(true));
+        assert_eq!(
+            snapshot_params["include_workflow_details"],
+            Value::Bool(true)
+        );
         assert_eq!(snapshot_params["include_feed_trace"], Value::Bool(true));
         let compact_snapshot_params = context_snapshot_params(
             vec![
                 "--surface-id".to_string(),
                 "surface-1".to_string(),
                 "--include-team-details=false".to_string(),
+                "--include-workflow-details=false".to_string(),
                 "--include-feed-trace=false".to_string(),
             ],
             "context-snapshot",
@@ -12258,6 +12271,10 @@ mod tests {
         .unwrap();
         assert_eq!(
             compact_snapshot_params["include_team_details"],
+            Value::Bool(false)
+        );
+        assert_eq!(
+            compact_snapshot_params["include_workflow_details"],
             Value::Bool(false)
         );
         assert_eq!(
@@ -12274,6 +12291,17 @@ mod tests {
                 "context-snapshot",
             ),
             "--include-team-details expects true or false",
+        );
+        assert_err_contains(
+            context_snapshot_params(
+                vec![
+                    "--surface-id".to_string(),
+                    "surface-1".to_string(),
+                    "--include-workflow-details=maybe".to_string(),
+                ],
+                "context-snapshot",
+            ),
+            "--include-workflow-details expects true or false",
         );
         assert_err_contains(
             context_snapshot_params(

@@ -304,8 +304,10 @@ forktty events
 `forktty team ask` and `forktty team review` compose the existing team socket
 methods for common coordination flows: create/update the team, create the task,
 launch a fresh worker surface, assign the task after launch, queue the prompt,
-and dispatch it. Submit mode appends a carriage-return Enter to the same
-terminal input unless the queued message already ends in carriage return.
+and dispatch it. Submit mode uses provider-aware terminal input: most workers
+receive text plus carriage-return Enter in one write, while Claude receives
+the text, a short settle, and a separate Enter so its TUI starts the staged
+prompt reliably.
 Re-run them to launch a new worker;
 use `team-message-send` plus `team-message-dispatch` for follow-up prompts to
 an existing worker. Context snapshots include compact `team_summaries` rows so
@@ -322,11 +324,14 @@ finalization blocks on open tasks, pending messages, or live-looking workers
 unless `--force` is supplied, closes only launch-owned disposable worker panes
 with `--close-workers`, normalizes missing worker surfaces as closed, and marks
 the team done.
-Workflow rows in `context.snapshot` also include `consistency_warnings`, with
-`workflow_consistency_warning` in `risk_flags` when a running workflow has a
-completed plan or a terminal workflow still has open steps. Snapshot feed rows
-are compact by default: approvals and notifications remain, while status and
-progress trace rows are available with `include_feed_trace: true`.
+Context snapshots also include compact `workflow_summaries` rows. Full workflow
+records with durable memory, plan steps, and evidence are included only when
+`context.snapshot` receives `include_workflow_details: true`. Workflow summary
+rows include `consistency_warnings`, with `workflow_consistency_warning` in
+`risk_flags` when a running workflow has a completed plan or a terminal workflow
+still has open steps. Snapshot feed rows are compact by default: approvals and
+notifications remain, while status and progress trace rows are available with
+`include_feed_trace: true`.
 Workspace, surface, agent, and agent-health rows expose
 `effective_project_cwd`, preferring the tracked agent `resume_cwd` over the
 workspace directory when they differ. `team.worker.health` includes
@@ -335,8 +340,8 @@ workspace directory when they differ. `team.worker.health` includes
 `surface_missing`, or `stale` so cleanup decisions do not require interpreting
 raw worker fields; a worker surface is live only when it still exists in the
 workspace model and the terminal backend still reports a ready runtime.
-`team.worker.shutdown` appends a carriage-return Enter to shutdown text by
-default; its `close_surface`
+`team.worker.shutdown` uses the same provider-aware submit behavior by default;
+its `close_surface`
 option, exposed by CLI `forktty team-worker-shutdown --close`, immediately
 closes only surfaces that ForkTTY created through `team.worker.launch`, not
 manually attached user panes.
