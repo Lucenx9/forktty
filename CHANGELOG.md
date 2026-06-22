@@ -111,6 +111,10 @@ All notable changes to ForkTTY are documented here.
   icon.
 - Agent HUD scrollbars now reserve their own gutter instead of overlaying row
   action buttons.
+- Embedded Ghostty panes now force Ghostty's `wait-after-command` behavior for
+  ForkTTY-managed surfaces, so a clean shell exit leaves an inspectable
+  `Closed` pane with restart/scrollback parity instead of immediately removing
+  the split.
 - The GTK worktree dialog now uses the focused pane's live or recorded cwd when
   available, so worktree actions no longer fall back to the workspace launch
   directory when ForkTTY knows the pane is in a project checkout.
