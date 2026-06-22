@@ -95,7 +95,8 @@ Use read-only inventory before mutation:
   `team_inbox`, `team_events`.
 - Provider support: `forktty capabilities` or `system.capabilities` when
   available, especially before launching less-common providers. The capabilities
-  response includes `team_provider_policy` and PATH-based provider detection.
+  response includes `team_provider_policy`, configured provider command
+  overrides, and PATH-based provider detection.
   `team_worker_launch` may omit `agent` or use `agent: "auto"`; ForkTTY then
   selects from the configured provider order and returns a `selection` record.
   Use an explicit provider when the user named one or when a previous visible
@@ -155,7 +156,8 @@ or parallel workers:
 3. Launch one worker per independent task. Check `system.capabilities` or
    `forktty capabilities` for `provider_capabilities` and
    `team_provider_policy` when provider support is uncertain; do not assume
-   removed or legacy providers are launchable. If the user did not name a
+   removed, missing, or non-default-install providers are launchable unless
+   capabilities shows a resolved executable. If the user did not name a
    provider, prefer auto-selection and report the returned `selection` summary.
    Do not run real provider probes just to test quota or auth; those conditions
    must come from the visible worker TUI, hooks, or an explicit user report. Keep

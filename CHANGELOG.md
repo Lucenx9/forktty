@@ -49,9 +49,10 @@ All notable changes to ForkTTY are documented here.
   ForkTTY any background scheduler or automatic command execution.
 - Team worker launch now supports configurable provider auto-selection:
   Settings > Agents exposes the default provider, fallback, provider order,
-  disabled providers, and PATH detection for supported harnesses; socket/MCP/CLI
-  launches can omit `agent` or pass `auto`, and successful launches report the
-  selected provider and considered candidates.
+  disabled providers, PATH detection, and direct command overrides for
+  non-default harness install locations; socket/MCP/CLI launches can omit
+  `agent` or pass `auto`, and successful launches report the selected provider
+  and considered candidates.
 
 ### Changed
 - `AGENTS.md` now reflects the current MCP/team/workflow/skill/AppImage

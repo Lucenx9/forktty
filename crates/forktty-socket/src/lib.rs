@@ -1044,27 +1044,30 @@ fn provider_capabilities(path: Option<&OsStr>, team: &forktty_core::TeamConfig) 
         .collect::<Vec<_>>();
     let mut providers = serde_json::Map::new();
     for capability in PROVIDER_CAPABILITIES {
-        let executable = resolve_child_program(capability.program, path);
+        let resolution = team_provider_program_resolution(capability, team, path);
         let disabled_by_config = disabled.contains(&capability.agent);
         let unavailable_reason = if disabled_by_config {
             Value::String("disabled_by_config".to_string())
-        } else if executable.is_none() {
-            Value::String("program_not_found".to_string())
+        } else if let Some(reason) = resolution.unavailable_reason.as_ref() {
+            Value::String((*reason).to_string())
         } else {
             Value::Null
         };
         providers.insert(
             capability.agent.to_string(),
             json!({
-                "program": capability.program,
+                "program": resolution.program.clone(),
+                "default_program": capability.program,
+                "configured_command": resolution.configured.then(|| resolution.program.clone()),
                 "team_worker_launch": true,
-                "launchable": executable.is_some() && !disabled_by_config,
+                "launchable": resolution.executable.is_some() && !disabled_by_config,
                 "safe_resume": capability.safe_resume,
                 "cwd_resume_flag": capability.cwd_resume_flag,
                 "permission_bypass_resume": capability.permission_bypass_resume,
                 "aliases": capability.aliases,
-                "available_on_path": executable.is_some(),
-                "executable": executable
+                "available_on_path": resolution.available_on_path,
+                "executable": resolution
+                    .executable
                     .as_ref()
                     .map(|path| Value::String(path.to_string_lossy().into_owned()))
                     .unwrap_or(Value::Null),
@@ -1082,6 +1085,7 @@ fn team_provider_policy(team: &forktty_core::TeamConfig) -> Value {
         "provider_order": team.provider_order,
         "auto_fallback": team.auto_fallback,
         "disabled_agents": team.disabled_agents,
+        "provider_commands": team.provider_commands,
     })
 }
 
@@ -1443,8 +1447,12 @@ pub async fn dispatch(
                 optional_non_blank_string_param(&params, "worktree_name")?.map(str::to_string);
             let extra_args = optional_string_array_param(&params, "args")?.unwrap_or_default();
             let selection = select_team_worker_provider(requested_agent)?;
-            let (program, args) =
-                team_worker_launch_command(&selection.selected_agent, role.as_deref(), extra_args)?;
+            let (program, args) = team_worker_launch_command_with_program(
+                &selection.selected_agent,
+                &selection.program,
+                role.as_deref(),
+                extra_args,
+            )?;
             let surface =
                 create_team_worker_surface(state, &team_id, &worker_id, worktree_name.as_deref())?;
             let request =
@@ -5992,9 +6000,20 @@ struct TeamWorkerProviderSelection {
     requested_agent: String,
     selected_agent: String,
     program: String,
+    default_program: String,
+    configured_command: Option<String>,
     executable: Option<PathBuf>,
     reason: String,
     considered: Vec<Value>,
+}
+
+#[derive(Debug, Clone)]
+struct TeamProviderProgramResolution {
+    program: String,
+    configured: bool,
+    available_on_path: bool,
+    executable: Option<PathBuf>,
+    unavailable_reason: Option<&'static str>,
 }
 
 fn select_team_worker_provider(
@@ -6044,19 +6063,28 @@ fn select_explicit_team_worker_provider(
             "unsupported team worker agent: {requested}"
         )));
     };
-    let executable = resolve_child_program(capability.program, path);
-    if executable.is_none() {
+    let resolution = team_provider_program_resolution(capability, team, path);
+    if resolution.executable.is_none() {
+        let reason = if resolution.configured {
+            "configured command is not executable or not found"
+        } else {
+            "is not available on PATH"
+        };
         return Err(DispatchError::PreconditionFailed(format!(
-            "Team worker provider {agent} is not available on PATH"
+            "Team worker provider {agent} {reason}"
         )));
     }
     Ok(TeamWorkerProviderSelection {
         requested_agent: requested.to_string(),
         selected_agent: agent.to_string(),
-        program: capability.program.to_string(),
-        executable,
+        program: resolution.program.clone(),
+        default_program: capability.program.to_string(),
+        configured_command: resolution.configured.then(|| resolution.program.clone()),
+        executable: resolution.executable,
         reason: "explicit_agent".to_string(),
-        considered: vec![provider_considered_row(capability, true, "selected", path)],
+        considered: vec![provider_considered_row(
+            capability, team, true, "selected", path,
+        )],
     })
 }
 
@@ -6074,16 +6102,18 @@ fn select_auto_team_worker_provider(
             .disabled_agents
             .iter()
             .any(|disabled| disabled == agent);
-        let executable = resolve_child_program(capability.program, path);
-        let available = executable.is_some() && !disabled;
+        let resolution = team_provider_program_resolution(capability, team, path);
+        let available = resolution.executable.is_some() && !disabled;
         let reason = if disabled {
             "disabled_by_config"
-        } else if executable.is_none() {
-            "program_not_found"
+        } else if let Some(reason) = resolution.unavailable_reason.as_ref() {
+            *reason
         } else {
             "selected"
         };
-        considered.push(provider_considered_row(capability, available, reason, path));
+        considered.push(provider_considered_row(
+            capability, team, available, reason, path,
+        ));
         if available {
             let selection_reason =
                 if index == 0 && team.default_agent != forktty_core::config::TEAM_AGENT_AUTO {
@@ -6094,8 +6124,10 @@ fn select_auto_team_worker_provider(
             return Ok(TeamWorkerProviderSelection {
                 requested_agent: forktty_core::config::TEAM_AGENT_AUTO.to_string(),
                 selected_agent: agent.clone(),
-                program: capability.program.to_string(),
-                executable,
+                program: resolution.program.clone(),
+                default_program: capability.program.to_string(),
+                configured_command: resolution.configured.then(|| resolution.program.clone()),
+                executable: resolution.executable,
                 reason: selection_reason.to_string(),
                 considered,
             });
@@ -6129,19 +6161,49 @@ fn provider_capability(agent: &str) -> Option<&'static ProviderCapability> {
         .find(|capability| capability.agent == canonical)
 }
 
+fn team_provider_program_resolution(
+    capability: &ProviderCapability,
+    team: &forktty_core::TeamConfig,
+    path: Option<&OsStr>,
+) -> TeamProviderProgramResolution {
+    let configured_command = forktty_core::config::team_provider_command(team, capability.agent);
+    let program = configured_command.unwrap_or(capability.program).to_string();
+    let executable = resolve_child_program(&program, path);
+    let available_on_path = executable.is_some() && !Path::new(&program).is_absolute();
+    let unavailable_reason = if executable.is_some() {
+        None
+    } else if configured_command.is_some() {
+        Some("configured_program_not_found")
+    } else {
+        Some("program_not_found")
+    };
+    TeamProviderProgramResolution {
+        program,
+        configured: configured_command.is_some(),
+        available_on_path,
+        executable,
+        unavailable_reason,
+    }
+}
+
 fn provider_considered_row(
     capability: &ProviderCapability,
+    team: &forktty_core::TeamConfig,
     available: bool,
     reason: &str,
     path: Option<&OsStr>,
 ) -> Value {
-    let executable = resolve_child_program(capability.program, path);
+    let resolution = team_provider_program_resolution(capability, team, path);
     json!({
         "agent": capability.agent,
-        "program": capability.program,
+        "program": resolution.program.clone(),
+        "default_program": capability.program,
+        "configured_command": resolution.configured.then(|| resolution.program.clone()),
         "available": available,
         "reason": reason,
-        "executable": executable
+        "available_on_path": resolution.available_on_path,
+        "executable": resolution
+            .executable
             .map(|path| Value::String(path.to_string_lossy().into_owned()))
             .unwrap_or(Value::Null),
     })
@@ -6152,6 +6214,8 @@ fn team_worker_provider_selection_value(selection: &TeamWorkerProviderSelection)
         "requested_agent": selection.requested_agent,
         "selected_agent": selection.selected_agent,
         "program": selection.program,
+        "default_program": selection.default_program,
+        "configured_command": selection.configured_command,
         "executable": selection.executable
             .as_ref()
             .map(|path| Value::String(path.to_string_lossy().into_owned()))
@@ -6161,6 +6225,7 @@ fn team_worker_provider_selection_value(selection: &TeamWorkerProviderSelection)
     })
 }
 
+#[cfg(test)]
 fn team_worker_launch_command(
     agent: &str,
     role: Option<&str>,
@@ -6171,7 +6236,20 @@ fn team_worker_launch_command(
             "unsupported team worker agent: {agent}"
         )));
     };
-    let program = capability.program;
+    team_worker_launch_command_with_program(agent, capability.program, role, extra_args)
+}
+
+fn team_worker_launch_command_with_program(
+    agent: &str,
+    program: &str,
+    role: Option<&str>,
+    extra_args: Vec<String>,
+) -> Result<(String, Vec<String>), DispatchError> {
+    let Some(capability) = provider_capability(agent) else {
+        return Err(DispatchError::InvalidParam(format!(
+            "unsupported team worker agent: {agent}"
+        )));
+    };
     if extra_args.len() > 64 {
         return Err(DispatchError::InvalidParam(
             "team worker launch args exceed 64 entries".to_string(),
@@ -6185,16 +6263,17 @@ fn team_worker_launch_command(
             ));
         }
     }
-    let mut args = if program == "claude" && !claude_args_have_permission_override(&extra_args) {
-        claude_team_permission_args(role)
-    } else if program == "pi"
-        && role.is_some_and(team_role_is_review)
-        && !pi_args_have_tool_override(&extra_args)
-    {
-        vec!["--tools".to_string(), "read,grep,find,ls".to_string()]
-    } else {
-        Vec::new()
-    };
+    let mut args =
+        if capability.agent == "claude" && !claude_args_have_permission_override(&extra_args) {
+            claude_team_permission_args(role)
+        } else if capability.agent == "pi"
+            && role.is_some_and(team_role_is_review)
+            && !pi_args_have_tool_override(&extra_args)
+        {
+            vec!["--tools".to_string(), "read,grep,find,ls".to_string()]
+        } else {
+            Vec::new()
+        };
     args.extend(extra_args);
     if forktty_core::command_safety::is_shell_trampoline(program, &args) {
         return Err(DispatchError::InvalidParam(
@@ -9170,6 +9249,56 @@ mod tests {
 
     #[tokio::test]
     #[serial_test::serial]
+    async fn capabilities_report_configured_provider_command_outside_path() {
+        let path_dir = tempfile::tempdir().unwrap();
+        let custom_dir = tempfile::tempdir().unwrap();
+        let custom_codex = write_fake_program(custom_dir.path(), "codex-custom");
+        let _path = EnvGuard::set("PATH", path_dir.path().to_str().unwrap());
+        let config_home = tempfile::tempdir().unwrap();
+        let forktty_config_dir = config_home.path().join("forktty");
+        fs::create_dir_all(&forktty_config_dir).unwrap();
+        fs::write(
+            forktty_config_dir.join("config.toml"),
+            format!(
+                r#"
+            [general]
+            shell = "/bin/sh"
+
+            [team]
+            provider_commands = {{ codex = "{}" }}
+            "#,
+                custom_codex.display()
+            ),
+        )
+        .unwrap();
+        let _config_home = EnvGuard::set("XDG_CONFIG_HOME", config_home.path().to_str().unwrap());
+        let (state, _backend) = test_state();
+
+        let result = dispatch(&state, "system.capabilities", json!({}))
+            .await
+            .unwrap();
+
+        let custom_codex = custom_codex.to_string_lossy().into_owned();
+        let provider = &result["provider_capabilities"]["codex"];
+        assert_eq!(provider["launchable"], true);
+        assert_eq!(provider["available_on_path"], false);
+        assert_eq!(provider["program"].as_str().unwrap(), custom_codex);
+        assert_eq!(provider["default_program"], "codex");
+        assert_eq!(
+            provider["configured_command"].as_str().unwrap(),
+            custom_codex
+        );
+        assert_eq!(provider["executable"].as_str().unwrap(), custom_codex);
+        assert_eq!(
+            result["team_provider_policy"]["provider_commands"]["codex"]
+                .as_str()
+                .unwrap(),
+            custom_codex
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
     async fn team_worker_launch_auto_selects_first_available_configured_provider() {
         let dir = tempfile::tempdir().unwrap();
         let pi = write_fake_program(dir.path(), "pi");
@@ -9233,6 +9362,83 @@ mod tests {
         assert_eq!(first_considered["program"], "claude");
         assert_eq!(first_considered["available"], false);
         assert_eq!(first_considered["reason"], "program_not_found");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn team_worker_launch_auto_uses_configured_command_outside_path() {
+        let path_dir = tempfile::tempdir().unwrap();
+        let custom_dir = tempfile::tempdir().unwrap();
+        let custom_codex = write_fake_program(custom_dir.path(), "codex-custom");
+        let _path = EnvGuard::set("PATH", path_dir.path().to_str().unwrap());
+        let config_home = tempfile::tempdir().unwrap();
+        let forktty_config_dir = config_home.path().join("forktty");
+        fs::create_dir_all(&forktty_config_dir).unwrap();
+        fs::write(
+            forktty_config_dir.join("config.toml"),
+            format!(
+                r#"
+            [general]
+            shell = "/bin/sh"
+
+            [team]
+            default_agent = "auto"
+            provider_order = ["codex"]
+            provider_commands = {{ codex = "{}" }}
+            "#,
+                custom_codex.display()
+            ),
+        )
+        .unwrap();
+        let _config_home = EnvGuard::set("XDG_CONFIG_HOME", config_home.path().to_str().unwrap());
+        let (mut state, backend) = test_state();
+        let team_store = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(team_store.path().join("team-v1.json"));
+        let main = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let main_workspace_id = main[0]["id"].as_str().unwrap().to_string();
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "workspace_id": main_workspace_id,
+                "name": "Launch",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let launched = dispatch(
+            &state,
+            "team.worker.launch",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let launched_surface_id = launched["surface"]["id"].as_str().unwrap();
+        let custom_codex = custom_codex.to_string_lossy().into_owned();
+        assert_eq!(launched["worker"]["agent"], "codex");
+        assert_eq!(launched["argv"][0].as_str().unwrap(), custom_codex);
+        assert_eq!(
+            backend.spawn_shell(launched_surface_id).unwrap(),
+            custom_codex
+        );
+        assert_eq!(
+            launched["selection"]["program"].as_str().unwrap(),
+            custom_codex
+        );
+        assert_eq!(launched["selection"]["default_program"], "codex");
+        assert_eq!(
+            launched["selection"]["configured_command"]
+                .as_str()
+                .unwrap(),
+            custom_codex
+        );
+        assert_eq!(launched["selection"]["considered"][0]["available"], true);
     }
 
     #[tokio::test]

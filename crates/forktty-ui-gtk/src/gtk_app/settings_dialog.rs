@@ -211,11 +211,19 @@ pub(super) fn show_settings_dialog_page(
         .build();
     team_disabled_agents.add_css_class("settings-row");
     team_provider_list.append(&team_disabled_agents);
+    let team_provider_commands = adw::EntryRow::builder()
+        .title("Provider commands")
+        .text(team_provider_commands_text(&loaded.team.provider_commands))
+        .show_apply_button(true)
+        .tooltip_text("Comma-separated overrides, for example codex=/opt/codex/bin/codex. Values are direct commands, not shell snippets.")
+        .build();
+    team_provider_commands.add_css_class("settings-row");
+    team_provider_list.append(&team_provider_commands);
     agents_content.append(&team_provider_section);
 
     let (provider_detection_section, provider_detection_list) =
         settings_section("Detected Harnesses", "");
-    append_team_provider_detection_rows(&provider_detection_list);
+    append_team_provider_detection_rows(&provider_detection_list, &loaded.team);
     agents_content.append(&provider_detection_section);
 
     let (agent_advanced_section, agent_advanced_list) = settings_section("Advanced", "");
@@ -624,6 +632,41 @@ pub(super) fn show_settings_dialog_page(
             }
         }
     });
+    team_provider_commands.connect_changed(|row| {
+        row.remove_css_class("error");
+    });
+    team_provider_commands.connect_apply({
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let provider_detection_list = provider_detection_list.clone();
+        move |row: &adw::EntryRow| {
+            let commands = match normalized_team_provider_commands_entry(row) {
+                Ok(commands) => commands,
+                Err(err) => {
+                    row.add_css_class("error");
+                    dialog.add_toast(adw::Toast::new(&err));
+                    return;
+                }
+            };
+            let saved = persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.team.provider_commands = commands,
+                "Team provider commands saved.",
+            );
+            if saved {
+                row.remove_css_class("error");
+                refresh_team_provider_detection_rows(
+                    &provider_detection_list,
+                    &current.borrow().team,
+                );
+            } else {
+                row.add_css_class("error");
+            }
+        }
+    });
     notification_command.connect_changed(|row| {
         row.remove_css_class("error");
     });
@@ -722,6 +765,8 @@ pub(super) fn show_settings_dialog_page(
             let team_auto_fallback_for_reset = team_auto_fallback.clone();
             let team_provider_order_for_reset = team_provider_order.clone();
             let team_disabled_agents_for_reset = team_disabled_agents.clone();
+            let team_provider_commands_for_reset = team_provider_commands.clone();
+            let provider_detection_list_for_reset = provider_detection_list.clone();
             let notification_command_for_reset = notification_command.clone();
             let desktop_notifications_for_reset = desktop_notifications.clone();
             let notification_sound_for_reset = notification_sound.clone();
@@ -772,6 +817,13 @@ pub(super) fn show_settings_dialog_page(
                     team_disabled_agents_for_reset
                         .set_text(&team_provider_list_text(&defaults.team.disabled_agents));
                     team_disabled_agents_for_reset.remove_css_class("error");
+                    team_provider_commands_for_reset
+                        .set_text(&team_provider_commands_text(&defaults.team.provider_commands));
+                    team_provider_commands_for_reset.remove_css_class("error");
+                    refresh_team_provider_detection_rows(
+                        &provider_detection_list_for_reset,
+                        &defaults.team,
+                    );
                     notification_command_for_reset.set_text(&defaults.general.notification_command);
                     notification_command_for_reset.remove_css_class("error");
                     desktop_notifications_for_reset.set_active(defaults.notifications.desktop);
@@ -1159,6 +1211,14 @@ fn team_provider_list_text(providers: &[String]) -> String {
     providers.join(", ")
 }
 
+fn team_provider_commands_text(commands: &std::collections::BTreeMap<String, String>) -> String {
+    commands
+        .iter()
+        .map(|(provider, command)| format!("{provider}={command}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn normalized_team_provider_entry(
     row: &adw::EntryRow,
     allow_empty: bool,
@@ -1189,19 +1249,63 @@ fn normalized_team_provider_entry(
     Ok(providers)
 }
 
-fn append_team_provider_detection_rows(list: &gtk::ListBox) {
+fn normalized_team_provider_commands_entry(
+    row: &adw::EntryRow,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let text = normalized_settings_entry_text(row);
+    let mut commands = std::collections::BTreeMap::new();
+    for item in text.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let Some((provider, command)) = item.split_once('=') else {
+            return Err("Provider commands must use provider=command entries.".to_string());
+        };
+        let provider = provider.trim();
+        let command = command.trim();
+        let Some(provider) = config::canonical_team_provider(provider) else {
+            return Err(format!("Unknown team provider: {provider}"));
+        };
+        if let Err(err) = config::validate_team_provider_command_value(command) {
+            return Err(format!("Invalid command for {provider}: {err}"));
+        }
+        commands.insert(provider.to_string(), command.to_string());
+    }
+    row.set_text(&team_provider_commands_text(&commands));
+    Ok(commands)
+}
+
+fn refresh_team_provider_detection_rows(list: &gtk::ListBox, team: &config::TeamConfig) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+    append_team_provider_detection_rows(list, team);
+}
+
+fn append_team_provider_detection_rows(list: &gtk::ListBox, team: &config::TeamConfig) {
     let path = std::env::var_os("PATH");
     for provider in config::TEAM_PROVIDER_CHOICES {
-        let program = config::team_provider_program(provider).unwrap_or(provider);
+        let default_program = config::team_provider_program(provider).unwrap_or(provider);
+        let configured = config::team_provider_command(team, provider);
+        let program = configured.unwrap_or(default_program);
         let executable = forktty_terminal::spawn::resolve_child_program(program, path.as_deref());
         let row = settings_action_row(
             team_provider_label(provider),
             &executable
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned())
-                .unwrap_or_else(|| format!("{program} not found on PATH")),
+                .unwrap_or_else(|| {
+                    if configured.is_some() {
+                        format!("Configured command not executable or not found: {program}")
+                    } else {
+                        format!("{program} not found on PATH")
+                    }
+                }),
         );
-        let status = gtk::Label::new(Some(if executable.is_some() {
+        let status = gtk::Label::new(Some(if executable.is_some() && configured.is_some() {
+            "Configured"
+        } else if executable.is_some() {
             "Found"
         } else {
             "Missing"

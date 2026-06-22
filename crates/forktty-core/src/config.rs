@@ -1,6 +1,7 @@
 use crate::backup::BackupReservationKind;
 use crate::command_safety::{is_executable_file, is_shell_trampoline};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 #[cfg(unix)]
@@ -111,6 +112,8 @@ pub struct TeamConfig {
     pub auto_fallback: bool,
     #[serde(default)]
     pub disabled_agents: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub provider_commands: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -197,6 +200,7 @@ impl Default for TeamConfig {
             provider_order: default_team_provider_order(),
             auto_fallback: true,
             disabled_agents: Vec::new(),
+            provider_commands: BTreeMap::new(),
         }
     }
 }
@@ -624,6 +628,7 @@ fn normalize_team_config(mut team: TeamConfig) -> TeamConfig {
         team.provider_order = default_team_provider_order();
     }
     team.disabled_agents = normalize_team_provider_list(team.disabled_agents);
+    team.provider_commands = normalize_team_provider_commands(team.provider_commands);
     if team.default_agent != TEAM_AGENT_AUTO && team.disabled_agents.contains(&team.default_agent) {
         team.default_agent = TEAM_AGENT_AUTO.to_string();
     }
@@ -641,6 +646,19 @@ fn normalize_team_provider_list(values: Vec<String>) -> Vec<String> {
         }
     }
     normalized
+}
+
+fn normalize_team_provider_commands(
+    commands: BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    commands
+        .into_iter()
+        .filter_map(|(provider, command)| {
+            let provider = canonical_team_provider(&provider)?;
+            let command = command.trim();
+            (!command.is_empty()).then(|| (provider.to_string(), command.to_string()))
+        })
+        .collect()
 }
 
 pub fn normalize_team_agent_choice(value: &str) -> Option<String> {
@@ -671,6 +689,41 @@ pub fn team_provider_program(provider: &str) -> Option<&'static str> {
         "antigravity" => Some("agy"),
         _ => None,
     }
+}
+
+pub fn team_provider_command<'a>(team: &'a TeamConfig, provider: &str) -> Option<&'a str> {
+    let provider = canonical_team_provider(provider)?;
+    team.provider_commands.get(provider).map(String::as_str)
+}
+
+pub fn validate_team_provider_command_value(command: &str) -> Result<(), String> {
+    let command = command.trim();
+    if command.is_empty() {
+        return Err("must not be empty".to_string());
+    }
+    if command.len() > 4096 {
+        return Err("must be 4096 bytes or fewer".to_string());
+    }
+    if command.chars().any(char::is_control) {
+        return Err("must not contain control characters".to_string());
+    }
+    let path = Path::new(command);
+    if path.is_absolute() {
+        return Ok(());
+    }
+    if command.starts_with('-') {
+        return Err("must not be flag-like".to_string());
+    }
+    if command.chars().any(char::is_whitespace) {
+        return Err(
+            "must be a bare command name or absolute path; arguments belong in the launch args"
+                .to_string(),
+        );
+    }
+    if path.components().count() > 1 {
+        return Err("must be a bare command name or absolute path".to_string());
+    }
+    Ok(())
 }
 
 fn normalize_notification_filter_values(values: Vec<String>) -> Vec<String> {
@@ -734,6 +787,7 @@ fn validate_team_config(team: &TeamConfig) -> Result<(), ConfigError> {
     }
     validate_team_provider_list("team.provider_order", &team.provider_order, true)?;
     validate_team_provider_list("team.disabled_agents", &team.disabled_agents, false)?;
+    validate_team_provider_commands(&team.provider_commands)?;
     if team.default_agent != TEAM_AGENT_AUTO && team.disabled_agents.contains(&team.default_agent) {
         return Err(ConfigError::Invalid(
             "team.default_agent must not also appear in team.disabled_agents".to_string(),
@@ -772,6 +826,23 @@ fn validate_team_provider_list(
             )));
         }
         seen.push(value);
+    }
+    Ok(())
+}
+
+fn validate_team_provider_commands(commands: &BTreeMap<String, String>) -> Result<(), ConfigError> {
+    for (provider, command) in commands {
+        if canonical_team_provider(provider) != Some(provider.as_str()) {
+            return Err(ConfigError::Invalid(
+                "team.provider_commands keys must be canonical provider names: codex, claude, pi, opencode, antigravity"
+                    .to_string(),
+            ));
+        }
+        if let Err(err) = validate_team_provider_command_value(command) {
+            return Err(ConfigError::Invalid(format!(
+                "team.provider_commands.{provider} {err}"
+            )));
+        }
     }
     Ok(())
 }
@@ -1102,6 +1173,7 @@ mod tests {
         );
         assert!(config.team.auto_fallback);
         assert!(config.team.disabled_agents.is_empty());
+        assert!(config.team.provider_commands.is_empty());
     }
 
     #[test]
@@ -1119,6 +1191,7 @@ mod tests {
             provider_order = ["Pi", "unknown", "codex", "pi", "agy"]
             auto_fallback = false
             disabled_agents = ["open-code", "bad", "codex", "codex"]
+            provider_commands = { "claude-code" = " /opt/claude/bin/claude ", agy = "agy-dev", unknown = "ignored" }
             "#,
         )
         .unwrap();
@@ -1129,6 +1202,45 @@ mod tests {
         assert_eq!(config.team.provider_order, ["pi", "codex", "antigravity"]);
         assert!(!config.team.auto_fallback);
         assert_eq!(config.team.disabled_agents, ["opencode", "codex"]);
+        assert_eq!(
+            config
+                .team
+                .provider_commands
+                .get("claude")
+                .map(String::as_str),
+            Some("/opt/claude/bin/claude")
+        );
+        assert_eq!(
+            config
+                .team
+                .provider_commands
+                .get("antigravity")
+                .map(String::as_str),
+            Some("agy-dev")
+        );
+        assert!(!config.team.provider_commands.contains_key("unknown"));
+    }
+
+    #[test]
+    fn team_provider_command_values_reject_args_and_relative_paths() {
+        for valid in ["codex", "/opt/codex/bin/codex", "/opt/My Tools/codex"] {
+            assert!(
+                validate_team_provider_command_value(valid).is_ok(),
+                "{valid} should be accepted"
+            );
+        }
+        for invalid in [
+            "codex --model fast",
+            "./codex",
+            "bin/codex",
+            "-codex",
+            "co\ndex",
+        ] {
+            assert!(
+                validate_team_provider_command_value(invalid).is_err(),
+                "{invalid:?} should be rejected"
+            );
+        }
     }
 
     #[test]

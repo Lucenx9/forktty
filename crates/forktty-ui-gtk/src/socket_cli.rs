@@ -1924,9 +1924,19 @@ fn format_capabilities_lines(result: &Value) -> Vec<String> {
                 .get("available_on_path")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
+            let launchable = provider
+                .get("launchable")
+                .and_then(Value::as_bool)
+                .unwrap_or(available);
+            let configured = provider
+                .get("configured_command")
+                .and_then(Value::as_str)
+                .is_some();
             let status = if disabled {
                 "disabled"
-            } else if available {
+            } else if launchable && configured {
+                "configured"
+            } else if launchable || available {
                 "found"
             } else {
                 "missing"
@@ -1934,7 +1944,7 @@ fn format_capabilities_lines(result: &Value) -> Vec<String> {
             let detail = if disabled {
                 safe_string_field(provider, "unavailable_reason")
                     .or_else(|| safe_string_field(provider, "program"))
-            } else if available {
+            } else if launchable || available {
                 safe_string_field(provider, "executable")
                     .or_else(|| safe_string_field(provider, "program"))
             } else {
@@ -15460,12 +15470,14 @@ mod tests {
                 "codex": {
                     "program": "codex",
                     "available_on_path": true,
+                    "launchable": true,
                     "executable": "/usr/bin/codex",
                     "disabled_by_config": false
                 },
                 "claude": {
                     "program": "claude",
                     "available_on_path": true,
+                    "launchable": false,
                     "executable": "/usr/bin/claude",
                     "disabled_by_config": true,
                     "unavailable_reason": "disabled by team.disabled_agents"
@@ -15473,8 +15485,18 @@ mod tests {
                 "pi": {
                     "program": "pi",
                     "available_on_path": false,
+                    "launchable": false,
                     "disabled_by_config": false,
                     "unavailable_reason": "pi not found on PATH"
+                },
+                "opencode": {
+                    "program": "/opt/opencode/bin/opencode",
+                    "default_program": "opencode",
+                    "configured_command": "/opt/opencode/bin/opencode",
+                    "available_on_path": false,
+                    "launchable": true,
+                    "executable": "/opt/opencode/bin/opencode",
+                    "disabled_by_config": false
                 }
             }
         }));
@@ -15488,6 +15510,7 @@ mod tests {
                 "provider codex found /usr/bin/codex",
                 "provider claude disabled disabled by team.disabled_agents",
                 "provider pi missing pi not found on PATH",
+                "provider opencode configured /opt/opencode/bin/opencode",
             ]
         );
     }
