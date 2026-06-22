@@ -2858,7 +2858,8 @@ entry.agent-reply {
 }
 
 .agent-current,
-.agent-permission {
+.agent-permission,
+.agent-loop {
   padding: 1px 7px 2px 7px;
   border-radius: 999px;
   font-size: 0.68em;
@@ -2876,6 +2877,26 @@ entry.agent-reply {
 }
 
 .agent-permission.risky {
+  color: #d78f8f;
+  background: #2b1d1d;
+}
+
+.agent-loop {
+  color: #9aa0a6;
+  background: #242424;
+}
+
+.agent-loop.running {
+  color: #8eb6d8;
+  background: #1c2630;
+}
+
+.agent-loop.done {
+  color: #91bd97;
+  background: #1d2a21;
+}
+
+.agent-loop.warning {
   color: #d78f8f;
   background: #2b1d1d;
 }

@@ -51,6 +51,9 @@ All notable changes to ForkTTY are documented here.
 ### Changed
 - `AGENTS.md` now reflects the current MCP/team/workflow/skill/AppImage
   maintenance flow, including final-binary skill checksum verification.
+- Agent HUD rows now show a compact workflow loop chip when a visible agent
+  surface is bound to closed-loop workflow state, with gate failures and
+  human-attention stops highlighted without adding a separate loop panel.
 - Pane drag-and-drop now exposes a visible header grip and tooltip clarifying
   that dragging a pane header swaps panes.
 - Tab drag-and-drop now starts from the tab grip instead of the whole tab,

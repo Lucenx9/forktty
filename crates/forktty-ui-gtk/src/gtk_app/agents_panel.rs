@@ -3,6 +3,22 @@ use forktty_core::agent_resume_command_with_cwd_and_permission_mode;
 use forktty_socket::dispatch;
 use serde_json::json;
 use std::borrow::Cow;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct AgentHudLoopBadge {
+    pub(super) label: String,
+    pub(super) tooltip: String,
+    pub(super) class_name: &'static str,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct AgentHudLoopBadges {
+    pub(super) by_surface: BTreeMap<String, AgentHudLoopBadge>,
+    pub(super) by_session: BTreeMap<(String, String), AgentHudLoopBadge>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct AgentHudRow {
@@ -33,9 +49,22 @@ pub(super) struct AgentHudRow {
     /// "Claude needs your permission to use Bash"). Shown instead of the raw
     /// terminal tail, which for full-screen TUIs is just their status bar.
     pub(super) attention_hint: Option<String>,
+    /// Compact workflow loop state for the workflow currently bound to this
+    /// surface. The loop remains owned by the workflow store; the HUD only
+    /// annotates live agent rows.
+    pub(super) loop_badge: Option<AgentHudLoopBadge>,
 }
 
+#[cfg(test)]
 pub(super) fn agent_hud_rows(model: &WorkspaceModel, now_ms: u64) -> Vec<AgentHudRow> {
+    agent_hud_rows_with_loops(model, &AgentHudLoopBadges::default(), now_ms)
+}
+
+pub(super) fn agent_hud_rows_with_loops(
+    model: &WorkspaceModel,
+    loop_badges: &AgentHudLoopBadges,
+    now_ms: u64,
+) -> Vec<AgentHudRow> {
     let workspaces = model
         .list_workspaces()
         .into_iter()
@@ -85,6 +114,16 @@ pub(super) fn agent_hud_rows(model: &WorkspaceModel, now_ms: u64) -> Vec<AgentHu
                         .map(|notification| notification.body.clone())
                 })
                 .flatten();
+            let loop_badge = loop_badges
+                .by_surface
+                .get(&surface.id)
+                .or_else(|| {
+                    loop_badges.by_session.get(&(
+                        surface.workspace_id.clone(),
+                        agent_session.session_id.clone(),
+                    ))
+                })
+                .cloned();
             Some((
                 priority,
                 AgentHudRow {
@@ -110,6 +149,7 @@ pub(super) fn agent_hud_rows(model: &WorkspaceModel, now_ms: u64) -> Vec<AgentHu
                     can_resume,
                     unread: surface.unread,
                     attention_hint,
+                    loop_badge,
                 },
             ))
         })
@@ -126,6 +166,275 @@ pub(super) fn agent_hud_rows(model: &WorkspaceModel, now_ms: u64) -> Vec<AgentHu
             .then_with(|| a.1.surface_id.cmp(&b.1.surface_id))
     });
     rows.into_iter().map(|(_, row)| row).collect()
+}
+
+pub(super) fn agent_hud_loop_badges_from_workflows(
+    workflows: &[forktty_core::WorkflowState],
+) -> AgentHudLoopBadges {
+    let mut by_surface: BTreeMap<String, (u64, AgentHudLoopBadge)> = BTreeMap::new();
+    let mut by_session: BTreeMap<(String, String), (u64, AgentHudLoopBadge)> = BTreeMap::new();
+    for workflow in workflows {
+        let Some((updated_at_ms, badge)) = agent_hud_loop_badge(workflow) else {
+            continue;
+        };
+        if let Some(surface_id) = workflow.surface_id.as_deref() {
+            insert_latest_loop_badge(
+                &mut by_surface,
+                surface_id.to_string(),
+                updated_at_ms,
+                badge,
+            );
+        } else if let (Some(workspace_id), Some(session_id)) = (
+            workflow.workspace_id.as_deref(),
+            workflow.session_id.as_deref(),
+        ) {
+            insert_latest_loop_badge(
+                &mut by_session,
+                (workspace_id.to_string(), session_id.to_string()),
+                updated_at_ms,
+                badge,
+            );
+        }
+    }
+    AgentHudLoopBadges {
+        by_surface: by_surface
+            .into_iter()
+            .map(|(key, (_, badge))| (key, badge))
+            .collect(),
+        by_session: by_session
+            .into_iter()
+            .map(|(key, (_, badge))| (key, badge))
+            .collect(),
+    }
+}
+
+fn insert_latest_loop_badge<K: Ord>(
+    badges: &mut BTreeMap<K, (u64, AgentHudLoopBadge)>,
+    key: K,
+    updated_at_ms: u64,
+    badge: AgentHudLoopBadge,
+) {
+    let replace = badges
+        .get(&key)
+        .is_none_or(|(existing_updated_at_ms, _)| updated_at_ms > *existing_updated_at_ms);
+    if replace {
+        badges.insert(key, (updated_at_ms, badge));
+    }
+}
+
+fn agent_hud_loop_badge(
+    workflow: &forktty_core::WorkflowState,
+) -> Option<(u64, AgentHudLoopBadge)> {
+    if !workflow_has_loop_state(workflow) {
+        return None;
+    }
+    let updated_at_ms = workflow
+        .loop_updated_at_ms
+        .unwrap_or(workflow.updated_at_ms);
+    let stage = workflow
+        .loop_stage
+        .as_deref()
+        .filter(|stage| !stage.trim().is_empty())
+        .or(workflow.loop_recipe.as_deref())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(workflow.status.as_str());
+    let mut label = format!("Loop {}", compact_loop_badge_text(stage, 18));
+    if let Some(iteration) = workflow.loop_iteration {
+        label.push(' ');
+        label.push_str(&iteration.to_string());
+        if let Some(max_iterations) = workflow.loop_max_iterations {
+            label.push('/');
+            label.push_str(&max_iterations.to_string());
+        }
+    }
+    let (passed, failed, running) = loop_gate_counts(&workflow.loop_gates);
+    let total = workflow.loop_gates.len();
+    let class_name = if failed > 0 || workflow_loop_needs_attention(workflow) {
+        "warning"
+    } else if workflow_loop_done(workflow) {
+        "done"
+    } else if running > 0 || workflow_status_is_active(&workflow.status) {
+        "running"
+    } else {
+        "idle"
+    };
+    let mut tooltip_parts = Vec::new();
+    if let Some(recipe) = workflow.loop_recipe.as_deref() {
+        if !recipe.trim().is_empty() {
+            tooltip_parts.push(recipe.trim().to_string());
+        }
+    }
+    if let Some(stage) = workflow.loop_stage.as_deref() {
+        if !stage.trim().is_empty() {
+            tooltip_parts.push(format!("stage {}", stage.trim()));
+        }
+    }
+    if let Some(iteration) = workflow.loop_iteration {
+        let mut text = format!("iteration {iteration}");
+        if let Some(max_iterations) = workflow.loop_max_iterations {
+            text.push('/');
+            text.push_str(&max_iterations.to_string());
+        }
+        tooltip_parts.push(text);
+    }
+    if total > 0 {
+        let open = total.saturating_sub(passed + failed);
+        let mut gate_parts = vec![format!(
+            "{} {}",
+            total,
+            if total == 1 { "gate" } else { "gates" }
+        )];
+        if passed > 0 {
+            gate_parts.push(format!("{passed} passed"));
+        }
+        if failed > 0 {
+            gate_parts.push(format!("{failed} failed"));
+        }
+        if running > 0 {
+            gate_parts.push(format!("{running} running"));
+        }
+        if open > 0 && running == 0 {
+            gate_parts.push(format!("{open} open"));
+        }
+        tooltip_parts.push(gate_parts.join(", "));
+    }
+    if let Some(stop_reason) = workflow.loop_stop_reason.as_deref() {
+        if !stop_reason.trim().is_empty() {
+            tooltip_parts.push(format!("stop {}", stop_reason.trim()));
+        }
+    }
+    Some((
+        updated_at_ms,
+        AgentHudLoopBadge {
+            label,
+            tooltip: tooltip_parts.join("; "),
+            class_name,
+        },
+    ))
+}
+
+fn workflow_has_loop_state(workflow: &forktty_core::WorkflowState) -> bool {
+    workflow.loop_recipe.is_some()
+        || workflow.loop_stage.is_some()
+        || workflow.loop_iteration.is_some()
+        || workflow.loop_max_iterations.is_some()
+        || workflow.loop_stop_reason.is_some()
+        || !workflow.loop_gates.is_empty()
+}
+
+fn loop_gate_counts(gates: &[forktty_core::WorkflowLoopGate]) -> (usize, usize, usize) {
+    let passed = gates
+        .iter()
+        .filter(|gate| loop_gate_status_is_passed(&gate.status))
+        .count();
+    let failed = gates
+        .iter()
+        .filter(|gate| loop_gate_status_is_failed(&gate.status))
+        .count();
+    let running = gates
+        .iter()
+        .filter(|gate| loop_gate_status_is_running(&gate.status))
+        .count();
+    (passed, failed, running)
+}
+
+fn loop_gate_status_is_passed(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "passed" | "pass" | "done" | "success" | "succeeded" | "ok"
+    )
+}
+
+fn loop_gate_status_is_failed(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "failed" | "fail" | "error" | "errored" | "blocked"
+    )
+}
+
+fn loop_gate_status_is_running(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "running" | "working" | "in_progress" | "in-progress"
+    )
+}
+
+fn workflow_loop_needs_attention(workflow: &forktty_core::WorkflowState) -> bool {
+    workflow
+        .loop_stage
+        .as_deref()
+        .is_some_and(matches_loop_attention_value)
+        || workflow
+            .loop_stop_reason
+            .as_deref()
+            .is_some_and(matches_loop_attention_value)
+        || workflow_status_is_failed(&workflow.status)
+}
+
+fn matches_loop_attention_value(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "needs_human"
+            | "needs-human"
+            | "human"
+            | "blocked"
+            | "failed"
+            | "failure"
+            | "budget_exhausted"
+            | "budget-exhausted"
+    )
+}
+
+// This HUD taxonomy is intentionally display-specific: failed/blocked loops
+// remain warning-colored instead of being treated as terminal/done.
+fn workflow_loop_done(workflow: &forktty_core::WorkflowState) -> bool {
+    workflow_status_is_terminal(&workflow.status)
+        || workflow
+            .loop_stop_reason
+            .as_deref()
+            .is_some_and(workflow_status_is_terminal)
+}
+
+fn workflow_status_is_active(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "running" | "active" | "working" | "in_progress" | "in-progress"
+    )
+}
+
+fn workflow_status_is_failed(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "failed" | "failure" | "error" | "errored" | "blocked"
+    )
+}
+
+fn workflow_status_is_terminal(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "done"
+            | "complete"
+            | "completed"
+            | "closed"
+            | "cancelled"
+            | "canceled"
+            | "pass"
+            | "passed"
+            | "ok"
+            | "success"
+            | "succeeded"
+            | "stopped"
+    )
+}
+
+fn compact_loop_badge_text(value: &str, max_chars: usize) -> String {
+    let value = value.trim();
+    let mut chars = value.chars();
+    let mut out = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        out.push_str("...");
+    }
+    out
 }
 
 pub(super) fn agent_attention_count(state: &SocketAppState) -> usize {
@@ -190,19 +499,41 @@ struct AgentPanelUi {
     /// `surface_tail_line` skip its full-scrollback read while an agent
     /// produces no output.
     tails: Rc<RefCell<BTreeMap<String, AgentTailEntry>>>,
+    workflow_loop_badges: Rc<RefCell<AgentWorkflowLoopBadgeCache>>,
 }
 
 /// `(content_generation, last output line)` snapshot for one agent surface.
 pub(super) type AgentTailEntry = (u64, Option<String>);
 
+#[derive(Debug, Clone, Default)]
+struct AgentWorkflowLoopBadgeCache {
+    path: Option<PathBuf>,
+    store_exists: bool,
+    modified: Option<SystemTime>,
+    badges: AgentHudLoopBadges,
+}
+
+fn workflow_store_stamp(path: &Path) -> (bool, Option<SystemTime>, bool) {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            let modified = metadata.modified().ok();
+            let cacheable = modified.is_some();
+            (true, modified, cacheable)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => (false, None, true),
+        Err(_) => (true, None, true),
+    }
+}
+
 impl AgentPanelUi {
     fn refresh(&self, first: bool) {
+        let loop_badges = self.current_workflow_loop_badges();
         let rows = self
             .state
             .model
             .lock()
             .ok()
-            .map(|model| agent_hud_rows(&model, now_epoch_ms()))
+            .map(|model| agent_hud_rows_with_loops(&model, &loop_badges, now_epoch_ms()))
             .unwrap_or_default();
         self.refresh_tails(&rows);
         // Never tear the list down mid-typing: while a reply entry holds
@@ -257,6 +588,36 @@ impl AgentPanelUi {
             }
             label.set_visible(!text.is_empty());
         }
+    }
+
+    fn current_workflow_loop_badges(&self) -> AgentHudLoopBadges {
+        let Some(path) = self.state.workflow_store_path.as_deref() else {
+            return AgentHudLoopBadges::default();
+        };
+        let (store_exists, modified, cacheable_stamp) = workflow_store_stamp(path);
+        {
+            let cache = self.workflow_loop_badges.borrow();
+            if cacheable_stamp
+                && cache.path.as_deref() == Some(path)
+                && cache.store_exists == store_exists
+                && cache.modified == modified
+            {
+                return cache.badges.clone();
+            }
+        }
+        let badges = forktty_core::load_workflows_from_path(path)
+            .map(|store| agent_hud_loop_badges_from_workflows(&store.workflows))
+            .unwrap_or_else(|err| {
+                eprintln!("Failed to load workflow loop badges for Agent HUD: {err}");
+                AgentHudLoopBadges::default()
+            });
+        *self.workflow_loop_badges.borrow_mut() = AgentWorkflowLoopBadgeCache {
+            path: Some(path.to_path_buf()),
+            store_exists,
+            modified,
+            badges: badges.clone(),
+        };
+        badges
     }
 
     /// Whether keyboard focus sits in one of this panel's reply entries.
@@ -411,6 +772,7 @@ pub(super) fn show_agent_panel(
         rendered: Rc::new(RefCell::new(Vec::new())),
         tail_labels: Rc::new(RefCell::new(BTreeMap::new())),
         tails: Rc::new(RefCell::new(BTreeMap::new())),
+        workflow_loop_badges: Rc::new(RefCell::new(AgentWorkflowLoopBadgeCache::default())),
     };
     ui.refresh(true);
     dialog.present();
@@ -542,6 +904,17 @@ fn append_agent_row(
         current.add_css_class("agent-current");
         current.set_tooltip_text(Some("This agent is in the focused pane"));
         top.append(&current);
+    }
+    if let Some(loop_badge) = row.loop_badge.as_ref() {
+        let badge = gtk::Label::builder()
+            .label(loop_badge.label.as_str())
+            .build();
+        badge.add_css_class("agent-loop");
+        badge.add_css_class(loop_badge.class_name);
+        if !loop_badge.tooltip.is_empty() {
+            badge.set_tooltip_text(Some(&loop_badge.tooltip));
+        }
+        top.append(&badge);
     }
     if let Some(permission_label) = agent_permission_pill_label(row) {
         let permission = gtk::Label::builder()
