@@ -3320,7 +3320,7 @@ fn workflow_status_is_active(status: &str) -> bool {
 fn workflow_plan_step_status_is_terminal(status: &str) -> bool {
     matches!(
         status.trim().to_ascii_lowercase().as_str(),
-        "done" | "closed" | "cancelled" | "canceled" | "skipped"
+        "done" | "completed" | "closed" | "cancelled" | "canceled" | "skipped"
     )
 }
 
@@ -13922,6 +13922,63 @@ mod tests {
         );
         assert_eq!(detailed["workflow_summaries"][0]["id"], "workflow-1");
         assert!(detailed["risk_flags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("workflow_consistency_warning")));
+    }
+
+    #[tokio::test]
+    async fn context_snapshot_treats_completed_workflow_steps_as_terminal() {
+        let (state, _) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        let state = state.with_workflow_store_path(dir.path().join("workflow-v1.json"));
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap();
+        let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+        let workflow = dispatch(
+            &state,
+            "workflow.upsert",
+            json!({
+                "workflow_id": "workflow-completed-steps",
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "status": "done",
+                "goal": "Finished review"
+            }),
+        )
+        .await
+        .unwrap();
+        let workflow_id = workflow["id"].as_str().unwrap();
+        dispatch(
+            &state,
+            "workflow.plan.set",
+            json!({
+                "workflow_id": workflow_id,
+                "steps": [
+                    {"id": "inspect", "title": "Inspect", "status": "completed"},
+                    {"id": "verify", "title": "Verify", "status": "completed"}
+                ]
+            }),
+        )
+        .await
+        .unwrap();
+
+        let snapshot = dispatch(
+            &state,
+            "context.snapshot",
+            json!({"workspace_id": workspace_id, "tail_lines": 0}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(snapshot["workflow_summaries"][0]["plan_steps_total"], 2);
+        assert_eq!(snapshot["workflow_summaries"][0]["plan_steps_open"], 0);
+        assert_eq!(
+            snapshot["workflow_summaries"][0]["consistency_warnings"],
+            json!([])
+        );
+        assert!(!snapshot["risk_flags"]
             .as_array()
             .unwrap()
             .contains(&json!("workflow_consistency_warning")));

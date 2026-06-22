@@ -97,6 +97,9 @@ All notable changes to ForkTTY are documented here.
 - Workflow loop iteration updates now clear prior gate results and stop reasons
   unless the same request supplies replacements, preventing stale failed gates
   from carrying into a new verification pass.
+- Workflow consistency warnings now treat `completed` plan steps as terminal,
+  matching existing workflow records and avoiding false `done_with_open_plan_steps`
+  risk flags in compact context snapshots.
 - CLI routing now recognizes `forktty workflow-loop-set` and its socket-style
   aliases, so the documented wrapper reaches `workflow.loop.set` instead of
   being rejected as an unknown argument.
