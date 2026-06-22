@@ -1864,6 +1864,24 @@ fn relative_pane_target_rejects_missing_focused_surface() {
 }
 
 #[test]
+fn relative_pane_target_wraps_at_edges() {
+    let panes = vec![
+        "surface-1".to_string(),
+        "surface-2".to_string(),
+        "surface-3".to_string(),
+    ];
+
+    assert_eq!(
+        relative_pane_target(&panes, "surface-3", 1),
+        Some("surface-1".to_string())
+    );
+    assert_eq!(
+        relative_pane_target(&panes, "surface-1", -1),
+        Some("surface-3".to_string())
+    );
+}
+
+#[test]
 fn select_tab_in_focused_pane_wraps_and_jumps_edges() {
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
@@ -3327,6 +3345,34 @@ fn drop_position_splits_on_midpoint() {
     // A zero/degenerate span must not divide by zero; the clamped half still splits.
     assert_eq!(drop_position(0.0, 0), forktty_core::MovePosition::Before);
     assert_eq!(drop_position(1.0, 0), forktty_core::MovePosition::After);
+}
+
+#[test]
+fn workspace_drop_position_matches_model_reorder_direction() {
+    let mut model = WorkspaceModel::new();
+    let first = model.create_workspace("first", "/tmp/first").id;
+    let second = model.create_workspace("second", "/tmp/second").id;
+    let third = model.create_workspace("third", "/tmp/third").id;
+
+    assert!(model.move_workspace(&first, &third, drop_position(39.0, 40)));
+    assert_eq!(
+        model
+            .list_workspaces()
+            .into_iter()
+            .map(|workspace| workspace.id)
+            .collect::<Vec<_>>(),
+        vec![second.clone(), third.clone(), first.clone()]
+    );
+
+    assert!(model.move_workspace(&first, &second, drop_position(0.0, 40)));
+    assert_eq!(
+        model
+            .list_workspaces()
+            .into_iter()
+            .map(|workspace| workspace.id)
+            .collect::<Vec<_>>(),
+        vec![first, second, third]
+    );
 }
 
 #[test]

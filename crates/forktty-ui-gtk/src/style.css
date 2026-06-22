@@ -859,12 +859,13 @@ button.flat.status-shortcut:focus-visible {
 .pane-drag-grip {
   -gtk-icon-size: 12px;
   color: #626262;
-  opacity: 0.56;
+  min-width: 14px;
+  opacity: 0.38;
 }
 
 .terminal-pane-header:hover .pane-drag-grip,
 .terminal-pane.active .pane-drag-grip {
-  opacity: 0.82;
+  opacity: 0.74;
 }
 
 .terminal-pane.active .terminal-pane-header {
@@ -984,8 +985,9 @@ button.flat.status-shortcut:focus-visible {
 
 .pane-tab-grip {
   -gtk-icon-size: 11px;
+  min-width: 14px;
   color: #626262;
-  opacity: 0.54;
+  opacity: 0.46;
 }
 
 .pane-tab:hover .pane-tab-grip,

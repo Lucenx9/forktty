@@ -5548,6 +5548,44 @@ mod tests {
     }
 
     #[test]
+    fn move_tab_rejects_cross_workspace_missing_and_last_tab_sources() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let workspace_id = workspace.id.clone();
+        let first_id = workspace.focused_surface_id.clone();
+        let tab2 = model.add_tab(&first_id).expect("add_tab");
+        let second = model
+            .split_surface(&first_id, SplitAxis::Horizontal)
+            .expect("split succeeds");
+        let other_workspace_surface_id = model
+            .create_workspace("other", "/tmp/other")
+            .focused_surface_id;
+
+        assert!(!model.move_tab(&tab2.id, &other_workspace_surface_id, MovePosition::After));
+        assert!(!model.move_tab("missing-surface", &second.id, MovePosition::After));
+        assert!(!model.move_tab(&tab2.id, "missing-surface", MovePosition::After));
+        assert!(!model.move_tab(&second.id, &first_id, MovePosition::Before));
+
+        let workspace = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .expect("workspace still present");
+        let PaneNode::Split { children, .. } = workspace.pane_tree else {
+            panic!("expected split");
+        };
+        assert_eq!(
+            children[0].leaf_tabs().unwrap(),
+            &[first_id.clone(), tab2.id.clone()]
+        );
+        assert_eq!(
+            children[1].leaf_tabs().unwrap(),
+            std::slice::from_ref(&second.id)
+        );
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
+    }
+
+    #[test]
     fn swap_panes_exchanges_leaf_positions_without_changing_focus() {
         let mut model = WorkspaceModel::new();
         let workspace = model.create_workspace("main", "/tmp");
@@ -5570,6 +5608,36 @@ mod tests {
         assert_eq!(children[2].leaf_active_id(), Some(&first_id));
         assert_eq!(workspace.focused_surface_id, second.id);
         assert!(!model.swap_panes(&second.id, &second.id));
+        crate::session::validate_session_data(&model.to_session_data()).unwrap();
+    }
+
+    #[test]
+    fn swap_panes_rejects_cross_workspace_and_missing_surfaces() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let workspace_id = workspace.id.clone();
+        let first_id = workspace.focused_surface_id.clone();
+        let second = model
+            .split_surface(&first_id, SplitAxis::Horizontal)
+            .expect("split succeeds");
+        let other_workspace_surface_id = model
+            .create_workspace("other", "/tmp/other")
+            .focused_surface_id;
+
+        assert!(!model.swap_panes(&first_id, "missing-surface"));
+        assert!(!model.swap_panes("missing-surface", &first_id));
+        assert!(!model.swap_panes(&first_id, &other_workspace_surface_id));
+
+        let workspace = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .expect("workspace still present");
+        let PaneNode::Split { children, .. } = workspace.pane_tree else {
+            panic!("expected split");
+        };
+        assert_eq!(children[0].leaf_active_id(), Some(&first_id));
+        assert_eq!(children[1].leaf_active_id(), Some(&second.id));
         crate::session::validate_session_data(&model.to_session_data()).unwrap();
     }
 

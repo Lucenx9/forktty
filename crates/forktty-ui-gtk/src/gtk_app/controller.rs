@@ -1749,7 +1749,8 @@ impl TerminalController {
             select.add_css_class("pane-tab-select");
             let grip = gtk::Image::from_icon_name("forktty-menu-symbolic");
             grip.add_css_class("pane-tab-grip");
-            grip.set_tooltip_text(Some("Drag Tab"));
+            grip.set_tooltip_text(Some("Drag to move tab"));
+            install_tab_drag_source(&grip, surface_id);
             select.append(&grip);
             select.append(&label);
             update_tab_tooltip(&select, Some(title.clone()));
@@ -1799,7 +1800,6 @@ impl TerminalController {
 
             tab.append(&select);
             tab.append(&close);
-            install_tab_drag_source(&tab, surface_id);
             tabstrip.append(&tab);
             tab_widgets.push(tab);
             labels.push(label);

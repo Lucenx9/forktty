@@ -48,6 +48,8 @@ All notable changes to ForkTTY are documented here.
   maintenance flow, including final-binary skill checksum verification.
 - Pane drag-and-drop now exposes a visible header grip and tooltip clarifying
   that dragging a pane header swaps panes.
+- Tab drag-and-drop now starts from the tab grip instead of the whole tab,
+  reducing accidental drags while selecting or closing tabs.
 - Notification panel and Agent HUD polish now make attention states easier to
   scan: notifications group prompt/current-workspace history, avoid a duplicate
   global open action, and use quieter tonal cards/chips/action areas; agent
