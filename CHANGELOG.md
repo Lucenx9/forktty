@@ -46,6 +46,8 @@ All notable changes to ForkTTY are documented here.
 ### Changed
 - `AGENTS.md` now reflects the current MCP/team/workflow/skill/AppImage
   maintenance flow, including final-binary skill checksum verification.
+- Pane drag-and-drop now exposes a visible header grip and tooltip clarifying
+  that dragging a pane header swaps panes.
 - Notification panel and Agent HUD polish now make attention states easier to
   scan: notifications group prompt/current-workspace history, avoid a duplicate
   global open action, and use quieter tonal cards/chips/action areas; agent

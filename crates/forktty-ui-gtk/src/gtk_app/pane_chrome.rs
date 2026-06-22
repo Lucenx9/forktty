@@ -55,6 +55,10 @@ fn build_pane_chrome_with_content(
     focus_marker.add_css_class("pane-focus-marker");
     focus_marker.set_valign(gtk::Align::Center);
     focus_marker.set_visible(false);
+    let drag_grip = gtk::Image::from_icon_name("forktty-menu-symbolic");
+    drag_grip.add_css_class("pane-drag-grip");
+    drag_grip.set_tooltip_text(Some("Drag to swap panes"));
+    drag_grip.update_property(&[gtk::accessible::Property::Label("Drag to swap panes")]);
     let title = gtk::Label::builder()
         .label("Terminal")
         .xalign(0.0)
@@ -238,6 +242,7 @@ fn build_pane_chrome_with_content(
 
     header.append(&focus_marker);
     header.append(&attention_dot);
+    header.append(&drag_grip);
     header.append(&title);
     header.append(&cwd);
     header.append(&actions);
@@ -332,20 +337,19 @@ where
     let target_id_for_drop = target_id.clone();
     let state_for_drop = state.clone();
     let target = pane_drop_target(move |source_id, _x, _y| {
-        if source_id == target_id_for_drop {
-            return false;
-        }
-        let swapped = state_for_drop
-            .model
-            .lock()
-            .ok()
-            .is_some_and(|mut model| model.swap_panes(&source_id, &target_id_for_drop));
+        let swapped = state_for_drop.model.lock().ok().is_some_and(|mut model| {
+            if !pane_swap_allowed(&model, &source_id, &target_id_for_drop) {
+                return false;
+            }
+            model.swap_panes(&source_id, &target_id_for_drop)
+        });
         if swapped {
             save_session_from_state(&state_for_drop);
         }
         swapped
     });
     target.set_preload(true);
+    let state_for_motion = state.clone();
     target.connect_motion(move |target, _x, _y| {
         let Some(source_id) = target
             .value()
@@ -353,12 +357,81 @@ where
         else {
             return gdk::DragAction::MOVE;
         };
-        if source_id == target_id {
+        let allowed = state_for_motion
+            .model
+            .lock()
+            .ok()
+            .is_some_and(|model| pane_swap_allowed(&model, &source_id, &target_id));
+        if !allowed {
             return gdk::DragAction::empty();
         }
         gdk::DragAction::MOVE
     });
     handle.add_controller(target);
+}
+
+pub(super) fn pane_swap_allowed(
+    model: &WorkspaceModel,
+    source_surface_id: &str,
+    target_surface_id: &str,
+) -> bool {
+    if source_surface_id == target_surface_id {
+        return false;
+    }
+    let Some(source) = model.surface(source_surface_id) else {
+        return false;
+    };
+    let Some(target) = model.surface(target_surface_id) else {
+        return false;
+    };
+    if source.workspace_id != target.workspace_id {
+        return false;
+    }
+    let Some(workspace) = model
+        .list_workspaces()
+        .into_iter()
+        .find(|workspace| workspace.id == source.workspace_id)
+    else {
+        return false;
+    };
+    let Some(source_path) = pane_leaf_path_for_surface(&workspace.pane_tree, source_surface_id)
+    else {
+        return false;
+    };
+    let Some(target_path) = pane_leaf_path_for_surface(&workspace.pane_tree, target_surface_id)
+    else {
+        return false;
+    };
+    source_path != target_path
+}
+
+fn pane_leaf_path_for_surface(node: &PaneNode, surface_id: &str) -> Option<Vec<usize>> {
+    let mut path = Vec::new();
+    if collect_pane_leaf_path_for_surface(node, surface_id, &mut path) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn collect_pane_leaf_path_for_surface(
+    node: &PaneNode,
+    surface_id: &str,
+    path: &mut Vec<usize>,
+) -> bool {
+    match node {
+        PaneNode::Leaf { tabs, .. } => tabs.iter().any(|id| id == surface_id),
+        PaneNode::Split { children, .. } => {
+            for (index, child) in children.iter().enumerate() {
+                path.push(index);
+                if collect_pane_leaf_path_for_surface(child, surface_id, path) {
+                    return true;
+                }
+                path.pop();
+            }
+            false
+        }
+    }
 }
 
 pub(super) fn focus_pane_chrome_surface(
@@ -589,6 +662,43 @@ mod tests {
             .has_css_class("pane-close-action"));
         assert!(children[children.len() - 2].has_css_class("pane-action-separator"));
         assert!(children[children.len() - 3].property::<bool>("hexpand"));
+    }
+
+    #[test]
+    fn pane_swap_allowed_rejects_invalid_or_non_swap_targets() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", Path::new("/tmp"));
+        let first_surface_id = workspace.focused_surface_id;
+        let same_leaf_tab = model.add_tab(&first_surface_id).expect("add tab").id;
+        let second_pane = model
+            .split_surface(&first_surface_id, SplitAxis::Horizontal)
+            .expect("split surface")
+            .id;
+        let other_workspace_surface_id = model
+            .create_workspace("other", Path::new("/tmp/other"))
+            .focused_surface_id;
+
+        assert!(!pane_swap_allowed(
+            &model,
+            &first_surface_id,
+            &first_surface_id
+        ));
+        assert!(!pane_swap_allowed(
+            &model,
+            &first_surface_id,
+            "missing-surface"
+        ));
+        assert!(!pane_swap_allowed(
+            &model,
+            &first_surface_id,
+            &same_leaf_tab
+        ));
+        assert!(!pane_swap_allowed(
+            &model,
+            &first_surface_id,
+            &other_workspace_surface_id
+        ));
+        assert!(pane_swap_allowed(&model, &first_surface_id, &second_pane));
     }
 
     #[test]
