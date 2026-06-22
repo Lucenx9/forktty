@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{collections::BTreeSet, path::Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +40,8 @@ pub enum FeedApprovalState {
     Pending,
     Approved,
     Denied,
+    Dismissed,
+    Stale,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -184,6 +186,44 @@ impl FeedStore {
             return Err(err);
         }
         Ok(entry)
+    }
+
+    pub fn mark_approvals<I>(
+        &mut self,
+        ids: I,
+        state: FeedApprovalState,
+    ) -> Result<Vec<FeedEntry>, FeedError>
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        let ids = ids
+            .into_iter()
+            .map(|id| id.as_ref().to_string())
+            .collect::<BTreeSet<_>>();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let previous = self.entries.clone();
+        let mut changed = Vec::new();
+        for entry in &mut self.entries {
+            if entry.entry_type != FeedEntryType::Approval
+                || entry.approval_state != Some(FeedApprovalState::Pending)
+                || !ids.contains(&entry.id)
+            {
+                continue;
+            }
+            entry.approval_state = Some(state.clone());
+            changed.push(entry.clone());
+        }
+        if changed.is_empty() {
+            return Ok(changed);
+        }
+        if let Err(err) = self.save() {
+            self.entries = previous;
+            return Err(err);
+        }
+        Ok(changed)
     }
 
     fn bound_entries(&mut self) {

@@ -671,6 +671,9 @@ pub(super) fn show_notification_panel(
                     })
                     .unwrap_or(0);
                 if removed {
+                    state_for_dismiss.mark_notification_feed_entries_dismissed(
+                        std::slice::from_ref(&notification_for_dismiss),
+                    );
                     close_desktop_notification(&notification_id);
                     send_terminal_notification_close_report(
                         controller_for_dismiss.as_ref(),
@@ -723,6 +726,7 @@ pub(super) fn show_notification_panel(
                 for (index, label) in metadata.buttons.iter().enumerate() {
                     let button = gtk::Button::with_label(label);
                     button.add_css_class("flat");
+                    set_accessible_button_text(&button, label, None);
                     let controller_for_button = controller.clone();
                     let notification_for_button = notification.clone();
                     button.connect_clicked(move |_| {
@@ -785,6 +789,7 @@ pub(super) fn show_notification_panel(
         } else {
             Vec::new()
         };
+        state_for_clear.mark_notification_feed_entries_dismissed(&notifications);
         for notification in notifications {
             close_desktop_notification(&notification.id);
             send_terminal_notification_close_report(controller_for_clear.as_ref(), &notification);

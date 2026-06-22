@@ -1,14 +1,14 @@
 use forktty_core::events::{self, ModelEvent, Snapshot};
 use forktty_core::{
-    agent_resume_command_with_cwd_and_permission_mode, codex_session_cwd,
-    command_safety::is_valid_ssh_host, config, dispatch_notification, normalize_agent_status,
-    validate_worktree_name, worktree, AgentKind, AgentResumeError, AgentSession,
-    AgentSessionLifecycle, AgentStatus, BrowserCmdError, BrowserCommand, BrowserOp, CmdResult,
-    FeedApprovalState, FeedEntry, FeedEntryType, FeedStore, JsonRpcRequest, JsonRpcResponse,
-    LogLevel, NotificationItem, NotificationKind, ProgressEntry, SplitAxis, StatusEntry,
-    StatusHookMetadata, SurfaceKind, WorkflowEvidenceInput, WorkflowPlanStepInput, WorkflowQuery,
-    WorkflowReplayQuery, WorkflowState, WorkflowUpsert, WorkspaceModel, WorkspaceSelector,
-    MAX_BROWSER_URL_BYTES,
+    agent_resume_command_with_cwd_and_permission_mode, close_desktop_notification,
+    codex_session_cwd, command_safety::is_valid_ssh_host, config, dispatch_notification,
+    normalize_agent_status, validate_worktree_name, worktree, AgentKind, AgentResumeError,
+    AgentSession, AgentSessionLifecycle, AgentStatus, BrowserCmdError, BrowserCommand, BrowserOp,
+    CmdResult, FeedApprovalState, FeedEntry, FeedEntryType, FeedStore, JsonRpcRequest,
+    JsonRpcResponse, LogLevel, NotificationItem, NotificationKind, ProgressEntry, SplitAxis,
+    StatusEntry, StatusHookMetadata, SurfaceKind, WorkflowEvidenceInput, WorkflowPlanStepInput,
+    WorkflowQuery, WorkflowReplayQuery, WorkflowState, WorkflowUpsert, WorkspaceModel,
+    WorkspaceSelector, MAX_BROWSER_URL_BYTES,
 };
 use forktty_terminal::{
     spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
@@ -519,6 +519,26 @@ impl SocketAppState {
             *feed_store = Some(store);
         }
         self
+    }
+
+    pub fn mark_notification_feed_entries_dismissed(&self, notifications: &[NotificationItem]) {
+        let ids = notifications
+            .iter()
+            .filter(|notification| notification.kind == NotificationKind::Prompt)
+            .map(feed_notification_entry_id)
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return;
+        }
+        let Ok(mut store) = self.feed_store.lock() else {
+            return;
+        };
+        let Some(store) = store.as_mut() else {
+            return;
+        };
+        if let Err(err) = store.mark_approvals(ids, FeedApprovalState::Dismissed) {
+            eprintln!("forktty feed history dismiss update failed: {err}");
+        }
     }
 }
 
@@ -1246,10 +1266,13 @@ pub async fn dispatch(
                 Err(err) => return Err(err),
             };
             let limit = optional_u64_param(&params, "limit")?.unwrap_or(50).min(200) as usize;
-            if let Ok(store) = state.feed_store.lock() {
-                if let Some(store) = store.as_ref() {
-                    return Ok(json!(store.list(workspace_id.as_deref(), limit)));
-                }
+            let stored_entries = state.feed_store.lock().ok().and_then(|store| {
+                store
+                    .as_ref()
+                    .map(|store| store.list(workspace_id.as_deref(), limit))
+            });
+            if let Some(entries) = stored_entries {
+                return Ok(json!(feed_entries_for_model(&model, entries)));
             }
             Ok(json!(feed_list(&model, workspace_id.as_deref(), limit)))
         }
@@ -2532,11 +2555,20 @@ pub async fn dispatch(
             Ok(json!(model.list_notifications()))
         }
         "notification.clear" => {
-            let mut model = state
-                .model
-                .lock()
-                .map_err(|_| "Lock poisoned".to_string())?;
-            model.clear_notifications();
+            let notifications = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "Lock poisoned".to_string())?;
+                let notifications = model.list_notifications();
+                model.clear_notifications();
+                notifications
+            };
+            state.mark_notification_feed_entries_dismissed(&notifications);
+            for notification in &notifications {
+                close_desktop_notification(&notification.id);
+                send_terminal_notification_close_report(state, notification);
+            }
             Ok(json!({"cleared": true}))
         }
         "metadata.set_status" => {
@@ -2838,16 +2870,12 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
             .iter()
             .filter_map(|surface| remote_row(surface, &model, &terminal_by_id))
             .collect::<Vec<_>>();
-        let raw_feed = if let Ok(store) = state.feed_store.lock() {
-            if let Some(store) = store.as_ref() {
-                store
-                    .list(Some(&workspace_id), 20)
-                    .into_iter()
-                    .map(|entry| json!(entry))
-                    .collect::<Vec<_>>()
-            } else {
-                feed_list(&model, Some(&workspace_id), 20)
-            }
+        let raw_feed = if let Some(entries) = state.feed_store.lock().ok().and_then(|store| {
+            store
+                .as_ref()
+                .map(|store| store.list(Some(&workspace_id), 20))
+        }) {
+            feed_entries_for_model(&model, entries)
         } else {
             feed_list(&model, Some(&workspace_id), 20)
         };
@@ -3205,13 +3233,7 @@ fn context_snapshot_risk_flags(inputs: ContextSnapshotRiskInputs<'_>) -> Vec<&'s
     if !inputs.remotes.is_empty() {
         flags.push("remote_surface");
     }
-    if inputs.feed.iter().any(|entry| {
-        entry
-            .get("type")
-            .or_else(|| entry.get("entry_type"))
-            .and_then(Value::as_str)
-            == Some("approval")
-    }) {
+    if inputs.feed.iter().any(feed_entry_is_pending_approval) {
         flags.push("pending_approval");
     }
     let permission_status_bypass = inputs
@@ -3240,6 +3262,21 @@ fn context_snapshot_risk_flags(inputs: ContextSnapshotRiskInputs<'_>) -> Vec<&'s
         flags.push("permission_bypass");
     }
     flags
+}
+
+fn feed_entry_is_pending_approval(entry: &Value) -> bool {
+    if entry
+        .get("type")
+        .or_else(|| entry.get("entry_type"))
+        .and_then(Value::as_str)
+        != Some("approval")
+    {
+        return false;
+    }
+    entry
+        .get("approval_state")
+        .and_then(Value::as_str)
+        .is_none_or(|state| state == "pending")
 }
 
 fn agent_session_rows(
@@ -4134,7 +4171,7 @@ fn feed_list(model: &WorkspaceModel, workspace_id: Option<&str>, limit: usize) -
         prompt_notifications
             .into_iter()
             .take(limit)
-            .map(notification_feed_item),
+            .map(|notification| notification_feed_item(model, notification)),
     );
     if items.len() >= limit {
         return items;
@@ -4193,19 +4230,60 @@ fn feed_list(model: &WorkspaceModel, workspace_id: Option<&str>, limit: usize) -
             other_notifications
                 .into_iter()
                 .take(limit - items.len())
-                .map(notification_feed_item),
+                .map(|notification| notification_feed_item(model, notification)),
         );
     }
     items
 }
 
-fn notification_feed_item(notification: NotificationItem) -> Value {
+fn feed_entries_for_model(model: &WorkspaceModel, entries: Vec<FeedEntry>) -> Vec<Value> {
+    entries
+        .into_iter()
+        .map(|mut entry| {
+            normalize_feed_entry_for_model(model, &mut entry);
+            json!(entry)
+        })
+        .collect()
+}
+
+fn normalize_feed_entry_for_model(model: &WorkspaceModel, entry: &mut FeedEntry) {
+    if entry.entry_type == FeedEntryType::Approval
+        && entry.approval_state == Some(FeedApprovalState::Pending)
+        && feed_target_is_stale(
+            model,
+            entry.workspace_id.as_deref(),
+            entry.surface_id.as_deref(),
+        )
+    {
+        entry.approval_state = Some(FeedApprovalState::Stale);
+    }
+}
+
+fn feed_target_is_stale(
+    model: &WorkspaceModel,
+    workspace_id: Option<&str>,
+    surface_id: Option<&str>,
+) -> bool {
+    if let Some(surface_id) = surface_id {
+        let Some(surface) = model.surface(surface_id) else {
+            return true;
+        };
+        return workspace_id.is_some_and(|workspace_id| workspace_id != surface.workspace_id);
+    }
+    workspace_id.is_some_and(|workspace_id| {
+        model
+            .workspace_id_for(WorkspaceSelector::Id(workspace_id))
+            .is_none()
+    })
+}
+
+fn notification_feed_item(model: &WorkspaceModel, notification: NotificationItem) -> Value {
     let item_type = if notification.kind == NotificationKind::Prompt {
         "approval"
     } else {
         "notification"
     };
-    json!({
+    let mut item = json!({
         "id": notification.id,
         "type": item_type,
         "kind": notification.kind,
@@ -4215,7 +4293,36 @@ fn notification_feed_item(notification: NotificationItem) -> Value {
         "surface_id": notification.surface_id,
         "created_at_ms": notification.created_at_ms,
         "read": notification.read,
-    })
+    });
+    if notification.kind == NotificationKind::Prompt {
+        item["approval_state"] = if feed_target_is_stale(
+            model,
+            item["workspace_id"].as_str(),
+            item["surface_id"].as_str(),
+        ) {
+            json!("stale")
+        } else {
+            json!("pending")
+        };
+    }
+    item
+}
+
+fn send_terminal_notification_close_report(
+    state: &SocketAppState,
+    notification: &NotificationItem,
+) {
+    let Some(metadata) = notification.terminal_metadata.as_ref() else {
+        return;
+    };
+    if !metadata.report_close {
+        return;
+    }
+    let Some(surface_id) = notification.surface_id.as_deref() else {
+        return;
+    };
+    let report = format!("\x1b]99;i={}:p=close;\x1b\\", metadata.id);
+    let _ = state.terminal.send_text(surface_id, &report);
 }
 
 fn feed_number(value: f64) -> String {
@@ -10383,6 +10490,48 @@ mod tests {
         assert_eq!(flags, vec!["permission_bypass"]);
     }
 
+    #[test]
+    fn context_snapshot_risk_flags_only_pending_approvals() {
+        let status = json!({"status": []});
+        let agent_health = [];
+        let remotes = [];
+        let terminal_tails = [];
+        let terminal_tail_errors = [];
+        let workflow_summaries = json!([]);
+        let team_summaries = json!([]);
+        let non_pending_feed = [
+            json!({"type": "approval", "approval_state": "approved"}),
+            json!({"type": "approval", "approval_state": "denied"}),
+            json!({"type": "approval", "approval_state": "dismissed"}),
+            json!({"type": "approval", "approval_state": "stale"}),
+        ];
+
+        let flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
+            status: &status,
+            agent_health: &agent_health,
+            feed: &non_pending_feed,
+            remotes: &remotes,
+            terminal_tails: &terminal_tails,
+            terminal_tail_errors: &terminal_tail_errors,
+            workflow_summaries: &workflow_summaries,
+            team_summaries: &team_summaries,
+        });
+        assert!(!flags.contains(&"pending_approval"));
+
+        let pending_feed = [json!({"type": "approval", "approval_state": "pending"})];
+        let flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
+            status: &status,
+            agent_health: &agent_health,
+            feed: &pending_feed,
+            remotes: &remotes,
+            terminal_tails: &terminal_tails,
+            terminal_tail_errors: &terminal_tail_errors,
+            workflow_summaries: &workflow_summaries,
+            team_summaries: &team_summaries,
+        });
+        assert!(flags.contains(&"pending_approval"));
+    }
+
     #[tokio::test]
     async fn dispatches_notification_methods() {
         let (state, _) = test_state();
@@ -10407,6 +10556,90 @@ mod tests {
             .as_array()
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn notification_clear_marks_persisted_approvals_dismissed() {
+        let dir = tempfile::tempdir().unwrap();
+        let feed_path = dir.path().join("feed.json");
+        let (state, _) = test_state();
+        let state = state.with_feed_store_path(&feed_path).unwrap();
+        let workspace_id = state.model.lock().unwrap().active_workspace_id().unwrap();
+
+        dispatch(
+            &state,
+            "notification.create",
+            json!({
+                "workspace_id": workspace_id,
+                "kind": "prompt",
+                "title": "Permission",
+                "body": "Run command?"
+            }),
+        )
+        .await
+        .unwrap();
+
+        dispatch(&state, "notification.clear", json!({}))
+            .await
+            .unwrap();
+        let feed = dispatch(
+            &state,
+            "feed.list",
+            json!({"workspace_id": workspace_id, "limit": 10}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(feed[0]["type"], "approval");
+        assert_eq!(feed[0]["approval_state"], "dismissed");
+    }
+
+    #[tokio::test]
+    async fn context_snapshot_marks_missing_surface_approvals_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let feed_path = dir.path().join("feed.json");
+        let (state, _) = test_state();
+        let state = state.with_feed_store_path(&feed_path).unwrap();
+        let (workspace_id, stale_surface_id) = {
+            let mut model = state.model.lock().unwrap();
+            let workspace = model.active_workspace().unwrap();
+            let split = model
+                .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+                .unwrap();
+            (workspace.id, split.id)
+        };
+        {
+            let prev = current_snapshot(&state.model);
+            let mut model = state.model.lock().unwrap();
+            model.create_notification(
+                "Permission",
+                "Run stale command?",
+                NotificationKind::Prompt,
+                Some(workspace_id.clone()),
+                Some(stale_surface_id.clone()),
+            );
+            drop(model);
+            let next = current_snapshot(&state.model);
+            record_feed_events(&state, &events::diff(&prev, &next)).unwrap();
+            let mut model = state.model.lock().unwrap();
+            model.close_surface(&stale_surface_id).unwrap();
+        }
+
+        let snapshot = dispatch(
+            &state,
+            "context.snapshot",
+            json!({"workspace_id": workspace_id, "tail_lines": 0}),
+        )
+        .await
+        .unwrap();
+        let feed = snapshot["feed"].as_array().unwrap();
+
+        assert_eq!(feed[0]["surface_id"], stale_surface_id);
+        assert_eq!(feed[0]["approval_state"], "stale");
+        assert!(!snapshot["risk_flags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("pending_approval")));
     }
 
     #[tokio::test]

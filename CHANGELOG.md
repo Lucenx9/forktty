@@ -61,6 +61,16 @@ All notable changes to ForkTTY are documented here.
   Agent HUD and notification panel treatment.
 
 ### Fixed
+- Notification cleanup now stays coherent across surfaces: clearing through the
+  socket or notification panel closes matching desktop notifications, sends OSC
+  99 close reports when the terminal requested them, and marks pending prompt
+  approval feed rows as `dismissed`; stale prompt approvals whose target
+  workspace/surface disappeared now report `approval_state: "stale"` and no
+  longer raise `pending_approval` risk flags.
+- Workspace/surface-targeted desktop notifications now expose a best-effort
+  default Open action that focuses the relevant ForkTTY surface or workspace,
+  while terminal notification action buttons carry accessible labels and
+  app-authored notification chips use the clearer `App` label.
 - Team message dispatch and worker shutdown submit mode now use
   provider-aware input: Claude receives staged text, a short settle, and a
   separate Enter, while other providers keep text plus carriage-return Enter in

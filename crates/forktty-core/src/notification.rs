@@ -4,7 +4,10 @@ use std::collections::VecDeque;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Child;
-use std::sync::{mpsc, Mutex, OnceLock};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    mpsc, Mutex, OnceLock,
+};
 use std::time::{Duration, Instant};
 #[cfg(unix)]
 use std::{fs::Permissions, os::unix::fs::PermissionsExt};
@@ -22,6 +25,7 @@ const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(2);
 const NOTIFICATION_DEDUPE_CAPACITY: usize = 64;
 const CUSTOM_COMMAND_REAPER_QUEUE_CAPACITY: usize = 8;
 const DESKTOP_NOTIFICATION_HANDLE_CAPACITY: usize = 128;
+const DESKTOP_NOTIFICATION_ACTION_LISTENER_CAPACITY: usize = 64;
 const DESKTOP_ENTRY_ID: &str = "dev.forktty.forktty";
 const TERMINAL_ICON_MAX_DIMENSION: u32 = 128;
 const TERMINAL_ICON_MAX_PIXELS: u32 = TERMINAL_ICON_MAX_DIMENSION * TERMINAL_ICON_MAX_DIMENSION;
@@ -105,11 +109,16 @@ pub fn close_desktop_notification(notification_id: &str) {
 
 fn send_desktop_notification(item: &NotificationItem, play_sound: bool) -> Result<(), String> {
     let mut notification = notify_rust::Notification::new();
+    let action_args = desktop_notification_context_action_args(item);
+    let action_listener = action_args
+        .as_ref()
+        .and_then(|_| reserve_desktop_notification_action_listener());
     notification
         .summary(&item.title)
         .body(&item.body)
         .icon(desktop_notification_icon_name(item))
         .appname("ForkTTY");
+    apply_desktop_notification_context_action(&mut notification, action_listener.is_some());
 
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -138,8 +147,99 @@ fn send_desktop_notification(item: &NotificationItem, play_sound: bool) -> Resul
             return Err(err.to_string());
         }
     };
+    spawn_desktop_notification_action_listener(handle.id(), action_args, action_listener);
     remember_desktop_notification_handle(item.id.clone(), handle, image_path);
     Ok(())
+}
+
+fn desktop_notification_context_action_args(item: &NotificationItem) -> Option<Vec<String>> {
+    if let Some(surface_id) = item.surface_id.as_deref() {
+        return Some(vec!["focus-surface".to_string(), surface_id.to_string()]);
+    }
+    item.workspace_id.as_deref().map(|workspace_id| {
+        vec![
+            "focus".to_string(),
+            "--workspace-id".to_string(),
+            workspace_id.to_string(),
+        ]
+    })
+}
+
+fn apply_desktop_notification_context_action(
+    notification: &mut notify_rust::Notification,
+    listener_reserved: bool,
+) {
+    if listener_reserved {
+        notification.action("default", "Open");
+    }
+}
+
+struct DesktopNotificationActionListenerToken;
+
+impl Drop for DesktopNotificationActionListenerToken {
+    fn drop(&mut self) {
+        desktop_notification_action_listener_count().fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn desktop_notification_action_listener_count() -> &'static AtomicUsize {
+    static COUNT: OnceLock<AtomicUsize> = OnceLock::new();
+    COUNT.get_or_init(|| AtomicUsize::new(0))
+}
+
+fn reserve_desktop_notification_action_listener() -> Option<DesktopNotificationActionListenerToken>
+{
+    let count = desktop_notification_action_listener_count();
+    let mut current = count.load(Ordering::Acquire);
+    loop {
+        if current >= DESKTOP_NOTIFICATION_ACTION_LISTENER_CAPACITY {
+            return None;
+        }
+        match count.compare_exchange_weak(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => return Some(DesktopNotificationActionListenerToken),
+            Err(next) => current = next,
+        }
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn spawn_desktop_notification_action_listener(
+    server_id: u32,
+    args: Option<Vec<String>>,
+    token: Option<DesktopNotificationActionListenerToken>,
+) {
+    let (Some(args), Some(token)) = (args, token) else {
+        return;
+    };
+    let _ = std::thread::Builder::new()
+        .name("forktty-desktop-notification-action".to_string())
+        .spawn(move || {
+            let _token = token;
+            let _ = notify_rust::handle_action(server_id, move |response| {
+                if matches!(response, notify_rust::ActionResponse::Custom("default")) {
+                    run_desktop_notification_context_action(args);
+                }
+            });
+        });
+}
+
+#[cfg(any(not(unix), target_os = "macos"))]
+fn spawn_desktop_notification_action_listener(
+    _server_id: u32,
+    _args: Option<Vec<String>>,
+    _token: Option<DesktopNotificationActionListenerToken>,
+) {
+}
+
+fn run_desktop_notification_context_action(args: Vec<String>) {
+    let Ok(program) = std::env::current_exe() else {
+        return;
+    };
+    let Ok(mut child) = std::process::Command::new(program).args(args).spawn() else {
+        return;
+    };
+    let _ = child.wait();
 }
 
 fn write_desktop_notification_icon_file(
@@ -533,6 +633,66 @@ mod tests {
     #[test]
     fn desktop_entry_hint_matches_packaged_desktop_id() {
         assert_eq!(DESKTOP_ENTRY_ID, "dev.forktty.forktty");
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn targeted_desktop_notifications_expose_default_open_action() {
+        let mut model = WorkspaceModel::new();
+        let notification = model.create_notification(
+            "Prompt",
+            "Ready",
+            NotificationKind::Prompt,
+            Some("workspace-1".to_string()),
+            Some("surface-1".to_string()),
+        );
+        let mut desktop = notify_rust::Notification::new();
+
+        assert!(desktop_notification_context_action_args(&notification).is_some());
+        apply_desktop_notification_context_action(&mut desktop, true);
+
+        assert_eq!(
+            desktop.actions,
+            vec!["default".to_string(), "Open".to_string()]
+        );
+    }
+
+    #[test]
+    fn desktop_notification_action_args_focus_surface_or_workspace() {
+        let mut model = WorkspaceModel::new();
+        let surface_notification = model.create_notification(
+            "Prompt",
+            "Ready",
+            NotificationKind::Prompt,
+            Some("workspace-1".to_string()),
+            Some("surface-1".to_string()),
+        );
+        let workspace_notification = model.create_notification(
+            "Workspace",
+            "Ready",
+            NotificationKind::Info,
+            Some("workspace-1".to_string()),
+            None,
+        );
+        let global_notification =
+            model.create_notification("Global", "Ready", NotificationKind::Info, None, None);
+
+        assert_eq!(
+            desktop_notification_context_action_args(&surface_notification),
+            Some(vec!["focus-surface".to_string(), "surface-1".to_string()])
+        );
+        assert_eq!(
+            desktop_notification_context_action_args(&workspace_notification),
+            Some(vec![
+                "focus".to_string(),
+                "--workspace-id".to_string(),
+                "workspace-1".to_string()
+            ])
+        );
+        assert_eq!(
+            desktop_notification_context_action_args(&global_notification),
+            None
+        );
     }
 
     #[test]

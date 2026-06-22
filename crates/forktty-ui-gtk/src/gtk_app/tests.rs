@@ -4226,6 +4226,18 @@ fn notification_panel_truncated_labels_keep_full_tooltips() {
 }
 
 #[test]
+fn notification_panel_uses_human_custom_kind_label() {
+    assert_eq!(notification_kind_label(NotificationKind::Custom), "App");
+}
+
+#[test]
+fn notification_panel_terminal_action_buttons_have_accessible_names() {
+    let source = include_str!("notifications_panel.rs");
+
+    assert!(source.contains("set_accessible_button_text(&button, label, None);"));
+}
+
+#[test]
 fn notification_panel_css_only_styles_real_kind_classes() {
     let source = include_str!("../style.css");
 

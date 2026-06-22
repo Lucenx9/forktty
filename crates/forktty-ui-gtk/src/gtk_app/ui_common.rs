@@ -646,7 +646,7 @@ pub(super) fn notification_kind_label(kind: NotificationKind) -> &'static str {
         NotificationKind::Prompt => "Prompt",
         NotificationKind::Error => "Error",
         NotificationKind::Info => "Info",
-        NotificationKind::Custom => "Custom",
+        NotificationKind::Custom => "App",
     }
 }
 
