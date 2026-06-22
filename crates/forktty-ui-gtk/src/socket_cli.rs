@@ -65,7 +65,7 @@ Usage:
   forktty team-upsert <team-id> [--workspace-id <id>] [--leader-surface-id <id>] [--name <name>] [--status <status>] [--goal <text>] [--json]
   forktty team-worker-upsert <team-id> <worker-id> [--role <role>] [--agent <agent>] [--surface-id <id>] [--worktree-name <name>] [--status <status>] [--assigned-task-id <id>] [--json]
   forktty team-worker-heartbeat <team-id> <worker-id> [--status <status>] [--assigned-task-id <id>] [--json]
-  forktty team-worker-launch <team-id> <worker-id> --agent <agent> [--role <role>] [--assigned-task-id <id>] [--worktree-name <name>] [--args <comma-list>] [--json]
+  forktty team-worker-launch <team-id> <worker-id> [--agent <agent>] [--role <role>] [--assigned-task-id <id>] [--worktree-name <name>] [--args <comma-list>] [--json]
   forktty team-worker-health <team-id> [--stale-after-ms <ms>] [--json]
   forktty team-worker-nudge <team-id> <worker-id> [--text <text>] [--json]
   forktty team-worker-shutdown <team-id> <worker-id> [--text <text>] [--no-submit] [--close] [--json]
@@ -76,8 +76,8 @@ Usage:
   forktty team-inbox <team-id> [--worker-id <id>] [--include-delivered] [--limit <n>] [--json]
   forktty team-summary <team-id> [--json]
   forktty team-events [--team-id <id>] [--since-seq <n>] [--limit <n>] [--json]
-  forktty team ask <team-id> <worker-id> --agent <agent> --task-id <id> --prompt <text>
-  forktty team review <team-id> <worker-id> --agent <agent> --task-id <id> [--commit <rev>]
+  forktty team ask <team-id> <worker-id> [--agent <agent>] --task-id <id> --prompt <text>
+  forktty team review <team-id> <worker-id> [--agent <agent>] --task-id <id> [--commit <rev>]
   forktty team watch <team-id> [--stale-after-ms <ms>] [--limit <n>] [--json]
   forktty team finish <team-id> [--dry-run] [--close-workers] [--force] [--json]
   forktty split-surface [--surface-id <id>] [--axis horizontal|vertical]
@@ -156,16 +156,17 @@ const TEAM_HELP_TEXT: &str = "\
 ForkTTY team commands
 
 High-level wrappers:
-  forktty team ask <team-id> <worker-id> --agent <agent> --task-id <id> --prompt <text>
+  forktty team ask <team-id> <worker-id> [--agent <agent>] --task-id <id> --prompt <text>
       Create/update the team, create the task, launch a fresh worker surface, assign the task, queue the prompt, and dispatch it.
+      Omit --agent, or pass --agent auto, to use Settings > Agents team provider selection.
       Submit uses provider-aware terminal input; Claude gets text, a short settle, then Enter.
       Re-running ask/review launches another worker; use team-message-send + team-message-dispatch for follow-ups.
-      Options: --role <role>, --title <title>, --goal <text>, --worktree-name <name>,
+      Options: --agent <auto|codex|claude|pi|opencode|antigravity>, --role <role>, --title <title>, --goal <text>, --worktree-name <name>,
                --args <comma-list>, --submit[=true|false] (default: true; pass --submit=false to stage only).
 
-  forktty team review <team-id> <worker-id> --agent <agent> --task-id <id> [--commit <rev>]
+  forktty team review <team-id> <worker-id> [--agent <agent>] --task-id <id> [--commit <rev>]
       Same flow as ask, with a read-only commit review prompt.
-      Options: --role <role>, --worktree-name <name>, --args <comma-list>,
+      Options: --agent <auto|codex|claude|pi|opencode|antigravity>, --role <role>, --worktree-name <name>, --args <comma-list>,
                --prompt-extra <text>, --submit[=true|false] (default: true; pass --submit=false to stage only).
 
   forktty team watch <team-id> [--stale-after-ms <ms>] [--limit <n>] [--include-delivered]
@@ -231,8 +232,8 @@ ForkTTY examples
   forktty identify --json
   forktty wait agent-status --status needs_input --timeout-ms 30000
   forktty context-snapshot --workspace-name main --tail-lines 0 --json
-  forktty team ask review-team claude-review --agent claude --task-id review-head --prompt \"Review HEAD read-only\" --submit
-  forktty team review review-team claude-review --agent claude --task-id review-head --commit HEAD --submit
+  forktty team ask review-team review-worker --task-id review-head --prompt \"Review HEAD read-only\" --submit
+  forktty team review review-team review-worker --task-id review-head --commit HEAD --submit
   forktty team watch review-team --stale-after-ms 120000 --limit 10
   forktty team finish review-team
   forktty workflows --query release --limit 5
@@ -1856,17 +1857,109 @@ fn handle_capabilities(context: &CliContext, args: Vec<String>) -> CliResult<()>
     if context.json {
         return print_json(&result);
     }
-    if let Some(version) = string_field(&result, "version") {
-        write_stdout_line(&format!("version {version}"))?;
+    for line in format_capabilities_lines(&result) {
+        write_stdout_line(&line)?;
+    }
+    Ok(())
+}
+
+fn format_capabilities_lines(result: &Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(version) = string_field(result, "version") {
+        lines.push(format!("version {version}"));
     }
     if let Some(methods) = result.get("methods").and_then(Value::as_array) {
         for method in methods {
             if let Some(name) = method.as_str() {
-                write_stdout_line(name)?;
+                lines.push(sanitize_for_terminal(name));
             }
         }
     }
-    Ok(())
+    if let Some(policy) = result.get("team_provider_policy") {
+        let default = safe_string_field(policy, "default_agent").unwrap_or_else(|| "auto".into());
+        let order = string_array_field(policy, "provider_order").join(", ");
+        let disabled = string_array_field(policy, "disabled_agents");
+        let disabled = if disabled.is_empty() {
+            "none".to_string()
+        } else {
+            disabled.join(", ")
+        };
+        let fallback = if policy
+            .get("auto_fallback")
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+        {
+            "on"
+        } else {
+            "off"
+        };
+        lines.push(format!(
+            "team providers default {default} fallback {fallback} order {order} disabled {disabled}"
+        ));
+    }
+    if let Some(providers) = result
+        .get("provider_capabilities")
+        .and_then(Value::as_object)
+    {
+        let mut names = Vec::new();
+        for name in ["codex", "claude", "pi", "opencode", "antigravity"] {
+            if providers.contains_key(name) {
+                names.push(name.to_string());
+            }
+        }
+        for name in providers.keys() {
+            if !names.iter().any(|known| known == name) {
+                names.push(name.to_string());
+            }
+        }
+        for name in names {
+            let Some(provider) = providers.get(&name) else {
+                continue;
+            };
+            let disabled = provider
+                .get("disabled_by_config")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let available = provider
+                .get("available_on_path")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let status = if disabled {
+                "disabled"
+            } else if available {
+                "found"
+            } else {
+                "missing"
+            };
+            let detail = if disabled {
+                safe_string_field(provider, "unavailable_reason")
+                    .or_else(|| safe_string_field(provider, "program"))
+            } else if available {
+                safe_string_field(provider, "executable")
+                    .or_else(|| safe_string_field(provider, "program"))
+            } else {
+                safe_string_field(provider, "unavailable_reason")
+                    .or_else(|| safe_string_field(provider, "program"))
+            };
+            if let Some(detail) = detail.filter(|detail| !detail.is_empty()) {
+                lines.push(format!("provider {name} {status} {detail}"));
+            } else {
+                lines.push(format!("provider {name} {status}"));
+            }
+        }
+    }
+    lines
+}
+
+fn string_array_field(value: &Value, key: &str) -> Vec<String> {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(sanitize_for_terminal)
+        .collect()
 }
 
 fn handle_identify(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -3152,7 +3245,7 @@ struct TeamAskOptions {
     command_name: &'static str,
     team_id: String,
     worker_id: String,
-    agent: String,
+    agent: Option<String>,
     task_id: String,
     prompt: String,
     role: Option<String>,
@@ -3183,9 +3276,7 @@ fn handle_team_ask(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let positionals =
         required_positionals(&parsed.positionals, "team ask", &["team-id", "worker-id"])?;
     let agent = non_blank_string_option(&parsed.options, "agent", "--agent")?
-        .ok_or_else(|| CliError::new("team ask requires --agent"))?
-        .trim()
-        .to_string();
+        .map(|value| value.trim().to_string());
     let task_id = non_blank_string_option(&parsed.options, "task-id", "--task-id")?
         .ok_or_else(|| CliError::new("team ask requires --task-id"))?
         .trim()
@@ -3235,9 +3326,7 @@ fn handle_team_review(context: &CliContext, args: Vec<String>) -> CliResult<()> 
         &["team-id", "worker-id"],
     )?;
     let agent = non_blank_string_option(&parsed.options, "agent", "--agent")?
-        .ok_or_else(|| CliError::new("team review requires --agent"))?
-        .trim()
-        .to_string();
+        .map(|value| value.trim().to_string());
     let task_id = non_blank_string_option(&parsed.options, "task-id", "--task-id")?
         .ok_or_else(|| CliError::new("team review requires --task-id"))?
         .trim()
@@ -3451,7 +3540,9 @@ fn run_team_ask_flow(context: &CliContext, options: TeamAskOptions) -> CliResult
     let mut worker_params = Map::new();
     worker_params.insert("team_id".to_string(), Value::String(team_id.clone()));
     worker_params.insert("worker_id".to_string(), Value::String(worker_id.clone()));
-    worker_params.insert("agent".to_string(), Value::String(options.agent.clone()));
+    if let Some(agent) = &options.agent {
+        worker_params.insert("agent".to_string(), Value::String(agent.clone()));
+    }
     worker_params.insert(
         "assigned_task_id".to_string(),
         Value::String(task_id.clone()),
@@ -3793,15 +3884,15 @@ fn handle_team_worker_launch(context: &CliContext, args: Vec<String>) -> CliResu
         "team-worker-launch",
         &["team-id", "worker-id"],
     )?;
-    let agent = non_blank_string_option(&parsed.options, "agent", "--agent")?
-        .ok_or_else(|| CliError::new("team-worker-launch requires --agent"))?;
     let mut params = Map::new();
     params.insert("team_id".to_string(), Value::String(positionals[0].clone()));
     params.insert(
         "worker_id".to_string(),
         Value::String(positionals[1].clone()),
     );
-    params.insert("agent".to_string(), Value::String(agent.trim().to_string()));
+    if let Some(agent) = non_blank_string_option(&parsed.options, "agent", "--agent")? {
+        params.insert("agent".to_string(), Value::String(agent.trim().to_string()));
+    }
     insert_optional_cli_string_param(&mut params, &parsed.options, "role", "role")?;
     insert_optional_cli_string_param(
         &mut params,
@@ -4368,7 +4459,22 @@ fn format_team_worker_launch_line(result: &Value) -> String {
                 .join(" ")
         })
         .unwrap_or_default();
-    format!("Launched worker {worker_id} in {surface_id}: {argv}")
+    let selection = result
+        .get("selection")
+        .and_then(|selection| {
+            let requested = safe_string_field(selection, "requested_agent")?;
+            let selected = safe_string_field(selection, "selected_agent")?;
+            let reason = safe_string_field(selection, "reason").unwrap_or_default();
+            (requested == "auto").then(|| {
+                if reason.is_empty() {
+                    format!(" selected {selected}")
+                } else {
+                    format!(" selected {selected} ({reason})")
+                }
+            })
+        })
+        .unwrap_or_default();
+    format!("Launched worker {worker_id} in {surface_id}: {argv}{selection}")
 }
 
 fn format_team_worker_health_line(worker: &Value) -> String {
@@ -15340,6 +15446,53 @@ mod tests {
     }
 
     #[test]
+    fn capabilities_formatter_includes_team_provider_policy() {
+        let lines = format_capabilities_lines(&json!({
+            "version": "9.9.9",
+            "methods": ["system.ping"],
+            "team_provider_policy": {
+                "default_agent": "auto",
+                "provider_order": ["codex", "pi"],
+                "auto_fallback": true,
+                "disabled_agents": ["claude"]
+            },
+            "provider_capabilities": {
+                "codex": {
+                    "program": "codex",
+                    "available_on_path": true,
+                    "executable": "/usr/bin/codex",
+                    "disabled_by_config": false
+                },
+                "claude": {
+                    "program": "claude",
+                    "available_on_path": true,
+                    "executable": "/usr/bin/claude",
+                    "disabled_by_config": true,
+                    "unavailable_reason": "disabled by team.disabled_agents"
+                },
+                "pi": {
+                    "program": "pi",
+                    "available_on_path": false,
+                    "disabled_by_config": false,
+                    "unavailable_reason": "pi not found on PATH"
+                }
+            }
+        }));
+
+        assert_eq!(
+            lines,
+            vec![
+                "version 9.9.9",
+                "system.ping",
+                "team providers default auto fallback on order codex, pi disabled claude",
+                "provider codex found /usr/bin/codex",
+                "provider claude disabled disabled by team.disabled_agents",
+                "provider pi missing pi not found on PATH",
+            ]
+        );
+    }
+
+    #[test]
     fn identify_requests_system_identify_with_env_caller_context() {
         let request = with_env(
             &[
@@ -15941,6 +16094,37 @@ mod tests {
         assert_eq!(request["params"]["role"], "reviewer");
         assert_eq!(request["params"]["assigned_task_id"], "task-1");
         assert_eq!(request["params"]["args"], json!(["--model", "test"]));
+    }
+
+    #[test]
+    fn team_worker_launch_without_agent_requests_auto_launch() {
+        let request = with_socket_response(
+            |req| {
+                json!({
+                    "id": req["id"],
+                    "ok": true,
+                    "result": {
+                        "surface": {"id": "surface-2"},
+                        "worker": {"id": "worker-2", "agent": "pi"},
+                        "argv": ["pi"],
+                        "selection": {"requested_agent": "auto", "selected_agent": "pi"}
+                    },
+                })
+                .to_string()
+            },
+            |socket_path| {
+                handle_team_worker_launch(
+                    &ctx_for(socket_path),
+                    strings(&["team-1", "worker-2", "--role", "reviewer"]),
+                )
+                .unwrap();
+            },
+        );
+        assert_eq!(request["method"], "team.worker.launch");
+        assert_eq!(request["params"]["team_id"], "team-1");
+        assert_eq!(request["params"]["worker_id"], "worker-2");
+        assert!(request["params"].get("agent").is_none());
+        assert_eq!(request["params"]["role"], "reviewer");
     }
 
     #[test]
@@ -17033,14 +17217,14 @@ mod tests {
         let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
         assert_err_contains(
             handle_team(&ctx, strings(&["ask", "team-1", "worker-1"])),
-            "team ask requires --agent",
+            "team ask requires --task-id",
         );
         assert_err_contains(
             handle_team(
                 &ctx,
-                strings(&["ask", "team-1", "worker-1", "--agent", "claude"]),
+                strings(&["ask", "team-1", "worker-1", "--task-id", "task-1"]),
             ),
-            "team ask requires --task-id",
+            "team ask requires --prompt",
         );
         assert_err_contains(
             handle_team(
@@ -17049,10 +17233,10 @@ mod tests {
                     "ask",
                     "team-1",
                     "worker-1",
-                    "--agent",
-                    "claude",
                     "--task-id",
                     "task-1",
+                    "--prompt",
+                    "   ",
                 ]),
             ),
             "team ask requires --prompt",

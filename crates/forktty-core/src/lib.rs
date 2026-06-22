@@ -32,7 +32,9 @@ pub use command_safety::{validate_worktree_name, WorktreeNameError};
 pub use feed::{FeedApprovalState, FeedEntry, FeedEntryType, FeedError, FeedStore};
 
 pub use browser_history::{Bookmark, BookmarkStore, HistoryError, HistoryStore, Visit};
-pub use config::{AppConfig, AppearanceConfig, GeneralConfig, NotificationConfig, UpdateConfig};
+pub use config::{
+    AppConfig, AppearanceConfig, GeneralConfig, NotificationConfig, TeamConfig, UpdateConfig,
+};
 pub use model::{
     has_uri_scheme, normalize_browser_url, validated_browser_url, AgentSession,
     AgentSessionLifecycle, ClearedAgentMetadata, ClearedAgentSession, LogEntry, LogLevel,

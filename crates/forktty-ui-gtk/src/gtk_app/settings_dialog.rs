@@ -180,6 +180,44 @@ pub(super) fn show_settings_dialog_page(
     agent_setup_list.append(&all_setup_row);
     agents_content.append(&agent_setup_section);
 
+    let (team_provider_section, team_provider_list) = settings_section("Team workers", "");
+    let team_default_agent = settings_combo_row(
+        "Default provider",
+        "Auto uses the provider order below and skips unavailable harnesses.",
+        TEAM_DEFAULT_AGENT_ITEMS,
+        &loaded.team.default_agent,
+    );
+    team_provider_list.append(&team_default_agent);
+    let team_auto_fallback = adw::SwitchRow::builder()
+        .title("Fallback to next provider")
+        .subtitle("When the default is unavailable, try the next detected provider.")
+        .active(loaded.team.auto_fallback)
+        .build();
+    team_auto_fallback.add_css_class("settings-row");
+    team_provider_list.append(&team_auto_fallback);
+    let team_provider_order = adw::EntryRow::builder()
+        .title("Provider order")
+        .text(team_provider_list_text(&loaded.team.provider_order))
+        .show_apply_button(true)
+        .tooltip_text("Comma-separated providers: codex, claude, pi, opencode, antigravity")
+        .build();
+    team_provider_order.add_css_class("settings-row");
+    team_provider_list.append(&team_provider_order);
+    let team_disabled_agents = adw::EntryRow::builder()
+        .title("Disabled providers")
+        .text(team_provider_list_text(&loaded.team.disabled_agents))
+        .show_apply_button(true)
+        .tooltip_text("Comma-separated providers to skip for team worker launch")
+        .build();
+    team_disabled_agents.add_css_class("settings-row");
+    team_provider_list.append(&team_disabled_agents);
+    agents_content.append(&team_provider_section);
+
+    let (provider_detection_section, provider_detection_list) =
+        settings_section("Detected Harnesses", "");
+    append_team_provider_detection_rows(&provider_detection_list);
+    agents_content.append(&provider_detection_section);
+
     let (agent_advanced_section, agent_advanced_list) = settings_section("Advanced", "");
     let hooks_row = settings_action_row("Agent hooks", "Install provider hook entries.");
     hooks_row.add_css_class("settings-secondary-row");
@@ -458,6 +496,134 @@ pub(super) fn show_settings_dialog_page(
             );
         }
     });
+    team_default_agent.connect_selected_notify({
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        let team_disabled_agents = team_disabled_agents.clone();
+        move |row| {
+            if suppress_updates.get() {
+                return;
+            }
+            if let Some(agent) = settings_choice_value(TEAM_DEFAULT_AGENT_ITEMS, row.selected()) {
+                persist_settings_change(
+                    &dialog,
+                    &current,
+                    &on_apply,
+                    |config| {
+                        config.team.default_agent = agent.to_string();
+                        if agent != config::TEAM_AGENT_AUTO {
+                            config
+                                .team
+                                .disabled_agents
+                                .retain(|provider| provider != agent);
+                        }
+                    },
+                    "Team provider default saved.",
+                );
+                team_disabled_agents.set_text(&team_provider_list_text(
+                    &current.borrow().team.disabled_agents,
+                ));
+            }
+        }
+    });
+    team_auto_fallback.connect_notify_local(Some("active"), {
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |row: &adw::SwitchRow, _| {
+            if suppress_updates.get() {
+                return;
+            }
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.team.auto_fallback = row.is_active(),
+                "Team provider fallback updated.",
+            );
+        }
+    });
+    team_provider_order.connect_changed(|row| {
+        row.remove_css_class("error");
+    });
+    team_provider_order.connect_apply({
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        move |row: &adw::EntryRow| {
+            let providers = match normalized_team_provider_entry(row, false) {
+                Ok(providers) => providers,
+                Err(err) => {
+                    row.add_css_class("error");
+                    dialog.add_toast(adw::Toast::new(&err));
+                    return;
+                }
+            };
+            let saved = persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.team.provider_order = providers,
+                "Team provider order saved.",
+            );
+            if saved {
+                row.remove_css_class("error");
+            } else {
+                row.add_css_class("error");
+            }
+        }
+    });
+    team_disabled_agents.connect_changed(|row| {
+        row.remove_css_class("error");
+    });
+    team_disabled_agents.connect_apply({
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        let team_default_agent = team_default_agent.clone();
+        move |row: &adw::EntryRow| {
+            let providers = match normalized_team_provider_entry(row, true) {
+                Ok(providers) => providers,
+                Err(err) => {
+                    row.add_css_class("error");
+                    dialog.add_toast(adw::Toast::new(&err));
+                    return;
+                }
+            };
+            let saved = persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| {
+                    config.team.disabled_agents = providers;
+                    if config.team.default_agent != config::TEAM_AGENT_AUTO
+                        && config
+                            .team
+                            .disabled_agents
+                            .contains(&config.team.default_agent)
+                    {
+                        config.team.default_agent = config::TEAM_AGENT_AUTO.to_string();
+                    }
+                },
+                "Disabled team providers saved.",
+            );
+            if saved {
+                row.remove_css_class("error");
+                suppress_updates.set(true);
+                team_default_agent.set_selected(settings_choice_index(
+                    TEAM_DEFAULT_AGENT_ITEMS,
+                    &current.borrow().team.default_agent,
+                ));
+                suppress_updates.set(false);
+            } else {
+                row.add_css_class("error");
+            }
+        }
+    });
     notification_command.connect_changed(|row| {
         row.remove_css_class("error");
     });
@@ -552,6 +718,10 @@ pub(super) fn show_settings_dialog_page(
             let sidebar_visible_for_reset = sidebar_visible.clone();
             let worktree_layout_for_reset = worktree_layout.clone();
             let pr_lookup_for_reset = pr_lookup.clone();
+            let team_default_agent_for_reset = team_default_agent.clone();
+            let team_auto_fallback_for_reset = team_auto_fallback.clone();
+            let team_provider_order_for_reset = team_provider_order.clone();
+            let team_disabled_agents_for_reset = team_disabled_agents.clone();
             let notification_command_for_reset = notification_command.clone();
             let desktop_notifications_for_reset = desktop_notifications.clone();
             let notification_sound_for_reset = notification_sound.clone();
@@ -591,6 +761,17 @@ pub(super) fn show_settings_dialog_page(
                         &defaults.general.worktree_layout,
                     ));
                     pr_lookup_for_reset.set_active(defaults.general.enable_pr_lookup);
+                    team_default_agent_for_reset.set_selected(settings_choice_index(
+                        TEAM_DEFAULT_AGENT_ITEMS,
+                        &defaults.team.default_agent,
+                    ));
+                    team_auto_fallback_for_reset.set_active(defaults.team.auto_fallback);
+                    team_provider_order_for_reset
+                        .set_text(&team_provider_list_text(&defaults.team.provider_order));
+                    team_provider_order_for_reset.remove_css_class("error");
+                    team_disabled_agents_for_reset
+                        .set_text(&team_provider_list_text(&defaults.team.disabled_agents));
+                    team_disabled_agents_for_reset.remove_css_class("error");
                     notification_command_for_reset.set_text(&defaults.general.notification_command);
                     notification_command_for_reset.remove_css_class("error");
                     desktop_notifications_for_reset.set_active(defaults.notifications.desktop);
@@ -954,6 +1135,84 @@ pub(super) const WORKTREE_LAYOUT_ITEMS: &[(&str, &str)] = &[
     ("sibling", "Sibling"),
     ("outer-nested", "Outer nested"),
 ];
+pub(super) const TEAM_DEFAULT_AGENT_ITEMS: &[(&str, &str)] = &[
+    ("auto", "Auto"),
+    ("codex", "Codex"),
+    ("claude", "Claude"),
+    ("pi", "Pi"),
+    ("opencode", "OpenCode"),
+    ("antigravity", "Antigravity"),
+];
+
+fn team_provider_label(provider: &str) -> &'static str {
+    match provider {
+        "codex" => "Codex",
+        "claude" => "Claude",
+        "pi" => "Pi",
+        "opencode" => "OpenCode",
+        "antigravity" => "Antigravity",
+        _ => "Provider",
+    }
+}
+
+fn team_provider_list_text(providers: &[String]) -> String {
+    providers.join(", ")
+}
+
+fn normalized_team_provider_entry(
+    row: &adw::EntryRow,
+    allow_empty: bool,
+) -> Result<Vec<String>, String> {
+    let text = normalized_settings_entry_text(row);
+    let mut providers = Vec::new();
+    let mut invalid = Vec::new();
+    for item in text.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        };
+        let Some(provider) = config::canonical_team_provider(item) else {
+            invalid.push(item.to_string());
+            continue;
+        };
+        if !providers.iter().any(|candidate| candidate == provider) {
+            providers.push(provider.to_string());
+        }
+    }
+    if !invalid.is_empty() {
+        return Err(format!("Unknown team provider: {}", invalid.join(", ")));
+    }
+    if providers.is_empty() && !allow_empty {
+        providers = config::default_team_provider_order();
+    }
+    row.set_text(&team_provider_list_text(&providers));
+    Ok(providers)
+}
+
+fn append_team_provider_detection_rows(list: &gtk::ListBox) {
+    let path = std::env::var_os("PATH");
+    for provider in config::TEAM_PROVIDER_CHOICES {
+        let program = config::team_provider_program(provider).unwrap_or(provider);
+        let executable = forktty_terminal::spawn::resolve_child_program(program, path.as_deref());
+        let row = settings_action_row(
+            team_provider_label(provider),
+            &executable
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|| format!("{program} not found on PATH")),
+        );
+        let status = gtk::Label::new(Some(if executable.is_some() {
+            "Found"
+        } else {
+            "Missing"
+        }));
+        status.add_css_class("settings-status-pill");
+        status.set_valign(gtk::Align::Center);
+        set_setup_status_class(&status, if executable.is_some() { "ok" } else { "error" });
+        row.add_suffix(&status);
+        list.append(&row);
+    }
+}
 
 pub(super) fn settings_choice_index(items: &[(&str, &str)], value: &str) -> u32 {
     items.iter().position(|(id, _)| *id == value).unwrap_or(0) as u32

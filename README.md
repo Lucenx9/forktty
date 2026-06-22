@@ -422,10 +422,13 @@ require Node.js.
 `provider_capabilities` matrix for the supported providers (`codex`, `claude`,
 `pi`, `opencode`, and `antigravity`), including their launch program, whether
 ForkTTY has safe resume support, and whether the provider exposes a dedicated
-cwd resume flag. Providers without a cwd flag, such as Claude Code, can still
-resume in ForkTTY's recorded process cwd when `resume_cwd` is available.
-Pi resume uses the documented `pi --session <id>` flow. `forktty identify` is
-the smallest CLI read for "where am I in ForkTTY?", while
+cwd resume flag. It also reports `available_on_path`, the resolved executable
+path when present, disabled/missing reasons, and the active
+`team_provider_policy` used when team launches omit `--agent`. Providers
+without a cwd flag, such as Claude Code, can still resume in ForkTTY's recorded
+process cwd when `resume_cwd` is available. Pi resume uses the documented
+`pi --session <id>` flow. `forktty identify` is the smallest CLI read for
+"where am I in ForkTTY?", while
 `forktty wait agent-status` gives scripts and agents a bounded lifecycle wait.
 
 ### MCP server
@@ -602,6 +605,12 @@ sound = true
 blocked_terminal_apps = []
 blocked_terminal_types = []
 
+[team]
+default_agent = "auto" # "auto", "codex", "claude", "pi", "opencode", or "antigravity"
+provider_order = ["codex", "claude", "pi", "opencode", "antigravity"]
+auto_fallback = true
+disabled_agents = []
+
 [updates]
 auto_check = true
 
@@ -610,6 +619,12 @@ anonymous_ping = true
 ```
 
 `notification_command` is split with `shell_words`; ForkTTY does not use `sh -c`. The first token must be an absolute executable path. Notification title/body are passed through `FORKTTY_NOTIFICATION_TITLE` and `FORKTTY_NOTIFICATION_BODY`; OSC 99 `f`/`t` metadata is exposed as `FORKTTY_NOTIFICATION_TERMINAL_APP` and `FORKTTY_NOTIFICATION_TERMINAL_TYPES_JSON`. `blocked_terminal_apps` and `blocked_terminal_types` suppress terminal-originated OSC 99 notifications whose exact `f` application or `t` type matches one of the listed strings.
+
+The `[team]` section controls visible team worker launch defaults. Omit
+`--agent` or pass `--agent auto` to let ForkTTY choose the first configured
+provider whose harness is found on the ForkTTY process `PATH`; use an explicit
+provider to override the policy. Settings > Agents shows the same default,
+fallback, provider order, disabled providers, and harness detection.
 
 `persistent_scrollback_lines` is off by default; when set above `0`, ForkTTY stores a bounded plain-text tail per surface in `session-v2.json` and restores it before the fresh shell starts. Live embedded panes follow Ghostty's `scrollback-limit` budget (10 MB by default) and `scrollbar = system|never` preference, so mouse-wheel scrollback and the vertical scrollbar come from Ghostty config while legacy ForkTTY `scrollback_lines` is treated as a compatibility key and omitted from new saves. Terminal font, colors, cursor/faint opacity, bell behavior, mouse scroll multiplier, cell size adjustments, and inactive split dimming come from Ghostty's config (`~/.config/ghostty/config.ghostty` or the legacy `~/.config/ghostty/config`) when present, including `config-file`, `theme`, named colors, 16-color palette entries, `cursor-opacity`, `faint-opacity`, `bell-features`, `mouse-scroll-multiplier`, `adjust-cell-width`, `adjust-cell-height`, `unfocused-split-opacity`, and `unfocused-split-fill`; no system Ghostty install is required. Legacy ForkTTY font/theme/scrollback/bell/renderer keys are kept only for config compatibility and omitted from new saves. Terminal panes require the embedded Ghostty GTK widget; if `ghostty-gtk-embed.so` is missing or fails to load, panes report a spawn failure rather than opening with the old renderer.
 

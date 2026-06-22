@@ -983,48 +983,105 @@ async fn reject_over_capacity_connection(stream: tokio::net::UnixStream) {
     }
 }
 
-fn provider_capabilities() -> Value {
+#[derive(Debug, Clone, Copy)]
+struct ProviderCapability {
+    agent: &'static str,
+    program: &'static str,
+    aliases: &'static [&'static str],
+    safe_resume: bool,
+    cwd_resume_flag: bool,
+    permission_bypass_resume: bool,
+}
+
+const PROVIDER_CAPABILITIES: &[ProviderCapability] = &[
+    ProviderCapability {
+        agent: "codex",
+        program: "codex",
+        aliases: &["codex"],
+        safe_resume: true,
+        cwd_resume_flag: true,
+        permission_bypass_resume: true,
+    },
+    ProviderCapability {
+        agent: "claude",
+        program: "claude",
+        aliases: &["claude", "claude_code", "claude-code"],
+        safe_resume: true,
+        cwd_resume_flag: false,
+        permission_bypass_resume: true,
+    },
+    ProviderCapability {
+        agent: "opencode",
+        program: "opencode",
+        aliases: &["opencode", "open_code", "open-code"],
+        safe_resume: true,
+        cwd_resume_flag: false,
+        permission_bypass_resume: false,
+    },
+    ProviderCapability {
+        agent: "pi",
+        program: "pi",
+        aliases: &["pi"],
+        safe_resume: true,
+        cwd_resume_flag: false,
+        permission_bypass_resume: false,
+    },
+    ProviderCapability {
+        agent: "antigravity",
+        program: "agy",
+        aliases: &["antigravity", "agy"],
+        safe_resume: true,
+        cwd_resume_flag: false,
+        permission_bypass_resume: false,
+    },
+];
+
+fn provider_capabilities(path: Option<&OsStr>, team: &forktty_core::TeamConfig) -> Value {
+    let disabled = team
+        .disabled_agents
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let mut providers = serde_json::Map::new();
+    for capability in PROVIDER_CAPABILITIES {
+        let executable = resolve_child_program(capability.program, path);
+        let disabled_by_config = disabled.contains(&capability.agent);
+        let unavailable_reason = if disabled_by_config {
+            Value::String("disabled_by_config".to_string())
+        } else if executable.is_none() {
+            Value::String("program_not_found".to_string())
+        } else {
+            Value::Null
+        };
+        providers.insert(
+            capability.agent.to_string(),
+            json!({
+                "program": capability.program,
+                "team_worker_launch": true,
+                "launchable": executable.is_some() && !disabled_by_config,
+                "safe_resume": capability.safe_resume,
+                "cwd_resume_flag": capability.cwd_resume_flag,
+                "permission_bypass_resume": capability.permission_bypass_resume,
+                "aliases": capability.aliases,
+                "available_on_path": executable.is_some(),
+                "executable": executable
+                    .as_ref()
+                    .map(|path| Value::String(path.to_string_lossy().into_owned()))
+                    .unwrap_or(Value::Null),
+                "disabled_by_config": disabled_by_config,
+                "unavailable_reason": unavailable_reason,
+            }),
+        );
+    }
+    Value::Object(providers)
+}
+
+fn team_provider_policy(team: &forktty_core::TeamConfig) -> Value {
     json!({
-        "codex": {
-            "program": "codex",
-            "team_worker_launch": true,
-            "safe_resume": true,
-            "cwd_resume_flag": true,
-            "permission_bypass_resume": true,
-            "aliases": ["codex"],
-        },
-        "claude": {
-            "program": "claude",
-            "team_worker_launch": true,
-            "safe_resume": true,
-            "cwd_resume_flag": false,
-            "permission_bypass_resume": true,
-            "aliases": ["claude", "claude_code", "claude-code"],
-        },
-        "opencode": {
-            "program": "opencode",
-            "team_worker_launch": true,
-            "safe_resume": true,
-            "cwd_resume_flag": false,
-            "permission_bypass_resume": false,
-            "aliases": ["opencode", "open_code", "open-code"],
-        },
-        "pi": {
-            "program": "pi",
-            "team_worker_launch": true,
-            "safe_resume": true,
-            "cwd_resume_flag": false,
-            "permission_bypass_resume": false,
-            "aliases": ["pi"],
-        },
-        "antigravity": {
-            "program": "agy",
-            "team_worker_launch": true,
-            "safe_resume": true,
-            "cwd_resume_flag": false,
-            "permission_bypass_resume": false,
-            "aliases": ["antigravity", "agy"],
-        },
+        "default_agent": team.default_agent,
+        "provider_order": team.provider_order,
+        "auto_fallback": team.auto_fallback,
+        "disabled_agents": team.disabled_agents,
     })
 }
 
@@ -1232,11 +1289,16 @@ pub async fn dispatch(
 
     match method {
         "system.ping" => Ok(json!("pong")),
-        "system.capabilities" => Ok(json!({
-            "version": env!("CARGO_PKG_VERSION"),
-            "methods": METHODS,
-            "provider_capabilities": provider_capabilities(),
-        })),
+        "system.capabilities" => {
+            let config = forktty_core::config::load_config().unwrap_or_default();
+            let path = std::env::var_os("PATH");
+            Ok(json!({
+                "version": env!("CARGO_PKG_VERSION"),
+                "methods": METHODS,
+                "provider_capabilities": provider_capabilities(path.as_deref(), &config.team),
+                "team_provider_policy": team_provider_policy(&config.team),
+            }))
+        }
         "system.identify" => system_identify(state, &params),
         "context.snapshot" => context_snapshot(state, &params),
         "feed.approval.respond" => {
@@ -1373,14 +1435,16 @@ pub async fn dispatch(
             validate_optional_worktree_name(&params)?;
             let team_id = required_trimmed_string(&params, "team_id")?.to_string();
             let worker_id = required_trimmed_string(&params, "worker_id")?.to_string();
-            let agent = required_trimmed_string(&params, "agent")?.to_string();
+            let requested_agent = optional_non_blank_string_param(&params, "agent")?;
             let role = optional_non_blank_string_param(&params, "role")?.map(str::to_string);
             let assigned_task_id =
                 optional_non_blank_string_param(&params, "assigned_task_id")?.map(str::to_string);
             let worktree_name =
                 optional_non_blank_string_param(&params, "worktree_name")?.map(str::to_string);
             let extra_args = optional_string_array_param(&params, "args")?.unwrap_or_default();
-            let (program, args) = team_worker_launch_command(&agent, role.as_deref(), extra_args)?;
+            let selection = select_team_worker_provider(requested_agent)?;
+            let (program, args) =
+                team_worker_launch_command(&selection.selected_agent, role.as_deref(), extra_args)?;
             let surface =
                 create_team_worker_surface(state, &team_id, &worker_id, worktree_name.as_deref())?;
             let request =
@@ -1394,7 +1458,7 @@ pub async fn dispatch(
                 team_id,
                 worker_id,
                 role,
-                agent,
+                agent: selection.selected_agent.clone(),
                 surface_id: surface.id.clone(),
                 worktree_name,
                 assigned_task_id,
@@ -1424,6 +1488,7 @@ pub async fn dispatch(
                 "surface": surface,
                 "worker": worker,
                 "argv": argv,
+                "selection": team_worker_provider_selection_value(&selection),
             }))
         }
         "team.worker.health" => {
@@ -5922,23 +5987,191 @@ fn optional_string_array_param(
     }
 }
 
+#[derive(Debug, Clone)]
+struct TeamWorkerProviderSelection {
+    requested_agent: String,
+    selected_agent: String,
+    program: String,
+    executable: Option<PathBuf>,
+    reason: String,
+    considered: Vec<Value>,
+}
+
+fn select_team_worker_provider(
+    requested_agent: Option<&str>,
+) -> Result<TeamWorkerProviderSelection, DispatchError> {
+    let config = forktty_core::config::load_config().unwrap_or_default();
+    let path = std::env::var_os("PATH");
+    select_team_worker_provider_with_path(requested_agent, &config.team, path.as_deref())
+}
+
+fn select_team_worker_provider_with_path(
+    requested_agent: Option<&str>,
+    team: &forktty_core::TeamConfig,
+    path: Option<&OsStr>,
+) -> Result<TeamWorkerProviderSelection, DispatchError> {
+    let requested = requested_agent
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(forktty_core::config::TEAM_AGENT_AUTO);
+    let normalized =
+        forktty_core::config::normalize_team_agent_choice(requested).ok_or_else(|| {
+            DispatchError::InvalidParam(format!("unsupported team worker agent: {requested}"))
+        })?;
+    if normalized != forktty_core::config::TEAM_AGENT_AUTO {
+        return select_explicit_team_worker_provider(&normalized, requested, team, path);
+    }
+    select_auto_team_worker_provider(team, path)
+}
+
+fn select_explicit_team_worker_provider(
+    agent: &str,
+    requested: &str,
+    team: &forktty_core::TeamConfig,
+    path: Option<&OsStr>,
+) -> Result<TeamWorkerProviderSelection, DispatchError> {
+    if team
+        .disabled_agents
+        .iter()
+        .any(|disabled| disabled == agent)
+    {
+        return Err(DispatchError::PreconditionFailed(format!(
+            "Team worker provider {agent} is disabled in settings"
+        )));
+    }
+    let Some(capability) = provider_capability(agent) else {
+        return Err(DispatchError::InvalidParam(format!(
+            "unsupported team worker agent: {requested}"
+        )));
+    };
+    let executable = resolve_child_program(capability.program, path);
+    if executable.is_none() {
+        return Err(DispatchError::PreconditionFailed(format!(
+            "Team worker provider {agent} is not available on PATH"
+        )));
+    }
+    Ok(TeamWorkerProviderSelection {
+        requested_agent: requested.to_string(),
+        selected_agent: agent.to_string(),
+        program: capability.program.to_string(),
+        executable,
+        reason: "explicit_agent".to_string(),
+        considered: vec![provider_considered_row(capability, true, "selected", path)],
+    })
+}
+
+fn select_auto_team_worker_provider(
+    team: &forktty_core::TeamConfig,
+    path: Option<&OsStr>,
+) -> Result<TeamWorkerProviderSelection, DispatchError> {
+    let candidates = team_worker_auto_provider_candidates(team);
+    let mut considered = Vec::new();
+    for (index, agent) in candidates.iter().enumerate() {
+        let Some(capability) = provider_capability(agent) else {
+            continue;
+        };
+        let disabled = team
+            .disabled_agents
+            .iter()
+            .any(|disabled| disabled == agent);
+        let executable = resolve_child_program(capability.program, path);
+        let available = executable.is_some() && !disabled;
+        let reason = if disabled {
+            "disabled_by_config"
+        } else if executable.is_none() {
+            "program_not_found"
+        } else {
+            "selected"
+        };
+        considered.push(provider_considered_row(capability, available, reason, path));
+        if available {
+            let selection_reason =
+                if index == 0 && team.default_agent != forktty_core::config::TEAM_AGENT_AUTO {
+                    "configured_default"
+                } else {
+                    "provider_order"
+                };
+            return Ok(TeamWorkerProviderSelection {
+                requested_agent: forktty_core::config::TEAM_AGENT_AUTO.to_string(),
+                selected_agent: agent.clone(),
+                program: capability.program.to_string(),
+                executable,
+                reason: selection_reason.to_string(),
+                considered,
+            });
+        }
+    }
+    Err(DispatchError::PreconditionFailed(
+        "No team worker provider is available from the configured provider order".to_string(),
+    ))
+}
+
+fn team_worker_auto_provider_candidates(team: &forktty_core::TeamConfig) -> Vec<String> {
+    let mut candidates = Vec::new();
+    if team.default_agent != forktty_core::config::TEAM_AGENT_AUTO {
+        candidates.push(team.default_agent.clone());
+        if !team.auto_fallback {
+            return candidates;
+        }
+    }
+    for agent in &team.provider_order {
+        if !candidates.iter().any(|candidate| candidate == agent) {
+            candidates.push(agent.clone());
+        }
+    }
+    candidates
+}
+
+fn provider_capability(agent: &str) -> Option<&'static ProviderCapability> {
+    let canonical = forktty_core::config::canonical_team_provider(agent)?;
+    PROVIDER_CAPABILITIES
+        .iter()
+        .find(|capability| capability.agent == canonical)
+}
+
+fn provider_considered_row(
+    capability: &ProviderCapability,
+    available: bool,
+    reason: &str,
+    path: Option<&OsStr>,
+) -> Value {
+    let executable = resolve_child_program(capability.program, path);
+    json!({
+        "agent": capability.agent,
+        "program": capability.program,
+        "available": available,
+        "reason": reason,
+        "executable": executable
+            .map(|path| Value::String(path.to_string_lossy().into_owned()))
+            .unwrap_or(Value::Null),
+    })
+}
+
+fn team_worker_provider_selection_value(selection: &TeamWorkerProviderSelection) -> Value {
+    json!({
+        "requested_agent": selection.requested_agent,
+        "selected_agent": selection.selected_agent,
+        "program": selection.program,
+        "executable": selection.executable
+            .as_ref()
+            .map(|path| Value::String(path.to_string_lossy().into_owned()))
+            .unwrap_or(Value::Null),
+        "reason": selection.reason,
+        "considered": selection.considered,
+    })
+}
+
 fn team_worker_launch_command(
     agent: &str,
     role: Option<&str>,
     extra_args: Vec<String>,
 ) -> Result<(String, Vec<String>), DispatchError> {
-    let program = match agent.trim().to_ascii_lowercase().as_str() {
-        "codex" => "codex",
-        "claude" | "claude_code" | "claude-code" => "claude",
-        "opencode" | "open_code" | "open-code" => "opencode",
-        "antigravity" | "agy" => "agy",
-        "pi" => "pi",
-        _ => {
-            return Err(DispatchError::InvalidParam(format!(
-                "unsupported team worker agent: {agent}"
-            )));
-        }
+    let Some(capability) = provider_capability(agent) else {
+        return Err(DispatchError::InvalidParam(format!(
+            "unsupported team worker agent: {agent}"
+        )));
     };
+    let program = capability.program;
     if extra_args.len() > 64 {
         return Err(DispatchError::InvalidParam(
             "team worker launch args exceed 64 entries".to_string(),
@@ -8893,6 +9126,156 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn capabilities_report_provider_detection_and_team_policy() {
+        let dir = tempfile::tempdir().unwrap();
+        let codex = write_fake_program(dir.path(), "codex");
+        let pi = write_fake_program(dir.path(), "pi");
+        let _path = EnvGuard::set("PATH", dir.path().to_str().unwrap());
+        let config_home = tempfile::tempdir().unwrap();
+        let _config_home = EnvGuard::set("XDG_CONFIG_HOME", config_home.path().to_str().unwrap());
+        let (state, _backend) = test_state();
+
+        let result = dispatch(&state, "system.capabilities", json!({}))
+            .await
+            .unwrap();
+
+        let policy = &result["team_provider_policy"];
+        assert_eq!(policy["default_agent"], "auto");
+        assert_eq!(
+            policy["provider_order"],
+            json!(["codex", "claude", "pi", "opencode", "antigravity"])
+        );
+        assert_eq!(policy["auto_fallback"], true);
+        assert_eq!(policy["disabled_agents"], json!([]));
+
+        let providers = &result["provider_capabilities"];
+        assert_eq!(providers["codex"]["available_on_path"], true);
+        assert_eq!(
+            providers["codex"]["executable"].as_str().unwrap(),
+            codex.to_string_lossy()
+        );
+        assert_eq!(providers["pi"]["available_on_path"], true);
+        assert_eq!(
+            providers["pi"]["executable"].as_str().unwrap(),
+            pi.to_string_lossy()
+        );
+        assert_eq!(providers["claude"]["available_on_path"], false);
+        assert_eq!(
+            providers["claude"]["unavailable_reason"],
+            "program_not_found"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn team_worker_launch_auto_selects_first_available_configured_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let pi = write_fake_program(dir.path(), "pi");
+        let _path = EnvGuard::set("PATH", dir.path().to_str().unwrap());
+        let config_home = tempfile::tempdir().unwrap();
+        let forktty_config_dir = config_home.path().join("forktty");
+        fs::create_dir_all(&forktty_config_dir).unwrap();
+        fs::write(
+            forktty_config_dir.join("config.toml"),
+            r#"
+            [general]
+            shell = "/bin/sh"
+
+            [team]
+            default_agent = "auto"
+            provider_order = ["claude", "pi", "codex"]
+            auto_fallback = true
+            "#,
+        )
+        .unwrap();
+        let _config_home = EnvGuard::set("XDG_CONFIG_HOME", config_home.path().to_str().unwrap());
+        let (mut state, _backend) = test_state();
+        let team_store = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(team_store.path().join("team-v1.json"));
+        let main = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let main_workspace_id = main[0]["id"].as_str().unwrap().to_string();
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "workspace_id": main_workspace_id,
+                "name": "Launch",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let launched = dispatch(
+            &state,
+            "team.worker.launch",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "role": "reviewer",
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(launched["worker"]["agent"], "pi");
+        assert_eq!(launched["argv"][0], "pi");
+        assert_eq!(launched["selection"]["requested_agent"], "auto");
+        assert_eq!(launched["selection"]["selected_agent"], "pi");
+        assert_eq!(
+            launched["selection"]["executable"].as_str().unwrap(),
+            pi.to_string_lossy()
+        );
+        let first_considered = &launched["selection"]["considered"][0];
+        assert_eq!(first_considered["agent"], "claude");
+        assert_eq!(first_considered["program"], "claude");
+        assert_eq!(first_considered["available"], false);
+        assert_eq!(first_considered["reason"], "program_not_found");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn team_worker_launch_auto_rejects_when_no_provider_is_available() {
+        let dir = tempfile::tempdir().unwrap();
+        let _path = EnvGuard::set("PATH", dir.path().to_str().unwrap());
+        let config_home = tempfile::tempdir().unwrap();
+        let _config_home = EnvGuard::set("XDG_CONFIG_HOME", config_home.path().to_str().unwrap());
+        let (mut state, _backend) = test_state();
+        let team_store = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(team_store.path().join("team-v1.json"));
+        let main = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let main_workspace_id = main[0]["id"].as_str().unwrap().to_string();
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "workspace_id": main_workspace_id,
+                "name": "Launch",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let err = dispatch(
+            &state,
+            "team.worker.launch",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+            }),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.code(), "precondition_failed");
+        assert!(err
+            .to_string()
+            .contains("No team worker provider is available"));
+    }
+
     #[test]
     fn team_worker_launch_accepts_documented_provider_aliases() {
         for (alias, expected_program) in [
@@ -9092,17 +9475,21 @@ mod tests {
         }
     }
 
-    fn write_fake_codex(dir: &Path) -> PathBuf {
+    fn write_fake_program(dir: &Path, name: &str) -> PathBuf {
         use std::io::Write as _;
         use std::os::unix::fs::PermissionsExt as _;
 
-        let codex = dir.join("codex");
+        let program = dir.join(name);
         {
-            let mut file = fs::File::create(&codex).unwrap();
+            let mut file = fs::File::create(&program).unwrap();
             writeln!(file, "#!/bin/sh").unwrap();
         }
-        fs::set_permissions(&codex, fs::Permissions::from_mode(0o755)).unwrap();
-        codex
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+        program
+    }
+
+    fn write_fake_codex(dir: &Path) -> PathBuf {
+        write_fake_program(dir, "codex")
     }
 
     fn test_state() -> (SocketAppState, Arc<HeadlessTerminalBackend>) {
@@ -11170,7 +11557,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn dispatches_team_orchestration_runtime_methods() {
+        let bin_dir = tempfile::tempdir().unwrap();
+        let _codex = write_fake_codex(bin_dir.path());
+        let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
         let (mut state, backend) = test_state();
         let dir = tempfile::tempdir().unwrap();
         state.team_store_path = Some(dir.path().join("team-v1.json"));
@@ -11408,7 +11799,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn team_worker_shutdown_can_close_launch_owned_worker_surface() {
+        let bin_dir = tempfile::tempdir().unwrap();
+        let _codex = write_fake_codex(bin_dir.path());
+        let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
         let (mut state, backend) = test_state();
         let dir = tempfile::tempdir().unwrap();
         state.team_store_path = Some(dir.path().join("team-v1.json"));
@@ -11521,7 +11916,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn team_worker_shutdown_rejects_close_after_manual_surface_upsert() {
+        let bin_dir = tempfile::tempdir().unwrap();
+        let _codex = write_fake_codex(bin_dir.path());
+        let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
         let (mut state, backend) = test_state();
         let dir = tempfile::tempdir().unwrap();
         state.team_store_path = Some(dir.path().join("team-v1.json"));
@@ -11838,7 +12237,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn team_finish_can_close_launch_owned_workers() {
+        let bin_dir = tempfile::tempdir().unwrap();
+        let _codex = write_fake_codex(bin_dir.path());
+        let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
         let (mut state, backend) = test_state();
         let dir = tempfile::tempdir().unwrap();
         state.team_store_path = Some(dir.path().join("team-v1.json"));
@@ -11948,7 +12351,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn team_finish_marks_missing_worker_surface_closed_without_force() {
+        let bin_dir = tempfile::tempdir().unwrap();
+        let _codex = write_fake_codex(bin_dir.path());
+        let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
         let (mut state, backend) = test_state();
         let dir = tempfile::tempdir().unwrap();
         state.team_store_path = Some(dir.path().join("team-v1.json"));
@@ -16539,7 +16946,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn team_worker_launch_uses_requested_worktree_workspace() {
+        let bin_dir = tempfile::tempdir().unwrap();
+        let _codex = write_fake_program(bin_dir.path(), "codex");
+        let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
         let (mut state, backend) = test_state();
         let team_store = tempfile::tempdir().unwrap();
         let worktree_dir = tempfile::tempdir().unwrap();

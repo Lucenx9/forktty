@@ -47,6 +47,11 @@ All notable changes to ForkTTY are documented here.
   `forktty workflow-loop-set`: agents can record a loop recipe, stage,
   iteration budget, stop reason, and verification gate counts without granting
   ForkTTY any background scheduler or automatic command execution.
+- Team worker launch now supports configurable provider auto-selection:
+  Settings > Agents exposes the default provider, fallback, provider order,
+  disabled providers, and PATH detection for supported harnesses; socket/MCP/CLI
+  launches can omit `agent` or pass `auto`, and successful launches report the
+  selected provider and considered candidates.
 
 ### Changed
 - `AGENTS.md` now reflects the current MCP/team/workflow/skill/AppImage

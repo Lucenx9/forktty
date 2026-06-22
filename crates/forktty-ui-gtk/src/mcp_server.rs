@@ -782,8 +782,8 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             let mut params = map_from_pairs([
                 ("team_id", required_non_blank(args, "team_id")?),
                 ("worker_id", required_non_blank(args, "worker_id")?),
-                ("agent", required_non_blank(args, "agent")?),
             ]);
+            insert_optional_non_blank_param(args, &mut params, "agent")?;
             insert_optional_non_blank_param(args, &mut params, "role")?;
             insert_optional_non_blank_param(args, &mut params, "assigned_task_id")?;
             insert_optional_non_blank_param(args, &mut params, "worktree_name")?;
@@ -2067,13 +2067,13 @@ fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "team_worker_launch",
             annotations: mutating_annotations(false, false),
-            description: "Launch a provider worker in a new ForkTTY tab and attach it to a team worker record. Supported agents are codex, claude, pi, opencode, and antigravity. Claude launches add documented permission-mode defaults unless args already include Claude permission controls; Pi review-role launches add read-only tool defaults unless args already include Pi tool controls.",
+            description: "Launch a provider worker in a new ForkTTY tab and attach it to a team worker record. If agent is omitted or auto, ForkTTY selects the first configured available provider from Settings. Supported agents are codex, claude, pi, opencode, and antigravity. Claude launches add documented permission-mode defaults unless args already include Claude permission controls; Pi review-role launches add read-only tool defaults unless args already include Pi tool controls.",
             input_schema: object_schema(
-                &["team_id", "worker_id", "agent"],
+                &["team_id", "worker_id"],
                 json!({
                     "team_id": string_prop("Team id."),
                     "worker_id": string_prop("Worker id."),
-                    "agent": string_prop("Provider to launch: codex, claude, pi, opencode, or antigravity."),
+                    "agent": string_prop("Provider to launch: auto, codex, claude, pi, opencode, or antigravity. Defaults to auto."),
                     "role": string_prop("Worker role."),
                     "assigned_task_id": string_prop("Task id currently assigned to this worker."),
                     "worktree_name": string_prop("Worktree name assigned to this worker."),
