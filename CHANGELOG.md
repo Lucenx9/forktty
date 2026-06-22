@@ -91,6 +91,10 @@ All notable changes to ForkTTY are documented here.
 - CLI routing now recognizes `forktty workflow-loop-set` and its socket-style
   aliases, so the documented wrapper reaches `workflow.loop.set` instead of
   being rejected as an unknown argument.
+- Worktree socket/CLI/MCP operations now accept an explicit `cwd` that matches
+  an open surface's effective project cwd, so agent sessions resumed in a repo
+  still pass the open-workspace boundary even when the visible workspace root is
+  the user's home directory.
 - `team.summary` now flags active teams that have no active workers, open tasks,
   or pending messages as `active_without_open_work`, so stale orchestration
   records are visible before an agent mistakes them for still-running work.

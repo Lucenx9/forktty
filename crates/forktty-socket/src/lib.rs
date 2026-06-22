@@ -5661,7 +5661,7 @@ async fn resolve_open_repo_cwd_param(
     // Copy the open-workspace roots out under the lock, then run the git2
     // discovery off the runtime: it walks the filesystem once per open
     // workspace plus once for the candidate.
-    let working_dirs = open_workspace_working_dirs(state)?;
+    let working_dirs = open_workspace_git_boundary_dirs(state)?;
     let candidate = cwd.clone();
     match tokio::task::spawn_blocking(move || {
         validate_cwd_against_working_dirs(&working_dirs, &candidate)
@@ -5674,16 +5674,22 @@ async fn resolve_open_repo_cwd_param(
     Ok(cwd.to_string_lossy().to_string())
 }
 
-fn open_workspace_working_dirs(state: &SocketAppState) -> Result<Vec<PathBuf>, DispatchError> {
+fn open_workspace_git_boundary_dirs(state: &SocketAppState) -> Result<Vec<PathBuf>, DispatchError> {
     let model = state
         .model
         .lock()
         .map_err(|_| "Lock poisoned".to_string())?;
-    Ok(model
-        .list_workspaces()
-        .into_iter()
-        .map(|workspace| workspace.working_dir)
-        .collect())
+    let mut dirs = Vec::new();
+    for workspace in model.list_workspaces() {
+        dirs.push(workspace.working_dir.clone());
+        dirs.extend(
+            model
+                .list_surfaces(Some(&workspace.id))
+                .into_iter()
+                .map(|surface| surface_effective_project_cwd(&surface)),
+        );
+    }
+    Ok(dirs)
 }
 
 fn resolve_required_existing_dir_param(
@@ -17352,6 +17358,33 @@ mod tests {
             backend.sent_text(&surface_id),
             Err(forktty_terminal::TerminalError::NotFound(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn worktree_socket_allows_effective_project_cwd_from_open_surface() {
+        let repo_dir = make_temp_repo();
+        let (state, _) = test_state();
+        {
+            let mut model = state.model.lock().unwrap();
+            let surface_id = model.active_workspace().unwrap().focused_surface_id.clone();
+            assert!(model.set_surface_agent_session(
+                &surface_id,
+                AgentKind::Codex,
+                "codex-session-1",
+            ));
+            assert!(model
+                .set_surface_agent_session_resume_cwd(&surface_id, repo_dir.path().to_path_buf(),));
+        }
+
+        let listed = dispatch(&state, "worktree.list", json!({"cwd": repo_dir.path()}))
+            .await
+            .unwrap();
+        assert_eq!(listed.as_array().unwrap().len(), 0);
+
+        let status = dispatch(&state, "worktree.status", json!({"path": repo_dir.path()}))
+            .await
+            .unwrap();
+        assert_eq!(status["status"], "clean");
     }
 
     #[tokio::test]

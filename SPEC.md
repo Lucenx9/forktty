@@ -316,6 +316,7 @@ Embedded Ghostty panes currently service visible and tail captures from Ghostty'
 Hook-reported permission-mode status entries update the persisted agent session only when they target an already-known provider/session/surface. The exact mode `bypassPermissions` is preserved for supported Codex and Claude Code resumes by adding the providers' documented argv flags (`codex --dangerously-bypass-approvals-and-sandbox resume ...` and `claude --dangerously-skip-permissions --resume ...`) to `agent.health`, `agent.resume`, and restore-time auto-resume. Other permission mode strings remain metadata and are never copied into argv.
 
 Worktree and branch names are trimmed and rejected if empty, too long, flag-like, control-character bearing, backslash-containing, or path-traversing.
+Worktree socket, MCP, and CLI operations still require an explicit repository `cwd`/`path` and validate it against repositories already represented in ForkTTY; that boundary includes each open workspace directory and each open surface's effective project cwd, so an agent resumed inside a repository can operate on that repository even when the workspace was originally opened from a broader parent directory.
 
 Error responses include a structured `code` field so clients can branch on outcome instead of parsing message text:
 
