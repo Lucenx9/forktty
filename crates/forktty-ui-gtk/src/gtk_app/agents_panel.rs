@@ -324,6 +324,7 @@ impl AgentPanelUi {
         });
         gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
+            .overlay_scrolling(false)
             .vexpand(true)
             .child(&list)
             .build()

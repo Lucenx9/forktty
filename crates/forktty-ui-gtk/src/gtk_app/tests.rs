@@ -1596,6 +1596,13 @@ fn agent_reply_placeholder_uses_ascii_ellipsis() {
 }
 
 #[test]
+fn agent_hud_scrollbar_does_not_overlay_row_actions() {
+    let source = include_str!("agents_panel.rs");
+
+    assert!(source.contains(".overlay_scrolling(false)"));
+}
+
+#[test]
 fn embedded_agent_hud_tail_generation_advances_without_content_generation() {
     assert_eq!(embedded_agent_tail_generation(None), 0);
     let known = (41, Some("old tail".to_string()));
@@ -2729,6 +2736,82 @@ fn worktree_open_uses_captured_base_cwd_after_active_workspace_changes() {
 
     assert!(repo_one.path().join(".worktrees").exists());
     assert!(!repo_two.path().join(".worktrees").exists());
+}
+
+#[test]
+fn worktree_dialog_prefers_focused_surface_cwd_over_workspace_launch_dir() {
+    let launch_dir = tempfile::tempdir().unwrap();
+    let repo_dir = make_temp_repo();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", launch_dir.path());
+        assert!(model.set_surface_cwd(&workspace.focused_surface_id, repo_dir.path().to_path_buf()));
+    }
+
+    assert_eq!(
+        active_workspace_cwd_string(&state).unwrap(),
+        repo_dir.path().to_string_lossy()
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn worktree_dialog_prefers_live_child_pid_cwd_over_recorded_surface_cwd() {
+    let launch_dir = tempfile::tempdir().unwrap();
+    let recorded_dir = tempfile::tempdir().unwrap();
+    let repo_dir = make_temp_repo();
+    let (tx, _rx) = mpsc::channel();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(GtkTerminalBackend::new(tx));
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (workspace_id, surface_id) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", launch_dir.path());
+        assert!(model.set_surface_cwd(
+            &workspace.focused_surface_id,
+            recorded_dir.path().to_path_buf()
+        ));
+        (workspace.id, workspace.focused_surface_id)
+    };
+    terminal
+        .spawn(SpawnRequest {
+            surface_id: surface_id.clone(),
+            workspace_id,
+            shell: "/bin/sh".to_string(),
+            args: Vec::new(),
+            cwd: recorded_dir.path().to_path_buf(),
+            socket_path: PathBuf::from("/tmp/forktty.sock"),
+            extra_env: Vec::new(),
+        })
+        .unwrap();
+    let mut child = Command::new("/bin/sh")
+        .arg("-c")
+        .arg("sleep 60")
+        .current_dir(repo_dir.path())
+        .spawn()
+        .unwrap();
+    terminal.mark_surface_pid(&surface_id, child.id()).unwrap();
+
+    let cwd = active_workspace_cwd_string(&state).unwrap();
+
+    let _ = child.kill();
+    let _ = child.wait();
+    assert_eq!(cwd, repo_dir.path().to_string_lossy());
 }
 
 #[test]

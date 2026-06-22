@@ -109,6 +109,11 @@ All notable changes to ForkTTY are documented here.
   pill, truncated agent/notification text keeps full tooltips, pane status text
   has stronger contrast, and the Agents settings entry uses a more fitting
   icon.
+- Agent HUD scrollbars now reserve their own gutter instead of overlaying row
+  action buttons.
+- The GTK worktree dialog now uses the focused pane's live or recorded cwd when
+  available, so worktree actions no longer fall back to the workspace launch
+  directory when ForkTTY knows the pane is in a project checkout.
 - Socket `context.snapshot` and MCP `context_snapshot` now cap terminal-tail
   snapshots by aggregate surface count and text bytes, preventing large
   workspaces from multiplying the per-surface tail limit into an oversized

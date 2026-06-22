@@ -42,6 +42,38 @@ pub(super) fn worktree_dialog_choices_from_list(
         .collect()
 }
 
+fn active_worktree_base(state: &SocketAppState) -> Option<(String, PathBuf)> {
+    let (name, focused_surface_id, surface_cwd, workspace_cwd) =
+        state.model.lock().ok().and_then(|model| {
+            let workspace = model.active_workspace()?;
+            let surface_cwd = model
+                .surface(&workspace.focused_surface_id)
+                .map(|surface| surface.cwd.clone());
+            Some((
+                workspace.name,
+                workspace.focused_surface_id,
+                surface_cwd,
+                workspace.working_dir,
+            ))
+        })?;
+    let cwd = live_surface_cwd(state, &focused_surface_id)
+        .or_else(|| surface_cwd.filter(|cwd| cwd.is_dir()))
+        .unwrap_or(workspace_cwd);
+    Some((name, cwd))
+}
+
+fn live_surface_cwd(state: &SocketAppState, surface_id: &str) -> Option<PathBuf> {
+    let pid = state
+        .terminal
+        .surfaces()
+        .ok()?
+        .into_iter()
+        .find(|surface| surface.surface_id == surface_id)?
+        .pid?;
+    let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
+    cwd.is_dir().then_some(cwd)
+}
+
 pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState) {
     let dialog = gtk::Window::builder()
         .title("Worktree")
@@ -68,11 +100,7 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     header.append(&title);
     header.append(&subtitle);
 
-    let base_workspace = state.model.lock().ok().and_then(|model| {
-        model
-            .active_workspace()
-            .map(|workspace| (workspace.name, workspace.working_dir))
-    });
+    let base_workspace = active_worktree_base(state);
     let base_cwd = base_workspace.as_ref().map(|(_, cwd)| cwd.clone());
     let context_text = base_workspace
         .as_ref()
@@ -822,11 +850,7 @@ pub(super) fn no_active_workspace_message() -> String {
 }
 
 pub(super) fn active_workspace_cwd(state: &SocketAppState) -> Option<PathBuf> {
-    state.model.lock().ok().and_then(|model| {
-        model
-            .active_workspace()
-            .map(|workspace| workspace.working_dir)
-    })
+    active_worktree_base(state).map(|(_, cwd)| cwd)
 }
 
 /// Run `removal.finish` off the main thread; `git worktree remove` deletes
