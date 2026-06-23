@@ -1958,6 +1958,36 @@ fn format_capabilities_lines(result: &Value) -> Vec<String> {
             }
         }
     }
+    if let Some(pty) = result.get("pty_persistence") {
+        let config_enabled = pty
+            .get("config_enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let active = pty.get("active").and_then(Value::as_bool).unwrap_or(false);
+        let available = pty
+            .get("available")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let broker = safe_string_field(pty, "broker").unwrap_or_else(|| "dtach".to_string());
+        let status = if active {
+            "active"
+        } else if config_enabled && !available {
+            "configured-missing"
+        } else if available {
+            "available"
+        } else {
+            "off"
+        };
+        let detail = if active || available {
+            safe_string_field(pty, "broker_executable").unwrap_or(broker)
+        } else if config_enabled {
+            safe_string_field(pty, "unavailable_reason")
+                .unwrap_or_else(|| "broker_not_found".to_string())
+        } else {
+            broker
+        };
+        lines.push(format!("pty persistence {status} {detail}"));
+    }
     lines
 }
 
@@ -15546,6 +15576,15 @@ mod tests {
                     "executable": "/opt/opencode/bin/opencode",
                     "disabled_by_config": false
                 }
+            },
+            "pty_persistence": {
+                "config_enabled": true,
+                "active": false,
+                "available": false,
+                "broker": null,
+                "broker_executable": null,
+                "scope": "plain_terminal_surfaces",
+                "unavailable_reason": "broker_not_found"
             }
         }));
 
@@ -15559,6 +15598,7 @@ mod tests {
                 "provider claude disabled disabled by team.disabled_agents",
                 "provider pi missing pi not found on PATH",
                 "provider opencode configured /opt/opencode/bin/opencode",
+                "pty persistence configured-missing broker_not_found",
             ]
         );
     }

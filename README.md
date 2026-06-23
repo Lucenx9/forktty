@@ -436,7 +436,10 @@ ForkTTY has safe resume support, and whether the provider exposes a dedicated
 cwd resume flag. It also reports `available_on_path`, the resolved executable
 path when present, configured command overrides for harnesses installed outside
 the ForkTTY process `PATH`, disabled/missing reasons, and the active
-`team_provider_policy` used when team launches omit `--agent`. Providers
+`team_provider_policy` used when team launches omit `--agent`. It also includes
+`pty_persistence`, a read-only diagnostic block showing whether
+`general.persist_terminal_processes` is configured and whether a supported
+broker such as `dtach` is currently available. Providers
 without a cwd flag, such as Claude Code, can still resume in ForkTTY's recorded
 process cwd when `resume_cwd` is available. Pi resume uses the documented
 `pi --session <id>` flow. `forktty identify` is the smallest CLI read for
@@ -603,6 +606,7 @@ shell = "/bin/bash"
 worktree_layout = "nested" # "nested", "sibling", or "outer-nested"
 enable_pr_lookup = false
 notification_command = ""
+persist_terminal_processes = false
 
 [appearance]
 persistent_scrollback_lines = 0
@@ -638,7 +642,7 @@ configured `provider_commands` override; use an explicit provider to override
 the policy. Settings > Agents shows the same default, fallback, provider order,
 disabled providers, direct command overrides, and harness detection.
 
-`persistent_scrollback_lines` is off by default; when set above `0`, ForkTTY stores a bounded plain-text tail per surface in `session-v2.json` and restores it before the fresh shell starts. Live embedded panes follow Ghostty's `scrollback-limit` budget (10 MB by default) and `scrollbar = system|never` preference, so mouse-wheel scrollback and the vertical scrollbar come from Ghostty config while legacy ForkTTY `scrollback_lines` is treated as a compatibility key and omitted from new saves. Terminal font, colors, cursor/faint opacity, bell behavior, mouse scroll multiplier, cell size adjustments, and inactive split dimming come from Ghostty's config (`~/.config/ghostty/config.ghostty` or the legacy `~/.config/ghostty/config`) when present, including `config-file`, `theme`, named colors, 16-color palette entries, `cursor-opacity`, `faint-opacity`, `bell-features`, `mouse-scroll-multiplier`, `adjust-cell-width`, `adjust-cell-height`, `unfocused-split-opacity`, and `unfocused-split-fill`; no system Ghostty install is required. Legacy ForkTTY font/theme/scrollback/bell/renderer keys are kept only for config compatibility and omitted from new saves. Terminal panes require the embedded Ghostty GTK widget; if `ghostty-gtk-embed.so` is missing or fails to load, panes report a spawn failure rather than opening with the old renderer.
+`persistent_scrollback_lines` is off by default; when set above `0`, ForkTTY stores a bounded plain-text tail per surface in `session-v2.json` and restores it before the fresh shell starts. `persist_terminal_processes` is also off by default and can be toggled from Settings > Worktrees; when set to `true` and `dtach` is available on an absolute `PATH` entry, plain terminal panes run under a detach/reattach broker so generic shells, dev servers, REPLs, editors, and long-running commands can survive a GTK UI restart and re-attach on relaunch. Explicit pane close/restart removes the per-surface broker socket first, so a later reused surface id starts fresh instead of attaching to stale detached state. Agent panes continue to use provider resume, and SSH/browser panes are not wrapped. If `dtach` is missing, ForkTTY falls back to normal ephemeral terminal spawning. Live embedded panes follow Ghostty's `scrollback-limit` budget (10 MB by default) and `scrollbar = system|never` preference, so mouse-wheel scrollback and the vertical scrollbar come from Ghostty config while legacy ForkTTY `scrollback_lines` is treated as a compatibility key and omitted from new saves. Terminal font, colors, cursor/faint opacity, bell behavior, mouse scroll multiplier, cell size adjustments, and inactive split dimming come from Ghostty's config (`~/.config/ghostty/config.ghostty` or the legacy `~/.config/ghostty/config`) when present, including `config-file`, `theme`, named colors, 16-color palette entries, `cursor-opacity`, `faint-opacity`, `bell-features`, `mouse-scroll-multiplier`, `adjust-cell-width`, `adjust-cell-height`, `unfocused-split-opacity`, and `unfocused-split-fill`; no system Ghostty install is required. Legacy ForkTTY font/theme/scrollback/bell/renderer keys are kept only for config compatibility and omitted from new saves. Terminal panes require the embedded Ghostty GTK widget; if `ghostty-gtk-embed.so` is missing or fails to load, panes report a spawn failure rather than opening with the old renderer.
 
 `updates.auto_check = true` checks GitHub Releases no more than once every 24 hours. The stamp is written on both success and failure so offline machines are not probed on every launch.
 
@@ -654,7 +658,7 @@ GTK/Ghostty sessions are stored as:
 ~/.local/state/forktty/session-v2.json
 ```
 
-ForkTTY imports legacy `session.json` when present, but saves the native runtime as v2. Restore does not preserve running PTY processes; new Ghostty-backed terminals are spawned for restored panes. Scrollback restore is limited to the opt-in plain-text tail controlled by `persistent_scrollback_lines`. Corrupt or structurally invalid session files are quarantined.
+ForkTTY imports legacy `session.json` when present, but saves the native runtime as v2. By default restore re-spawns fresh Ghostty-backed terminals; scrollback restore is limited to the opt-in plain-text tail controlled by `persistent_scrollback_lines`. With `general.persist_terminal_processes = true` and `dtach` available, plain terminal process trees survive through the broker and restored panes re-attach by persisted surface id. Corrupt or structurally invalid session files are quarantined.
 
 ## Security Summary
 

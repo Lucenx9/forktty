@@ -82,8 +82,11 @@ pub(super) fn show_settings_dialog_page(
 
     let interface_nav =
         settings_nav_button("forktty-theme-symbolic", "Interface", "Window and sidebar");
-    let worktrees_nav =
-        settings_nav_button("forktty-grid-symbolic", "Worktrees", "Workspaces and PRs");
+    let worktrees_nav = settings_nav_button(
+        "forktty-grid-symbolic",
+        "Worktrees",
+        "Workspaces and sessions",
+    );
     let agents_nav =
         settings_nav_button("forktty-terminal-symbolic", "Agents", "Hooks, MCP, skills");
     let alerts_nav = settings_nav_button(
@@ -145,7 +148,8 @@ pub(super) fn show_settings_dialog_page(
     interface_content.append(&sidebar_section);
     stack.add_named(&interface_page, Some("interface"));
 
-    let (worktrees_page, worktrees_content) = settings_page("Worktrees", "Workspace creation.");
+    let (worktrees_page, worktrees_content) =
+        settings_page("Worktrees", "Workspaces and terminal sessions.");
 
     let (worktree_section, worktree_list) = settings_section("Git Worktrees", "");
     let worktree_layout = settings_combo_row(
@@ -163,6 +167,22 @@ pub(super) fn show_settings_dialog_page(
     pr_lookup.add_css_class("settings-row");
     worktree_list.append(&pr_lookup);
     worktrees_content.append(&worktree_section);
+
+    let (terminal_session_section, terminal_session_list) =
+        settings_section("Terminal Sessions", "");
+    let pty_persistence_subtitle = if forktty_core::pty_persistence::detect().is_some() {
+        "Plain terminals use dtach to survive ForkTTY UI restarts; pane close/restart starts fresh."
+    } else {
+        "Requires dtach on PATH; without it, terminals keep the normal fresh-spawn behavior."
+    };
+    let persist_terminal_processes = adw::SwitchRow::builder()
+        .title("Persist terminal processes")
+        .subtitle(pty_persistence_subtitle)
+        .active(loaded.general.persist_terminal_processes)
+        .build();
+    persist_terminal_processes.add_css_class("settings-row");
+    terminal_session_list.append(&persist_terminal_processes);
+    worktrees_content.append(&terminal_session_section);
     stack.add_named(&worktrees_page, Some("worktrees"));
 
     let (agents_page, agents_content) = settings_page("Agents", "Agent integrations.");
@@ -504,6 +524,24 @@ pub(super) fn show_settings_dialog_page(
             );
         }
     });
+    persist_terminal_processes.connect_notify_local(Some("active"), {
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |row: &adw::SwitchRow, _| {
+            if suppress_updates.get() {
+                return;
+            }
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.general.persist_terminal_processes = row.is_active(),
+                "PTY process persistence updated.",
+            );
+        }
+    });
     team_default_agent.connect_selected_notify({
         let dialog = dialog.clone();
         let current = current.clone();
@@ -761,6 +799,7 @@ pub(super) fn show_settings_dialog_page(
             let sidebar_visible_for_reset = sidebar_visible.clone();
             let worktree_layout_for_reset = worktree_layout.clone();
             let pr_lookup_for_reset = pr_lookup.clone();
+            let persist_terminal_processes_for_reset = persist_terminal_processes.clone();
             let team_default_agent_for_reset = team_default_agent.clone();
             let team_auto_fallback_for_reset = team_auto_fallback.clone();
             let team_provider_order_for_reset = team_provider_order.clone();
@@ -806,6 +845,8 @@ pub(super) fn show_settings_dialog_page(
                         &defaults.general.worktree_layout,
                     ));
                     pr_lookup_for_reset.set_active(defaults.general.enable_pr_lookup);
+                    persist_terminal_processes_for_reset
+                        .set_active(defaults.general.persist_terminal_processes);
                     team_default_agent_for_reset.set_selected(settings_choice_index(
                         TEAM_DEFAULT_AGENT_ITEMS,
                         &defaults.team.default_agent,

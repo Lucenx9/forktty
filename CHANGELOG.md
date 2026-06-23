@@ -5,6 +5,22 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- Opt-in real PTY/process persistence for generic terminal panes via a new
+  `general.persist_terminal_processes` config flag (default off). When enabled
+  and a detach/reattach broker (`dtach`) is on `PATH`, plain interactive
+  terminals run under the broker so their process tree (shell, dev servers,
+  REPLs, editors, long-running commands) survives a GTK UI restart; a relaunch
+  re-attaches the same surface to its still-running processes, keyed by the
+  persisted surface id. Agent panes (provider resume), SSH, and browser surfaces
+  are unaffected, and behavior is unchanged when the flag is off or no broker is
+  installed. The broker socket lives under the owner-only per-user runtime dir
+  and ForkTTY never wraps a `sh -c` command. `system.capabilities` and
+  `forktty capabilities` report whether the flag is configured and whether a
+  broker is currently available. Explicit ForkTTY pane close/restart removes
+  the per-surface broker socket so a later reused surface id starts fresh
+  instead of re-attaching to a stale detached session. Settings > Worktrees now
+  exposes a "Persist terminal processes" toggle and shows whether `dtach` is
+  available from the running ForkTTY environment.
 - CLI automation now includes high-level `forktty team ask/watch/finish/review`
   wrappers, `forktty status explain/watch`, a `context-snapshot` alias, grouped
   help/examples, and generated bash/zsh/fish completions.

@@ -92,13 +92,49 @@ Native session file:
 ~/.local/share/forktty/session-v2.json
 ```
 
-The native session includes workspace order, active workspace, pane tree, focused surface, cwd, branch, worktree metadata, and opt-in bounded plain-text scrollback tails when `appearance.persistent_scrollback_lines` is greater than zero. It excludes running PTY process handles.
+The native session includes workspace order, active workspace, pane tree, focused surface, cwd, branch, worktree metadata, and opt-in bounded plain-text scrollback tails when `appearance.persistent_scrollback_lines` is greater than zero. It does not serialize running PTY process handles; the session file records only durable identifiers (surface ids, agent resume metadata). Process survival across a UI restart is a separate, opt-in mechanism (`general.persist_terminal_processes`) described under [PTY process persistence](#pty-process-persistence), keyed by the persisted surface id rather than by any serialized handle.
 
 Browser panes persist their surface URL and profile ID in the same session
 model. WebKit processes, in-memory page state, and terminal PTY state are
 not restored.
 
 ForkTTY can import the legacy `session.json` format but saves native sessions as v2. Session load validates file type, size, version, pane-tree depth/shape, and focused leaf index. Invalid files are quarantined instead of crashing startup.
+
+### PTY process persistence
+
+Embedded Ghostty surfaces own their child PTY for the lifetime of the GTK
+process; the embedding ABI exposes no way to detach a running PTY from one
+surface and re-attach it to a surface created after a UI restart. So by default
+a UI restart re-spawns fresh shells and replays saved scrollback, but the
+previous processes are gone.
+
+When `general.persist_terminal_processes` is enabled (default off) and a
+detach/reattach broker (`dtach`) is found on an absolute `PATH` entry, ForkTTY
+launches plain interactive terminal surfaces under the broker in
+attach-or-create mode (`dtach -A <socket> -E -z <program> <args>`). The broker
+keeps the real program and its descendants under its own PTY in a detached
+daemon; the embedded surface runs only the broker client, which dies with the
+GTK process. On relaunch ForkTTY spawns a fresh client that re-attaches to the
+surviving daemon, so the shell, dev servers, REPLs, editors, and long-running
+commands continue. The reattach is keyed by a per-surface socket path derived
+from the persisted surface id, so no extra session state is serialized; if no
+daemon survived (the program exited), the broker creates a fresh session.
+
+Scope and boundaries: persistence applies only to plain `Terminal` surfaces.
+Agent panes persist through provider resume, SSH surfaces are already remote,
+and browser surfaces are not terminals, so none of them are wrapped. The
+behavior is unchanged when the flag is off or no broker is installed. Broker
+sockets live under `$XDG_RUNTIME_DIR/forktty-pty/` with owner-only (`0700`)
+directory permissions, the surface id is validated as a safe filename component
+(no path separators or traversal) before it is used in the socket path, and
+the complete socket path is capped below Linux's Unix-domain `sun_path` limit.
+ForkTTY never wraps a `sh -c` command — the no-`sh -c` argv policy holds across
+the broker boundary. The broker program itself is resolved only from absolute
+`PATH` entries, matching terminal child-program resolution. Explicit surface
+close/restart invalidates the per-surface broker socket before dropping the
+embedded client so a future reused surface id cannot attach to stale detached
+state; UI process exit does not take that cleanup path, preserving the intended
+restart/relaunch reattach behavior.
 
 ## Config
 
@@ -114,6 +150,7 @@ shell = "/bin/bash"
 worktree_layout = "nested"
 enable_pr_lookup = false
 notification_command = ""
+persist_terminal_processes = false
 
 [appearance]
 persistent_scrollback_lines = 0
@@ -134,7 +171,7 @@ auto_check = true
 anonymous_ping = true
 ```
 
-Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Config load validates and normalizes `general.shell` from manual TOML edits, but the Settings dialog does not expose a shell editor. Saved settings validate worktree layout, persistent scrollback bounds (max 1,000 lines), sidebar position, window mode, PR lookup toggle, update auto-check toggle, telemetry anonymous-ping toggle, notification filters, notification command, and team provider selection. The `[team]` config section controls visible team worker launches: `default_agent` is `auto` or one of `codex`, `claude`, `pi`, `opencode`, `antigravity`; `provider_order` is a non-empty deduplicated ordered list of those providers; `auto_fallback` controls whether a configured non-auto default can fall through to the next available provider; `disabled_agents` excludes providers from launch until re-enabled; and `provider_commands` is an optional canonical-provider map of direct command names or absolute executable paths for harnesses installed outside the ForkTTY process `PATH` (for example `{ codex = "/opt/codex/bin/codex" }`). Provider command overrides are single argv programs, not shell snippets or argument strings; launch args still come from the launch request. Provider aliases such as `claude-code`, `open-code`, and `agy` normalize to canonical names on load. Legacy `general.theme_source`, `font_family`, `font_size`, `scrollback_lines`, `terminal_audible_bell`, `terminal_renderer`, `terminal_theme`, and the temporary alpha `embedded_ghostty` switch are accepted on load for compatibility, omitted from new saves, and ignored by the GTK runtime; terminal panes always require the embedded Ghostty GTK renderer. Terminal font, color, bell, `scrollback-limit`, and `scrollbar` preferences come from Ghostty's config when present; no system Ghostty install is required. Embedded panes fall back to Ghostty's bounded default scrollback budget (10,000,000 bytes per surface) when Ghostty config does not set `scrollback-limit`; legacy ForkTTY `scrollback_lines` does not change retained embedded history. The GTK runtime loads `~/.config/ghostty/config.ghostty` and the legacy `~/.config/ghostty/config`, follows `config-file`, resolves `theme` for dark mode, searches Ghostty theme directories, and applies font size/family/style-family/style/synthetic-style entries, font features/variations, foreground/background, cursor, selection, named colors, `cell-foreground`/`cell-background` cursor and selection color references, `cursor-opacity`, DECSCUSR-backed `cursor-style`/`cursor-style-blink` defaults, `selection-clear-on-typing`, `selection-clear-on-copy`, `selection-word-chars`, `clipboard-trim-trailing-spaces`, `clipboard-codepoint-map`, `copy-on-select`, `right-click-action`, `scroll-to-bottom`, `scrollbar`, SGR faint text plus `faint-opacity`, `mouse-reporting`, `mouse-shift-capture`, `mouse-hide-while-typing`, `bell-features`, `bell-audio-path`, `bell-audio-volume`, `mouse-scroll-multiplier`, `adjust-cell-width`, `adjust-cell-height`, `adjust-font-baseline`, underline/strikethrough/overline/cursor metric adjustments, `bold-color`/`bold-is-bright`, short/full hex colors, ANSI palette entries 0-15, `image-storage-limit`, `unfocused-split-opacity`, and `unfocused-split-fill`. `terminal_renderer` is retained on load for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
+Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Config load validates and normalizes `general.shell` from manual TOML edits, but the Settings dialog does not expose a shell editor. Saved settings validate worktree layout, terminal-process persistence, persistent scrollback bounds (max 1,000 lines), sidebar position, window mode, PR lookup toggle, update auto-check toggle, telemetry anonymous-ping toggle, notification filters, notification command, and team provider selection. Settings > Worktrees exposes `general.persist_terminal_processes` as "Persist terminal processes" and reports whether `dtach` is currently detectable on the ForkTTY process `PATH`. The `[team]` config section controls visible team worker launches: `default_agent` is `auto` or one of `codex`, `claude`, `pi`, `opencode`, `antigravity`; `provider_order` is a non-empty deduplicated ordered list of those providers; `auto_fallback` controls whether a configured non-auto default can fall through to the next available provider; `disabled_agents` excludes providers from launch until re-enabled; and `provider_commands` is an optional canonical-provider map of direct command names or absolute executable paths for harnesses installed outside the ForkTTY process `PATH` (for example `{ codex = "/opt/codex/bin/codex" }`). Provider command overrides are single argv programs, not shell snippets or argument strings; launch args still come from the launch request. Provider aliases such as `claude-code`, `open-code`, and `agy` normalize to canonical names on load. Legacy `general.theme_source`, `font_family`, `font_size`, `scrollback_lines`, `terminal_audible_bell`, `terminal_renderer`, `terminal_theme`, and the temporary alpha `embedded_ghostty` switch are accepted on load for compatibility, omitted from new saves, and ignored by the GTK runtime; terminal panes always require the embedded Ghostty GTK renderer. Terminal font, color, bell, `scrollback-limit`, and `scrollbar` preferences come from Ghostty's config when present; no system Ghostty install is required. Embedded panes fall back to Ghostty's bounded default scrollback budget (10,000,000 bytes per surface) when Ghostty config does not set `scrollback-limit`; legacy ForkTTY `scrollback_lines` does not change retained embedded history. The GTK runtime loads `~/.config/ghostty/config.ghostty` and the legacy `~/.config/ghostty/config`, follows `config-file`, resolves `theme` for dark mode, searches Ghostty theme directories, and applies font size/family/style-family/style/synthetic-style entries, font features/variations, foreground/background, cursor, selection, named colors, `cell-foreground`/`cell-background` cursor and selection color references, `cursor-opacity`, DECSCUSR-backed `cursor-style`/`cursor-style-blink` defaults, `selection-clear-on-typing`, `selection-clear-on-copy`, `selection-word-chars`, `clipboard-trim-trailing-spaces`, `clipboard-codepoint-map`, `copy-on-select`, `right-click-action`, `scroll-to-bottom`, `scrollbar`, SGR faint text plus `faint-opacity`, `mouse-reporting`, `mouse-shift-capture`, `mouse-hide-while-typing`, `bell-features`, `bell-audio-path`, `bell-audio-volume`, `mouse-scroll-multiplier`, `adjust-cell-width`, `adjust-cell-height`, `adjust-font-baseline`, underline/strikethrough/overline/cursor metric adjustments, `bold-color`/`bold-is-bright`, short/full hex colors, ANSI palette entries 0-15, `image-storage-limit`, `unfocused-split-opacity`, and `unfocused-split-fill`. `terminal_renderer` is retained on load for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
 
 Ghostty compatibility scope:
 
@@ -300,7 +337,7 @@ omit full workflow goals, memory, evidence, and gate notes; use
 
 Agent rows from `agent.list`, `agent.health`, `status.summary`, and `context.snapshot` include `lifecycle_evidence` as diagnostic metadata, not as a second source of lifecycle truth. The block repeats the persisted lifecycle source, last activity, observation time, nullable age, matching workspace/provider status key/value/source/scope when present, and permission mode when present. `status_scope: "workspace_provider"` means the status row is shared by same-provider sessions in that workspace and is not per-session live proof. `agent.health` additionally includes `ready` and `readiness_reason` in that block so clients can explain stale-looking or non-resumable rows without joining separate response fields.
 
-`system.capabilities` includes `provider_capabilities` with the supported provider program, configured command override when present, aliases, resume features, PATH detection (`available_on_path`, `executable`), launchability, and disabled/missing reason, plus `team_provider_policy` mirroring the active `[team]` provider-selection config including `provider_commands`. `team.worker.launch` accepts optional `agent`; omitted or `auto` selects the first configured provider that is not disabled and whose default program or configured command is currently resolvable. An explicit provider still uses the same argv-only validation and returns `precondition_failed` if disabled or missing. Successful launches return a `selection` object with the requested agent, selected provider, selected program, default program, configured command, executable path, reason, and considered candidates. ForkTTY does not preflight provider quota/auth by calling model CLIs; those states appear in the visible worker TUI and hooks, and users can change Settings or pass an explicit provider for the next launch.
+`system.capabilities` includes `provider_capabilities` with the supported provider program, configured command override when present, aliases, resume features, PATH detection (`available_on_path`, `executable`), launchability, and disabled/missing reason, plus `team_provider_policy` mirroring the active `[team]` provider-selection config including `provider_commands`. It also includes `pty_persistence`, a read-only diagnostic block with `config_enabled`, `available`, `active`, broker name/executable when present, scope, and unavailable reason so clients can distinguish "configured but no broker installed" from active process persistence. `team.worker.launch` accepts optional `agent`; omitted or `auto` selects the first configured provider that is not disabled and whose default program or configured command is currently resolvable. An explicit provider still uses the same argv-only validation and returns `precondition_failed` if disabled or missing. Successful launches return a `selection` object with the requested agent, selected provider, selected program, default program, configured command, executable path, reason, and considered candidates. ForkTTY does not preflight provider quota/auth by calling model CLIs; those states appear in the visible worker TUI and hooks, and users can change Settings or pass an explicit provider for the next launch.
 
 Claude Code `team.worker.launch` calls add documented permission-mode defaults unless the caller already supplied Claude permission args: review roles start with `--permission-mode dontAsk` plus pre-approved built-in read tools (`Read`, `Grep`, and `Glob`), while other Claude workers start with `--permission-mode auto`.
 

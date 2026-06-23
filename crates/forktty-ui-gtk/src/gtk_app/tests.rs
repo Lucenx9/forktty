@@ -4813,6 +4813,15 @@ fn settings_dialog_does_not_expose_runtime_scrollback_limit() {
 }
 
 #[test]
+fn settings_dialog_exposes_pty_persistence_toggle() {
+    let source = include_str!("settings_dialog.rs");
+
+    assert!(source.contains("Persist terminal processes"));
+    assert!(source.contains("config.general.persist_terminal_processes = row.is_active()"));
+    assert!(source.contains("PTY process persistence updated."));
+}
+
+#[test]
 fn settings_agents_initial_page_targets_agents_stack() {
     assert_eq!(SettingsInitialPage::Interface.stack_name(), "interface");
     assert_eq!(SettingsInitialPage::Agents.stack_name(), "agents");

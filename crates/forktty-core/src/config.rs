@@ -57,6 +57,12 @@ pub struct GeneralConfig {
     pub enable_pr_lookup: bool,
     #[serde(default)]
     pub notification_command: String,
+    /// Run generic terminal panes under a detach/reattach broker (`dtach`) so
+    /// their process tree survives a GTK UI restart. Off by default: it changes
+    /// how shells are launched and requires a broker on `PATH`. Agent, SSH, and
+    /// browser surfaces are unaffected. See [`crate::pty_persistence`].
+    #[serde(default)]
+    pub persist_terminal_processes: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -157,6 +163,7 @@ impl Default for GeneralConfig {
             worktree_layout: default_worktree_layout(),
             enable_pr_lookup: false,
             notification_command: String::new(),
+            persist_terminal_processes: false,
         }
     }
 }
@@ -1043,6 +1050,8 @@ mod tests {
         assert!(config.appearance.terminal_audible_bell);
         assert_eq!(config.appearance.terminal_theme, TERMINAL_THEME_SYSTEM);
         assert!(!config.general.enable_pr_lookup);
+        // PTY persistence is opt-in: defaults must not change how shells spawn.
+        assert!(!config.general.persist_terminal_processes);
     }
 
     #[test]

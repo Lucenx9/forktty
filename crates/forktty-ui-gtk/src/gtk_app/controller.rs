@@ -447,6 +447,7 @@ impl TerminalController {
                 }
             }
             GtkTerminalCommand::Close { surface_id } => {
+                self.cleanup_pty_persistence_session(&surface_id);
                 self.pending_spawns.remove(&surface_id);
                 if let (Some(embedder), Some(pane)) = (
                     self.embedded_ghostty.as_ref(),
@@ -476,6 +477,20 @@ impl TerminalController {
                 }
                 self.rebuild_layout();
             }
+        }
+    }
+
+    fn cleanup_pty_persistence_session(&self, surface_id: &str) {
+        let Some(state) = &self.state else {
+            return;
+        };
+        let Some(runtime_dir) = state.socket_path.parent() else {
+            return;
+        };
+        if let Err(err) =
+            forktty_core::pty_persistence::cleanup_session_socket(runtime_dir, surface_id)
+        {
+            eprintln!("ForkTTY: failed to remove PTY persistence socket for {surface_id}: {err}");
         }
     }
 
@@ -510,6 +525,70 @@ impl TerminalController {
         }
     }
 
+    /// Build a PTY-persistence plan for this spawn, or `None` to spawn the
+    /// child directly (the default). Persistence is opt-in via
+    /// `general.persist_terminal_processes`, requires a detach/reattach broker
+    /// on `PATH`, and applies only to plain interactive terminal surfaces:
+    /// agent panes persist through provider resume, SSH is already remote, and
+    /// browser surfaces are not terminals. The socket path is derived from the
+    /// persisted surface id under the runtime dir, so a UI restart re-attaches
+    /// the same surface to its surviving process tree without extra state.
+    fn pty_persistence_plan(
+        &self,
+        request: &SpawnRequest,
+        config: &config::AppConfig,
+    ) -> Option<forktty_core::pty_persistence::PtyPersistencePlan> {
+        if !config.general.persist_terminal_processes {
+            return None;
+        }
+        let is_plain_terminal = self
+            .model
+            .lock()
+            .ok()
+            .and_then(|model| {
+                model.surface(&request.surface_id).map(|surface| {
+                    matches!(surface.kind, forktty_core::SurfaceKind::Terminal)
+                        && surface.agent_session.is_none()
+                })
+            })
+            .unwrap_or(false);
+        if !is_plain_terminal {
+            return None;
+        }
+        let persistence = forktty_core::pty_persistence::detect()?;
+        let runtime_dir = request.socket_path.parent()?;
+        let socket = match forktty_core::pty_persistence::session_socket_path(
+            runtime_dir,
+            &request.surface_id,
+        ) {
+            Ok(socket) => socket,
+            Err(err) => {
+                eprintln!(
+                    "ForkTTY: disabling PTY persistence for {} (invalid socket path): {err}",
+                    request.surface_id
+                );
+                return None;
+            }
+        };
+        if let Err(err) = forktty_core::pty_persistence::ensure_private_session_dir(&socket) {
+            eprintln!(
+                "ForkTTY: disabling PTY persistence for {} (cannot prepare socket dir): {err}",
+                request.surface_id
+            );
+            return None;
+        }
+        match forktty_core::pty_persistence::PtyPersistencePlan::new(&persistence, socket) {
+            Ok(plan) => Some(plan),
+            Err(err) => {
+                eprintln!(
+                    "ForkTTY: disabling PTY persistence for {} (invalid plan): {err}",
+                    request.surface_id
+                );
+                None
+            }
+        }
+    }
+
     fn spawn_embedded_ghostty(&mut self, request: SpawnRequest) -> Result<(), String> {
         let embedder = self.embedded_ghostty()?;
         let config = config::load_config().unwrap_or_default();
@@ -520,7 +599,11 @@ impl TerminalController {
         #[cfg(target_os = "linux")]
         let child_pids_before_spawn = current_process_child_pids();
         let widget = if embedder.supports_spawn_command() {
-            let argv = forktty_terminal::spawn::embedded_ghostty_command_argv(&request)?;
+            let persistence = self.pty_persistence_plan(&request, &config);
+            let argv = forktty_terminal::spawn::embedded_ghostty_command_argv_with_persistence(
+                &request,
+                persistence.as_ref(),
+            )?;
             unsafe {
                 embedder.create_widget_for_cwd_and_command(
                     Some(&request.cwd),

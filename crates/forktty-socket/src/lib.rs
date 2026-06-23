@@ -1089,6 +1089,23 @@ fn team_provider_policy(team: &forktty_core::TeamConfig) -> Value {
     })
 }
 
+fn pty_persistence_capability(path: Option<&OsStr>, config_enabled: bool) -> Value {
+    let detected = forktty_core::pty_persistence::detect_with_path(path);
+    let broker = detected.as_ref().map(|persistence| persistence.broker);
+    let broker_executable = detected
+        .as_ref()
+        .map(|persistence| persistence.broker_path.to_string_lossy().into_owned());
+    json!({
+        "config_enabled": config_enabled,
+        "active": config_enabled && detected.is_some(),
+        "available": detected.is_some(),
+        "broker": broker.map(|broker| broker.program_name()),
+        "broker_executable": broker_executable,
+        "scope": "plain_terminal_surfaces",
+        "unavailable_reason": if detected.is_none() { Some("broker_not_found") } else { None },
+    })
+}
+
 fn system_identify(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let requested_surface_id = optional_surface_id_param(params)?.map(str::to_string);
     let caller_workspace_id = optional_caller_id(params, "caller_workspace_id")?;
@@ -1301,6 +1318,10 @@ pub async fn dispatch(
                 "methods": METHODS,
                 "provider_capabilities": provider_capabilities(path.as_deref(), &config.team),
                 "team_provider_policy": team_provider_policy(&config.team),
+                "pty_persistence": pty_persistence_capability(
+                    path.as_deref(),
+                    config.general.persist_terminal_processes,
+                ),
             }))
         }
         "system.identify" => system_identify(state, &params),
@@ -9237,6 +9258,50 @@ mod tests {
             providers["claude"]["unavailable_reason"],
             "program_not_found"
         );
+        assert_eq!(result["pty_persistence"]["config_enabled"], false);
+        assert_eq!(result["pty_persistence"]["available"], false);
+        assert_eq!(result["pty_persistence"]["active"], false);
+        assert_eq!(
+            result["pty_persistence"]["unavailable_reason"],
+            "broker_not_found"
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn capabilities_report_pty_persistence_broker_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let dtach = write_fake_program(dir.path(), "dtach");
+        let _path = EnvGuard::set("PATH", dir.path().to_str().unwrap());
+        let config_home = tempfile::tempdir().unwrap();
+        let forktty_config_dir = config_home.path().join("forktty");
+        fs::create_dir_all(&forktty_config_dir).unwrap();
+        fs::write(
+            forktty_config_dir.join("config.toml"),
+            r#"
+            [general]
+            persist_terminal_processes = true
+            "#,
+        )
+        .unwrap();
+        let _config_home = EnvGuard::set("XDG_CONFIG_HOME", config_home.path().to_str().unwrap());
+        let (state, _backend) = test_state();
+
+        let result = dispatch(&state, "system.capabilities", json!({}))
+            .await
+            .unwrap();
+
+        let pty = &result["pty_persistence"];
+        assert_eq!(pty["config_enabled"], true);
+        assert_eq!(pty["available"], true);
+        assert_eq!(pty["active"], true);
+        assert_eq!(pty["broker"], "dtach");
+        assert_eq!(
+            pty["broker_executable"].as_str().unwrap(),
+            dtach.to_string_lossy()
+        );
+        assert_eq!(pty["scope"], "plain_terminal_surfaces");
+        assert_eq!(pty["unavailable_reason"], Value::Null);
     }
 
     #[tokio::test]

@@ -1,5 +1,6 @@
 use crate::SpawnRequest;
 use forktty_core::command_safety::is_executable_file;
+use forktty_core::pty_persistence::PtyPersistencePlan;
 use std::collections::BTreeMap;
 use std::{
     ffi::OsStr,
@@ -71,6 +72,20 @@ pub fn child_cwd(request: &SpawnRequest) -> &Path {
 /// Build the direct argv used by embedded Ghostty surfaces when the GTK
 /// embedding library can accept a command at surface creation time.
 pub fn embedded_ghostty_command_argv(request: &SpawnRequest) -> Result<Vec<String>, String> {
+    embedded_ghostty_command_argv_with_persistence(request, None)
+}
+
+/// Like [`embedded_ghostty_command_argv`], but when `persistence` is `Some` the
+/// resolved command is wrapped to run under a detach/reattach broker so the
+/// child process tree survives a GTK UI restart (see
+/// [`forktty_core::pty_persistence`]). The wrap is inserted *after* the resolved
+/// program but *before* the `/usr/bin/env` environment atoms, so the broker and
+/// the child both inherit the same sanitized environment, and the existing
+/// control-character check still covers the broker atoms.
+pub fn embedded_ghostty_command_argv_with_persistence(
+    request: &SpawnRequest,
+    persistence: Option<&PtyPersistencePlan>,
+) -> Result<Vec<String>, String> {
     let Some(env_command) = env_command_path() else {
         return Err("no trusted env executable found at /usr/bin/env or /bin/env".to_string());
     };
@@ -90,6 +105,12 @@ pub fn embedded_ghostty_command_argv(request: &SpawnRequest) -> Result<Vec<Strin
         format!("terminal child program not found on absolute PATH entries: {program}")
     })?;
     argv[0] = resolved.to_string_lossy().into_owned();
+
+    if let Some(plan) = persistence {
+        argv = plan
+            .wrap_command(argv)
+            .map_err(|err| format!("cannot persist embedded Ghostty command: {err}"))?;
+    }
 
     let env = embedded_ghostty_appimage_env_atoms()
         .into_iter()
@@ -915,6 +936,73 @@ mod tests {
         let err = embedded_ghostty_command_argv(&request).unwrap_err();
 
         assert!(err.contains("control characters"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn embedded_ghostty_command_argv_wraps_resolved_command_under_broker() {
+        use forktty_core::pty_persistence::{PtyBroker, PtyPersistence, PtyPersistencePlan};
+
+        let trusted = TestDir::new("persist-bin");
+        let shell = trusted.path().join("bash");
+        fs::write(&shell, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&shell, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let plan = PtyPersistencePlan::new(
+            &PtyPersistence {
+                broker: PtyBroker::Dtach,
+                broker_path: PathBuf::from("/usr/bin/dtach"),
+            },
+            PathBuf::from("/run/user/1000/forktty-pty/surface-1.sock"),
+        )
+        .unwrap();
+
+        let argv = with_env(&[("PATH", Some(trusted.path().to_str().unwrap()))], || {
+            let mut request = spawn_request();
+            request.shell = "bash".to_string();
+            request.args.clear();
+            embedded_ghostty_command_argv_with_persistence(&request, Some(&plan))
+                .expect("command argv")
+        });
+
+        // The env command still leads, and the broker invocation appears as a
+        // contiguous tail with the resolved shell as dtach's create-command.
+        assert_eq!(argv.first(), env_command_path().as_ref());
+        let resolved = shell.to_string_lossy().into_owned();
+        assert!(
+            argv.windows(6).any(|w| w
+                == [
+                    "/usr/bin/dtach".to_string(),
+                    "-A".to_string(),
+                    "/run/user/1000/forktty-pty/surface-1.sock".to_string(),
+                    "-E".to_string(),
+                    "-z".to_string(),
+                    resolved.clone(),
+                ]),
+            "expected broker-wrapped tail in {argv:?}"
+        );
+        assert_eq!(argv.last(), Some(&resolved));
+        // ForkTTY env still survives ahead of the broker.
+        assert!(argv.contains(&"FORKTTY_SURFACE_ID=surface-1".to_string()));
+    }
+
+    #[test]
+    fn embedded_ghostty_command_argv_without_persistence_is_unwrapped() {
+        // The default (no plan) path must not mention any broker, preserving
+        // existing embed behavior exactly.
+        let program = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let mut request = spawn_request();
+        request.shell = program.clone();
+        request.args.clear();
+
+        let argv = embedded_ghostty_command_argv(&request).expect("command argv");
+        assert!(!argv
+            .iter()
+            .any(|atom| atom.ends_with("/dtach") || atom == "-A"));
+        assert_eq!(argv.last(), Some(&program));
     }
 
     #[test]
