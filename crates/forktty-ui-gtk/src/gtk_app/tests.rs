@@ -34,6 +34,7 @@ fn test_spawn_request() -> SpawnRequest {
         cwd: PathBuf::from("/tmp"),
         socket_path: PathBuf::from("/tmp/forktty.sock"),
         extra_env: Vec::new(),
+        eligible_for_pty_persistence: false,
     }
 }
 
@@ -3258,6 +3259,7 @@ fn worktree_dialog_prefers_live_child_pid_cwd_over_recorded_surface_cwd() {
             cwd: recorded_dir.path().to_path_buf(),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         })
         .unwrap();
     let mut child = Command::new("/bin/sh")

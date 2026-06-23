@@ -541,7 +541,10 @@ impl TerminalController {
         if !config.general.persist_terminal_processes {
             return None;
         }
-        let is_plain_terminal = self
+        if !request.eligible_for_pty_persistence {
+            return None;
+        }
+        let is_plain_terminal_surface = self
             .model
             .lock()
             .ok()
@@ -552,7 +555,7 @@ impl TerminalController {
                 })
             })
             .unwrap_or(false);
-        if !is_plain_terminal {
+        if !is_plain_terminal_surface {
             return None;
         }
         let persistence = forktty_core::pty_persistence::detect()?;

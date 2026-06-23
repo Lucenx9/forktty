@@ -34,6 +34,13 @@ pub struct SpawnRequest {
     pub socket_path: PathBuf,
     #[serde(default)]
     pub extra_env: Vec<(String, String)>,
+    /// Whether this spawn is an explicitly plain interactive terminal shell
+    /// eligible for opt-in PTY process persistence. Command launches that are
+    /// not ordinary shells (project actions, team workers, SSH, and agent
+    /// resumes) must keep this false so their process trees do not survive the
+    /// visible pane lifecycle unexpectedly.
+    #[serde(default)]
+    pub eligible_for_pty_persistence: bool,
 }
 
 impl SpawnRequest {
@@ -50,6 +57,7 @@ impl SpawnRequest {
             cwd: workspace.working_dir.clone(),
             socket_path: socket_path.into(),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: true,
         }
     }
 
@@ -66,12 +74,14 @@ impl SpawnRequest {
             cwd: surface.cwd.clone(),
             socket_path: socket_path.into(),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: true,
         }
     }
 
     /// Return a clone of this request with `args` set to `args`.
     pub fn with_args(mut self, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.args = args.into_iter().map(Into::into).collect();
+        self.eligible_for_pty_persistence = false;
         self
     }
 
@@ -483,6 +493,7 @@ mod tests {
                 ("COLORTERM".to_string(), "8bit".to_string()),
                 ("FORKTTY_SURFACE_ID".to_string(), "spoofed".to_string()),
             ],
+            eligible_for_pty_persistence: false,
         };
 
         backend.spawn(request).unwrap();
@@ -577,12 +588,14 @@ mod tests {
         assert_eq!(workspace_request.cwd, PathBuf::from("/tmp/main"));
         assert_eq!(workspace_request.extra_env, Vec::<(String, String)>::new());
         assert_eq!(workspace_request.args, Vec::<String>::new());
+        assert!(workspace_request.eligible_for_pty_persistence);
 
         let surface_request = SpawnRequest::for_surface(surface, "/bin/zsh", "/tmp/other.sock");
         assert_eq!(surface_request.surface_id, surface.id);
         assert_eq!(surface_request.workspace_id, surface.workspace_id);
         assert_eq!(surface_request.cwd, surface.cwd);
         assert_eq!(surface_request.shell, "/bin/zsh");
+        assert!(surface_request.eligible_for_pty_persistence);
     }
 
     #[test]
@@ -595,6 +608,7 @@ mod tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         assert_eq!(request.argv(), vec!["/usr/bin/ssh", "user@example.com"]);
     }
@@ -609,6 +623,7 @@ mod tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         assert_eq!(request.argv(), vec!["/bin/zsh"]);
     }
@@ -621,6 +636,7 @@ mod tests {
             .with_args(["user@host"]);
         assert_eq!(request.shell, "/usr/bin/ssh");
         assert_eq!(request.args, vec!["user@host"]);
+        assert!(!request.eligible_for_pty_persistence);
     }
 
     #[test]
@@ -634,6 +650,7 @@ mod tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         backend.spawn(request).unwrap();
         assert_eq!(
@@ -653,6 +670,7 @@ mod tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
 
         let env = crate::spawn::child_environment(&request);
