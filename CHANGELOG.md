@@ -106,6 +106,11 @@ All notable changes to ForkTTY are documented here.
   Agent HUD and notification panel treatment.
 
 ### Fixed
+- AppImages now prefer the host GTK/libadwaita stack when it is available and
+  keep the bundled GTK copy as a fallback/override
+  (`FORKTTY_APPIMAGE_GTK_RUNTIME=bundled|host|auto`), preventing the Ubuntu
+  release bundle's GTK 4.14 runtime from failing embedded Ghostty OpenGL context
+  creation on newer desktop stacks.
 - Notification cleanup now stays coherent across surfaces: clearing through the
   socket or notification panel closes matching desktop notifications, sends OSC
   99 close reports when the terminal requested them, and marks pending prompt

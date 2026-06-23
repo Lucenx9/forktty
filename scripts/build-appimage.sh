@@ -552,11 +552,49 @@ case ",${GDK_DISABLE:-}," in
   *) GDK_DISABLE="${GDK_DISABLE:+$GDK_DISABLE,}vulkan" ;;
 esac
 export GDK_DISABLE
-# usr/lib holds ForkTTY's required private libraries; usr/lib/bundled carries
-# the GTK/libadwaita userspace stack so terminal panes do not depend on distro
-# GTK packages. Host fontconfig/display/GL/driver libraries are deliberately
-# not bundled.
-export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/bundled${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+# usr/lib holds ForkTTY's required private libraries. usr/lib/bundled carries a
+# GTK/libadwaita fallback, but modern hosts should use their own GTK stack so it
+# can match the host fontconfig/display/GL driver stack. Force a choice with
+# FORKTTY_APPIMAGE_GTK_RUNTIME=bundled|host|auto when debugging packaging.
+host_gtk_stack_available() {
+  if command -v ldconfig >/dev/null 2>&1; then
+    cache="$(ldconfig -p 2>/dev/null || true)"
+  elif [ -x /sbin/ldconfig ]; then
+    cache="$(/sbin/ldconfig -p 2>/dev/null || true)"
+  else
+    return 1
+  fi
+  [ -n "$cache" ] || return 1
+  printf '%s\n' "$cache" | grep -q 'libgtk-4\.so\.1' || return 1
+  printf '%s\n' "$cache" | grep -q 'libadwaita-1\.so\.0' || return 1
+}
+
+gtk_runtime="${FORKTTY_APPIMAGE_GTK_RUNTIME:-auto}"
+case "$gtk_runtime" in
+  auto | "")
+    if host_gtk_stack_available; then
+      use_bundled_gtk=0
+    else
+      use_bundled_gtk=1
+    fi
+    ;;
+  host)
+    use_bundled_gtk=0
+    ;;
+  bundled)
+    use_bundled_gtk=1
+    ;;
+  *)
+    echo "Invalid FORKTTY_APPIMAGE_GTK_RUNTIME=$gtk_runtime; expected auto, host, or bundled" >&2
+    use_bundled_gtk=1
+    ;;
+esac
+
+if [ "$use_bundled_gtk" = 1 ]; then
+  export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/bundled${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+else
+  export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 if [ -n "${XDG_DATA_DIRS:-}" ]; then
   export XDG_DATA_DIRS="$HERE/usr/share:$XDG_DATA_DIRS"
 else

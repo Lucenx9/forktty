@@ -68,8 +68,10 @@ The AppImage always ships the vendored libghostty-vt library and prefers the
 host's GUI stack: when the host provides GTK4, ForkTTY runs against the
 system GTK4/libadwaita for native cursor themes, fontconfig, and portal
 integration, and the bundled GTK copy is used only as a fallback on hosts
-without GTK4. It depends on the host system for glibc, the GSettings/GIO
-data tree, Wayland/X11 session services, fontconfig, the
+without GTK4. Set `FORKTTY_APPIMAGE_GTK_RUNTIME=bundled`, `host`, or `auto`
+to force or debug that runtime choice. It depends on the host system for
+glibc, the GSettings/GIO data tree, Wayland/X11 session services, fontconfig,
+the
 OpenGL/Vulkan/Mesa driver stack, and desktop notification services.
 It is the primary downloadable artifact for alpha releases and works on
 most modern distros that ship a recent glibc, but it should
@@ -675,8 +677,8 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 
 - Linux only. There are no supported macOS or Windows builds.
 - libadwaita 1.4+ is required by the native terminal integration.
-- The AppImage bundles GTK4/libadwaita/Ghostty plus gtk4-layer-shell, but still relies on the host's glibc, fontconfig, OpenGL/Vulkan/Mesa driver stack, display-server libraries, and desktop session services. Test it on the target distro/desktop environment; prefer the `.deb` on Debian/Ubuntu when package-manager integration matters.
-- PTYs are not persisted across restart; restored sessions spawn fresh shells. Scrollback persistence is opt-in, plain-text only, and bounded.
+- The AppImage ships a bundled GTK4/libadwaita fallback plus Ghostty and gtk4-layer-shell, but prefers a host GTK stack when available and still relies on the host's glibc, fontconfig, OpenGL/Vulkan/Mesa driver stack, display-server libraries, and desktop session services. Test it on the target distro/desktop environment; prefer the `.deb` on Debian/Ubuntu when package-manager integration matters.
+- PTY/process persistence is opt-in for plain terminal panes through `general.persist_terminal_processes` and requires `dtach`; by default restored sessions spawn fresh shells. Scrollback persistence is opt-in, plain-text only, and bounded.
 - OSC 9 and basic OSC 99 terminal notifications are parsed from the Ghostty-owned PTY stream and rate-limited per surface; OSC 99 title/body base64 payloads and same-id title/body chunks are decoded with multipart title/body kept separate, same-id update/close controls affect ForkTTY's notification model, and in-app Open/Dismiss/Clear All plus basic same-id buttons can send OSC 99 reports. Targeted desktop notifications expose a best-effort Open action, notification dismiss/clear closes matching desktop and OSC 99 tracked notifications, prompt feed approvals distinguish pending/approved/denied/dismissed/stale, icon names, application-name icon fallback, application/type filtering metadata, occasion filtering, urgency, expiry, and sound metadata feed notification handling, positive `w` expiry values dismiss in-app notifications, and bounded `p=icon` data can be cached by `g`; broader chunk lifecycle behavior remains partial.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
 - Agent hibernation/suspend UI, provider-side session existence checks, full theme customization, multi-window, and browser history/bookmark GTK address-bar integration are backlog items.

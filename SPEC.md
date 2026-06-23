@@ -213,6 +213,13 @@ read-only, extracted, or otherwise unsafe launches open the GitHub release page
 instead. External AppImage managers such as Gear Lever can continue to launch
 the same path; they may rescan their own metadata separately.
 
+Packaged AppImages set `LD_LIBRARY_PATH` to ForkTTY's private `usr/lib`
+runtime first. In `auto` mode they use the host GTK/libadwaita stack when
+`ldconfig` reports GTK4 and libadwaita, and add the bundled GTK/libadwaita
+fallback only when those host libraries are absent. The runtime choice can be
+forced for troubleshooting with `FORKTTY_APPIMAGE_GTK_RUNTIME=bundled`, `host`,
+or `auto`.
+
 ## Telemetry
 
 When `telemetry.anonymous_ping = true`, GTK startup sends at most one anonymous
