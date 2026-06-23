@@ -3394,15 +3394,16 @@ fn sidebar_badge_ignores_stale_surface_exit_status() {
 #[test]
 fn workspace_meta_line_prefers_agent_resume_cwd_for_visible_project() {
     let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/home/simone");
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
+    let project = home.join("forktty");
+    let workspace = model.create_workspace("main", home.clone());
     let surface_id = workspace.focused_surface_id.clone();
     assert!(model.set_surface_agent_session(
         &surface_id,
         forktty_core::AgentKind::Codex,
         "codex-session",
     ));
-    assert!(model
-        .set_surface_agent_session_resume_cwd(&surface_id, PathBuf::from("/home/simone/forktty"),));
+    assert!(model.set_surface_agent_session_resume_cwd(&surface_id, project));
     let workspace = model.list_workspaces().remove(0);
     let surface = model.surface(&surface_id).unwrap();
 
@@ -3412,8 +3413,8 @@ fn workspace_meta_line_prefers_agent_resume_cwd_for_visible_project() {
         Some(surface_effective_project_cwd(surface)),
     );
 
-    assert!(meta.contains("~/forktty"), "{meta}");
-    assert!(!meta.ends_with("~"), "{meta}");
+    assert!(meta.ends_with("forktty"), "{meta}");
+    assert!(!meta.ends_with(home.to_string_lossy().as_ref()), "{meta}");
 }
 
 #[test]
