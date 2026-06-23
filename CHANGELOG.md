@@ -4,6 +4,11 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Security
+- Restricted opt-in PTY process persistence to explicitly plain interactive
+  terminal shell spawns so project actions and team-worker provider commands
+  cannot be wrapped in `dtach` and outlive their visible pane unexpectedly.
+
 ## [0.2.0-alpha.15] - 2026-06-23
 
 ### Added

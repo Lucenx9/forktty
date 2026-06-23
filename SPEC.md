@@ -120,9 +120,11 @@ commands continue. The reattach is keyed by a per-surface socket path derived
 from the persisted surface id, so no extra session state is serialized; if no
 daemon survived (the program exited), the broker creates a fresh session.
 
-Scope and boundaries: persistence applies only to plain `Terminal` surfaces.
-Agent panes persist through provider resume, SSH surfaces are already remote,
-and browser surfaces are not terminals, so none of them are wrapped. The
+Scope and boundaries: persistence applies only to spawns explicitly marked as
+plain interactive `Terminal` shells. Agent panes persist through provider
+resume, SSH surfaces are already remote, browser surfaces are not terminals,
+and project actions/team-worker launches are delegated command executions, so
+none of them are wrapped. The
 behavior is unchanged when the flag is off or no broker is installed. Broker
 sockets live under `$XDG_RUNTIME_DIR/forktty-pty/` with owner-only (`0700`)
 directory permissions, the surface id is validated as a safe filename component

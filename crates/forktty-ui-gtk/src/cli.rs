@@ -487,6 +487,7 @@ fn remote_helper_pty_request(
         cwd,
         socket_path: PathBuf::new(),
         extra_env: Vec::new(),
+        eligible_for_pty_persistence: false,
     })
 }
 

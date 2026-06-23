@@ -468,6 +468,7 @@ mod tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         let scrollback: usize = std::env::var("FORKTTY_BENCH_SCROLLBACK")
             .ok()
@@ -544,6 +545,7 @@ mod tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 12, rows: 2 }).unwrap();
         runtime

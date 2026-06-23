@@ -375,6 +375,7 @@ mod tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         }
     }
 

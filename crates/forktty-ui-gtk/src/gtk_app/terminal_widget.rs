@@ -3172,6 +3172,7 @@ mod selection_tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
         runtime.feed_pty_bytes(lines).unwrap();
@@ -3327,6 +3328,7 @@ mod selection_tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
         runtime
@@ -3378,6 +3380,7 @@ mod selection_tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
         // Enable SGR mouse tracking, as tmux/vim/htop do.
@@ -3430,6 +3433,7 @@ mod selection_tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
         runtime
@@ -3575,6 +3579,7 @@ mod selection_tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
         runtime.feed_pty_bytes(b"alpha beta").unwrap();
@@ -3684,6 +3689,7 @@ mod selection_tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
         // 6 lines on a 4-row screen: 2 rows of scrollback, viewport at the
@@ -3852,6 +3858,7 @@ mod selection_tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
         let lines: String = (1..=20).map(|i| format!("line{i}\r\n")).collect();
@@ -3920,6 +3927,7 @@ mod selection_tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         let runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
         let runtime = Rc::new(RefCell::new(runtime));
@@ -3961,6 +3969,7 @@ mod selection_tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
         runtime
@@ -4008,6 +4017,7 @@ mod selection_tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
         runtime
@@ -4041,6 +4051,7 @@ mod selection_tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
         runtime
@@ -4068,6 +4079,7 @@ mod selection_tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 40, rows: 4 }).unwrap();
         runtime
@@ -4107,6 +4119,7 @@ mod selection_tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 20, rows: 4 }).unwrap();
         runtime
@@ -4141,6 +4154,7 @@ mod selection_tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 40, rows: 4 }).unwrap();
         runtime

@@ -499,6 +499,7 @@ impl TestTerminalRuntimeHarness {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         request.args = vec!["-lc".to_string(), "sleep 10".to_string()];
         harness.spawn(request);
@@ -583,6 +584,7 @@ impl TestTerminalRuntimeHarness {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         request.args = vec!["-lc".to_string(), "sleep 10".to_string()];
         self.spawn(request);
@@ -602,6 +604,7 @@ mod tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         request.args = vec!["-lc".to_string(), "sleep 10".to_string()];
         request
@@ -734,6 +737,7 @@ mod tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         request.args = vec!["-lc".to_string(), "sleep 10".to_string()];
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
@@ -858,6 +862,7 @@ mod tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         request.args = vec!["-lc".to_string(), "sleep 10".to_string()];
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
@@ -890,6 +895,7 @@ mod tests {
             cwd: PathBuf::from("/tmp"),
             socket_path: PathBuf::from("/tmp/forktty.sock"),
             extra_env: Vec::new(),
+            eligible_for_pty_persistence: false,
         };
         request.args = vec!["-lc".to_string(), "sleep 10".to_string()];
         let mut runtime = TerminalRuntime::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
