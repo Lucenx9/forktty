@@ -51,7 +51,9 @@ For normal local code changes, read and edit the repo directly.
    workflow `consistency_warnings` and `workflow_consistency_warning` the same
    way: inspect before declaring the workflow finished or stale.
    Prefer `effective_project_cwd` over the workspace `working_dir` when
-   launching, reviewing, or checking where an agent is actually working.
+   reviewing or checking where an agent is actually working. For worker launch
+   placement and worktree mutation, use an explicitly open worktree/workspace or
+   the target surface's recorded cwd.
 4. If `context_snapshot` is unavailable, combine read-only tools:
    `topology_tree`, `status_summary`, `agent_list`, `agent_health`,
    `team_list`, `workflow_list`, and bounded `surface_capture_tail` or
@@ -203,6 +205,11 @@ a small durable preflight before launching workers:
 5. Put coordination facts in task details or `workflow_evidence_add`: assigned
    role, cwd/worktree, allowed mutations, expected final format, and any files
    the worker must avoid.
+   Treat `effective_project_cwd` and hook-reported `resume_cwd` as context for
+   understanding where an agent is working, not as authorization for worktree
+   mutation. Mutating worktree commands require an explicit `cwd` that is
+   already visibly represented by an open workspace or surface cwd; prefer
+   launching mutating workers in already-open worktree workspaces.
 
 If the work may survive compaction, store key review verdicts, test commands,
 commit ids, or blockers with `workflow_evidence_add` as they happen.

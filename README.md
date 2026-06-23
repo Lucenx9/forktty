@@ -351,7 +351,10 @@ Workspace, surface, agent, and agent-health rows expose
 `effective_project_cwd`, preferring the tracked agent `resume_cwd` over the
 workspace directory when they differ; the GTK sidebar uses the same effective
 path for a focused tracked agent so a workspace launched from `~` can still
-display the project directory where the agent is actually working.
+display the project directory where the agent is actually working. That value is
+diagnostic context: worktree authorization and team worker launch placement use
+visible workspace roots and the selected surface's recorded terminal cwd rather
+than hook-reported `resume_cwd` metadata.
 `team.worker.health` includes
 `surface_present`, `surface_runtime_present`, `surface_ready`, and a derived
 `final_state` such as `shutdown_requested`, `closed`, `starting`,

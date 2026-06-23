@@ -5731,9 +5731,10 @@ async fn resolve_open_repo_cwd_param(
     missing_param: &'static str,
 ) -> Result<String, DispatchError> {
     let cwd = resolve_required_existing_dir_param(params, keys, missing_param)?;
-    // Copy the open-workspace roots out under the lock, then run the git2
-    // discovery off the runtime: it walks the filesystem once per open
-    // workspace plus once for the candidate.
+    // Copy the visible open-workspace/surface roots out under the lock, then
+    // run the git2 discovery off the runtime: it walks the filesystem once per
+    // open root plus once for the candidate. Hook-reported resume cwd metadata
+    // is deliberately excluded from this authorization boundary.
     let working_dirs = open_workspace_git_boundary_dirs(state)?;
     let candidate = cwd.clone();
     match tokio::task::spawn_blocking(move || {
@@ -5759,7 +5760,7 @@ fn open_workspace_git_boundary_dirs(state: &SocketAppState) -> Result<Vec<PathBu
             model
                 .list_surfaces(Some(&workspace.id))
                 .into_iter()
-                .map(|surface| surface_effective_project_cwd(&surface)),
+                .map(|surface| surface.cwd),
         );
     }
     Ok(dirs)
@@ -6568,7 +6569,7 @@ fn create_team_worker_surface(
     let team = store
         .get(team_id)
         .ok_or(DispatchError::NotFound("team".to_string()))?;
-    let (near_surface_id, near_agent_session) = {
+    let near_surface_id = {
         let model = state
             .model
             .lock()
@@ -6603,14 +6604,8 @@ fn create_team_worker_surface(
                 },
             }
         };
-        let near_agent_session = model
-            .surface(&near_surface_id)
-            .and_then(|surface| surface.agent_session.clone());
-        (near_surface_id, near_agent_session)
+        near_surface_id
     };
-    let inherited_agent_cwd = near_agent_session
-        .as_ref()
-        .and_then(effective_agent_resume_cwd);
     let mut model = state
         .model
         .lock()
@@ -6618,9 +6613,6 @@ fn create_team_worker_surface(
     let surface = model
         .add_tab(&near_surface_id)
         .ok_or(DispatchError::NotFound("surface".to_string()))?;
-    if let Some(cwd) = inherited_agent_cwd {
-        let _ = model.set_surface_cwd(&surface.id, cwd);
-    }
     let _ = model.set_surface_title(&surface.id, format!("worker:{worker_id}"));
     Ok(model.surface(&surface.id).cloned().unwrap_or(surface))
 }
@@ -11775,6 +11767,10 @@ mod tests {
         let workspace_id = workspace[0]["id"].as_str().unwrap();
         let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
         let leader_resume_cwd = tempfile::tempdir().unwrap();
+        let leader_surface_cwd = {
+            let model = state.model.lock().unwrap();
+            model.surface(surface_id).unwrap().cwd.clone()
+        };
         {
             let mut model = state.model.lock().unwrap();
             assert!(model.set_surface_agent_session(
@@ -11856,7 +11852,7 @@ mod tests {
             .into_iter()
             .find(|surface| surface.surface_id == launched_surface_id)
             .unwrap();
-        assert_eq!(launched_runtime_surface.cwd, leader_resume_cwd.path());
+        assert_eq!(launched_runtime_surface.cwd, leader_surface_cwd);
         assert_eq!(
             backend.spawn_args(launched_surface_id).unwrap(),
             vec!["--model".to_string(), "test".to_string()]
@@ -12064,6 +12060,84 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(health["workers"][0]["final_state"], "closed");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn team_worker_launch_does_not_promote_resume_cwd_to_worktree_boundary() {
+        let bin_dir = tempfile::tempdir().unwrap();
+        let _codex = write_fake_codex(bin_dir.path());
+        let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+        let open_repo = make_temp_repo();
+        let unopened_repo = make_temp_repo();
+        let (mut state, backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let workspace = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "open", "workingDir": open_repo.path()}),
+        )
+        .await
+        .unwrap();
+        let workspace_id = workspace["id"].as_str().unwrap();
+        let surface_id = workspace["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Running",
+                "hook_session_id": "spoofed-session",
+                "hook_session_cwd": unopened_repo.path(),
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "leader_surface_id": surface_id,
+                "workspace_id": workspace_id,
+            }),
+        )
+        .await
+        .unwrap();
+
+        let launched = dispatch(
+            &state,
+            "team.worker.launch",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+            }),
+        )
+        .await
+        .unwrap();
+        let worker_surface_id = launched["surface"]["id"].as_str().unwrap();
+        let spawned = backend
+            .surfaces()
+            .unwrap()
+            .into_iter()
+            .find(|surface| surface.surface_id == worker_surface_id)
+            .unwrap();
+        assert_eq!(spawned.cwd, open_repo.path());
+
+        let error = dispatch(
+            &state,
+            "worktree.list",
+            json!({"cwd": unopened_repo.path()}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), "precondition_failed");
     }
 
     #[tokio::test]
@@ -18035,19 +18109,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn worktree_socket_allows_effective_project_cwd_from_open_surface() {
+    async fn worktree_socket_allows_cwd_from_open_surface() {
         let repo_dir = make_temp_repo();
         let (state, _) = test_state();
         {
             let mut model = state.model.lock().unwrap();
             let surface_id = model.active_workspace().unwrap().focused_surface_id.clone();
-            assert!(model.set_surface_agent_session(
-                &surface_id,
-                AgentKind::Codex,
-                "codex-session-1",
-            ));
-            assert!(model
-                .set_surface_agent_session_resume_cwd(&surface_id, repo_dir.path().to_path_buf(),));
+            assert!(model.set_surface_cwd(&surface_id, repo_dir.path().to_path_buf()));
         }
 
         let listed = dispatch(&state, "worktree.list", json!({"cwd": repo_dir.path()}))
@@ -18059,6 +18127,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(status["status"], "clean");
+    }
+
+    #[tokio::test]
+    async fn worktree_socket_rejects_hook_reported_resume_cwd_for_unopened_repo() {
+        let open_repo = make_temp_repo();
+        let unopened_repo = make_temp_repo();
+        let (state, _) = test_state();
+        let workspace = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": "open", "workingDir": open_repo.path()}),
+        )
+        .await
+        .unwrap();
+        let workspace_id = workspace["id"].as_str().unwrap();
+        let surface_id = workspace["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": "agent:codex",
+                "label": "Codex",
+                "value": "Running",
+                "hook_session_id": "spoofed-session",
+                "hook_session_cwd": unopened_repo.path(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        let error = dispatch(
+            &state,
+            "worktree.list",
+            json!({"cwd": unopened_repo.path()}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code(), "precondition_failed");
+        assert!(error.to_string().contains("open workspace"));
     }
 
     #[tokio::test]

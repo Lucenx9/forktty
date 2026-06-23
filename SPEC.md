@@ -304,7 +304,7 @@ Agent rows from `agent.list`, `agent.health`, `status.summary`, and `context.sna
 
 Claude Code `team.worker.launch` calls add documented permission-mode defaults unless the caller already supplied Claude permission args: review roles start with `--permission-mode dontAsk` plus pre-approved built-in read tools (`Read`, `Grep`, and `Glob`), while other Claude workers start with `--permission-mode auto`.
 
-When `team.worker.launch` receives an explicit `worktree_name`, the worker tab is created in the matching already-open worktree workspace and inherits that workspace directory; without `worktree_name`, launch falls back to the team leader, team workspace focus, or active workspace. Provider launch argv validation treats BusyBox shell applets such as `busybox sh -c ...` as shell trampolines, matching direct shell and `env` wrappers.
+When `team.worker.launch` receives an explicit `worktree_name`, the worker tab is created in the matching already-open worktree workspace and inherits that workspace directory; without `worktree_name`, launch falls back to the team leader, team workspace focus, or active workspace and inherits the selected surface's recorded terminal cwd. Hook-reported agent `resume_cwd` metadata is not copied into the worker surface cwd. Provider launch argv validation treats BusyBox shell applets such as `busybox sh -c ...` as shell trampolines, matching direct shell and `env` wrappers.
 
 Provider-scoped status and progress keys are automatically cleared when the last same-provider session in a workspace ends, is suspended/hibernated, is forgotten, or its surface is closed; per-surface status/progress keys are cleared when their surface is closed.
 
@@ -317,7 +317,7 @@ Embedded Ghostty panes currently service visible and tail captures from Ghostty'
 Hook-reported permission-mode status entries update the persisted agent session only when they target an already-known provider/session/surface. The exact mode `bypassPermissions` is preserved for supported Codex and Claude Code resumes by adding the providers' documented argv flags (`codex --dangerously-bypass-approvals-and-sandbox resume ...` and `claude --dangerously-skip-permissions --resume ...`) to `agent.health`, `agent.resume`, and restore-time auto-resume. Other permission mode strings remain metadata and are never copied into argv.
 
 Worktree and branch names are trimmed and rejected if empty, too long, flag-like, control-character bearing, backslash-containing, or path-traversing.
-Worktree socket, MCP, and CLI operations still require an explicit repository `cwd`/`path` and validate it against repositories already represented in ForkTTY; that boundary includes each open workspace directory and each open surface's effective project cwd, so an agent resumed inside a repository can operate on that repository even when the workspace was originally opened from a broader parent directory.
+Worktree socket, MCP, and CLI operations still require an explicit repository `cwd`/`path` and validate it against repositories visibly represented in ForkTTY; that boundary includes each open workspace directory and each open surface's recorded terminal cwd. Hook-reported agent `resume_cwd` metadata is not trusted for worktree authorization.
 
 Error responses include a structured `code` field so clients can branch on outcome instead of parsing message text:
 

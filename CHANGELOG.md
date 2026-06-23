@@ -116,10 +116,14 @@ All notable changes to ForkTTY are documented here.
 - CLI routing now recognizes `forktty workflow-loop-set` and its socket-style
   aliases, so the documented wrapper reaches `workflow.loop.set` instead of
   being rejected as an unknown argument.
-- Worktree socket/CLI/MCP operations now accept an explicit `cwd` that matches
-  an open surface's effective project cwd, so agent sessions resumed in a repo
-  still pass the open-workspace boundary even when the visible workspace root is
-  the user's home directory.
+- Worktree socket/CLI/MCP operations now ignore hook-reported agent `resume_cwd`
+  metadata for repository authorization and only trust visible workspace roots
+  plus the recorded cwd of open surfaces, preventing spoofed hook metadata from
+  authorizing hidden worktree operations in unopened repositories.
+- Team worker launch no longer copies a leader's hook-reported `resume_cwd` into
+  the new worker surface cwd, preventing spoofed agent metadata from being
+  promoted into the worktree authorization boundary through a visible worker
+  tab.
 - CLI routing now accepts socket-style `worktree.*` and `project.action.*`
   aliases in addition to the documented dash/colon forms, keeping low-level
   worktree and project-action wrappers consistent with other socket methods.
