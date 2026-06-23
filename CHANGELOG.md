@@ -4,6 +4,8 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.15] - 2026-06-23
+
 ### Added
 - Opt-in real PTY/process persistence for generic terminal panes via a new
   `general.persist_terminal_processes` config flag (default off). When enabled
