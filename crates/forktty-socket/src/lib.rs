@@ -10,6 +10,7 @@ mod feed_params;
 mod feed_view;
 mod metadata_params;
 mod methods;
+mod notification_dispatch;
 mod project_action_params;
 mod remote;
 mod response_encoding;
@@ -44,13 +45,13 @@ use forktty_core::protocol_limits;
 use forktty_core::MAX_BROWSER_URL_BYTES;
 use forktty_core::{
     agent_resume_command_with_cwd_and_permission_mode, close_desktop_notification,
-    codex_session_cwd, command_safety::is_valid_ssh_host, config, dispatch_notification,
-    normalize_agent_status, validate_worktree_name, worktree, AgentKind, AgentResumeError,
-    AgentSession, AgentSessionLifecycle, AgentStatus, BrowserCommand, BrowserOp, FeedApprovalState,
-    FeedEntry, FeedEntryType, FeedStore, JsonRpcRequest, JsonRpcResponse, LogLevel,
-    NotificationItem, NotificationKind, ProgressEntry, SplitAxis, StatusEntry, StatusHookMetadata,
-    SurfaceKind, WorkflowEvidenceInput, WorkflowLoopGateInput, WorkflowLoopStateInput,
-    WorkflowPlanStepInput, WorkflowQuery, WorkflowState, WorkspaceModel, WorkspaceSelector,
+    codex_session_cwd, command_safety::is_valid_ssh_host, config, normalize_agent_status,
+    validate_worktree_name, worktree, AgentKind, AgentResumeError, AgentSession,
+    AgentSessionLifecycle, AgentStatus, BrowserCommand, BrowserOp, FeedApprovalState, FeedEntry,
+    FeedEntryType, FeedStore, JsonRpcRequest, JsonRpcResponse, LogLevel, NotificationItem,
+    NotificationKind, ProgressEntry, SplitAxis, StatusEntry, StatusHookMetadata, SurfaceKind,
+    WorkflowEvidenceInput, WorkflowLoopGateInput, WorkflowLoopStateInput, WorkflowPlanStepInput,
+    WorkflowQuery, WorkflowState, WorkspaceModel, WorkspaceSelector,
 };
 use forktty_terminal::{
     spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
@@ -60,6 +61,9 @@ use metadata_params::{
     MetadataClearKeyRequest, MetadataClearStatusRequest, MetadataLogRequest,
     MetadataSetProgressRequest, MetadataSetStatusRequest, MetadataWorkspaceRequest,
     NotificationCreateRequest,
+};
+use notification_dispatch::{
+    dispatch_notification_with_loaded_config, notify_worktree_setup_warning,
 };
 use project_action_params::{ProjectActionListRequest, ProjectActionRunRequest};
 use serde_json::{json, Value};
@@ -77,7 +81,9 @@ use std::os::unix::net::UnixStream as StdUnixStream;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::sync::atomic::Ordering;
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+#[cfg(test)]
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use team_params::{
     TeamEventsRequest, TeamFinishRequest, TeamGetRequest, TeamInboxRequest, TeamListRequest,
@@ -150,15 +156,9 @@ const EVENTS_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// response to a slow reader still gets through.
 const RESPONSE_WRITE_TIMEOUT: Duration = protocol_limits::SOCKET_RESPONSE_WRITE_TIMEOUT;
 const HOOK_SESSION_TARGET_CAPACITY: usize = 256;
-/// Pending desktop notification dispatch jobs. Dispatch can block in
-/// notify-rust/custom commands, so keep a small bounded queue rather than
-/// spawning one OS thread per socket request.
-const NOTIFICATION_DISPATCH_QUEUE_CAPACITY: usize = 64;
 const DEFAULT_AGENT_RECLAIM_MIN_IDLE_MS: u64 = 10 * 60 * 1_000;
 const DEFAULT_TEAM_WORKER_STALE_MS: u64 = 5 * 60 * 1_000;
 const CLAUDE_TEAM_REVIEW_ALLOWED_TOOLS: &str = "Read,Grep,Glob";
-static NOTIFICATION_DISPATCHER: OnceLock<mpsc::SyncSender<forktty_core::NotificationItem>> =
-    OnceLock::new();
 
 #[derive(Error, Debug)]
 pub enum SocketError {
@@ -4245,89 +4245,6 @@ fn ensure_max_text_size(field: &'static str, value: &str) -> Result<(), Dispatch
         });
     }
     Ok(())
-}
-
-/// Surfaces a non-fatal worktree `setup` hook failure as a workspace-scoped
-/// error notification so it is visible in the UI instead of only on stderr.
-fn notify_worktree_setup_warning(
-    state: &SocketAppState,
-    workspace_id: &str,
-    warning: Option<&str>,
-) -> Result<(), DispatchError> {
-    let Some(warning) = warning else {
-        return Ok(());
-    };
-    let item = {
-        let mut model = state
-            .model
-            .lock()
-            .map_err(|_| "Lock poisoned".to_string())?;
-        model.create_notification(
-            "Worktree Setup Hook Failed",
-            warning,
-            NotificationKind::Error,
-            Some(workspace_id.to_string()),
-            None,
-        )
-    };
-    if state.notification_dispatch {
-        dispatch_notification_with_loaded_config(&item);
-    }
-    Ok(())
-}
-
-fn dispatch_notification_with_loaded_config(notification: &forktty_core::NotificationItem) {
-    let dispatcher = NOTIFICATION_DISPATCHER.get_or_init(spawn_notification_dispatcher);
-    match dispatcher.try_send(notification.clone()) {
-        Ok(()) => {}
-        Err(mpsc::TrySendError::Full(_)) => {
-            eprintln!(
-                "Dropping desktop notification dispatch because the bounded dispatch queue is full"
-            );
-        }
-        Err(mpsc::TrySendError::Disconnected(_)) => {
-            eprintln!("Dropping desktop notification dispatch because the dispatch worker stopped");
-        }
-    }
-}
-
-fn spawn_notification_dispatcher() -> mpsc::SyncSender<forktty_core::NotificationItem> {
-    let (sender, receiver) = mpsc::sync_channel(NOTIFICATION_DISPATCH_QUEUE_CAPACITY);
-    // notify_rust's show() blocks on its own async runtime, and doing that from
-    // a tokio worker panics ("Cannot start a runtime from within a runtime"),
-    // killing the connection task that carried the request. Use one dedicated
-    // blocking worker with a bounded queue so repeated socket notifications
-    // cannot create unbounded native threads.
-    if let Err(err) = std::thread::Builder::new()
-        .name("forktty-notification-dispatch".to_string())
-        .spawn(move || {
-            for notification in receiver {
-                dispatch_notification_from_worker(&notification);
-            }
-        })
-    {
-        eprintln!("Failed to start desktop notification dispatch worker: {err}");
-    }
-    sender
-}
-
-fn dispatch_notification_from_worker(notification: &forktty_core::NotificationItem) {
-    let config = match config::load_config() {
-        Ok(config) => config,
-        Err(err) => {
-            // Surface the underlying cause so a misconfigured custom command or
-            // a corrupted config.toml is debuggable rather than silently
-            // turning into "default behavior with no custom command".
-            eprintln!("Falling back to default notification settings: {err}");
-            forktty_core::AppConfig::default()
-        }
-    };
-    for error in dispatch_notification(&config, notification) {
-        eprintln!(
-            "Failed to dispatch {} notification: {}",
-            error.channel, error.message
-        );
-    }
 }
 
 async fn open_worktree_workspace(
