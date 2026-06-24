@@ -5,6 +5,7 @@ mod coordinator;
 mod feed_params;
 mod metadata_params;
 mod methods;
+mod project_action_params;
 mod response_encoding;
 mod store_access;
 mod team_params;
@@ -47,6 +48,7 @@ use metadata_params::{
     MetadataSetProgressRequest, MetadataSetStatusRequest, MetadataWorkspaceRequest,
     NotificationCreateRequest,
 };
+use project_action_params::{ProjectActionListRequest, ProjectActionRunRequest};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsStr;
@@ -1986,14 +1988,15 @@ pub async fn dispatch(
             Ok(json!(result))
         }
         "project.action.list" => {
-            let (_, actions) = project_actions_for_params(state, &params).await?;
+            let request = ProjectActionListRequest::decode(state, &params).await?;
+            let (_, actions) = project_actions_for_cwd(request.cwd).await?;
             Ok(json!(actions))
         }
         "project.action.run" => {
-            let id = required_trimmed_string(&params, "id")?;
-            ensure_max_text_size("id", id)?;
-            let (project_root, actions) = project_actions_for_params(state, &params).await?;
-            let action = forktty_core::find_action(&actions, id).map_err(project_action_error)?;
+            let request = ProjectActionRunRequest::decode(state, &params).await?;
+            let (project_root, actions) = project_actions_for_cwd(request.cwd).await?;
+            let action =
+                forktty_core::find_action(&actions, &request.id).map_err(project_action_error)?;
             let action_cwd = {
                 let project_root = project_root.clone();
                 let action = action.clone();
@@ -4988,11 +4991,9 @@ where
     }
 }
 
-async fn project_actions_for_params(
-    state: &SocketAppState,
-    params: &Value,
+async fn project_actions_for_cwd(
+    cwd: String,
 ) -> Result<(PathBuf, Vec<forktty_core::ProjectAction>), DispatchError> {
-    let cwd = resolve_open_repo_cwd_param(state, params, &["cwd"], "cwd").await?;
     let project_root =
         run_project_action_blocking(move || forktty_core::discover_project_root(cwd)).await?;
     let actions = {
