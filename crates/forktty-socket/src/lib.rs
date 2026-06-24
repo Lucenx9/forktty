@@ -7,6 +7,7 @@ mod browser_runtime;
 mod context_params;
 mod coordinator;
 mod feed_params;
+mod feed_view;
 mod metadata_params;
 mod methods;
 mod project_action_params;
@@ -820,8 +821,12 @@ fn feed_entry_from_event(event: &ModelEvent) -> Option<FeedEntry> {
         } => {
             let now = u128::from(current_unix_epoch_ms());
             let body = match total {
-                Some(total) => format!("{}/{}", feed_number(*value), feed_number(*total)),
-                None => feed_number(*value),
+                Some(total) => format!(
+                    "{}/{}",
+                    feed_view::number(*value),
+                    feed_view::number(*total)
+                ),
+                None => feed_view::number(*value),
             };
             Some(FeedEntry {
                 id: format!("feed:{now}:{workspace_id}:progress:{key}"),
@@ -1240,9 +1245,9 @@ pub async fn dispatch(
                     .map(|store| store.list(request.workspace_id.as_deref(), request.limit))
             });
             if let Some(entries) = stored_entries {
-                return Ok(json!(feed_entries_for_model(&model, entries)));
+                return Ok(json!(feed_view::entries_for_model(&model, entries)));
             }
-            Ok(json!(feed_list(
+            Ok(json!(feed_view::list(
                 &model,
                 request.workspace_id.as_deref(),
                 request.limit
@@ -2415,7 +2420,7 @@ pub async fn dispatch(
             state.mark_notification_feed_entries_dismissed(&notifications);
             for notification in &notifications {
                 close_desktop_notification(&notification.id);
-                send_terminal_notification_close_report(state, notification);
+                feed_view::send_terminal_notification_close_report(state, notification);
             }
             Ok(json!({"cleared": true}))
         }
@@ -2706,9 +2711,9 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
                 .as_ref()
                 .map(|store| store.list(Some(&request.workspace_id), 20))
         }) {
-            feed_entries_for_model(&model, entries)
+            feed_view::entries_for_model(&model, entries)
         } else {
-            feed_list(&model, Some(&request.workspace_id), 20)
+            feed_view::list(&model, Some(&request.workspace_id), 20)
         };
         let feed = context_snapshot_feed(raw_feed, request.include_feed_trace);
         let effective_project_cwd = workspace_effective_project_cwd(&workspace, &model_surfaces);
@@ -4037,199 +4042,6 @@ fn progress_entries_with_source(entries: Vec<ProgressEntry>) -> Vec<Value> {
             })
         })
         .collect()
-}
-
-fn feed_list(model: &WorkspaceModel, workspace_id: Option<&str>, limit: usize) -> Vec<Value> {
-    if limit == 0 {
-        return Vec::new();
-    }
-
-    let mut prompt_notifications = Vec::new();
-    let mut other_notifications = Vec::new();
-    for notification in model.list_notifications() {
-        if workspace_id.is_some_and(|id| notification.workspace_id.as_deref() != Some(id)) {
-            continue;
-        }
-        if notification.kind == NotificationKind::Prompt {
-            prompt_notifications.push(notification);
-        } else {
-            other_notifications.push(notification);
-        }
-    }
-    prompt_notifications.sort_by_key(|notification| std::cmp::Reverse(notification.created_at_ms));
-    other_notifications.sort_by_key(|notification| std::cmp::Reverse(notification.created_at_ms));
-
-    let mut items = Vec::with_capacity(
-        limit.min(
-            prompt_notifications
-                .len()
-                .saturating_add(other_notifications.len()),
-        ),
-    );
-    items.extend(
-        prompt_notifications
-            .into_iter()
-            .take(limit)
-            .map(|notification| notification_feed_item(model, notification)),
-    );
-    if items.len() >= limit {
-        return items;
-    }
-
-    for workspace in model
-        .list_workspaces()
-        .into_iter()
-        .filter(|workspace| workspace_id.is_none_or(|id| workspace.id == id))
-    {
-        let remaining = limit - items.len();
-        if remaining == 0 {
-            break;
-        }
-        for status in model.list_status_limited(&workspace.id, remaining) {
-            items.push(json!({
-                "id": format!("status:{}:{}", workspace.id, status.key),
-                "type": "status",
-                "kind": "status",
-                "key": status.key,
-                "title": status.label,
-                "body": status.value,
-                "workspace_id": workspace.id,
-                "surface_id": null,
-                "created_at_ms": 0,
-            }));
-        }
-
-        let remaining = limit - items.len();
-        if remaining == 0 {
-            break;
-        }
-        for progress in model.list_progress_limited(&workspace.id, remaining) {
-            let body = match progress.total {
-                Some(total) => format!("{}/{}", feed_number(progress.value), feed_number(total)),
-                None => feed_number(progress.value),
-            };
-            items.push(json!({
-                "id": format!("progress:{}:{}", workspace.id, progress.key),
-                "type": "progress",
-                "kind": "progress",
-                "key": progress.key,
-                "title": progress.label,
-                "body": body,
-                "value": progress.value,
-                "total": progress.total,
-                "workspace_id": workspace.id,
-                "surface_id": null,
-                "created_at_ms": 0,
-            }));
-        }
-    }
-
-    if items.len() < limit {
-        items.extend(
-            other_notifications
-                .into_iter()
-                .take(limit - items.len())
-                .map(|notification| notification_feed_item(model, notification)),
-        );
-    }
-    items
-}
-
-fn feed_entries_for_model(model: &WorkspaceModel, entries: Vec<FeedEntry>) -> Vec<Value> {
-    entries
-        .into_iter()
-        .map(|mut entry| {
-            normalize_feed_entry_for_model(model, &mut entry);
-            json!(entry)
-        })
-        .collect()
-}
-
-fn normalize_feed_entry_for_model(model: &WorkspaceModel, entry: &mut FeedEntry) {
-    if entry.entry_type == FeedEntryType::Approval
-        && entry.approval_state == Some(FeedApprovalState::Pending)
-        && feed_target_is_stale(
-            model,
-            entry.workspace_id.as_deref(),
-            entry.surface_id.as_deref(),
-        )
-    {
-        entry.approval_state = Some(FeedApprovalState::Stale);
-    }
-}
-
-fn feed_target_is_stale(
-    model: &WorkspaceModel,
-    workspace_id: Option<&str>,
-    surface_id: Option<&str>,
-) -> bool {
-    if let Some(surface_id) = surface_id {
-        let Some(surface) = model.surface(surface_id) else {
-            return true;
-        };
-        return workspace_id.is_some_and(|workspace_id| workspace_id != surface.workspace_id);
-    }
-    workspace_id.is_some_and(|workspace_id| {
-        model
-            .workspace_id_for(WorkspaceSelector::Id(workspace_id))
-            .is_none()
-    })
-}
-
-fn notification_feed_item(model: &WorkspaceModel, notification: NotificationItem) -> Value {
-    let item_type = if notification.kind == NotificationKind::Prompt {
-        "approval"
-    } else {
-        "notification"
-    };
-    let mut item = json!({
-        "id": notification.id,
-        "type": item_type,
-        "kind": notification.kind,
-        "title": notification.title,
-        "body": notification.body,
-        "workspace_id": notification.workspace_id,
-        "surface_id": notification.surface_id,
-        "created_at_ms": notification.created_at_ms,
-        "read": notification.read,
-    });
-    if notification.kind == NotificationKind::Prompt {
-        item["approval_state"] = if feed_target_is_stale(
-            model,
-            item["workspace_id"].as_str(),
-            item["surface_id"].as_str(),
-        ) {
-            json!("stale")
-        } else {
-            json!("pending")
-        };
-    }
-    item
-}
-
-fn send_terminal_notification_close_report(
-    state: &SocketAppState,
-    notification: &NotificationItem,
-) {
-    let Some(metadata) = notification.terminal_metadata.as_ref() else {
-        return;
-    };
-    if !metadata.report_close {
-        return;
-    }
-    let Some(surface_id) = notification.surface_id.as_deref() else {
-        return;
-    };
-    let report = format!("\x1b]99;i={}:p=close;\x1b\\", metadata.id);
-    let _ = state.terminal.send_text(surface_id, &report);
-}
-
-fn feed_number(value: f64) -> String {
-    if value.fract() == 0.0 {
-        format!("{value:.0}")
-    } else {
-        value.to_string()
-    }
 }
 
 fn workflow_list(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
