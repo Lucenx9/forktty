@@ -2,6 +2,7 @@ mod coordinator;
 mod methods;
 mod response_encoding;
 mod store_access;
+mod workflow_params;
 
 use coordinator::{SocketCoordinator, TeamTerminalDispatchedMessage};
 use forktty_core::events::{self, ModelEvent, Snapshot};
@@ -14,8 +15,8 @@ use forktty_core::{
     CmdResult, FeedApprovalState, FeedEntry, FeedEntryType, FeedStore, JsonRpcRequest,
     JsonRpcResponse, LogLevel, NotificationItem, NotificationKind, ProgressEntry, SplitAxis,
     StatusEntry, StatusHookMetadata, SurfaceKind, WorkflowEvidenceInput, WorkflowLoopGateInput,
-    WorkflowLoopStateInput, WorkflowPlanStepInput, WorkflowQuery, WorkflowReplayQuery,
-    WorkflowState, WorkflowUpsert, WorkspaceModel, WorkspaceSelector, MAX_BROWSER_URL_BYTES,
+    WorkflowLoopStateInput, WorkflowPlanStepInput, WorkflowQuery, WorkflowState, WorkspaceModel,
+    WorkspaceSelector, MAX_BROWSER_URL_BYTES,
 };
 use forktty_terminal::{
     spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
@@ -36,6 +37,10 @@ use thiserror::Error;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::{broadcast, Semaphore};
+use workflow_params::{
+    WorkflowEvidenceAddRequest, WorkflowGetRequest, WorkflowListRequest, WorkflowLoopSetRequest,
+    WorkflowPlanSetRequest, WorkflowReplayRequest, WorkflowUpsertRequest,
+};
 
 const MAX_REQUEST_SIZE: usize = protocol_limits::SOCKET_REQUEST_MAX_BYTES;
 const MAX_SEND_TEXT_BYTES: usize = protocol_limits::SOCKET_SEND_TEXT_MAX_BYTES;
@@ -4460,93 +4465,80 @@ fn feed_number(value: f64) -> String {
 }
 
 fn workflow_list(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let (workspace_id, surface_id) = workflow_target_ids(state, params)?;
-    let session_id = optional_non_blank_string_param(params, "session_id")?.map(str::to_string);
-    let query = optional_non_blank_string_param(params, "query")?.map(str::to_string);
-    let limit = optional_limit_param(params, "limit")?;
+    let request = WorkflowListRequest::decode(state, params)?;
     let store = workflow_store_access(state)?
         .load()
         .map_err(workflow_error)?;
-    Ok(json!(store.list(&WorkflowQuery {
-        workspace_id,
-        surface_id,
-        session_id,
-        query,
-        limit,
-    })))
+    Ok(json!(store.list(&request.query)))
 }
 
 fn workflow_get(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let workflow_id = required_workflow_id(params)?;
+    let request = WorkflowGetRequest::decode(params)?;
     let store = workflow_store_access(state)?
         .load()
         .map_err(workflow_error)?;
     store
-        .get(workflow_id)
+        .get(&request.workflow_id)
         .map(|workflow| json!(workflow))
         .ok_or_else(|| DispatchError::NotFound("workflow".to_string()))
 }
 
 fn workflow_upsert(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let (workspace_id, surface_id) = workflow_target_ids(state, params)?;
-    let input = WorkflowUpsert {
-        workflow_id: optional_workflow_id(params)?.map(str::to_string),
-        workspace_id,
-        surface_id,
-        agent: optional_non_blank_string_param(params, "agent")?.map(str::to_string),
-        session_id: optional_non_blank_string_param(params, "session_id")?.map(str::to_string),
-        mode: optional_non_blank_string_param(params, "mode")?.map(str::to_string),
-        status: optional_non_blank_string_param(params, "status")?.map(str::to_string),
-        goal: optional_non_blank_string_param(params, "goal")?.map(str::to_string),
-        memory: optional_non_blank_string_param(params, "memory")?.map(str::to_string),
-    };
+    let request = WorkflowUpsertRequest::decode(state, params)?;
     let workflow = workflow_store_access(state)?
-        .update(|store| store.upsert(input, forktty_core::workflow_now_ms()))
+        .update(|store| store.upsert(request.input, forktty_core::workflow_now_ms()))
         .map_err(workflow_error)?;
     Ok(json!(workflow))
 }
 
 fn workflow_loop_set(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let workflow_id = required_workflow_id(params)?.to_string();
-    let input = workflow_loop_state_input(params)?;
+    let request = WorkflowLoopSetRequest::decode(params)?;
     let workflow = workflow_store_access(state)?
-        .update(|store| store.set_loop_state(&workflow_id, input, forktty_core::workflow_now_ms()))
+        .update(|store| {
+            store.set_loop_state(
+                &request.workflow_id,
+                request.input,
+                forktty_core::workflow_now_ms(),
+            )
+        })
         .map_err(workflow_error)?;
     Ok(json!(workflow))
 }
 
 fn workflow_plan_set(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let workflow_id = required_workflow_id(params)?.to_string();
-    let steps = workflow_plan_steps(params)?;
+    let request = WorkflowPlanSetRequest::decode(params)?;
     let workflow = workflow_store_access(state)?
-        .update(|store| store.set_plan(&workflow_id, steps, forktty_core::workflow_now_ms()))
+        .update(|store| {
+            store.set_plan(
+                &request.workflow_id,
+                request.steps,
+                forktty_core::workflow_now_ms(),
+            )
+        })
         .map_err(workflow_error)?;
     Ok(json!(workflow))
 }
 
 fn workflow_evidence_add(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let workflow_id = required_workflow_id(params)?.to_string();
-    let evidence = workflow_evidence_input(params)?;
+    let request = WorkflowEvidenceAddRequest::decode(params)?;
     let workflow = workflow_store_access(state)?
-        .update(|store| store.add_evidence(&workflow_id, evidence, forktty_core::workflow_now_ms()))
+        .update(|store| {
+            store.add_evidence(
+                &request.workflow_id,
+                request.evidence,
+                forktty_core::workflow_now_ms(),
+            )
+        })
         .map_err(workflow_error)?;
     Ok(json!(workflow))
 }
 
 fn workflow_replay(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let workflow_id = optional_workflow_id(params)?.map(str::to_string);
-    let query = optional_non_blank_string_param(params, "query")?.map(str::to_string);
-    let since_seq = optional_u64_param(params, "since_seq")?;
-    let limit = optional_limit_param(params, "limit")?;
+    let request = WorkflowReplayRequest::decode(params)?;
     let store = workflow_store_access(state)?
         .load()
         .map_err(workflow_error)?;
-    Ok(json!(store.replay(&WorkflowReplayQuery {
-        workflow_id,
-        query,
-        since_seq,
-        limit,
-    })))
+    Ok(json!(store.replay(&request.query)))
 }
 
 fn optional_workflow_store_access(
