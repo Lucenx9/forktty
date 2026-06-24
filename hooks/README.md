@@ -139,6 +139,8 @@ so the installer writes per-event wrapper scripts under
 groups in that file are left untouched, and `hooks remove antigravity`
 deletes only the `"forktty"` group and the generated scripts directory.
 Antigravity v1.0.3 supports `PreInvocation`, `PreToolUse`, and `PostToolUse`;
+`PreInvocation` uses Antigravity's flat lifecycle-hook handler shape, while
+tool hooks use the nested matcher plus `hooks` array shape.
 unknown event names are dropped silently, and hook stdout is unmarshaled
 strictly. ForkTTY therefore avoids the `continue` JSON used by other
 providers; it returns an explicit `{"decision":"approve"}` for the gating

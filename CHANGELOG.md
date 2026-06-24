@@ -4,6 +4,11 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- Fixed Antigravity hook setup so the generated `PreInvocation` entry uses
+  Antigravity's flat lifecycle-hook handler shape instead of the nested
+  tool-hook matcher shape, allowing ForkTTY's before-model wrapper to load.
+
 ### Security
 - Restricted opt-in PTY process persistence to explicitly plain interactive
   terminal shell spawns so project actions and team-worker provider commands

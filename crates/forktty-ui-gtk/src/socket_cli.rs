@@ -669,6 +669,7 @@ const CLAUDE_HIGH_FREQUENCY_HOOK_ENTRIES: &[HookEntrySpec] = &[
 // Antigravity CLI v1.0.3 parses exactly these hook events from hooks.json;
 // unknown event names are dropped silently (verified against the binary's
 // "N total handlers" load log). PreInvocation fires before each model call.
+// Lifecycle hooks use flat handler objects; tool hooks use matcher wrappers.
 // The timeout field is unverified for Antigravity and never emitted.
 const ANTIGRAVITY_HOOK_ENTRIES: &[HookEntrySpec] = &[
     HookEntrySpec {
@@ -8989,20 +8990,22 @@ fn merge_antigravity_hook_config(existing: &Value, spec: &AgentSpec) -> CliResul
     group.insert("enabled".to_string(), Value::Bool(true));
     for entry_spec in spec.hook_entries {
         let mut entry = Map::new();
-        // Antigravity v1.0.3 accepts a matcher on tool events; PreInvocation
-        // is verified to fire without one.
-        if entry_spec.event_name != "PreInvocation" {
+        let command = antigravity_script_path(entry_spec.hook_event_name);
+        if is_antigravity_flat_hook_event(entry_spec.event_name) {
+            entry.insert("type".to_string(), Value::String("command".to_string()));
+            entry.insert("command".to_string(), json!(command));
+        } else {
             if let Some(matcher) = spec.matcher {
                 entry.insert("matcher".to_string(), Value::String(matcher.to_string()));
             }
+            entry.insert(
+                "hooks".to_string(),
+                json!([{
+                    "type": "command",
+                    "command": command,
+                }]),
+            );
         }
-        entry.insert(
-            "hooks".to_string(),
-            json!([{
-                "type": "command",
-                "command": antigravity_script_path(entry_spec.hook_event_name),
-            }]),
-        );
         group.insert(
             entry_spec.event_name.to_string(),
             json!([Value::Object(entry)]),
@@ -9012,6 +9015,10 @@ fn merge_antigravity_hook_config(existing: &Value, spec: &AgentSpec) -> CliResul
     let changed = config.get(ANTIGRAVITY_HOOK_GROUP) != Some(&next_group);
     config.insert(ANTIGRAVITY_HOOK_GROUP.to_string(), next_group);
     Ok((changed, Value::Object(config)))
+}
+
+fn is_antigravity_flat_hook_event(event_name: &str) -> bool {
+    matches!(event_name, "PreInvocation" | "PostInvocation" | "Stop")
 }
 
 fn is_legacy_forktty_hook_command(
@@ -15045,8 +15052,15 @@ mod tests {
             let config: Value = serde_json::from_str(&plan.content).unwrap();
             let group = &config[ANTIGRAVITY_HOOK_GROUP];
             assert_eq!(group["enabled"], Value::Bool(true));
-            // PreInvocation is verified to fire without a matcher; tool
-            // events carry the wildcard matcher.
+            // Model lifecycle hooks use flat handlers; tool events use
+            // matcher wrappers.
+            assert_eq!(
+                group["PreInvocation"][0]["command"],
+                antigravity_script_path("before-model")
+                    .display()
+                    .to_string()
+            );
+            assert!(group["PreInvocation"][0].get("hooks").is_none());
             assert!(group["PreInvocation"][0].get("matcher").is_none());
             assert_eq!(group["PreToolUse"][0]["matcher"], json!("*"));
             assert_eq!(group["PostToolUse"][0]["matcher"], json!("*"));
@@ -15058,9 +15072,13 @@ mod tests {
                 ("post-tool", "PostToolUse"),
             ] {
                 let script_path = antigravity_script_path(event);
-                let command = group[provider_event][0]["hooks"][0]["command"]
-                    .as_str()
-                    .unwrap();
+                let command = if provider_event == "PreInvocation" {
+                    group[provider_event][0]["command"].as_str().unwrap()
+                } else {
+                    group[provider_event][0]["hooks"][0]["command"]
+                        .as_str()
+                        .unwrap()
+                };
                 assert_eq!(command, script_path.display().to_string());
                 let (_, content) = plan
                     .scripts
