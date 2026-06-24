@@ -7,7 +7,8 @@ use crate::browser_import_params::{
     browser_import_source_id, BrowserImportPreviewRequest, BrowserImportRunRequest,
     BrowserImportSelection,
 };
-use crate::{profiles_store, DispatchError, SocketAppState};
+use crate::browser_profile::profiles_store;
+use crate::{DispatchError, SocketAppState};
 
 #[derive(Debug, Clone, Copy, Default)]
 struct BrowserImportCounts {

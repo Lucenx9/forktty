@@ -1,9 +1,10 @@
 use forktty_core::{ProfileId, SplitAxis, MAX_BROWSER_URL_BYTES};
 use serde_json::Value;
 
+use crate::browser_profile::{history_limit_from_params, resolve_profile_param};
 use crate::{
-    history_limit_from_params, required_string, required_string_param, required_surface_id,
-    resolve_profile_param, split_axis_from_params, DispatchError,
+    required_string, required_string_param, required_surface_id, split_axis_from_params,
+    DispatchError,
 };
 
 pub(crate) struct BrowserOpenRequest {

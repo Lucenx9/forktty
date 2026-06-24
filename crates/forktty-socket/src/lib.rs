@@ -2,6 +2,7 @@ mod agent_params;
 mod browser_import;
 mod browser_import_params;
 mod browser_params;
+mod browser_profile;
 mod browser_runtime;
 mod context_params;
 mod coordinator;
@@ -2129,7 +2130,7 @@ pub async fn dispatch(
                                 "Invalid parameter profile: expected string".to_string(),
                             )
                         })?;
-                        profiles_store()?
+                        browser_profile::profiles_store()?
                             .resolve(profile_name)
                             .ok_or(DispatchError::NotFound("profile".to_string()))?
                     }
@@ -2204,7 +2205,7 @@ pub async fn dispatch(
                 .profile_store_lock
                 .lock()
                 .map_err(|_| "Lock poisoned".to_string())?;
-            let store = profiles_store()?;
+            let store = browser_profile::profiles_store()?;
             let out: Vec<_> = store
                 .list()
                 .iter()
@@ -2224,7 +2225,7 @@ pub async fn dispatch(
                 .profile_store_lock
                 .lock()
                 .map_err(|_| "Lock poisoned".to_string())?;
-            let mut store = profiles_store()?;
+            let mut store = browser_profile::profiles_store()?;
             let meta = store
                 .create(&request.display_name)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
@@ -2253,7 +2254,7 @@ pub async fn dispatch(
                     ));
                 }
             }
-            let mut store = profiles_store()?;
+            let mut store = browser_profile::profiles_store()?;
             // on-disk data dir cleanup deferred to the GUI profile manager (P4)
             store.delete(&request.id).map_err(|e| match e {
                 forktty_core::ProfileError::NotFound => {
@@ -6971,51 +6972,6 @@ fn split_axis_from_params(params: &Value) -> Result<SplitAxis, DispatchError> {
         Some("vertical") => Ok(SplitAxis::Vertical),
         Some(_) => Err("Invalid parameter axis: expected horizontal or vertical".into()),
         None => Err("Invalid parameter axis: expected string".into()),
-    }
-}
-
-fn profiles_store() -> Result<forktty_core::ProfileStore, DispatchError> {
-    let path = dirs::data_local_dir()
-        .map(|d| {
-            d.join("forktty")
-                .join("browser_profiles")
-                .join("profiles.json")
-        })
-        .ok_or_else(|| DispatchError::from("no data dir for profiles".to_string()))?;
-    forktty_core::ProfileStore::load(path).map_err(|e| DispatchError::from(e.to_string()))
-}
-
-/// Resolve an optional `profile` param (id or display name) to a `ProfileId`.
-/// Absent or null → the Default profile. Present-but-unknown → NotFound.
-/// Non-string → InvalidParam.
-fn resolve_profile_param(params: &Value) -> Result<forktty_core::ProfileId, DispatchError> {
-    match params.get("profile") {
-        None => Ok(forktty_core::ProfileId::default()),
-        Some(Value::Null) => Ok(forktty_core::ProfileId::default()),
-        Some(value) => {
-            let name = value.as_str().ok_or_else(|| {
-                DispatchError::InvalidParam(
-                    "Invalid parameter profile: expected string".to_string(),
-                )
-            })?;
-            profiles_store()?
-                .resolve(name)
-                .ok_or(DispatchError::NotFound("profile".to_string()))
-        }
-    }
-}
-
-fn history_limit_from_params(params: &Value) -> Result<usize, DispatchError> {
-    match params.get("limit") {
-        None | Some(Value::Null) => Ok(100),
-        Some(value) => value
-            .as_u64()
-            .map(|n| n.min(10_000) as usize)
-            .ok_or_else(|| {
-                DispatchError::InvalidParam(
-                    "Invalid parameter limit: expected unsigned integer".to_string(),
-                )
-            }),
     }
 }
 
@@ -19570,18 +19526,24 @@ mod tests {
 
         #[test]
         fn browser_history_limit_defaults_and_caps() {
-            assert_eq!(history_limit_from_params(&json!({})).unwrap(), 100);
             assert_eq!(
-                history_limit_from_params(&json!({"limit": null})).unwrap(),
+                browser_profile::history_limit_from_params(&json!({})).unwrap(),
                 100
             );
-            assert_eq!(history_limit_from_params(&json!({"limit": 5})).unwrap(), 5);
             assert_eq!(
-                history_limit_from_params(&json!({"limit": u64::MAX})).unwrap(),
+                browser_profile::history_limit_from_params(&json!({"limit": null})).unwrap(),
+                100
+            );
+            assert_eq!(
+                browser_profile::history_limit_from_params(&json!({"limit": 5})).unwrap(),
+                5
+            );
+            assert_eq!(
+                browser_profile::history_limit_from_params(&json!({"limit": u64::MAX})).unwrap(),
                 10_000
             );
             assert!(matches!(
-                history_limit_from_params(&json!({"limit": "5"})),
+                browser_profile::history_limit_from_params(&json!({"limit": "5"})),
                 Err(DispatchError::InvalidParam(_))
             ));
         }
