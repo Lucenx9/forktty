@@ -1,4 +1,5 @@
 mod coordinator;
+mod methods;
 
 use coordinator::{SocketCoordinator, TeamTerminalDispatchedMessage};
 use forktty_core::events::{self, ModelEvent, Snapshot};
@@ -90,187 +91,6 @@ const CLAUDE_TEAM_REVIEW_ALLOWED_TOOLS: &str = "Read,Grep,Glob";
 static SOCKET_BIND_STAGING_SEQ: AtomicU64 = AtomicU64::new(0);
 static NOTIFICATION_DISPATCHER: OnceLock<mpsc::SyncSender<forktty_core::NotificationItem>> =
     OnceLock::new();
-
-/// Methods advertised by `system.capabilities`. Every entry except
-/// `events.subscribe` (handled at the connection level, not in [`dispatch`]) is
-/// covered by a `dispatch` match arm; the `capabilities_lists_dispatchable`
-/// test guards against an entry here that has no handler.
-#[cfg(feature = "browser")]
-pub const METHODS: &[&str] = &[
-    "browser.back",
-    "browser.bookmark.add",
-    "browser.bookmark.list",
-    "browser.bookmark.remove",
-    "browser.click",
-    "browser.fill",
-    "browser.forward",
-    "browser.history.clear",
-    "browser.history.list",
-    "browser.history.search",
-    "browser.navigate",
-    "browser.open",
-    "browser.profile.create",
-    "browser.profile.delete",
-    "browser.profile.list",
-    "browser.reload",
-    "browser.snapshot",
-    "context.snapshot",
-    "events.subscribe",
-    "feed.approval.respond",
-    "feed.list",
-    "agent.health",
-    "agent.hibernate",
-    "agent.list",
-    "agent.reclaim.plan",
-    "agent.reclaim",
-    "agent.resume",
-    "metadata.clear_logs",
-    "metadata.clear_progress",
-    "metadata.clear_status",
-    "metadata.list_logs",
-    "metadata.list_progress",
-    "metadata.list_status",
-    "metadata.log",
-    "metadata.set_progress",
-    "metadata.set_status",
-    "notification.clear",
-    "notification.create",
-    "notification.list",
-    "pane.new_tab",
-    "pane.select_tab",
-    "project.action.list",
-    "project.action.run",
-    "remote.list",
-    "remote.status",
-    "surface.close",
-    "surface.focus",
-    "surface.capture_tail",
-    "surface.list",
-    "surface.read_text",
-    "surface.send_text",
-    "surface.split",
-    "status.summary",
-    "system.capabilities",
-    "system.identify",
-    "system.ping",
-    "system.top",
-    "team.events",
-    "team.finish",
-    "team.get",
-    "team.inbox",
-    "team.list",
-    "team.message.dispatch",
-    "team.message.ack",
-    "team.message.send",
-    "team.summary",
-    "team.task.upsert",
-    "team.upsert",
-    "team.worker.heartbeat",
-    "team.worker.health",
-    "team.worker.launch",
-    "team.worker.nudge",
-    "team.worker.shutdown",
-    "team.worker.upsert",
-    "topology.tree",
-    "workspace.close",
-    "workspace.create",
-    "workspace.create_ssh",
-    "workspace.list",
-    "workspace.select",
-    "workflow.evidence.add",
-    "workflow.get",
-    "workflow.list",
-    "workflow.loop.set",
-    "workflow.plan.set",
-    "workflow.replay",
-    "workflow.upsert",
-    "worktree.attach",
-    "worktree.create",
-    "worktree.list",
-    "worktree.merge",
-    "worktree.remove",
-    "worktree.status",
-];
-
-#[cfg(not(feature = "browser"))]
-pub const METHODS: &[&str] = &[
-    "context.snapshot",
-    "events.subscribe",
-    "feed.approval.respond",
-    "feed.list",
-    "agent.health",
-    "agent.hibernate",
-    "agent.list",
-    "agent.reclaim.plan",
-    "agent.reclaim",
-    "agent.resume",
-    "metadata.clear_logs",
-    "metadata.clear_progress",
-    "metadata.clear_status",
-    "metadata.list_logs",
-    "metadata.list_progress",
-    "metadata.list_status",
-    "metadata.log",
-    "metadata.set_progress",
-    "metadata.set_status",
-    "notification.clear",
-    "notification.create",
-    "notification.list",
-    "pane.new_tab",
-    "pane.select_tab",
-    "project.action.list",
-    "project.action.run",
-    "remote.list",
-    "remote.status",
-    "surface.close",
-    "surface.focus",
-    "surface.capture_tail",
-    "surface.list",
-    "surface.read_text",
-    "surface.send_text",
-    "surface.split",
-    "status.summary",
-    "system.capabilities",
-    "system.identify",
-    "system.ping",
-    "system.top",
-    "team.events",
-    "team.finish",
-    "team.get",
-    "team.inbox",
-    "team.list",
-    "team.message.dispatch",
-    "team.message.ack",
-    "team.message.send",
-    "team.summary",
-    "team.task.upsert",
-    "team.upsert",
-    "team.worker.heartbeat",
-    "team.worker.health",
-    "team.worker.launch",
-    "team.worker.nudge",
-    "team.worker.shutdown",
-    "team.worker.upsert",
-    "topology.tree",
-    "workspace.close",
-    "workspace.create",
-    "workspace.create_ssh",
-    "workspace.list",
-    "workspace.select",
-    "workflow.evidence.add",
-    "workflow.get",
-    "workflow.list",
-    "workflow.loop.set",
-    "workflow.plan.set",
-    "workflow.replay",
-    "workflow.upsert",
-    "worktree.attach",
-    "worktree.create",
-    "worktree.list",
-    "worktree.merge",
-    "worktree.remove",
-    "worktree.status",
-];
 
 #[derive(Error, Debug)]
 pub enum SocketError {
@@ -1318,7 +1138,7 @@ pub async fn dispatch(
             let path = std::env::var_os("PATH");
             Ok(json!({
                 "version": env!("CARGO_PKG_VERSION"),
-                "methods": METHODS,
+                "methods": methods::capability_method_names(),
                 "provider_capabilities": provider_capabilities(path.as_deref(), &config.team),
                 "team_provider_policy": team_provider_policy(&config.team),
                 "pty_persistence": pty_persistence_capability(
@@ -2940,7 +2760,7 @@ pub async fn dispatch(
 }
 
 fn method_allowed_from_socket(method: &str) -> bool {
-    !method.starts_with("browser.import.")
+    methods::allowed_from_socket(method)
 }
 
 fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
@@ -19428,7 +19248,7 @@ mod tests {
             json!({"surface_id": null, "workspace": [], "text": {}}),
         ];
         let mut rng = 0x5eed_2026_0610_f00du64;
-        for method in METHODS {
+        for method in methods::capability_method_names() {
             // Fresh state per method so earlier mutations (closed workspaces,
             // split surfaces) cannot mask a later parameter path.
             let (state, _backend) = test_state();
@@ -19950,14 +19770,78 @@ mod tests {
         }));
         // Every advertised method except the connection-level events.subscribe
         // must resolve to a dispatch arm (not MethodNotFound).
-        for method in METHODS {
-            if *method == "events.subscribe" {
+        for method in methods::capability_method_names() {
+            if method == "events.subscribe" {
                 continue;
             }
             if let Err(DispatchError::MethodNotFound(_)) = dispatch(&state, method, json!({})).await
             {
                 panic!("advertised method {method} has no dispatch handler");
             }
+        }
+    }
+
+    #[test]
+    fn method_registry_classifies_socket_exposure() {
+        use methods::MethodExposure;
+
+        let capability_methods = methods::capability_method_names();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut all_specs = std::collections::BTreeSet::new();
+        for spec in methods::method_specs() {
+            assert!(
+                all_specs.insert(spec.name),
+                "duplicate method spec {}",
+                spec.name
+            );
+        }
+        for method in &capability_methods {
+            assert!(seen.insert(*method), "duplicate capability method {method}");
+            #[cfg(feature = "browser")]
+            assert_ne!(
+                methods::exposure(method),
+                Some(MethodExposure::InternalOnly),
+                "internal method advertised in capabilities: {method}"
+            );
+            assert!(
+                method_allowed_from_socket(method),
+                "capability method rejected by socket filter: {method}"
+            );
+        }
+        assert_eq!(
+            methods::exposure("events.subscribe"),
+            Some(MethodExposure::ConnectionLevel)
+        );
+        assert!(method_allowed_from_socket("not.a.real.method"));
+
+        #[cfg(feature = "browser")]
+        {
+            assert_eq!(
+                methods::exposure("browser.open"),
+                Some(MethodExposure::Public)
+            );
+            for method in [
+                "browser.import.discover",
+                "browser.import.preview",
+                "browser.import.run",
+            ] {
+                assert_eq!(
+                    methods::exposure(method),
+                    Some(MethodExposure::InternalOnly)
+                );
+                assert!(!method_allowed_from_socket(method));
+                assert!(
+                    !capability_methods.contains(&method),
+                    "internal method advertised in capabilities: {method}"
+                );
+            }
+        }
+
+        #[cfg(not(feature = "browser"))]
+        {
+            assert_eq!(methods::exposure("browser.open"), None);
+            assert!(method_allowed_from_socket("browser.open"));
+            assert!(!method_allowed_from_socket("browser.import.discover"));
         }
     }
 
