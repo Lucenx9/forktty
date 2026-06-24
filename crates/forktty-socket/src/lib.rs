@@ -1,4 +1,5 @@
 mod agent_params;
+mod context_params;
 mod coordinator;
 mod feed_params;
 mod metadata_params;
@@ -13,6 +14,7 @@ use agent_params::{
     AgentHibernateRequest, AgentReclaimPlanRequest, AgentReclaimRequest, AgentResumeRequest,
     AgentWorkspaceRequest,
 };
+use context_params::ContextSnapshotRequest;
 use coordinator::{SocketCoordinator, TeamTerminalDispatchedMessage};
 use feed_params::{FeedApprovalRespondRequest, FeedListRequest};
 use forktty_core::events::{self, ModelEvent, Snapshot};
@@ -2655,14 +2657,7 @@ fn method_allowed_from_socket(method: &str) -> bool {
 }
 
 fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let workspace_id = resolve_workspace_id_for_metadata(state, params)?;
-    let tail_lines = context_snapshot_tail_lines_from_params(params)?;
-    let tail_max_bytes = context_snapshot_tail_max_bytes_from_params(params)?;
-    let include_team_details =
-        optional_bool_param(params, "include_team_details")?.unwrap_or(false);
-    let include_workflow_details =
-        optional_bool_param(params, "include_workflow_details")?.unwrap_or(false);
-    let include_feed_trace = optional_bool_param(params, "include_feed_trace")?.unwrap_or(false);
+    let request = ContextSnapshotRequest::decode(state, params)?;
     let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
     let now_ms = current_unix_epoch_ms();
 
@@ -2684,10 +2679,10 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
         let workspace = model
             .list_workspaces()
             .into_iter()
-            .find(|workspace| workspace.id == workspace_id)
+            .find(|workspace| workspace.id == request.workspace_id)
             .ok_or(DispatchError::NotFound("workspace".to_string()))?;
         let pane_tree = workspace.pane_tree.clone();
-        let model_surfaces = model.list_surfaces(Some(&workspace_id));
+        let model_surfaces = model.list_surfaces(Some(&request.workspace_id));
         let terminal_surface_ids = model_surfaces
             .iter()
             .filter(|surface| {
@@ -2709,13 +2704,13 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
         let raw_feed = if let Some(entries) = state.feed_store.lock().ok().and_then(|store| {
             store
                 .as_ref()
-                .map(|store| store.list(Some(&workspace_id), 20))
+                .map(|store| store.list(Some(&request.workspace_id), 20))
         }) {
             feed_entries_for_model(&model, entries)
         } else {
-            feed_list(&model, Some(&workspace_id), 20)
+            feed_list(&model, Some(&request.workspace_id), 20)
         };
-        let feed = context_snapshot_feed(raw_feed, include_feed_trace);
+        let feed = context_snapshot_feed(raw_feed, request.include_feed_trace);
         let effective_project_cwd = workspace_effective_project_cwd(&workspace, &model_surfaces);
         (
             json!({
@@ -2730,22 +2725,33 @@ fn context_snapshot(state: &SocketAppState, params: &Value) -> Result<Value, Dis
                 "needs_attention": workspace.needs_attention,
             }),
             pane_tree,
-            surface_list_rows(&model, Some(&workspace_id), terminal_surfaces.clone()),
-            status_summary_at(&model, &workspace_id, now_ms).unwrap_or(Value::Null),
-            agent_session_rows(&model, Some(&workspace_id), now_ms),
-            agent_health_rows(&model, Some(&workspace_id), now_ms),
+            surface_list_rows(
+                &model,
+                Some(&request.workspace_id),
+                terminal_surfaces.clone(),
+            ),
+            status_summary_at(&model, &request.workspace_id, now_ms).unwrap_or(Value::Null),
+            agent_session_rows(&model, Some(&request.workspace_id), now_ms),
+            agent_health_rows(&model, Some(&request.workspace_id), now_ms),
             feed,
             remotes,
             terminal_surface_ids,
         )
     };
 
-    let (terminal_tails, terminal_tail_errors) =
-        context_snapshot_terminal_tails(state, &terminal_surface_ids, tail_lines, tail_max_bytes);
-    let (workflows, workflow_summaries, loop_summaries) =
-        context_snapshot_workflows(state, &workspace_id, include_workflow_details)?;
+    let (terminal_tails, terminal_tail_errors) = context_snapshot_terminal_tails(
+        state,
+        &terminal_surface_ids,
+        request.tail_lines,
+        request.tail_max_bytes,
+    );
+    let (workflows, workflow_summaries, loop_summaries) = context_snapshot_workflows(
+        state,
+        &request.workspace_id,
+        request.include_workflow_details,
+    )?;
     let (teams, team_summaries) =
-        context_snapshot_team_state(state, &workspace_id, include_team_details)?;
+        context_snapshot_team_state(state, &request.workspace_id, request.include_team_details)?;
     let risk_flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
         status: &status,
         agent_health: &agent_health,
@@ -7931,28 +7937,6 @@ fn terminal_tail_lines_from_params(params: &Value) -> Result<usize, DispatchErro
         )));
     }
     Ok(lines as usize)
-}
-
-fn context_snapshot_tail_lines_from_params(params: &Value) -> Result<usize, DispatchError> {
-    let lines = optional_u64_param(params, "tail_lines")?
-        .unwrap_or(DEFAULT_CONTEXT_SNAPSHOT_TAIL_LINES as u64);
-    if lines > MAX_CAPTURE_TAIL_LINES as u64 {
-        return Err(DispatchError::InvalidParam(format!(
-            "Invalid parameter tail_lines: expected 0..={MAX_CAPTURE_TAIL_LINES}"
-        )));
-    }
-    Ok(lines as usize)
-}
-
-fn context_snapshot_tail_max_bytes_from_params(params: &Value) -> Result<usize, DispatchError> {
-    let bytes = optional_u64_param(params, "tail_max_bytes")?
-        .unwrap_or(DEFAULT_CONTEXT_SNAPSHOT_TAIL_MAX_BYTES as u64);
-    if bytes == 0 || bytes > MAX_TERMINAL_TEXT_BYTES as u64 {
-        return Err(DispatchError::InvalidParam(format!(
-            "Invalid parameter tail_max_bytes: expected 1..={MAX_TERMINAL_TEXT_BYTES}"
-        )));
-    }
-    Ok(bytes as usize)
 }
 
 fn optional_bookmark_title(params: &Value) -> Result<String, DispatchError> {
