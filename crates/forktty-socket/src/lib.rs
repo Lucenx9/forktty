@@ -2,6 +2,7 @@ mod agent_params;
 mod browser_import;
 mod browser_import_params;
 mod browser_params;
+mod browser_runtime;
 mod context_params;
 mod coordinator;
 mod feed_params;
@@ -41,12 +42,11 @@ use forktty_core::{
     agent_resume_command_with_cwd_and_permission_mode, close_desktop_notification,
     codex_session_cwd, command_safety::is_valid_ssh_host, config, dispatch_notification,
     normalize_agent_status, validate_worktree_name, worktree, AgentKind, AgentResumeError,
-    AgentSession, AgentSessionLifecycle, AgentStatus, BrowserCmdError, BrowserCommand, BrowserOp,
-    CmdResult, FeedApprovalState, FeedEntry, FeedEntryType, FeedStore, JsonRpcRequest,
-    JsonRpcResponse, LogLevel, NotificationItem, NotificationKind, ProgressEntry, SplitAxis,
-    StatusEntry, StatusHookMetadata, SurfaceKind, WorkflowEvidenceInput, WorkflowLoopGateInput,
-    WorkflowLoopStateInput, WorkflowPlanStepInput, WorkflowQuery, WorkflowState, WorkspaceModel,
-    WorkspaceSelector,
+    AgentSession, AgentSessionLifecycle, AgentStatus, BrowserCommand, BrowserOp, FeedApprovalState,
+    FeedEntry, FeedEntryType, FeedStore, JsonRpcRequest, JsonRpcResponse, LogLevel,
+    NotificationItem, NotificationKind, ProgressEntry, SplitAxis, StatusEntry, StatusHookMetadata,
+    SurfaceKind, WorkflowEvidenceInput, WorkflowLoopGateInput, WorkflowLoopStateInput,
+    WorkflowPlanStepInput, WorkflowQuery, WorkflowState, WorkspaceModel, WorkspaceSelector,
 };
 use forktty_terminal::{
     spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
@@ -105,7 +105,6 @@ const MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_SURFACES: usize = 16;
 const MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES: usize =
     protocol_limits::MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES;
 const MAX_METADATA_TEXT_BYTES: usize = protocol_limits::SOCKET_METADATA_TEXT_MAX_BYTES;
-const BROWSER_CMD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const MAX_SOCKET_CONNECTIONS: usize = 64;
 const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 /// Max time to wait for a client to deliver a complete request line before the
@@ -2163,11 +2162,11 @@ pub async fn dispatch(
         }
         "browser.snapshot" => {
             let request = BrowserSurfaceRequest::decode(&params)?;
-            dispatch_browser_cmd(state, request.surface_id, BrowserOp::Snapshot).await
+            browser_runtime::dispatch_cmd(state, request.surface_id, BrowserOp::Snapshot).await
         }
         "browser.click" => {
             let request = BrowserClickRequest::decode(&params)?;
-            dispatch_browser_cmd(
+            browser_runtime::dispatch_cmd(
                 state,
                 request.surface_id,
                 BrowserOp::Click {
@@ -2178,7 +2177,7 @@ pub async fn dispatch(
         }
         "browser.fill" => {
             let request = BrowserFillRequest::decode(&params)?;
-            dispatch_browser_cmd(
+            browser_runtime::dispatch_cmd(
                 state,
                 request.surface_id,
                 BrowserOp::Fill {
@@ -2190,15 +2189,15 @@ pub async fn dispatch(
         }
         "browser.back" => {
             let request = BrowserSurfaceRequest::decode(&params)?;
-            dispatch_browser_cmd(state, request.surface_id, BrowserOp::Back).await
+            browser_runtime::dispatch_cmd(state, request.surface_id, BrowserOp::Back).await
         }
         "browser.forward" => {
             let request = BrowserSurfaceRequest::decode(&params)?;
-            dispatch_browser_cmd(state, request.surface_id, BrowserOp::Forward).await
+            browser_runtime::dispatch_cmd(state, request.surface_id, BrowserOp::Forward).await
         }
         "browser.reload" => {
             let request = BrowserSurfaceRequest::decode(&params)?;
-            dispatch_browser_cmd(state, request.surface_id, BrowserOp::Reload).await
+            browser_runtime::dispatch_cmd(state, request.surface_id, BrowserOp::Reload).await
         }
         "browser.profile.list" => {
             let _profile_store_guard = state
@@ -6972,71 +6971,6 @@ fn split_axis_from_params(params: &Value) -> Result<SplitAxis, DispatchError> {
         Some("vertical") => Ok(SplitAxis::Vertical),
         Some(_) => Err("Invalid parameter axis: expected horizontal or vertical".into()),
         None => Err("Invalid parameter axis: expected string".into()),
-    }
-}
-
-/// Validate the surface is a browser, send `op` to the GTK side, and await the
-/// reply within [`BROWSER_CMD_TIMEOUT`]. Maps [`CmdResult`] to a JSON value or a
-/// [`DispatchError`].
-async fn dispatch_browser_cmd(
-    state: &SocketAppState,
-    surface_id: String,
-    op: BrowserOp,
-) -> Result<Value, DispatchError> {
-    {
-        let model = state
-            .model
-            .lock()
-            .map_err(|_| "Lock poisoned".to_string())?;
-        match model.surface(&surface_id) {
-            None => return Err(DispatchError::NotFound("surface".to_string())),
-            Some(surface) => {
-                if !matches!(surface.kind, forktty_core::SurfaceKind::Browser { .. }) {
-                    return Err(DispatchError::NotFound("browser surface".to_string()));
-                }
-            }
-        }
-    }
-    let Some(sender) = state.browser_cmd.clone() else {
-        return Err("browser automation unavailable".into());
-    };
-    let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-    sender
-        .send(BrowserCommand {
-            surface_id,
-            op,
-            reply: reply_tx,
-        })
-        .await
-        .map_err(|_| DispatchError::from("browser automation unavailable"))?;
-    let result = tokio::time::timeout(BROWSER_CMD_TIMEOUT, reply_rx)
-        .await
-        .map_err(|_| DispatchError::from("browser command timed out"))?
-        .map_err(|_| DispatchError::Other("browser reply dropped".to_string()))?;
-    match result {
-        CmdResult::Ok => Ok(json!({"ok": true})),
-        CmdResult::Json(raw) => serde_json::from_str::<Value>(&raw)
-            .map_err(|e| DispatchError::Other(format!("invalid browser result json: {e}"))),
-        CmdResult::Err(err) => Err(browser_cmd_error_to_dispatch(err)),
-    }
-}
-
-fn browser_cmd_error_to_dispatch(err: BrowserCmdError) -> DispatchError {
-    match err {
-        BrowserCmdError::SurfaceGone => DispatchError::NotFound("surface".to_string()),
-        BrowserCmdError::NotABrowser => DispatchError::NotFound("browser surface".to_string()),
-        BrowserCmdError::NoWebView => DispatchError::NotFound("web view".to_string()),
-        BrowserCmdError::RefNotFound => DispatchError::NotFound("element ref".to_string()),
-        BrowserCmdError::ElementNotInteractable => {
-            DispatchError::InvalidParam("element is not interactable".to_string())
-        }
-        BrowserCmdError::TooLarge => DispatchError::PayloadTooLarge {
-            field: "result",
-            limit: forktty_core::MAX_BROWSER_RESULT_BYTES,
-            actual: forktty_core::MAX_BROWSER_RESULT_BYTES + 1,
-        },
-        BrowserCmdError::JsError(msg) => DispatchError::Other(msg),
-        BrowserCmdError::Internal(msg) => DispatchError::Other(msg),
     }
 }
 
