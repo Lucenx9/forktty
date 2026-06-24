@@ -41,7 +41,7 @@ jobs:
             meson ninja-build python3-gi libxml2-utils pkg-config
 
       - name: Install Zig
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        uses: mlugg/setup-zig@v1 # v2
         with:
           version: 0.15.2
 
@@ -116,7 +116,7 @@ jobs:
             libgtk-4-dev libadwaita-1-dev git libwebkitgtk-6.0-dev
 
       - name: Install Zig
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        uses: mlugg/setup-zig@v1 # v2
         with:
           version: 0.15.2
 
@@ -172,7 +172,7 @@ jobs:
             meson ninja-build python3-gi libxml2-utils pkg-config xvfb xauth
 
       - name: Install Zig
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        uses: mlugg/setup-zig@v1 # v2
         with:
           version: 0.15.2
 

@@ -22,7 +22,7 @@ jobs:
             libgtk-4-dev libadwaita-1-dev git
 
       - name: Install Zig
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        uses: mlugg/setup-zig@v1 # v2
         with:
           version: 0.15.2
 
