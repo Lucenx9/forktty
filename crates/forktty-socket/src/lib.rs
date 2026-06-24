@@ -4,6 +4,7 @@ mod methods;
 mod response_encoding;
 mod store_access;
 mod team_params;
+mod topology_params;
 mod workflow_params;
 
 use agent_params::{
@@ -50,6 +51,11 @@ use thiserror::Error;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::{broadcast, Semaphore};
+use topology_params::{
+    OptionalWorkspaceRequest, SurfaceCaptureTailRequest, SurfaceIdRequest, SurfaceReadTextRequest,
+    SurfaceSendTextRequest, SurfaceSplitRequest, WorkspaceCreateRequest, WorkspaceCreateSshRequest,
+    WorkspaceSelectorRequest,
+};
 use workflow_params::{
     WorkflowEvidenceAddRequest, WorkflowGetRequest, WorkflowListRequest, WorkflowLoopSetRequest,
     WorkflowPlanSetRequest, WorkflowReplayRequest, WorkflowUpsertRequest,
@@ -1562,17 +1568,16 @@ pub async fn dispatch(
             Ok(json!(model.list_workspaces()))
         }
         "workspace.create" => {
-            let name = optional_workspace_create_name_from_params(&params)?;
-            let cwd = resolve_workspace_cwd_param(&params)?;
+            let request = WorkspaceCreateRequest::decode(&params)?;
             let (workspace, previous_active_id) = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
                 let previous_active_id = model.active_workspace_id();
-                let workspace = match name {
-                    Some(name) => model.create_workspace(name, cwd),
-                    None => model.create_auto_named_workspace(cwd),
+                let workspace = match request.name.as_deref() {
+                    Some(name) => model.create_workspace(name, request.cwd),
+                    None => model.create_auto_named_workspace(request.cwd),
                 };
                 (workspace, previous_active_id)
             };
@@ -1583,18 +1588,16 @@ pub async fn dispatch(
             Ok(json!(workspace))
         }
         "workspace.create_ssh" => {
-            let host = required_ssh_host_param(&params)?;
-            let name = optional_workspace_create_name_from_params(&params)?;
-            let cwd = resolve_workspace_cwd_param(&params)?;
+            let request = WorkspaceCreateSshRequest::decode(&params)?;
             let (workspace, previous_active_id) = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
                 let previous_active_id = model.active_workspace_id();
-                let workspace = match name {
-                    Some(name) => model.create_ssh_workspace(name, cwd, host.to_string()),
-                    None => model.create_auto_named_ssh_workspace(cwd, host.to_string()),
+                let workspace = match request.name.as_deref() {
+                    Some(name) => model.create_ssh_workspace(name, request.cwd, request.host),
+                    None => model.create_auto_named_ssh_workspace(request.cwd, request.host),
                 };
                 (workspace, previous_active_id)
             };
@@ -1605,7 +1608,7 @@ pub async fn dispatch(
             Ok(json!(workspace))
         }
         "workspace.select" => {
-            let selector = workspace_selector_from_params(&params)?;
+            let request = WorkspaceSelectorRequest::decode(&params)?;
             let (workspace, previous_active_id) = {
                 let mut model = state
                     .model
@@ -1614,7 +1617,7 @@ pub async fn dispatch(
                 let previous_active_id = model.active_workspace_id();
                 (
                     model
-                        .select_workspace(selector)
+                        .select_workspace(request.selector)
                         .ok_or(DispatchError::NotFound("workspace".to_string()))?,
                     previous_active_id,
                 )
@@ -1642,14 +1645,14 @@ pub async fn dispatch(
             Ok(json!(workspace))
         }
         "workspace.close" => {
-            let selector = workspace_selector_from_params(&params)?;
+            let request = WorkspaceSelectorRequest::decode(&params)?;
             let (workspace_id, workspace, surfaces, is_last_workspace) = {
                 let model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
                 let workspace_id = model
-                    .workspace_id_for(selector)
+                    .workspace_id_for(request.selector)
                     .ok_or(DispatchError::NotFound("workspace".to_string()))?;
                 let surfaces = model.list_surfaces(Some(&workspace_id));
                 let workspace = model
@@ -2024,60 +2027,43 @@ pub async fn dispatch(
                 .model
                 .lock()
                 .map_err(|_| "Lock poisoned".to_string())?;
-            let workspace_id = match workspace_selector_from_params(&params) {
-                Ok(selector) => Some(
-                    model
-                        .workspace_id_for(selector)
-                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
-                ),
-                Err(DispatchError::MissingParam(_)) => None,
-                Err(err) => return Err(err),
-            };
+            let request = OptionalWorkspaceRequest::decode(&model, &params)?;
             Ok(surface_list_rows(
                 &model,
-                workspace_id.as_deref(),
+                request.workspace_id.as_deref(),
                 terminal_surfaces,
             ))
         }
         "surface.read_text" => {
-            let surface_id = required_surface_id(&params)?;
-            let capture = terminal_text_capture_from_params(&params)?;
-            let max_bytes = terminal_text_max_bytes_from_params(&params)?;
-            ensure_model_surface_exists(state, surface_id)?;
+            let request = SurfaceReadTextRequest::decode(&params)?;
+            ensure_model_surface_exists(state, &request.surface_id)?;
             let snapshot = state
                 .terminal
-                .read_text(surface_id, capture, max_bytes)
+                .read_text(&request.surface_id, request.capture, request.max_bytes)
                 .map_err(DispatchError::from)?;
             Ok(json!(snapshot))
         }
         "surface.capture_tail" => {
-            let surface_id = required_surface_id(&params)?;
-            let lines = terminal_tail_lines_from_params(&params)?;
-            let max_bytes = terminal_text_max_bytes_from_params(&params)?;
-            ensure_model_surface_exists(state, surface_id)?;
+            let request = SurfaceCaptureTailRequest::decode(&params)?;
+            ensure_model_surface_exists(state, &request.surface_id)?;
             let snapshot = state
                 .terminal
-                .read_text(surface_id, TerminalTextCapture::Tail { lines }, max_bytes)
+                .read_text(
+                    &request.surface_id,
+                    TerminalTextCapture::Tail {
+                        lines: request.lines,
+                    },
+                    request.max_bytes,
+                )
                 .map_err(DispatchError::from)?;
             Ok(json!(snapshot))
         }
         "surface.send_text" => {
-            let surface_id = required_surface_id(&params)?;
-            let text = required_string_param(&params, "text")?;
-            if text.is_empty() {
-                return Err("Invalid parameter text: must not be empty".into());
-            }
-            if text.len() > MAX_SEND_TEXT_BYTES {
-                return Err(DispatchError::PayloadTooLarge {
-                    field: "text",
-                    limit: MAX_SEND_TEXT_BYTES,
-                    actual: text.len(),
-                });
-            }
-            ensure_model_surface_exists(state, surface_id)?;
+            let request = SurfaceSendTextRequest::decode(&params)?;
+            ensure_model_surface_exists(state, &request.surface_id)?;
             state
                 .terminal
-                .send_text(surface_id, text)
+                .send_text(&request.surface_id, &request.text)
                 .map_err(DispatchError::from)?;
             Ok(json!({"sent": true}))
         }
@@ -2086,27 +2072,18 @@ pub async fn dispatch(
                 .model
                 .lock()
                 .map_err(|_| "Lock poisoned".to_string())?;
-            let workspace_id = match workspace_selector_from_params(&params) {
-                Ok(selector) => Some(
-                    model
-                        .workspace_id_for(selector)
-                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
-                ),
-                Err(DispatchError::MissingParam(_)) => None,
-                Err(err) => return Err(err),
-            };
-            Ok(topology_tree(&model, workspace_id.as_deref()))
+            let request = OptionalWorkspaceRequest::decode(&model, &params)?;
+            Ok(topology_tree(&model, request.workspace_id.as_deref()))
         }
         "surface.split" => {
-            let surface_id = required_surface_id(&params)?;
-            let axis = split_axis_from_params(&params)?;
+            let request = SurfaceSplitRequest::decode(&params)?;
             let surface = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
-                    .split_surface(surface_id, axis)
+                    .split_surface(&request.surface_id, request.axis)
                     .ok_or(DispatchError::NotFound("surface".to_string()))?
             };
             if let Err(err) = spawn_surface_terminal(state, &surface) {
@@ -2342,14 +2319,14 @@ pub async fn dispatch(
         "browser.import.preview" => browser_import_preview(&params).await,
         "browser.import.run" => browser_import_run(state, &params).await,
         "pane.new_tab" => {
-            let surface_id = required_surface_id(&params)?;
+            let request = SurfaceIdRequest::decode(&params)?;
             let surface = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
-                    .add_tab(surface_id)
+                    .add_tab(&request.surface_id)
                     .ok_or(DispatchError::NotFound("surface".to_string()))?
             };
             if let Err(err) = spawn_surface_terminal(state, &surface) {
@@ -2359,13 +2336,13 @@ pub async fn dispatch(
             Ok(json!(surface))
         }
         "pane.select_tab" => {
-            let surface_id = required_surface_id(&params)?;
+            let request = SurfaceIdRequest::decode(&params)?;
             let selected = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
-                model.select_tab(surface_id)
+                model.select_tab(&request.surface_id)
             };
             if selected {
                 Ok(json!({"selected": true}))
@@ -2374,13 +2351,13 @@ pub async fn dispatch(
             }
         }
         "surface.focus" => {
-            let surface_id = required_surface_id(&params)?;
+            let request = SurfaceIdRequest::decode(&params)?;
             let focused = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
-                model.focus_surface(surface_id)
+                model.focus_surface(&request.surface_id)
             };
             if focused {
                 Ok(json!({"focused": true}))
@@ -2388,7 +2365,10 @@ pub async fn dispatch(
                 Err(DispatchError::NotFound("surface".to_string()))
             }
         }
-        "surface.close" => close_surface_request(state, required_surface_id(&params)?).await,
+        "surface.close" => {
+            let request = SurfaceIdRequest::decode(&params)?;
+            close_surface_request(state, &request.surface_id).await
+        }
         "notification.create" => {
             let title = notification_title_from_params(&params)?;
             let body = notification_body_from_params(&params)?;
