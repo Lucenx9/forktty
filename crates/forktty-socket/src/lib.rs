@@ -1,3 +1,4 @@
+mod agent_params;
 mod coordinator;
 mod methods;
 mod response_encoding;
@@ -5,6 +6,10 @@ mod store_access;
 mod team_params;
 mod workflow_params;
 
+use agent_params::{
+    AgentHibernateRequest, AgentReclaimPlanRequest, AgentReclaimRequest, AgentResumeRequest,
+    AgentWorkspaceRequest,
+};
 use coordinator::{SocketCoordinator, TeamTerminalDispatchedMessage};
 use forktty_core::events::{self, ModelEvent, Snapshot};
 use forktty_core::protocol_limits;
@@ -1483,18 +1488,10 @@ pub async fn dispatch(
                 .model
                 .lock()
                 .map_err(|_| "Lock poisoned".to_string())?;
-            let workspace_id = match workspace_selector_from_params(&params) {
-                Ok(selector) => Some(
-                    model
-                        .workspace_id_for(selector)
-                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
-                ),
-                Err(DispatchError::MissingParam(_)) => None,
-                Err(err) => return Err(err),
-            };
+            let request = AgentWorkspaceRequest::decode(&model, &params)?;
             Ok(json!(agent_health_rows(
                 &model,
-                workspace_id.as_deref(),
+                request.workspace_id.as_deref(),
                 current_unix_epoch_ms(),
             )))
         }
@@ -1504,18 +1501,10 @@ pub async fn dispatch(
                 .model
                 .lock()
                 .map_err(|_| "Lock poisoned".to_string())?;
-            let workspace_id = match workspace_selector_from_params(&params) {
-                Ok(selector) => Some(
-                    model
-                        .workspace_id_for(selector)
-                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
-                ),
-                Err(DispatchError::MissingParam(_)) => None,
-                Err(err) => return Err(err),
-            };
+            let request = AgentWorkspaceRequest::decode(&model, &params)?;
             Ok(json!(agent_session_rows(
                 &model,
-                workspace_id.as_deref(),
+                request.workspace_id.as_deref(),
                 current_unix_epoch_ms(),
             )))
         }
@@ -1524,21 +1513,11 @@ pub async fn dispatch(
                 .model
                 .lock()
                 .map_err(|_| "Lock poisoned".to_string())?;
-            let workspace_id = match workspace_selector_from_params(&params) {
-                Ok(selector) => Some(
-                    model
-                        .workspace_id_for(selector)
-                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
-                ),
-                Err(DispatchError::MissingParam(_)) => None,
-                Err(err) => return Err(err),
-            };
-            let min_idle_ms = optional_u64_param(&params, "min_idle_ms")?
-                .unwrap_or(DEFAULT_AGENT_RECLAIM_MIN_IDLE_MS);
+            let request = AgentReclaimPlanRequest::decode(&model, &params)?;
             Ok(agent_reclaim_plan(
                 &model,
-                workspace_id.as_deref(),
-                min_idle_ms,
+                request.workspace_id.as_deref(),
+                request.min_idle_ms,
             ))
         }
         "agent.reclaim" => reclaim_agent_sessions(state, &params),
@@ -3616,30 +3595,21 @@ fn agent_reclaim_protect_reason(
 }
 
 fn hibernate_agent_session(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let surface_id = required_surface_id(params)?;
-    let min_idle_ms = optional_u64_param(params, "min_idle_ms")?.unwrap_or(0);
-    hibernate_agent_surface(state, surface_id, min_idle_ms)
+    let request = AgentHibernateRequest::decode(params)?;
+    hibernate_agent_surface(state, &request.surface_id, request.min_idle_ms)
 }
 
 fn reclaim_agent_sessions(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let min_idle_ms =
-        optional_u64_param(params, "min_idle_ms")?.unwrap_or(DEFAULT_AGENT_RECLAIM_MIN_IDLE_MS);
-    let limit = optional_u64_param(params, "limit")?.unwrap_or(200).min(200) as usize;
-    let plan = {
+    let (plan, request) = {
         let model = state
             .model
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
-        let workspace_id = match workspace_selector_from_params(params) {
-            Ok(selector) => Some(
-                model
-                    .workspace_id_for(selector)
-                    .ok_or(DispatchError::NotFound("workspace".to_string()))?,
-            ),
-            Err(DispatchError::MissingParam(_)) => None,
-            Err(err) => return Err(err),
-        };
-        agent_reclaim_plan(&model, workspace_id.as_deref(), min_idle_ms)
+        let request = AgentReclaimRequest::decode(&model, params)?;
+        (
+            agent_reclaim_plan(&model, request.workspace_id.as_deref(), request.min_idle_ms),
+            request,
+        )
     };
 
     let candidate_ids = plan
@@ -3648,14 +3618,14 @@ fn reclaim_agent_sessions(state: &SocketAppState, params: &Value) -> Result<Valu
         .into_iter()
         .flatten()
         .filter_map(|row| row.get("surface_id").and_then(Value::as_str))
-        .take(limit)
+        .take(request.limit)
         .map(ToString::to_string)
         .collect::<Vec<_>>();
 
     let mut hibernated = Vec::new();
     let mut failed = Vec::new();
     for surface_id in candidate_ids {
-        match hibernate_agent_surface(state, &surface_id, min_idle_ms) {
+        match hibernate_agent_surface(state, &surface_id, request.min_idle_ms) {
             Ok(row) => hibernated.push(row),
             Err(err) => failed.push(json!({
                 "surface_id": surface_id,
@@ -3957,14 +3927,15 @@ fn agent_resume_readiness(
 }
 
 fn resume_agent_session(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let source_surface_id = required_surface_id(params)?;
+    let request = AgentResumeRequest::decode(params)?;
+    let source_surface_id = request.source_surface_id;
     let (surface, agent, session_id, program, args, resume_cwd) = {
         let mut model = state
             .model
             .lock()
             .map_err(|_| DispatchError::Other("Lock poisoned".to_string()))?;
         let source = model
-            .surface(source_surface_id)
+            .surface(&source_surface_id)
             .ok_or(DispatchError::NotFound("surface".to_string()))?
             .clone();
         let agent_session = source.agent_session.ok_or_else(|| {
@@ -3981,7 +3952,7 @@ fn resume_agent_session(state: &SocketAppState, params: &Value) -> Result<Value,
         )
         .map_err(|err| DispatchError::PreconditionFailed(err.to_string()))?;
         let new_surface = model
-            .add_tab(source_surface_id)
+            .add_tab(&source_surface_id)
             .ok_or(DispatchError::NotFound("surface".to_string()))?;
         model.set_surface_agent_session(
             &new_surface.id,
