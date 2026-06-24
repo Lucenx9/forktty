@@ -1,5 +1,6 @@
 mod coordinator;
 mod methods;
+mod response_encoding;
 
 use coordinator::{SocketCoordinator, TeamTerminalDispatchedMessage};
 use forktty_core::events::{self, ModelEvent, Snapshot};
@@ -8892,10 +8893,10 @@ async fn write_response(
     response: &JsonRpcResponse,
     timeout: Duration,
 ) -> Result<(), io::Error> {
-    let mut bytes = serde_json::to_vec(response)?;
-    bytes.push(b'\n');
+    let encoded = response_encoding::serialize_response(response)?;
+    debug_assert_eq!(encoded.encoded_len(), encoded.as_bytes().len());
     tokio::time::timeout(timeout, async {
-        writer.write_all(&bytes).await?;
+        writer.write_all(encoded.as_bytes()).await?;
         writer.flush().await
     })
     .await
