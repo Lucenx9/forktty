@@ -1,4 +1,5 @@
 mod agent_params;
+mod browser_params;
 mod context_params;
 mod coordinator;
 mod feed_params;
@@ -14,6 +15,12 @@ use agent_params::{
     AgentHibernateRequest, AgentReclaimPlanRequest, AgentReclaimRequest, AgentResumeRequest,
     AgentWorkspaceRequest,
 };
+use browser_params::{
+    BrowserBookmarkAddRequest, BrowserBookmarkRemoveRequest, BrowserClickRequest,
+    BrowserFillRequest, BrowserHistoryListRequest, BrowserHistorySearchRequest,
+    BrowserNavigateRequest, BrowserOpenRequest, BrowserProfileCreateRequest,
+    BrowserProfileDeleteRequest, BrowserProfileRequest, BrowserSurfaceRequest,
+};
 use context_params::ContextSnapshotRequest;
 use coordinator::{SocketCoordinator, TeamTerminalDispatchedMessage};
 use feed_params::{FeedApprovalRespondRequest, FeedListRequest};
@@ -28,7 +35,7 @@ use forktty_core::{
     JsonRpcResponse, LogLevel, NotificationItem, NotificationKind, ProgressEntry, SplitAxis,
     StatusEntry, StatusHookMetadata, SurfaceKind, WorkflowEvidenceInput, WorkflowLoopGateInput,
     WorkflowLoopStateInput, WorkflowPlanStepInput, WorkflowQuery, WorkflowState, WorkspaceModel,
-    WorkspaceSelector, MAX_BROWSER_URL_BYTES,
+    WorkspaceSelector,
 };
 use forktty_terminal::{
     spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
@@ -2096,9 +2103,7 @@ pub async fn dispatch(
             Ok(json!(surface))
         }
         "browser.open" => {
-            let workspace_id = required_string_param(&params, "workspace_id")?.to_string();
-            let url = required_browser_url(&params)?;
-            let axis = split_axis_from_params(&params)?;
+            let request = BrowserOpenRequest::decode(&params)?;
             let surface = {
                 let _profile_store_guard = state
                     .profile_store_lock
@@ -2122,20 +2127,19 @@ pub async fn dispatch(
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
                 model
-                    .open_browser(&workspace_id, &url, profile, axis)
+                    .open_browser(&request.workspace_id, &request.url, profile, request.axis)
                     .ok_or(DispatchError::NotFound("workspace".to_string()))?
             };
             Ok(json!(surface))
         }
         "browser.navigate" => {
-            let surface_id = required_surface_id(&params)?.to_string();
-            let url = required_browser_url(&params)?;
+            let request = BrowserNavigateRequest::decode(&params)?;
             let updated = {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
-                model.set_surface_url(&surface_id, &url)
+                model.set_surface_url(&request.surface_id, &request.url)
             };
             if updated {
                 Ok(json!({"navigated": true}))
@@ -2144,37 +2148,43 @@ pub async fn dispatch(
             }
         }
         "browser.snapshot" => {
-            let surface_id = required_surface_id(&params)?.to_string();
-            dispatch_browser_cmd(state, surface_id, BrowserOp::Snapshot).await
+            let request = BrowserSurfaceRequest::decode(&params)?;
+            dispatch_browser_cmd(state, request.surface_id, BrowserOp::Snapshot).await
         }
         "browser.click" => {
-            let surface_id = required_surface_id(&params)?.to_string();
-            let reference = required_string_param(&params, "ref")?.to_string();
-            if reference.is_empty() {
-                return Err("Invalid parameter ref: must not be empty".into());
-            }
-            dispatch_browser_cmd(state, surface_id, BrowserOp::Click { reference }).await
+            let request = BrowserClickRequest::decode(&params)?;
+            dispatch_browser_cmd(
+                state,
+                request.surface_id,
+                BrowserOp::Click {
+                    reference: request.reference,
+                },
+            )
+            .await
         }
         "browser.fill" => {
-            let surface_id = required_surface_id(&params)?.to_string();
-            let reference = required_string_param(&params, "ref")?.to_string();
-            if reference.is_empty() {
-                return Err("Invalid parameter ref: must not be empty".into());
-            }
-            let value = required_string_param(&params, "value")?.to_string();
-            dispatch_browser_cmd(state, surface_id, BrowserOp::Fill { reference, value }).await
+            let request = BrowserFillRequest::decode(&params)?;
+            dispatch_browser_cmd(
+                state,
+                request.surface_id,
+                BrowserOp::Fill {
+                    reference: request.reference,
+                    value: request.value,
+                },
+            )
+            .await
         }
         "browser.back" => {
-            let surface_id = required_surface_id(&params)?.to_string();
-            dispatch_browser_cmd(state, surface_id, BrowserOp::Back).await
+            let request = BrowserSurfaceRequest::decode(&params)?;
+            dispatch_browser_cmd(state, request.surface_id, BrowserOp::Back).await
         }
         "browser.forward" => {
-            let surface_id = required_surface_id(&params)?.to_string();
-            dispatch_browser_cmd(state, surface_id, BrowserOp::Forward).await
+            let request = BrowserSurfaceRequest::decode(&params)?;
+            dispatch_browser_cmd(state, request.surface_id, BrowserOp::Forward).await
         }
         "browser.reload" => {
-            let surface_id = required_surface_id(&params)?.to_string();
-            dispatch_browser_cmd(state, surface_id, BrowserOp::Reload).await
+            let request = BrowserSurfaceRequest::decode(&params)?;
+            dispatch_browser_cmd(state, request.surface_id, BrowserOp::Reload).await
         }
         "browser.profile.list" => {
             let _profile_store_guard = state
@@ -2196,27 +2206,19 @@ pub async fn dispatch(
             Ok(json!(out))
         }
         "browser.profile.create" => {
-            let display_name = required_string_param(&params, "display_name")?.to_string();
-            if display_name.trim().is_empty() {
-                return Err(DispatchError::InvalidParam(
-                    "display_name must not be empty".to_string(),
-                ));
-            }
+            let request = BrowserProfileCreateRequest::decode(&params)?;
             let _profile_store_guard = state
                 .profile_store_lock
                 .lock()
                 .map_err(|_| "Lock poisoned".to_string())?;
             let mut store = profiles_store()?;
             let meta = store
-                .create(&display_name)
+                .create(&request.display_name)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             Ok(json!({ "id": meta.id.to_string(), "display_name": meta.display_name }))
         }
         "browser.profile.delete" => {
-            let id_str = required_string_param(&params, "id")?.to_string();
-            let id: forktty_core::ProfileId = id_str
-                .parse()
-                .map_err(|_| DispatchError::NotFound("profile".to_string()))?;
+            let request = BrowserProfileDeleteRequest::decode(&params)?;
             let _profile_store_guard = state
                 .profile_store_lock
                 .lock()
@@ -2229,7 +2231,7 @@ pub async fn dispatch(
                 let in_use = model.list_surfaces(None).iter().any(|s| {
                     matches!(
                         &s.kind,
-                        forktty_core::SurfaceKind::Browser { profile, .. } if *profile == id
+                        forktty_core::SurfaceKind::Browser { profile, .. } if *profile == request.id
                     )
                 });
                 if in_use {
@@ -2240,7 +2242,7 @@ pub async fn dispatch(
             }
             let mut store = profiles_store()?;
             // on-disk data dir cleanup deferred to the GUI profile manager (P4)
-            store.delete(&id).map_err(|e| match e {
+            store.delete(&request.id).map_err(|e| match e {
                 forktty_core::ProfileError::NotFound => {
                     DispatchError::NotFound("profile".to_string())
                 }
@@ -2252,29 +2254,26 @@ pub async fn dispatch(
             Ok(json!({ "deleted": true }))
         }
         "browser.history.list" => {
-            let profile = resolve_profile_param(&params)?;
-            let limit = history_limit_from_params(&params)?;
-            let store = forktty_core::HistoryStore::for_profile(profile)
+            let request = BrowserHistoryListRequest::decode(&params)?;
+            let store = forktty_core::HistoryStore::for_profile(request.profile)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             let rows = store
-                .list(limit)
+                .list(request.limit)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             Ok(json!(rows))
         }
         "browser.history.search" => {
-            let query = required_string(&params, "query")?.to_string();
-            let profile = resolve_profile_param(&params)?;
-            let limit = history_limit_from_params(&params)?;
-            let store = forktty_core::HistoryStore::for_profile(profile)
+            let request = BrowserHistorySearchRequest::decode(&params)?;
+            let store = forktty_core::HistoryStore::for_profile(request.profile)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             let rows = store
-                .search(&query, limit)
+                .search(&request.query, request.limit)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             Ok(json!(rows))
         }
         "browser.history.clear" => {
-            let profile = resolve_profile_param(&params)?;
-            let store = forktty_core::HistoryStore::for_profile(profile)
+            let request = BrowserProfileRequest::decode(&params)?;
+            let store = forktty_core::HistoryStore::for_profile(request.profile)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             store
                 .clear()
@@ -2282,39 +2281,26 @@ pub async fn dispatch(
             Ok(json!({ "cleared": true }))
         }
         "browser.bookmark.add" => {
-            let url = required_string_param(&params, "url")?.trim().to_string();
-            if url.is_empty() {
-                return Err(DispatchError::InvalidParam(
-                    "url must not be empty".to_string(),
-                ));
-            }
-            let title = optional_bookmark_title(&params)?;
-            let profile = resolve_profile_param(&params)?;
-            let mut store = forktty_core::BookmarkStore::for_profile(profile)
+            let request = BrowserBookmarkAddRequest::decode(&params)?;
+            let mut store = forktty_core::BookmarkStore::for_profile(request.profile)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             store
-                .add(&url, &title)
+                .add(&request.url, &request.title)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             Ok(json!({ "added": true }))
         }
         "browser.bookmark.list" => {
-            let profile = resolve_profile_param(&params)?;
-            let store = forktty_core::BookmarkStore::for_profile(profile)
+            let request = BrowserProfileRequest::decode(&params)?;
+            let store = forktty_core::BookmarkStore::for_profile(request.profile)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             Ok(json!(store.list()))
         }
         "browser.bookmark.remove" => {
-            let url = required_string_param(&params, "url")?.trim().to_string();
-            if url.is_empty() {
-                return Err(DispatchError::InvalidParam(
-                    "url must not be empty".to_string(),
-                ));
-            }
-            let profile = resolve_profile_param(&params)?;
-            let mut store = forktty_core::BookmarkStore::for_profile(profile)
+            let request = BrowserBookmarkRemoveRequest::decode(&params)?;
+            let mut store = forktty_core::BookmarkStore::for_profile(request.profile)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             let removed = store
-                .remove(&url)
+                .remove(&request.url)
                 .map_err(|e| DispatchError::from(e.to_string()))?;
             Ok(json!({ "removed": removed }))
         }
@@ -7154,21 +7140,6 @@ fn browser_cmd_error_to_dispatch(err: BrowserCmdError) -> DispatchError {
     }
 }
 
-fn required_browser_url(params: &Value) -> Result<String, DispatchError> {
-    let raw = required_string_param(params, "url")?;
-    let Some(url) = forktty_core::normalize_browser_url(raw) else {
-        return Err("Invalid parameter url: must not be empty".into());
-    };
-    if url.len() > MAX_BROWSER_URL_BYTES {
-        return Err(DispatchError::PayloadTooLarge {
-            field: "url",
-            limit: MAX_BROWSER_URL_BYTES,
-            actual: url.len(),
-        });
-    }
-    Ok(url)
-}
-
 fn profiles_store() -> Result<forktty_core::ProfileStore, DispatchError> {
     let path = dirs::data_local_dir()
         .map(|d| {
@@ -7937,18 +7908,6 @@ fn terminal_tail_lines_from_params(params: &Value) -> Result<usize, DispatchErro
         )));
     }
     Ok(lines as usize)
-}
-
-fn optional_bookmark_title(params: &Value) -> Result<String, DispatchError> {
-    match params.get("title") {
-        None | Some(Value::Null) => Ok(String::new()),
-        Some(value) => value
-            .as_str()
-            .map(|title| title.trim().to_string())
-            .ok_or_else(|| {
-                DispatchError::InvalidParam("Invalid parameter title: expected string".to_string())
-            }),
-    }
 }
 
 fn notification_kind_from_params(params: &Value) -> Result<NotificationKind, DispatchError> {
