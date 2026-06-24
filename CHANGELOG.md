@@ -5,6 +5,18 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Fixed
+- Fixed official CLI/MCP socket clients timing out before slower server-side
+  operations complete or rejecting valid bounded responses larger than 1 MiB.
+- Fixed `team.message.dispatch` so concurrent or post-send/failed-ack retries
+  of the same queued message do not write the prompt to a terminal twice.
+- Fixed duplicate `team.worker.launch` calls for the same live launch-owned
+  worker so the second call fails before leaving an orphaned worker pane.
+- Fixed `workspace.close` and `worktree.remove` rollback when closing multiple
+  surfaces fails after one or more terminal runtimes were already closed.
+- Fixed `events.subscribe` validation for non-boolean `replay` values and
+  capped event subscribers separately from the general socket request budget.
+- Fixed MCP tool metadata and `SPEC.md` drift for workflow loop state and
+  non-idempotent team heartbeat/ack operations.
 - Fixed Antigravity hook setup so the generated `PreInvocation` entry uses
   Antigravity's flat lifecycle-hook handler shape instead of the nested
   tool-hook matcher shape, allowing ForkTTY's before-model wrapper to load.

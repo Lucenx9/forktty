@@ -10,7 +10,7 @@ const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 // the server actually supports it; otherwise it answers with its own latest.
 const MCP_SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
     &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
-const MCP_SOCKET_TIMEOUT: Duration = Duration::from_secs(5);
+const MCP_SOCKET_TIMEOUT: Duration = Duration::from_secs(35);
 const MAX_MCP_MESSAGE_BYTES: usize = 1_048_576;
 
 pub(crate) fn run_stdio(socket_path: PathBuf) -> CliResult<()> {
@@ -2052,7 +2052,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "team_worker_heartbeat",
-            annotations: mutating_annotations(false, true),
+            annotations: mutating_annotations(false, false),
             description: "Record a worker heartbeat/status update for a ForkTTY team.",
             input_schema: object_schema(
                 &["team_id", "worker_id"],
@@ -2170,7 +2170,7 @@ fn tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "team_message_ack",
-            annotations: mutating_annotations(false, true),
+            annotations: mutating_annotations(false, false),
             description: "Acknowledge a ForkTTY team mailbox message.",
             input_schema: object_schema(
                 &["team_id", "message_id"],
@@ -2637,6 +2637,8 @@ mod tests {
         assert_eq!(annotation("surface_send_text")["openWorldHint"], true);
         assert_eq!(annotation("team_message_dispatch")["destructiveHint"], true);
         assert_eq!(annotation("team_message_dispatch")["openWorldHint"], true);
+        assert_eq!(annotation("team_worker_heartbeat")["idempotentHint"], false);
+        assert_eq!(annotation("team_message_ack")["idempotentHint"], false);
     }
 
     #[test]

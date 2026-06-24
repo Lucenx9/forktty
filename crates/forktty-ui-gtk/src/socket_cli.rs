@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const SOCKET_TIMEOUT: Duration = Duration::from_secs(5);
+const SOCKET_TIMEOUT: Duration = Duration::from_secs(35);
 const DEFAULT_AGENT_WAIT_TIMEOUT_MS: u64 = 30_000;
 const MAX_AGENT_WAIT_TIMEOUT_MS: u64 = 120_000;
 const DEFAULT_AGENT_WAIT_INTERVAL_MS: u64 = 250;
@@ -39,7 +39,7 @@ const MAX_AGENT_SKILL_FILE_BYTES: u64 = MAX_HOOK_CONFIG_SIZE_BYTES;
 // exceeds 1 MiB — so it gets a larger budget than ForkTTY-owned hook configs.
 const MAX_MCP_CONFIG_SIZE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_STDIN_TEXT_BYTES: usize = 1_048_576;
-const MAX_SOCKET_RESPONSE_BYTES: usize = 1_048_576;
+const MAX_SOCKET_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 
 static NONCE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -12312,6 +12312,28 @@ mod tests {
                 let err = send_socket_request(socket_path, "system.ping", json!({})).unwrap_err();
                 assert_eq!(err.code.as_deref(), Some("response_too_large"));
                 assert!(err.message.contains("socket response exceeds"));
+            },
+        );
+    }
+
+    #[test]
+    fn socket_response_accepts_valid_large_official_response() {
+        let result = "x".repeat(2 * 1024 * 1024);
+        with_socket_response(
+            move |request| {
+                format!(
+                    "{}\n",
+                    json!({
+                        "id": request["id"],
+                        "ok": true,
+                        "result": result
+                    })
+                )
+            },
+            |socket_path| {
+                let value = send_socket_request(socket_path, "metadata.list_logs", json!({}))
+                    .expect("large official response should be readable");
+                assert_eq!(value.as_str().unwrap().len(), 2 * 1024 * 1024);
             },
         );
     }

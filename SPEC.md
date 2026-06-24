@@ -370,17 +370,17 @@ Error responses include a structured `code` field so clients can branch on outco
 | Code | Cause |
 | ---- | ----- |
 | `method_not_found` | Unknown method name. |
-| `missing_param` | A required parameter is absent or has the wrong type. |
+| `missing_param` | A required parameter is absent. |
 | `not_found` | The referenced workspace, surface, worktree, or metadata entry does not exist. |
 | `payload_too_large` | The request line exceeds 1 MiB, `surface.send_text` text exceeds 256 KiB, or metadata text exceeds its method-specific limit. |
 | `conflict` | The operation is valid but blocked by current state, such as dirty worktrees or in-use browser profiles. |
 | `precondition_failed` | The request needs setup the caller can perform first: the worktree open-workspace boundary returns this, naming the remedy (`forktty create-workspace` / the `workspace_create` MCP tool). |
-
-`forktty --json hooks doctor <agent>` and `forktty --json hooks test <agent>` emit a stable machine-readable report: a `version` field (currently 1) with additive-only evolution, an overall `ok` boolean, and — for `hooks test` — per-method `{method, ok, error?}` entries from a real socket round-trip that always includes `notification.create`. Both commands exit 0 when every check passes and 1 otherwise, so CI can gate on the exit code alone; the human-readable output is rendered from the same report.
 | `already_exists` | The requested worktree or resource already exists. |
 | `not_ready` | A target exists but is not ready to accept the operation. |
-| `invalid_param` | A supplied parameter has an invalid value. |
+| `invalid_param` | A supplied parameter has the wrong type or an invalid value. |
 | `error` | Catch-all for other failures (carries a `message`). |
+
+`forktty --json hooks doctor <agent>` and `forktty --json hooks test <agent>` emit a stable machine-readable report: a `version` field (currently 1) with additive-only evolution, an overall `ok` boolean, and — for `hooks test` — per-method `{method, ok, error?}` entries from a real socket round-trip that always includes `notification.create`. Both commands exit 0 when every check passes and 1 otherwise, so CI can gate on the exit code alone; the human-readable output is rendered from the same report.
 
 `forktty remote-helper hello` is a no-socket stdio handshake intended to run
 through SSH as `ssh <host> forktty remote-helper hello`. It emits one JSON
@@ -403,7 +403,7 @@ not listen on a network port; each MCP tool call is validated and then bridged
 to the same owner-only Unix socket described above. Oversized, invalid JSON,
 and invalid UTF-8 stdio messages return JSON-RPC `-32700` parse errors and do
 not end the stdio session. The server exposes
-`identify`, `workspace_list`, `surface_list`, `context_snapshot`, `topology_tree`, `remote_list`, `remote_status`, `surface_read_text`, `surface_capture_tail`, `agent_list`, `agent_health`, `agent_reclaim_plan`, `agent_hibernate`, `agent_reclaim`, `agent_resume`, `status_summary`, `workflow_list`, `workflow_get`, `workflow_upsert`, `workflow_plan_set`, `workflow_evidence_add`, `workflow_replay`, `team_list`, `team_get`, `team_upsert`, `team_finish`, `team_worker_upsert`, `team_worker_heartbeat`, `team_worker_launch`, `team_worker_health`, `team_worker_nudge`, `team_worker_shutdown`, `team_task_upsert`, `team_message_send`, `team_message_dispatch`, `team_message_ack`, `team_inbox`, `team_summary`, `team_events`, `surface_split`, `surface_send_text`,
+`identify`, `workspace_list`, `surface_list`, `context_snapshot`, `topology_tree`, `remote_list`, `remote_status`, `surface_read_text`, `surface_capture_tail`, `agent_list`, `agent_health`, `agent_reclaim_plan`, `agent_hibernate`, `agent_reclaim`, `agent_resume`, `status_summary`, `workflow_list`, `workflow_get`, `workflow_upsert`, `workflow_loop_set`, `workflow_plan_set`, `workflow_evidence_add`, `workflow_replay`, `team_list`, `team_get`, `team_upsert`, `team_finish`, `team_worker_upsert`, `team_worker_heartbeat`, `team_worker_launch`, `team_worker_health`, `team_worker_nudge`, `team_worker_shutdown`, `team_task_upsert`, `team_message_send`, `team_message_dispatch`, `team_message_ack`, `team_inbox`, `team_summary`, `team_events`, `surface_split`, `surface_send_text`,
 `surface_focus`, `worktree_list`, `worktree_status`, `worktree_create`,
 `worktree_attach`, `worktree_remove`, `worktree_merge`,
 `notification_create`, and `status_set`. `FORKTTY_SOCKET_PATH` chooses the

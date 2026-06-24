@@ -55,8 +55,10 @@ const TEAM_MESSAGE_SURFACE_READY_TIMEOUT: Duration = Duration::from_secs(10);
 /// likely to coalesce the writes into one paste-like input chunk.
 const TEAM_SEPARATE_SUBMIT_ENTER_SETTLE: Duration = Duration::from_millis(50);
 static TEAM_MESSAGE_DISPATCH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+static TEAM_WORKER_LAUNCH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 /// Buffered events per subscriber before a slow client gets a `Lagged` notice.
 const EVENTS_CHANNEL_CAPACITY: usize = 256;
+const MAX_EVENT_SUBSCRIBERS: usize = 32;
 /// How often the background task snapshots the model and emits diffs.
 const EVENTS_TICK: Duration = Duration::from_millis(250);
 /// Max time one event write to a subscriber may take. A subscriber that
@@ -455,6 +457,7 @@ pub struct SocketAppState {
     feed_store: Arc<Mutex<Option<FeedStore>>>,
     hook_session_targets: Arc<Mutex<HookSessionTargets>>,
     team_launch_owned_surfaces: Arc<Mutex<HashSet<TeamLaunchOwnedSurface>>>,
+    team_terminal_dispatched_messages: Arc<Mutex<HashSet<TeamTerminalDispatchedMessage>>>,
 }
 
 impl SocketAppState {
@@ -483,6 +486,7 @@ impl SocketAppState {
             feed_store: Arc::new(Mutex::new(None)),
             hook_session_targets: Arc::new(Mutex::new(HookSessionTargets::default())),
             team_launch_owned_surfaces: Arc::new(Mutex::new(HashSet::new())),
+            team_terminal_dispatched_messages: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -551,6 +555,13 @@ struct TeamLaunchOwnedSurface {
     team_id: String,
     worker_id: String,
     surface_id: String,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct TeamTerminalDispatchedMessage {
+    store_path: PathBuf,
+    team_id: String,
+    message_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -741,6 +752,7 @@ pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(
     let listener = UnixListener::from_std(listener)?;
     spawn_event_tick(state.clone());
     let connection_limit = Arc::new(Semaphore::new(MAX_SOCKET_CONNECTIONS));
+    let event_subscription_limit = Arc::new(Semaphore::new(MAX_EVENT_SUBSCRIBERS));
     loop {
         let stream = match listener.accept().await {
             Ok((stream, _)) => stream,
@@ -756,6 +768,7 @@ pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(
             Err(err) => return Err(err.into()),
         };
         let state = state.clone();
+        let event_subscription_limit = event_subscription_limit.clone();
         let Ok(permit) = connection_limit.clone().try_acquire_owned() else {
             tokio::spawn(async move {
                 reject_over_capacity_connection(stream).await;
@@ -764,7 +777,9 @@ pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(
         };
         tokio::spawn(async move {
             let _permit = permit;
-            if let Err(err) = handle_connection(stream, state).await {
+            if let Err(err) =
+                handle_connection_with_event_limit(stream, state, event_subscription_limit).await
+            {
                 // We can't return errors to a client whose connection has
                 // already dropped, but the operator should still see the
                 // underlying I/O or JSON failure on stderr.
@@ -1457,6 +1472,7 @@ pub async fn dispatch(
             Ok(json!(worker))
         }
         "team.worker.launch" => {
+            let _launch_guard = team_worker_launch_lock().lock().await;
             validate_optional_worktree_name(&params)?;
             let team_id = required_trimmed_string(&params, "team_id")?.to_string();
             let worker_id = required_trimmed_string(&params, "worker_id")?.to_string();
@@ -1474,6 +1490,7 @@ pub async fn dispatch(
                 role.as_deref(),
                 extra_args,
             )?;
+            ensure_team_worker_can_launch(state, &team_id, &worker_id)?;
             let surface =
                 create_team_worker_surface(state, &team_id, &worker_id, worktree_name.as_deref())?;
             let request =
@@ -1637,9 +1654,13 @@ pub async fn dispatch(
             let worker_id =
                 optional_non_blank_string_param(&params, "worker_id")?.map(str::to_string);
             let submit = optional_bool_param(&params, "submit")?.unwrap_or(false);
+            let _dispatch_guard = team_message_dispatch_lock().lock().await;
             let (surface_id, resolved_worker_id, text, agent) =
                 team_message_dispatch_target(state, &team_id, &message_id, worker_id.as_deref())?;
+            let terminal_message = team_terminal_dispatched_message(state, &team_id, &message_id)?;
+            ensure_team_message_not_terminal_dispatched(state, &terminal_message)?;
             dispatch_team_message_text(state, &surface_id, &text, submit, agent.as_deref()).await?;
+            remember_team_message_terminal_dispatched(state, terminal_message.clone())?;
             let message = forktty_core::update_teams_at_path(team_store_path(state)?, |store| {
                 store.ack_message(
                     forktty_core::TeamMessageAck {
@@ -1651,6 +1672,7 @@ pub async fn dispatch(
                 )
             })
             .map_err(DispatchError::from)?;
+            let _ = forget_team_message_terminal_dispatched(state, &terminal_message);
             Ok(json!({
                 "sent": true,
                 "submitted": submit,
@@ -1894,7 +1916,7 @@ pub async fn dispatch(
         }
         "workspace.close" => {
             let selector = workspace_selector_from_params(&params)?;
-            let (workspace_id, workspace, surface_ids, is_last_workspace) = {
+            let (workspace_id, workspace, surfaces, is_last_workspace) = {
                 let model = state
                     .model
                     .lock()
@@ -1902,19 +1924,19 @@ pub async fn dispatch(
                 let workspace_id = model
                     .workspace_id_for(selector)
                     .ok_or(DispatchError::NotFound("workspace".to_string()))?;
-                let surface_ids = model
-                    .list_surfaces(Some(&workspace_id))
-                    .into_iter()
-                    .map(|surface| surface.id)
-                    .collect::<Vec<_>>();
+                let surfaces = model.list_surfaces(Some(&workspace_id));
                 let workspace = model
                     .list_workspaces()
                     .into_iter()
                     .find(|workspace| workspace.id == workspace_id)
                     .ok_or(DispatchError::NotFound("workspace".to_string()))?;
                 let is_last_workspace = model.list_workspaces().len() == 1;
-                (workspace_id, workspace, surface_ids, is_last_workspace)
+                (workspace_id, workspace, surfaces, is_last_workspace)
             };
+            let surface_ids = surfaces
+                .iter()
+                .map(|surface| surface.id.clone())
+                .collect::<Vec<_>>();
             if is_last_workspace {
                 let (replacement, previous_active_id) = {
                     let mut model = state
@@ -1931,7 +1953,7 @@ pub async fn dispatch(
                     rollback_workspace_creation(state, &replacement.id, previous_active_id)?;
                     return Err(err.into());
                 }
-                if let Err(err) = close_terminal_surfaces_if_present(state, &surface_ids) {
+                if let Err(err) = close_terminal_surfaces_or_restore(state, &surfaces) {
                     let mut err = err;
                     if let Err(cleanup_err) = close_replacement_terminal_surface_if_present(
                         state,
@@ -1979,7 +2001,7 @@ pub async fn dispatch(
                 evict_hook_session_targets_for_surfaces(state, &surface_ids)?;
                 return Ok(json!(workspace));
             }
-            close_terminal_surfaces_if_present(state, &surface_ids)?;
+            close_terminal_surfaces_or_restore(state, &surfaces)?;
             {
                 let mut model = state
                     .model
@@ -2124,7 +2146,7 @@ pub async fn dispatch(
                     }
                     return Err(err.into());
                 }
-                if let Err(err) = close_terminal_surfaces_if_present(state, &surface_ids) {
+                if let Err(err) = close_terminal_surfaces_or_restore(state, &surfaces) {
                     let mut err = err;
                     if let Err(cleanup_err) = close_replacement_terminal_surface_if_present(
                         state,
@@ -2190,7 +2212,7 @@ pub async fn dispatch(
                 evict_hook_session_targets_for_surfaces(state, &surface_ids)?;
                 return Ok(json!({"removed": name}));
             }
-            close_terminal_surfaces_if_present(state, &surface_ids)?;
+            close_terminal_surfaces_or_restore(state, &surfaces)?;
             if let Err(err) = finish_removal_blocking(removal, false).await {
                 let mut err = err.to_string();
                 if let Err(respawn_err) = spawn_terminal_surfaces(state, &surfaces) {
@@ -3910,7 +3932,7 @@ fn hibernate_agent_surface(
 ) -> Result<Value, DispatchError> {
     let now_ms = current_unix_epoch_ms();
     let path = std::env::var_os("PATH");
-    let (surface, status, agent, session_id, resume_cwd, permission_mode, argv, idle_ms) = {
+    let (surface, status, agent, session_id, resume_cwd, permission_mode, argv, idle_ms, rollback) = {
         let mut model = state
             .model
             .lock()
@@ -3991,28 +4013,18 @@ fn hibernate_agent_surface(
             "Suspended",
             Some("yellow".to_string()),
         );
-        if let Err(err) = close_terminal_surface_if_present(state, surface_id) {
-            model.set_surface_agent_session_lifecycle(surface_id, AgentSessionLifecycle::Idle);
-            model.set_surface_agent_session_last_activity_ms(surface_id, previous_last_activity_ms);
-            let _ = model.mark_surface_unread(surface_id, previous_unread);
-            let _ = model.restore_agent_metadata(&workspace_id, cleared_agent_metadata);
-            if let Some(previous_status) = previous_status {
-                let _ = model.set_status(
-                    &workspace_id,
-                    previous_status.key,
-                    previous_status.label,
-                    previous_status.value,
-                    previous_status.color,
-                );
-            } else {
-                let _ = model.clear_status(&workspace_id, Some(&status_key));
-            }
-            return Err(DispatchError::Other(err));
-        }
         let surface = model
             .surface(surface_id)
             .cloned()
             .ok_or(DispatchError::NotFound("surface".to_string()))?;
+        let rollback = (
+            workspace_id,
+            status_key,
+            previous_last_activity_ms,
+            previous_unread,
+            previous_status,
+            cleared_agent_metadata,
+        );
         (
             surface,
             status.ok_or(DispatchError::NotFound("workspace".to_string()))?,
@@ -4022,8 +4034,39 @@ fn hibernate_agent_surface(
             permission_mode,
             argv,
             idle_ms,
+            rollback,
         )
     };
+    if let Err(err) = close_terminal_surface_if_present(state, surface_id) {
+        let (
+            workspace_id,
+            status_key,
+            previous_last_activity_ms,
+            previous_unread,
+            previous_status,
+            cleared_agent_metadata,
+        ) = rollback;
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        model.set_surface_agent_session_lifecycle(surface_id, AgentSessionLifecycle::Idle);
+        model.set_surface_agent_session_last_activity_ms(surface_id, previous_last_activity_ms);
+        let _ = model.mark_surface_unread(surface_id, previous_unread);
+        let _ = model.restore_agent_metadata(&workspace_id, cleared_agent_metadata);
+        if let Some(previous_status) = previous_status {
+            let _ = model.set_status(
+                &workspace_id,
+                previous_status.key,
+                previous_status.label,
+                previous_status.value,
+                previous_status.color,
+            );
+        } else {
+            let _ = model.clear_status(&workspace_id, Some(&status_key));
+        }
+        return Err(DispatchError::Other(err));
+    }
 
     Ok(json!({
         "surface": surface,
@@ -5559,12 +5602,21 @@ fn close_replacement_terminal_surface_if_present(
     }
 }
 
-fn close_terminal_surfaces_if_present(
+fn close_terminal_surfaces_or_restore(
     state: &SocketAppState,
-    surface_ids: &[String],
+    surfaces: &[forktty_core::Surface],
 ) -> Result<(), String> {
-    for surface_id in surface_ids {
-        close_terminal_surface_if_present(state, surface_id)?;
+    let mut closed = Vec::new();
+    for surface in surfaces {
+        if let Err(err) = close_terminal_surface_if_present(state, &surface.id) {
+            if !closed.is_empty() {
+                if let Err(respawn_err) = spawn_terminal_surfaces(state, &closed) {
+                    return Err(format!("{err}; terminal restore failed: {respawn_err}"));
+                }
+            }
+            return Err(err);
+        }
+        closed.push(surface.clone());
     }
     Ok(())
 }
@@ -6384,10 +6436,6 @@ async fn dispatch_team_message_text(
     submit: bool,
     agent: Option<&str>,
 ) -> Result<(), DispatchError> {
-    // Team dispatches are serialized because GTK can only foreground one
-    // worker surface at a time. Keep the wait bounded so a never-ready surface
-    // cannot block unrelated dispatches indefinitely.
-    let _dispatch_guard = team_message_dispatch_lock().lock().await;
     show_team_message_surface(state, surface_id)?;
     let (text, separate_enter) = terminal_text_and_separate_enter(body, submit, agent);
     send_team_message_body_when_ready(state, surface_id, &text).await?;
@@ -6444,6 +6492,10 @@ fn agent_uses_separate_submit_enter(agent: Option<&str>) -> bool {
 
 fn team_message_dispatch_lock() -> &'static tokio::sync::Mutex<()> {
     TEAM_MESSAGE_DISPATCH_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+fn team_worker_launch_lock() -> &'static tokio::sync::Mutex<()> {
+    TEAM_WORKER_LAUNCH_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
 fn show_team_message_surface(
@@ -6638,6 +6690,33 @@ fn create_team_worker_surface(
     Ok(model.surface(&surface.id).cloned().unwrap_or(surface))
 }
 
+fn ensure_team_worker_can_launch(
+    state: &SocketAppState,
+    team_id: &str,
+    worker_id: &str,
+) -> Result<(), DispatchError> {
+    let store =
+        forktty_core::load_teams_from_path(team_store_path(state)?).map_err(DispatchError::from)?;
+    let Some(surface_id) = store.get(team_id).and_then(|team| {
+        team.workers
+            .iter()
+            .find(|worker| worker.id == worker_id)
+            .and_then(|worker| worker.launched_surface_id.clone())
+    }) else {
+        return Ok(());
+    };
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    if model.surface(&surface_id).is_some() {
+        return Err(DispatchError::Conflict(format!(
+            "team worker {worker_id} is already launched on surface {surface_id}"
+        )));
+    }
+    Ok(())
+}
+
 fn team_worker_surface_id(
     state: &SocketAppState,
     team_id: &str,
@@ -6755,6 +6834,59 @@ fn forget_team_launch_owned_surfaces_for_surfaces(
         .lock()
         .map_err(|_| "Lock poisoned".to_string())?
         .retain(|owned| !surface_ids.contains(owned.surface_id.as_str()));
+    Ok(())
+}
+
+fn team_terminal_dispatched_message(
+    state: &SocketAppState,
+    team_id: &str,
+    message_id: &str,
+) -> Result<TeamTerminalDispatchedMessage, DispatchError> {
+    Ok(TeamTerminalDispatchedMessage {
+        store_path: team_store_path(state)?.to_path_buf(),
+        team_id: team_id.to_string(),
+        message_id: message_id.to_string(),
+    })
+}
+
+fn ensure_team_message_not_terminal_dispatched(
+    state: &SocketAppState,
+    message: &TeamTerminalDispatchedMessage,
+) -> Result<(), DispatchError> {
+    if state
+        .team_terminal_dispatched_messages
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?
+        .contains(message)
+    {
+        return Err(DispatchError::Conflict(
+            "message already dispatched to a terminal in this runtime".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn remember_team_message_terminal_dispatched(
+    state: &SocketAppState,
+    message: TeamTerminalDispatchedMessage,
+) -> Result<(), DispatchError> {
+    state
+        .team_terminal_dispatched_messages
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?
+        .insert(message);
+    Ok(())
+}
+
+fn forget_team_message_terminal_dispatched(
+    state: &SocketAppState,
+    message: &TeamTerminalDispatchedMessage,
+) -> Result<(), DispatchError> {
+    state
+        .team_terminal_dispatched_messages
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?
+        .remove(message);
     Ok(())
 }
 
@@ -8743,6 +8875,7 @@ pub fn bootstrap_default_workspace(state: &SocketAppState, cwd: PathBuf) -> Resu
     spawn_workspace_terminal(state, &workspace)
 }
 
+#[cfg(test)]
 async fn handle_connection(
     stream: tokio::net::UnixStream,
     state: SocketAppState,
@@ -8750,13 +8883,43 @@ async fn handle_connection(
     handle_connection_with_write_timeout(stream, state, RESPONSE_WRITE_TIMEOUT).await
 }
 
+async fn handle_connection_with_event_limit(
+    stream: tokio::net::UnixStream,
+    state: SocketAppState,
+    event_subscription_limit: Arc<Semaphore>,
+) -> Result<(), SocketError> {
+    handle_connection_with_limits(
+        stream,
+        state,
+        RESPONSE_WRITE_TIMEOUT,
+        event_subscription_limit,
+    )
+    .await
+}
+
 // The write timeout is injectable so tests of the stalled-client behavior can
 // pass a short one instead of waiting out the production
 // [`RESPONSE_WRITE_TIMEOUT`].
+#[cfg(test)]
 async fn handle_connection_with_write_timeout(
     stream: tokio::net::UnixStream,
     state: SocketAppState,
     write_timeout: Duration,
+) -> Result<(), SocketError> {
+    handle_connection_with_limits(
+        stream,
+        state,
+        write_timeout,
+        Arc::new(Semaphore::new(MAX_EVENT_SUBSCRIBERS)),
+    )
+    .await
+}
+
+async fn handle_connection_with_limits(
+    stream: tokio::net::UnixStream,
+    state: SocketAppState,
+    write_timeout: Duration,
+    event_subscription_limit: Arc<Semaphore>,
 ) -> Result<(), SocketError> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
@@ -8801,12 +8964,25 @@ async fn handle_connection_with_write_timeout(
             }
         };
         if request.method == "events.subscribe" {
+            let replay = match events_subscribe_replay_param(&request.params) {
+                Ok(replay) => replay,
+                Err(err) => {
+                    let response = JsonRpcResponse::error(request.id, err.code(), err.to_string());
+                    write_response(&mut writer, &response, write_timeout).await?;
+                    continue;
+                }
+            };
+            let Ok(event_permit) = event_subscription_limit.clone().try_acquire_owned() else {
+                let response = JsonRpcResponse::error(
+                    request.id,
+                    "server_busy",
+                    format!("Too many active event subscribers (limit {MAX_EVENT_SUBSCRIBERS})"),
+                );
+                write_response(&mut writer, &response, write_timeout).await?;
+                continue;
+            };
+            let _event_permit = event_permit;
             // Takes over the connection: stream events until the peer drops.
-            let replay = request
-                .params
-                .get("replay")
-                .and_then(Value::as_bool)
-                .unwrap_or(true);
             return stream_events(
                 &state,
                 replay,
@@ -8832,6 +9008,10 @@ async fn handle_connection_with_write_timeout(
         write_response(&mut writer, &response, write_timeout).await?;
     }
     Ok(())
+}
+
+fn events_subscribe_replay_param(params: &Value) -> Result<bool, DispatchError> {
+    optional_bool_param(params, "replay").map(|replay| replay.unwrap_or(true))
 }
 
 /// Hold the connection open and stream model events as NDJSON until the peer
@@ -10244,6 +10424,78 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct BlockingFirstSendBackend {
+        inner: HeadlessTerminalBackend,
+        first_send_started: Mutex<Option<mpsc::Sender<()>>>,
+        release_first_send: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl BlockingFirstSendBackend {
+        fn new(
+            first_send_started: mpsc::Sender<()>,
+            release_first_send: mpsc::Receiver<()>,
+        ) -> Self {
+            Self {
+                inner: HeadlessTerminalBackend::new(),
+                first_send_started: Mutex::new(Some(first_send_started)),
+                release_first_send: Mutex::new(release_first_send),
+            }
+        }
+
+        fn sent_text(&self, surface_id: &str) -> Result<Vec<String>, TerminalError> {
+            self.inner.sent_text(surface_id)
+        }
+    }
+
+    impl TerminalBackend for BlockingFirstSendBackend {
+        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+            self.inner.spawn(request)
+        }
+
+        fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
+            if let Some(started) = self
+                .first_send_started
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .take()
+            {
+                let _ = started.send(());
+                self.release_first_send
+                    .lock()
+                    .map_err(|_| TerminalError::LockPoisoned)?
+                    .recv()
+                    .map_err(|err| TerminalError::Backend(err.to_string()))?;
+            }
+            self.inner.send_text(surface_id, text)
+        }
+
+        fn show_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
+            self.inner.show_surface(surface_id)
+        }
+
+        fn read_text(
+            &self,
+            surface_id: &str,
+            capture: TerminalTextCapture,
+            max_bytes: usize,
+        ) -> Result<TerminalTextSnapshot, TerminalError> {
+            self.inner.read_text(surface_id, capture, max_bytes)
+        }
+
+        fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
+            self.inner.resize(surface_id, cols, rows)
+        }
+
+        fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+            self.inner.close(surface_id)
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            self.inner.surfaces()
+        }
+    }
+
     impl TerminalBackend for RecordingEnterBackend {
         fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
             self.inner.spawn(request)
@@ -10401,6 +10653,52 @@ mod tests {
     #[derive(Debug, Default)]
     struct FailingCloseBackend {
         surfaces: Mutex<BTreeMap<String, TerminalSurfaceState>>,
+    }
+
+    #[derive(Debug, Default)]
+    struct FailsSecondCloseBackend {
+        inner: HeadlessTerminalBackend,
+        close_count: AtomicUsize,
+    }
+
+    impl FailsSecondCloseBackend {
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            self.inner.surfaces()
+        }
+    }
+
+    impl TerminalBackend for FailsSecondCloseBackend {
+        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+            self.inner.spawn(request)
+        }
+
+        fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
+            self.inner.send_text(surface_id, text)
+        }
+
+        fn read_text(
+            &self,
+            surface_id: &str,
+            capture: TerminalTextCapture,
+            max_bytes: usize,
+        ) -> Result<TerminalTextSnapshot, TerminalError> {
+            self.inner.read_text(surface_id, capture, max_bytes)
+        }
+
+        fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
+            self.inner.resize(surface_id, cols, rows)
+        }
+
+        fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+            if self.close_count.fetch_add(1, Ordering::SeqCst) == 1 {
+                return Err(TerminalError::Backend("second close failed".to_string()));
+            }
+            self.inner.close(surface_id)
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            self.inner.surfaces()
+        }
     }
 
     impl TerminalBackend for FailingCloseBackend {
@@ -13330,6 +13628,253 @@ mod tests {
                 "multi-line prompt\n\r".to_string(),
                 "broadcast\r".to_string()
             ]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn team_message_dispatch_same_message_concurrently_sends_once() {
+        let (first_send_started_tx, first_send_started_rx) = mpsc::channel();
+        let (release_first_send_tx, release_first_send_rx) = mpsc::channel();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(BlockingFirstSendBackend::new(
+            first_send_started_tx,
+            release_first_send_rx,
+        ));
+        let mut state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        state.workflow_store_path = None;
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspace[0]["focused_surface_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "leader_surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+                "surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.message.send",
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-1",
+                "from": "leader",
+                "to_worker_id": "worker-1",
+                "body": "do it"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let first_state = state.clone();
+        let first = tokio::spawn(async move {
+            dispatch(
+                &first_state,
+                "team.message.dispatch",
+                json!({"team_id": "team-1", "message_id": "msg-1"}),
+            )
+            .await
+        });
+        first_send_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first dispatch should reach terminal send");
+
+        let second_state = state.clone();
+        let second = tokio::spawn(async move {
+            dispatch(
+                &second_state,
+                "team.message.dispatch",
+                json!({"team_id": "team-1", "message_id": "msg-1"}),
+            )
+            .await
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        release_first_send_tx.send(()).unwrap();
+
+        let first = first.await.unwrap();
+        let second = second.await.unwrap();
+        assert!(
+            first.is_ok() != second.is_ok(),
+            "one dispatch must win and one must conflict: {first:?} / {second:?}"
+        );
+        let conflict = first.err().or_else(|| second.err()).unwrap();
+        assert_eq!(conflict.code(), "conflict");
+        assert_eq!(
+            backend.sent_text(&surface_id).unwrap(),
+            vec!["do it".to_string()]
+        );
+        let store =
+            forktty_core::load_teams_from_path(state.team_store_path.as_ref().unwrap()).unwrap();
+        let ack_events = store
+            .events
+            .iter()
+            .filter(|event| event.kind == "team.message.acked")
+            .count();
+        assert_eq!(ack_events, 1);
+    }
+
+    #[tokio::test]
+    async fn team_message_dispatch_does_not_resend_when_ack_persist_fails() {
+        let (mut state, backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        let team_store_path = dir.path().join("team-v1.json");
+        state.team_store_path = Some(team_store_path.clone());
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let surface_id = workspace[0]["focused_surface_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "leader_surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.worker.upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex",
+                "surface_id": surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        dispatch(
+            &state,
+            "team.message.send",
+            json!({
+                "team_id": "team-1",
+                "message_id": "msg-1",
+                "from": "leader",
+                "to_worker_id": "worker-1",
+                "body": "do it"
+            }),
+        )
+        .await
+        .unwrap();
+
+        let tmp_path = team_store_path.with_extension(format!("json.tmp-{}", std::process::id()));
+        fs::create_dir(&tmp_path).unwrap();
+        let first = dispatch(
+            &state,
+            "team.message.dispatch",
+            json!({"team_id": "team-1", "message_id": "msg-1"}),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(first.code(), "error");
+        assert_eq!(
+            backend.sent_text(&surface_id).unwrap(),
+            vec!["do it".to_string()]
+        );
+
+        let retry = dispatch(
+            &state,
+            "team.message.dispatch",
+            json!({"team_id": "team-1", "message_id": "msg-1"}),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(retry.code(), "conflict");
+        assert_eq!(
+            backend.sent_text(&surface_id).unwrap(),
+            vec!["do it".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn team_worker_launch_same_worker_rejects_duplicate_and_rolls_back_surface() {
+        let (mut state, backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        state.team_store_path = Some(dir.path().join("team-v1.json"));
+        let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let leader_surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+        dispatch(
+            &state,
+            "team.upsert",
+            json!({
+                "team_id": "team-1",
+                "leader_surface_id": leader_surface_id
+            }),
+        )
+        .await
+        .unwrap();
+        let first = dispatch(
+            &state,
+            "team.worker.launch",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex"
+            }),
+        )
+        .await
+        .unwrap();
+        let first_surface_id = first["surface"]["id"].as_str().unwrap().to_string();
+
+        let duplicate = dispatch(
+            &state,
+            "team.worker.launch",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "codex"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(duplicate.code(), "conflict");
+        let runtime_surfaces = backend
+            .surfaces()
+            .unwrap()
+            .into_iter()
+            .map(|surface| surface.surface_id)
+            .collect::<Vec<_>>();
+        assert!(runtime_surfaces.contains(&leader_surface_id.to_string()));
+        assert!(runtime_surfaces.contains(&first_surface_id));
+        assert_eq!(
+            runtime_surfaces.len(),
+            2,
+            "duplicate launch surface must be rolled back"
         );
     }
 
@@ -17930,6 +18475,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn workspace_close_restores_already_closed_surfaces_when_later_close_fails() {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(FailsSecondCloseBackend::default());
+        let state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap().to_string();
+        let first_surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+        let second = dispatch(
+            &state,
+            "surface.split",
+            json!({"surface_id": first_surface_id, "axis": "horizontal"}),
+        )
+        .await
+        .unwrap();
+        let second_surface_id = second["id"].as_str().unwrap().to_string();
+
+        let error = dispatch(&state, "workspace.close", json!({"id": workspace_id}))
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code(), "error");
+        assert!(error.to_string().contains("second close failed"));
+        let model_surfaces = dispatch(
+            &state,
+            "surface.list",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(model_surfaces.as_array().unwrap().len(), 2);
+        let runtime_surfaces = backend
+            .surfaces()
+            .unwrap()
+            .into_iter()
+            .map(|surface| surface.surface_id)
+            .collect::<Vec<_>>();
+        assert!(runtime_surfaces.contains(&first_surface_id.to_string()));
+        assert!(runtime_surfaces.contains(&second_surface_id));
+        assert_eq!(runtime_surfaces.len(), 2);
+    }
+
+    #[tokio::test]
     async fn worktree_create_removes_created_worktree_when_spawn_fails() {
         let repo_dir = make_temp_repo();
         let branch_name = format!("topic/spawn-rollback-{}", std::process::id());
@@ -19480,6 +20074,81 @@ mod tests {
         drop(write_half);
         drop(reader);
         server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn events_subscribe_rejects_non_boolean_replay() {
+        let (state, _backend) = test_state();
+        let (client, server) = tokio::net::UnixStream::pair().unwrap();
+        let server = tokio::spawn(handle_connection(server, state));
+        let (read_half, mut write_half) = client.into_split();
+
+        write_half
+            .write_all(br#"{"id":1,"method":"events.subscribe","params":{"replay":"false"}}"#)
+            .await
+            .unwrap();
+        write_half.write_all(b"\n").await.unwrap();
+        write_half.shutdown().await.unwrap();
+
+        let mut reader = BufReader::new(read_half);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        let response: JsonRpcResponse = serde_json::from_str(line.trim_end()).unwrap();
+
+        assert!(!response.ok);
+        assert_eq!(response.id, json!(1));
+        assert_eq!(response.error.unwrap().code, "invalid_param");
+        server.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn events_subscribe_uses_separate_subscriber_budget() {
+        let (state, _backend) = test_state();
+        let event_limit = Arc::new(Semaphore::new(1));
+        let (first_client, first_server) = tokio::net::UnixStream::pair().unwrap();
+        let first_task = tokio::spawn(handle_connection_with_limits(
+            first_server,
+            state.clone(),
+            RESPONSE_WRITE_TIMEOUT,
+            event_limit.clone(),
+        ));
+        let (first_read, mut first_write) = first_client.into_split();
+        first_write
+            .write_all(br#"{"id":1,"method":"events.subscribe","params":{"replay":false}}"#)
+            .await
+            .unwrap();
+        first_write.write_all(b"\n").await.unwrap();
+        let mut first_reader = BufReader::new(first_read);
+        let mut first_line = String::new();
+        first_reader.read_line(&mut first_line).await.unwrap();
+        assert!(first_line.contains("\"subscribed\""));
+
+        let (second_client, second_server) = tokio::net::UnixStream::pair().unwrap();
+        let second_task = tokio::spawn(handle_connection_with_limits(
+            second_server,
+            state,
+            RESPONSE_WRITE_TIMEOUT,
+            event_limit,
+        ));
+        let (second_read, mut second_write) = second_client.into_split();
+        second_write
+            .write_all(br#"{"id":2,"method":"events.subscribe","params":{"replay":false}}"#)
+            .await
+            .unwrap();
+        second_write.write_all(b"\n").await.unwrap();
+        second_write.shutdown().await.unwrap();
+        let mut second_reader = BufReader::new(second_read);
+        let mut second_line = String::new();
+        second_reader.read_line(&mut second_line).await.unwrap();
+        let response: JsonRpcResponse = serde_json::from_str(second_line.trim_end()).unwrap();
+
+        assert!(!response.ok);
+        assert_eq!(response.id, json!(2));
+        assert_eq!(response.error.unwrap().code, "server_busy");
+        second_task.await.unwrap().unwrap();
+        drop(first_write);
+        drop(first_reader);
+        first_task.abort();
     }
 
     #[test]
