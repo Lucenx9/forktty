@@ -1,6 +1,7 @@
 mod coordinator;
 mod methods;
 mod response_encoding;
+mod store_access;
 
 use coordinator::{SocketCoordinator, TeamTerminalDispatchedMessage};
 use forktty_core::events::{self, ModelEvent, Snapshot};
@@ -2975,10 +2976,10 @@ fn context_snapshot_workflows(
     workspace_id: &str,
     include_workflow_details: bool,
 ) -> Result<(Value, Value, Value), DispatchError> {
-    let Some(path) = state.workflow_store_path.as_deref() else {
+    let Some(store_access) = optional_workflow_store_access(state) else {
         return Ok((json!([]), json!([]), json!([])));
     };
-    let store = forktty_core::load_workflows_from_path(path).map_err(workflow_error)?;
+    let store = store_access.load().map_err(workflow_error)?;
     let workflows = store
         .list(&WorkflowQuery {
             workspace_id: Some(workspace_id.to_string()),
@@ -4461,8 +4462,9 @@ fn workflow_list(state: &SocketAppState, params: &Value) -> Result<Value, Dispat
     let session_id = optional_non_blank_string_param(params, "session_id")?.map(str::to_string);
     let query = optional_non_blank_string_param(params, "query")?.map(str::to_string);
     let limit = optional_limit_param(params, "limit")?;
-    let path = workflow_store_path(state)?;
-    let store = forktty_core::load_workflows_from_path(path).map_err(workflow_error)?;
+    let store = workflow_store_access(state)?
+        .load()
+        .map_err(workflow_error)?;
     Ok(json!(store.list(&WorkflowQuery {
         workspace_id,
         surface_id,
@@ -4474,8 +4476,9 @@ fn workflow_list(state: &SocketAppState, params: &Value) -> Result<Value, Dispat
 
 fn workflow_get(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let workflow_id = required_workflow_id(params)?;
-    let path = workflow_store_path(state)?;
-    let store = forktty_core::load_workflows_from_path(path).map_err(workflow_error)?;
+    let store = workflow_store_access(state)?
+        .load()
+        .map_err(workflow_error)?;
     store
         .get(workflow_id)
         .map(|workflow| json!(workflow))
@@ -4495,44 +4498,36 @@ fn workflow_upsert(state: &SocketAppState, params: &Value) -> Result<Value, Disp
         goal: optional_non_blank_string_param(params, "goal")?.map(str::to_string),
         memory: optional_non_blank_string_param(params, "memory")?.map(str::to_string),
     };
-    let path = workflow_store_path(state)?;
-    let workflow = forktty_core::update_workflows_at_path(path, |store| {
-        store.upsert(input, forktty_core::workflow_now_ms())
-    })
-    .map_err(workflow_error)?;
+    let workflow = workflow_store_access(state)?
+        .update(|store| store.upsert(input, forktty_core::workflow_now_ms()))
+        .map_err(workflow_error)?;
     Ok(json!(workflow))
 }
 
 fn workflow_loop_set(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let workflow_id = required_workflow_id(params)?.to_string();
     let input = workflow_loop_state_input(params)?;
-    let path = workflow_store_path(state)?;
-    let workflow = forktty_core::update_workflows_at_path(path, |store| {
-        store.set_loop_state(&workflow_id, input, forktty_core::workflow_now_ms())
-    })
-    .map_err(workflow_error)?;
+    let workflow = workflow_store_access(state)?
+        .update(|store| store.set_loop_state(&workflow_id, input, forktty_core::workflow_now_ms()))
+        .map_err(workflow_error)?;
     Ok(json!(workflow))
 }
 
 fn workflow_plan_set(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let workflow_id = required_workflow_id(params)?.to_string();
     let steps = workflow_plan_steps(params)?;
-    let path = workflow_store_path(state)?;
-    let workflow = forktty_core::update_workflows_at_path(path, |store| {
-        store.set_plan(&workflow_id, steps, forktty_core::workflow_now_ms())
-    })
-    .map_err(workflow_error)?;
+    let workflow = workflow_store_access(state)?
+        .update(|store| store.set_plan(&workflow_id, steps, forktty_core::workflow_now_ms()))
+        .map_err(workflow_error)?;
     Ok(json!(workflow))
 }
 
 fn workflow_evidence_add(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let workflow_id = required_workflow_id(params)?.to_string();
     let evidence = workflow_evidence_input(params)?;
-    let path = workflow_store_path(state)?;
-    let workflow = forktty_core::update_workflows_at_path(path, |store| {
-        store.add_evidence(&workflow_id, evidence, forktty_core::workflow_now_ms())
-    })
-    .map_err(workflow_error)?;
+    let workflow = workflow_store_access(state)?
+        .update(|store| store.add_evidence(&workflow_id, evidence, forktty_core::workflow_now_ms()))
+        .map_err(workflow_error)?;
     Ok(json!(workflow))
 }
 
@@ -4541,8 +4536,9 @@ fn workflow_replay(state: &SocketAppState, params: &Value) -> Result<Value, Disp
     let query = optional_non_blank_string_param(params, "query")?.map(str::to_string);
     let since_seq = optional_u64_param(params, "since_seq")?;
     let limit = optional_limit_param(params, "limit")?;
-    let path = workflow_store_path(state)?;
-    let store = forktty_core::load_workflows_from_path(path).map_err(workflow_error)?;
+    let store = workflow_store_access(state)?
+        .load()
+        .map_err(workflow_error)?;
     Ok(json!(store.replay(&WorkflowReplayQuery {
         workflow_id,
         query,
@@ -4551,8 +4547,19 @@ fn workflow_replay(state: &SocketAppState, params: &Value) -> Result<Value, Disp
     })))
 }
 
-fn workflow_store_path(state: &SocketAppState) -> Result<&Path, DispatchError> {
-    state.workflow_store_path.as_deref().ok_or_else(|| {
+fn optional_workflow_store_access(
+    state: &SocketAppState,
+) -> Option<store_access::WorkflowStoreAccess<'_>> {
+    state
+        .workflow_store_path
+        .as_deref()
+        .map(store_access::WorkflowStoreAccess::new)
+}
+
+fn workflow_store_access(
+    state: &SocketAppState,
+) -> Result<store_access::WorkflowStoreAccess<'_>, DispatchError> {
+    optional_workflow_store_access(state).ok_or_else(|| {
         DispatchError::PreconditionFailed(
             "Workflow store path is unavailable on this system".to_string(),
         )
