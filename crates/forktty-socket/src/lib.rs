@@ -1,5 +1,6 @@
 mod agent_params;
 mod coordinator;
+mod feed_params;
 mod metadata_params;
 mod methods;
 mod response_encoding;
@@ -13,6 +14,7 @@ use agent_params::{
     AgentWorkspaceRequest,
 };
 use coordinator::{SocketCoordinator, TeamTerminalDispatchedMessage};
+use feed_params::{FeedApprovalRespondRequest, FeedListRequest};
 use forktty_core::events::{self, ModelEvent, Snapshot};
 use forktty_core::protocol_limits;
 use forktty_core::{
@@ -1182,9 +1184,7 @@ pub async fn dispatch(
         "system.identify" => system_identify(state, &params),
         "context.snapshot" => context_snapshot(state, &params),
         "feed.approval.respond" => {
-            let id = required_trimmed_string(&params, "id")?;
-            ensure_max_text_size("id", id)?;
-            let decision = feed_approval_decision_from_params(&params)?;
+            let request = FeedApprovalRespondRequest::decode(&params)?;
             let mut store = state
                 .feed_store
                 .lock()
@@ -1195,7 +1195,7 @@ pub async fn dispatch(
                 ));
             };
             store
-                .decide_approval(id, decision)
+                .decide_approval(&request.id, request.decision)
                 .map(|entry| json!(entry))
                 .map_err(|err| match err {
                     forktty_core::FeedError::NotFound(_) => {
@@ -1209,25 +1209,20 @@ pub async fn dispatch(
                 .model
                 .lock()
                 .map_err(|_| "Lock poisoned".to_string())?;
-            let workspace_id = match workspace_selector_from_params(&params) {
-                Ok(selector) => Some(
-                    model
-                        .workspace_id_for(selector)
-                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
-                ),
-                Err(DispatchError::MissingParam(_)) => None,
-                Err(err) => return Err(err),
-            };
-            let limit = optional_u64_param(&params, "limit")?.unwrap_or(50).min(200) as usize;
+            let request = FeedListRequest::decode(&params, &model)?;
             let stored_entries = state.feed_store.lock().ok().and_then(|store| {
                 store
                     .as_ref()
-                    .map(|store| store.list(workspace_id.as_deref(), limit))
+                    .map(|store| store.list(request.workspace_id.as_deref(), request.limit))
             });
             if let Some(entries) = stored_entries {
                 return Ok(json!(feed_entries_for_model(&model, entries)));
             }
-            Ok(json!(feed_list(&model, workspace_id.as_deref(), limit)))
+            Ok(json!(feed_list(
+                &model,
+                request.workspace_id.as_deref(),
+                request.limit
+            )))
         }
         "workflow.list" => workflow_list(state, &params),
         "workflow.get" => workflow_get(state, &params),
@@ -4642,16 +4637,6 @@ fn workflow_error(err: forktty_core::WorkflowError) -> DispatchError {
         forktty_core::WorkflowError::NotFound => DispatchError::NotFound("workflow".to_string()),
         forktty_core::WorkflowError::InvalidData(message) => DispatchError::InvalidParam(message),
         other => DispatchError::Other(other.to_string()),
-    }
-}
-
-fn feed_approval_decision_from_params(params: &Value) -> Result<FeedApprovalState, DispatchError> {
-    match required_trimmed_string(params, "decision")? {
-        "approve" | "approved" => Ok(FeedApprovalState::Approved),
-        "deny" | "denied" => Ok(FeedApprovalState::Denied),
-        other => Err(DispatchError::InvalidParam(format!(
-            "Invalid parameter decision: expected approve or deny, got {other}"
-        ))),
     }
 }
 
