@@ -10,6 +10,7 @@ mod store_access;
 mod team_params;
 mod topology_params;
 mod workflow_params;
+mod worktree_params;
 
 use agent_params::{
     AgentHibernateRequest, AgentReclaimPlanRequest, AgentReclaimRequest, AgentResumeRequest,
@@ -77,6 +78,7 @@ use workflow_params::{
     WorkflowEvidenceAddRequest, WorkflowGetRequest, WorkflowListRequest, WorkflowLoopSetRequest,
     WorkflowPlanSetRequest, WorkflowReplayRequest, WorkflowUpsertRequest,
 };
+use worktree_params::{WorktreeNamedRequest, WorktreeRepoRequest, WorktreeStatusRequest};
 
 const MAX_REQUEST_SIZE: usize = protocol_limits::SOCKET_REQUEST_MAX_BYTES;
 const MAX_SEND_TEXT_BYTES: usize = protocol_limits::SOCKET_SEND_TEXT_MAX_BYTES;
@@ -1756,22 +1758,20 @@ pub async fn dispatch(
             Ok(json!(workspace))
         }
         "worktree.list" => {
-            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd").await?;
-            let worktrees = run_worktree_blocking(move || worktree::list(&cwd)).await?;
+            let request = WorktreeRepoRequest::decode_list(state, &params).await?;
+            let worktrees = run_worktree_blocking(move || worktree::list(&request.cwd)).await?;
             Ok(json!(worktrees))
         }
         "worktree.status" => {
-            let path = resolve_open_repo_cwd_param(state, &params, &["path", "cwd"], "path or cwd")
-                .await?;
-            let status = run_worktree_blocking(move || worktree::status(&path)).await?;
+            let request = WorktreeStatusRequest::decode(state, &params).await?;
+            let status = run_worktree_blocking(move || worktree::status(&request.path)).await?;
             Ok(json!({"status": status}))
         }
         "worktree.create" => {
-            let name = worktree_name_from_params(&params, &["name"], "name")?;
-            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd").await?;
+            let request = WorktreeNamedRequest::decode_create_like(state, &params).await?;
             let info = {
-                let cwd = cwd.clone();
-                let name = name.to_string();
+                let cwd = request.cwd.clone();
+                let name = request.name.clone();
                 // worktree_layout() reads config.toml, so it joins the
                 // blocking task too.
                 run_worktree_blocking(move || {
@@ -1784,7 +1784,7 @@ pub async fn dispatch(
                 Ok(workspace) => workspace,
                 Err(err) => {
                     let message = match tokio::task::spawn_blocking(move || {
-                        rollback_created_worktree_after_spawn_failure(&cwd, &info, err)
+                        rollback_created_worktree_after_spawn_failure(&request.cwd, &info, err)
                     })
                     .await
                     {
@@ -1805,10 +1805,10 @@ pub async fn dispatch(
             }))
         }
         "worktree.attach" => {
-            let name = worktree_name_from_params(&params, &["name", "branch"], "name")?;
-            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd").await?;
+            let request = WorktreeNamedRequest::decode_attach(state, &params).await?;
             let info = {
-                let name = name.to_string();
+                let name = request.name.clone();
+                let cwd = request.cwd;
                 run_worktree_blocking(move || {
                     let layout = worktree_layout();
                     worktree::attach(&cwd, &name, &layout)
@@ -1827,10 +1827,10 @@ pub async fn dispatch(
             }))
         }
         "worktree.remove" => {
-            let name = worktree_name_from_params(&params, &["name"], "name")?;
-            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd").await?;
+            let request = WorktreeNamedRequest::decode_create_like(state, &params).await?;
             let (fallback_path, removal) = {
-                let name = name.to_string();
+                let name = request.name.clone();
+                let cwd = request.cwd.clone();
                 run_worktree_blocking(move || {
                     let fallback =
                         worktree::repository_root(&cwd).unwrap_or_else(|_| PathBuf::from(&cwd));
@@ -1860,7 +1860,7 @@ pub async fn dispatch(
                 .collect::<Vec<_>>();
             if workspace.is_none() {
                 finish_removal_blocking(removal, false).await?;
-                return Ok(json!({"removed": name}));
+                return Ok(json!({"removed": request.name}));
             }
             if is_last_workspace {
                 let workspace = workspace
@@ -1950,7 +1950,7 @@ pub async fn dispatch(
                     }
                 }
                 evict_hook_session_targets_for_surfaces(state, &surface_ids)?;
-                return Ok(json!({"removed": name}));
+                return Ok(json!({"removed": request.name}));
             }
             close_terminal_surfaces_or_restore(state, &surfaces)?;
             if let Err(err) = finish_removal_blocking(removal, false).await {
@@ -1974,13 +1974,13 @@ pub async fn dispatch(
             }
             evict_hook_session_targets_for_surfaces(state, &surface_ids)?;
             ensure_terminal_for_active_workspace(state).await?;
-            Ok(json!({"removed": name}))
+            Ok(json!({"removed": request.name}))
         }
         "worktree.merge" => {
-            let name = worktree_name_from_params(&params, &["name"], "name")?;
-            let cwd = resolve_open_repo_cwd_param(state, &params, &["cwd"], "cwd").await?;
+            let request = WorktreeNamedRequest::decode_create_like(state, &params).await?;
             let result = {
-                let name = name.to_string();
+                let name = request.name;
+                let cwd = request.cwd;
                 run_worktree_blocking(move || worktree::merge(&cwd, &name)).await?
             };
             Ok(json!(result))
