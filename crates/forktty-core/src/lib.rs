@@ -13,6 +13,7 @@ pub mod pr;
 pub mod profile;
 pub mod project_actions;
 pub mod protocol;
+pub mod protocol_limits;
 pub mod pty_persistence;
 pub mod session;
 pub mod team;

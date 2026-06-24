@@ -1,4 +1,5 @@
 use crate::agent_guide;
+use forktty_core::protocol_limits;
 use forktty_core::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, VecDeque};
@@ -13,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const SOCKET_TIMEOUT: Duration = Duration::from_secs(35);
+const SOCKET_TIMEOUT: Duration = protocol_limits::OFFICIAL_SOCKET_TIMEOUT;
 const DEFAULT_AGENT_WAIT_TIMEOUT_MS: u64 = 30_000;
 const MAX_AGENT_WAIT_TIMEOUT_MS: u64 = 120_000;
 const DEFAULT_AGENT_WAIT_INTERVAL_MS: u64 = 250;
@@ -38,8 +39,8 @@ const MAX_AGENT_SKILL_FILE_BYTES: u64 = MAX_HOOK_CONFIG_SIZE_BYTES;
 // ~/.claude.json in particular carries per-project state and routinely
 // exceeds 1 MiB — so it gets a larger budget than ForkTTY-owned hook configs.
 const MAX_MCP_CONFIG_SIZE_BYTES: u64 = 16 * 1024 * 1024;
-const MAX_STDIN_TEXT_BYTES: usize = 1_048_576;
-const MAX_SOCKET_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_STDIN_TEXT_BYTES: usize = protocol_limits::CLI_STDIN_TEXT_MAX_BYTES;
+const MAX_SOCKET_RESPONSE_BYTES: usize = protocol_limits::OFFICIAL_SOCKET_RESPONSE_MAX_BYTES;
 
 static NONCE_COUNTER: AtomicU64 = AtomicU64::new(0);
 

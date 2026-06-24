@@ -1,4 +1,8 @@
+mod coordinator;
+
+use coordinator::{SocketCoordinator, TeamTerminalDispatchedMessage};
 use forktty_core::events::{self, ModelEvent, Snapshot};
+use forktty_core::protocol_limits;
 use forktty_core::{
     agent_resume_command_with_cwd_and_permission_mode, close_desktop_notification,
     codex_session_cwd, command_safety::is_valid_ssh_host, config, dispatch_notification,
@@ -30,16 +34,18 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 use tokio::sync::{broadcast, Semaphore};
 
-const MAX_REQUEST_SIZE: usize = 1_048_576;
-const MAX_SEND_TEXT_BYTES: usize = 262_144;
-const MAX_TERMINAL_TEXT_BYTES: usize = 512 * 1024;
+const MAX_REQUEST_SIZE: usize = protocol_limits::SOCKET_REQUEST_MAX_BYTES;
+const MAX_SEND_TEXT_BYTES: usize = protocol_limits::SOCKET_SEND_TEXT_MAX_BYTES;
+const MAX_TERMINAL_TEXT_BYTES: usize = protocol_limits::SOCKET_TERMINAL_TEXT_MAX_BYTES;
 const DEFAULT_CAPTURE_TAIL_LINES: usize = 80;
 const MAX_CAPTURE_TAIL_LINES: usize = 5_000;
 const DEFAULT_CONTEXT_SNAPSHOT_TAIL_LINES: usize = 40;
-const DEFAULT_CONTEXT_SNAPSHOT_TAIL_MAX_BYTES: usize = 16 * 1024;
+const DEFAULT_CONTEXT_SNAPSHOT_TAIL_MAX_BYTES: usize =
+    protocol_limits::DEFAULT_CONTEXT_SNAPSHOT_TAIL_MAX_BYTES;
 const MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_SURFACES: usize = 16;
-const MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES: usize = 1024 * 1024;
-const MAX_METADATA_TEXT_BYTES: usize = 16_384;
+const MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES: usize =
+    protocol_limits::MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES;
+const MAX_METADATA_TEXT_BYTES: usize = protocol_limits::SOCKET_METADATA_TEXT_MAX_BYTES;
 const BROWSER_CMD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const MAX_SOCKET_CONNECTIONS: usize = 64;
 const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
@@ -47,15 +53,13 @@ const SOCKET_PROBE_TIMEOUT: Duration = Duration::from_millis(250);
 /// connection is dropped. Clients send a full `{json}\n` immediately, so this
 /// only fires on idle or slow-loris connections that would otherwise hold one
 /// of the [`MAX_SOCKET_CONNECTIONS`] permits indefinitely.
-const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(30);
+const REQUEST_READ_TIMEOUT: Duration = protocol_limits::SOCKET_REQUEST_READ_TIMEOUT;
 const TEAM_MESSAGE_SURFACE_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const TEAM_MESSAGE_SURFACE_READY_TIMEOUT: Duration = Duration::from_secs(10);
 /// When a provider needs Enter as a distinct submit action, avoid issuing it
 /// in the same scheduler turn as the prompt body so embedded PTYs are less
 /// likely to coalesce the writes into one paste-like input chunk.
 const TEAM_SEPARATE_SUBMIT_ENTER_SETTLE: Duration = Duration::from_millis(50);
-static TEAM_MESSAGE_DISPATCH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-static TEAM_WORKER_LAUNCH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
 /// Buffered events per subscriber before a slow client gets a `Lagged` notice.
 const EVENTS_CHANNEL_CAPACITY: usize = 256;
 const MAX_EVENT_SUBSCRIBERS: usize = 32;
@@ -72,7 +76,7 @@ const EVENTS_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// otherwise park `write_response` on a full buffer forever, holding one of
 /// the [`MAX_SOCKET_CONNECTIONS`] permits. Generous so a legitimately large
 /// response to a slow reader still gets through.
-const RESPONSE_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+const RESPONSE_WRITE_TIMEOUT: Duration = protocol_limits::SOCKET_RESPONSE_WRITE_TIMEOUT;
 const HOOK_SESSION_TARGET_CAPACITY: usize = 256;
 /// Pending desktop notification dispatch jobs. Dispatch can block in
 /// notify-rust/custom commands, so keep a small bounded queue rather than
@@ -456,8 +460,7 @@ pub struct SocketAppState {
     pub browser_cmd: Option<async_channel::Sender<BrowserCommand>>,
     feed_store: Arc<Mutex<Option<FeedStore>>>,
     hook_session_targets: Arc<Mutex<HookSessionTargets>>,
-    team_launch_owned_surfaces: Arc<Mutex<HashSet<TeamLaunchOwnedSurface>>>,
-    team_terminal_dispatched_messages: Arc<Mutex<HashSet<TeamTerminalDispatchedMessage>>>,
+    coordinator: Arc<SocketCoordinator>,
 }
 
 impl SocketAppState {
@@ -485,8 +488,7 @@ impl SocketAppState {
             browser_cmd: None,
             feed_store: Arc::new(Mutex::new(None)),
             hook_session_targets: Arc::new(Mutex::new(HookSessionTargets::default())),
-            team_launch_owned_surfaces: Arc::new(Mutex::new(HashSet::new())),
-            team_terminal_dispatched_messages: Arc::new(Mutex::new(HashSet::new())),
+            coordinator: Arc::new(SocketCoordinator::default()),
         }
     }
 
@@ -548,20 +550,6 @@ impl SocketAppState {
             eprintln!("forktty feed history dismiss update failed: {err}");
         }
     }
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct TeamLaunchOwnedSurface {
-    team_id: String,
-    worker_id: String,
-    surface_id: String,
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct TeamTerminalDispatchedMessage {
-    store_path: PathBuf,
-    team_id: String,
-    message_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1472,7 +1460,7 @@ pub async fn dispatch(
             Ok(json!(worker))
         }
         "team.worker.launch" => {
-            let _launch_guard = team_worker_launch_lock().lock().await;
+            let _launch_guard = state.coordinator.team_worker_launch.lock().await;
             validate_optional_worktree_name(&params)?;
             let team_id = required_trimmed_string(&params, "team_id")?.to_string();
             let worker_id = required_trimmed_string(&params, "worker_id")?.to_string();
@@ -1654,7 +1642,7 @@ pub async fn dispatch(
             let worker_id =
                 optional_non_blank_string_param(&params, "worker_id")?.map(str::to_string);
             let submit = optional_bool_param(&params, "submit")?.unwrap_or(false);
-            let _dispatch_guard = team_message_dispatch_lock().lock().await;
+            let _dispatch_guard = state.coordinator.team_message_dispatch.lock().await;
             let (surface_id, resolved_worker_id, text, agent) =
                 team_message_dispatch_target(state, &team_id, &message_id, worker_id.as_deref())?;
             let terminal_message = team_terminal_dispatched_message(state, &team_id, &message_id)?;
@@ -6490,14 +6478,6 @@ fn agent_uses_separate_submit_enter(agent: Option<&str>) -> bool {
     )
 }
 
-fn team_message_dispatch_lock() -> &'static tokio::sync::Mutex<()> {
-    TEAM_MESSAGE_DISPATCH_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
-}
-
-fn team_worker_launch_lock() -> &'static tokio::sync::Mutex<()> {
-    TEAM_WORKER_LAUNCH_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
-}
-
 fn show_team_message_surface(
     state: &SocketAppState,
     surface_id: &str,
@@ -6778,15 +6758,9 @@ fn remember_team_launch_owned_surface(
     surface_id: &str,
 ) -> Result<(), DispatchError> {
     state
-        .team_launch_owned_surfaces
-        .lock()
-        .map_err(|_| "Lock poisoned".to_string())?
-        .insert(TeamLaunchOwnedSurface {
-            team_id: team_id.to_string(),
-            worker_id: worker_id.to_string(),
-            surface_id: surface_id.to_string(),
-        });
-    Ok(())
+        .coordinator
+        .remember_team_launch_owned_surface(team_id, worker_id, surface_id)
+        .map_err(DispatchError::from)
 }
 
 fn is_current_team_launch_owned_surface(
@@ -6795,15 +6769,10 @@ fn is_current_team_launch_owned_surface(
     worker_id: &str,
     surface_id: &str,
 ) -> Result<bool, DispatchError> {
-    Ok(state
-        .team_launch_owned_surfaces
-        .lock()
-        .map_err(|_| "Lock poisoned".to_string())?
-        .contains(&TeamLaunchOwnedSurface {
-            team_id: team_id.to_string(),
-            worker_id: worker_id.to_string(),
-            surface_id: surface_id.to_string(),
-        }))
+    state
+        .coordinator
+        .is_current_team_launch_owned_surface(team_id, worker_id, surface_id)
+        .map_err(DispatchError::from)
 }
 
 fn forget_team_launch_owned_surface_for_surface(
@@ -6811,11 +6780,9 @@ fn forget_team_launch_owned_surface_for_surface(
     surface_id: &str,
 ) -> Result<(), DispatchError> {
     state
-        .team_launch_owned_surfaces
-        .lock()
-        .map_err(|_| "Lock poisoned".to_string())?
-        .retain(|owned| owned.surface_id != surface_id);
-    Ok(())
+        .coordinator
+        .forget_team_launch_owned_surface_for_surface(surface_id)
+        .map_err(DispatchError::from)
 }
 
 fn forget_team_launch_owned_surfaces_for_surfaces(
@@ -6830,11 +6797,9 @@ fn forget_team_launch_owned_surfaces_for_surfaces(
         .map(String::as_str)
         .collect::<HashSet<_>>();
     state
-        .team_launch_owned_surfaces
-        .lock()
-        .map_err(|_| "Lock poisoned".to_string())?
-        .retain(|owned| !surface_ids.contains(owned.surface_id.as_str()));
-    Ok(())
+        .coordinator
+        .forget_team_launch_owned_surfaces_for_surfaces(&surface_ids)
+        .map_err(DispatchError::from)
 }
 
 fn team_terminal_dispatched_message(
@@ -6842,28 +6807,21 @@ fn team_terminal_dispatched_message(
     team_id: &str,
     message_id: &str,
 ) -> Result<TeamTerminalDispatchedMessage, DispatchError> {
-    Ok(TeamTerminalDispatchedMessage {
-        store_path: team_store_path(state)?.to_path_buf(),
-        team_id: team_id.to_string(),
-        message_id: message_id.to_string(),
-    })
+    Ok(TeamTerminalDispatchedMessage::new(
+        team_store_path(state)?.to_path_buf(),
+        team_id,
+        message_id,
+    ))
 }
 
 fn ensure_team_message_not_terminal_dispatched(
     state: &SocketAppState,
     message: &TeamTerminalDispatchedMessage,
 ) -> Result<(), DispatchError> {
-    if state
-        .team_terminal_dispatched_messages
-        .lock()
-        .map_err(|_| "Lock poisoned".to_string())?
-        .contains(message)
-    {
-        return Err(DispatchError::Conflict(
-            "message already dispatched to a terminal in this runtime".to_string(),
-        ));
-    }
-    Ok(())
+    state
+        .coordinator
+        .ensure_team_message_not_terminal_dispatched(message)
+        .map_err(DispatchError::Conflict)
 }
 
 fn remember_team_message_terminal_dispatched(
@@ -6871,11 +6829,9 @@ fn remember_team_message_terminal_dispatched(
     message: TeamTerminalDispatchedMessage,
 ) -> Result<(), DispatchError> {
     state
-        .team_terminal_dispatched_messages
-        .lock()
-        .map_err(|_| "Lock poisoned".to_string())?
-        .insert(message);
-    Ok(())
+        .coordinator
+        .remember_team_message_terminal_dispatched(message)
+        .map_err(DispatchError::from)
 }
 
 fn forget_team_message_terminal_dispatched(
@@ -6883,11 +6839,9 @@ fn forget_team_message_terminal_dispatched(
     message: &TeamTerminalDispatchedMessage,
 ) -> Result<(), DispatchError> {
     state
-        .team_terminal_dispatched_messages
-        .lock()
-        .map_err(|_| "Lock poisoned".to_string())?
-        .remove(message);
-    Ok(())
+        .coordinator
+        .forget_team_message_terminal_dispatched(message)
+        .map_err(DispatchError::from)
 }
 
 fn team_message_dispatch_target(

@@ -1,5 +1,6 @@
 use crate::agent_guide;
 use crate::socket_cli::{send_socket_request_with_timeout, CliResult};
+use forktty_core::protocol_limits;
 use serde_json::{json, Map, Value};
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -10,8 +11,8 @@ const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 // the server actually supports it; otherwise it answers with its own latest.
 const MCP_SUPPORTED_PROTOCOL_VERSIONS: &[&str] =
     &["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
-const MCP_SOCKET_TIMEOUT: Duration = Duration::from_secs(35);
-const MAX_MCP_MESSAGE_BYTES: usize = 1_048_576;
+const MCP_SOCKET_TIMEOUT: Duration = protocol_limits::OFFICIAL_SOCKET_TIMEOUT;
+const MAX_MCP_MESSAGE_BYTES: usize = protocol_limits::MCP_MESSAGE_MAX_BYTES;
 
 pub(crate) fn run_stdio(socket_path: PathBuf) -> CliResult<()> {
     let stdin = io::stdin();
