@@ -22,6 +22,7 @@ mod topology_params;
 mod topology_view;
 mod workflow_params;
 mod worktree_params;
+mod worktree_runtime;
 
 use agent_params::{
     AgentHibernateRequest, AgentReclaimPlanRequest, AgentReclaimRequest, AgentResumeRequest,
@@ -111,6 +112,7 @@ use workflow_params::{
     WorkflowPlanSetRequest, WorkflowReplayRequest, WorkflowUpsertRequest,
 };
 use worktree_params::{WorktreeNamedRequest, WorktreeRepoRequest, WorktreeStatusRequest};
+use worktree_runtime::{finish_removal_blocking, run_worktree_blocking};
 
 pub use socket_bind::{bind_socket_listener, default_socket_path, socket_path_from_env};
 #[cfg(test)]
@@ -4301,28 +4303,6 @@ fn rollback_created_worktree_after_spawn_failure(
             info.worktree_name
         ),
     }
-}
-
-/// Run blocking worktree/git work off the socket runtime: these operations
-/// walk the repository on disk, and create/remove additionally run the
-/// repo's setup/teardown hook for up to HOOK_TIMEOUT (30s), which would pin
-/// a tokio worker and starve every other socket connection.
-async fn run_worktree_blocking<T, F>(task: F) -> Result<T, DispatchError>
-where
-    T: Send + 'static,
-    F: FnOnce() -> Result<T, worktree::WorktreeError> + Send + 'static,
-{
-    match tokio::task::spawn_blocking(task).await {
-        Ok(result) => result.map_err(DispatchError::from),
-        Err(err) => Err(format!("Worktree task failed: {err}").into()),
-    }
-}
-
-async fn finish_removal_blocking(
-    removal: worktree::PreparedWorktreeRemoval,
-    delete_branch: bool,
-) -> Result<(), DispatchError> {
-    run_worktree_blocking(move || removal.finish(delete_branch)).await
 }
 
 fn spawn_workspace_terminal(
