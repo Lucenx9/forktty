@@ -6,7 +6,7 @@ use forktty_core::{Surface, TeamState, TeamWorker};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
-pub(crate) fn create_team_worker_surface(
+pub(crate) async fn create_team_worker_surface(
     state: &SocketAppState,
     team_id: &str,
     worker_id: &str,
@@ -14,6 +14,7 @@ pub(crate) fn create_team_worker_surface(
 ) -> Result<Surface, DispatchError> {
     let store = store_access::team_store_access(state)?
         .load()
+        .await
         .map_err(DispatchError::from)?;
     let team = store
         .get(team_id)
@@ -66,13 +67,14 @@ pub(crate) fn create_team_worker_surface(
     Ok(model.surface(&surface.id).cloned().unwrap_or(surface))
 }
 
-pub(crate) fn ensure_team_worker_can_launch(
+pub(crate) async fn ensure_team_worker_can_launch(
     state: &SocketAppState,
     team_id: &str,
     worker_id: &str,
 ) -> Result<(), DispatchError> {
     let store = store_access::team_store_access(state)?
         .load()
+        .await
         .map_err(DispatchError::from)?;
     let Some(surface_id) = store.get(team_id).and_then(|team| {
         team.workers
@@ -94,13 +96,14 @@ pub(crate) fn ensure_team_worker_can_launch(
     Ok(())
 }
 
-pub(crate) fn team_worker_surface_id(
+pub(crate) async fn team_worker_surface_id(
     state: &SocketAppState,
     team_id: &str,
     worker_id: &str,
 ) -> Result<String, DispatchError> {
     let store = store_access::team_store_access(state)?
         .load()
+        .await
         .map_err(DispatchError::from)?;
     let team = store
         .get(team_id)
@@ -117,13 +120,14 @@ pub(crate) fn team_worker_surface_id(
     Ok(surface_id)
 }
 
-pub(crate) fn team_worker_launch_owned_surface_id(
+pub(crate) async fn team_worker_launch_owned_surface_id(
     state: &SocketAppState,
     team_id: &str,
     worker_id: &str,
 ) -> Result<String, DispatchError> {
     let store = store_access::team_store_access(state)?
         .load()
+        .await
         .map_err(DispatchError::from)?;
     let team = store
         .get(team_id)
@@ -243,7 +247,7 @@ pub(crate) fn forget_team_message_terminal_dispatched(
         .map_err(DispatchError::from)
 }
 
-pub(crate) fn team_message_dispatch_target(
+pub(crate) async fn team_message_dispatch_target(
     state: &SocketAppState,
     team_id: &str,
     message_id: &str,
@@ -251,6 +255,7 @@ pub(crate) fn team_message_dispatch_target(
 ) -> Result<(String, String, String, Option<String>), DispatchError> {
     let store = store_access::team_store_access(state)?
         .load()
+        .await
         .map_err(DispatchError::from)?;
     let team = store
         .get(team_id)
@@ -299,13 +304,14 @@ pub(crate) fn team_message_dispatch_target(
     ))
 }
 
-pub(crate) fn team_worker_agent(
+pub(crate) async fn team_worker_agent(
     state: &SocketAppState,
     team_id: &str,
     worker_id: &str,
 ) -> Result<Option<String>, DispatchError> {
     let store = store_access::team_store_access(state)?
         .load()
+        .await
         .map_err(DispatchError::from)?;
     let team = store
         .get(team_id)

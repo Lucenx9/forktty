@@ -4,7 +4,8 @@ use crate::agent_params::{
 };
 use crate::{
     agent_kind_from_status_key, close_terminal_surface_if_present, current_unix_epoch_ms,
-    rollback_surface_creation, surface_effective_project_cwd, DispatchError, SocketAppState,
+    env_var_os, rollback_surface_creation, surface_effective_project_cwd, DispatchError,
+    SocketAppState,
 };
 use forktty_core::{
     agent_resume_command_with_cwd_and_permission_mode, codex_session_cwd, normalize_agent_status,
@@ -245,7 +246,7 @@ pub(crate) fn agent_health_rows(
     workspace_id: Option<&str>,
     observed_at_ms: u64,
 ) -> Vec<Value> {
-    let path = std::env::var_os("PATH");
+    let path = env_var_os("PATH");
     agent_health_rows_with_path(model, workspace_id, path.as_deref(), observed_at_ms)
 }
 
@@ -392,7 +393,7 @@ fn agent_reclaim_plan(
     workspace_id: Option<&str>,
     min_idle_ms: u64,
 ) -> Value {
-    let path = std::env::var_os("PATH");
+    let path = env_var_os("PATH");
     agent_reclaim_plan_with_path(
         model,
         workspace_id,
@@ -493,7 +494,7 @@ fn hibernate_agent_surface(
     min_idle_ms: u64,
 ) -> Result<Value, DispatchError> {
     let now_ms = current_unix_epoch_ms();
-    let path = std::env::var_os("PATH");
+    let path = env_var_os("PATH");
     let (surface, status, agent, session_id, resume_cwd, permission_mode, argv, idle_ms, rollback) = {
         let mut model = state
             .model

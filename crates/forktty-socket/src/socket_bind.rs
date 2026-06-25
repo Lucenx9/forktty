@@ -1,3 +1,4 @@
+use crate::env_var;
 use serde_json::Value;
 use std::fs::{self, DirBuilder};
 use std::io;
@@ -281,7 +282,7 @@ fn validate_private_socket_parent(path: &Path) -> io::Result<()> {
 }
 
 fn default_socket_dir() -> PathBuf {
-    default_socket_dir_from_env(std::env::var("XDG_RUNTIME_DIR").ok().as_deref())
+    default_socket_dir_from_env(env_var("XDG_RUNTIME_DIR").ok().as_deref())
 }
 
 #[cfg_attr(not(test), allow(dead_code))]

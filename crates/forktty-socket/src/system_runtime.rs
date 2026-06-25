@@ -1,5 +1,5 @@
 use crate::{
-    agent_session_identify_row, ensure_max_text_size, optional_non_blank_string_param,
+    agent_session_identify_row, ensure_max_text_size, env_var_os, optional_non_blank_string_param,
     optional_surface_id_param, provider_runtime, surface_effective_project_cwd,
     workspace_effective_project_cwd, workspace_selector_from_params, DispatchError, SocketAppState,
 };
@@ -13,7 +13,7 @@ pub(crate) fn ping() -> Value {
 
 pub(crate) fn capabilities() -> Value {
     let config = forktty_core::config::load_config().unwrap_or_default();
-    let path = std::env::var_os("PATH");
+    let path = env_var_os("PATH");
     json!({
         "version": env!("CARGO_PKG_VERSION"),
         "methods": crate::methods::capability_method_names(),

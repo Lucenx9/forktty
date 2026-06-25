@@ -100,6 +100,96 @@ use tokio::net::UnixListener;
 use tokio::sync::{broadcast, Semaphore};
 
 #[cfg(test)]
+mod env_access {
+    use std::ffi::OsString;
+    use std::sync::{Condvar, Mutex, OnceLock};
+    use std::thread::ThreadId;
+
+    static ENV_TEST_LOCK: OnceLock<EnvTestLock> = OnceLock::new();
+
+    struct EnvTestLock {
+        state: Mutex<EnvTestLockState>,
+        cvar: Condvar,
+    }
+
+    #[derive(Default)]
+    struct EnvTestLockState {
+        owner: Option<ThreadId>,
+        depth: usize,
+    }
+
+    pub(crate) struct EnvTestLockGuard {
+        lock: &'static EnvTestLock,
+    }
+
+    pub(crate) fn lock_env_for_test() -> EnvTestLockGuard {
+        let lock = ENV_TEST_LOCK.get_or_init(|| EnvTestLock {
+            state: Mutex::new(EnvTestLockState::default()),
+            cvar: Condvar::new(),
+        });
+        let current = std::thread::current().id();
+        let mut state = lock.state.lock().expect("env test lock poisoned");
+        loop {
+            match state.owner {
+                Some(owner) if owner == current => {
+                    state.depth += 1;
+                    return EnvTestLockGuard { lock };
+                }
+                Some(_) => {
+                    state = lock.cvar.wait(state).expect("env test lock poisoned");
+                }
+                None => {
+                    state.owner = Some(current);
+                    state.depth = 1;
+                    return EnvTestLockGuard { lock };
+                }
+            }
+        }
+    }
+
+    impl Drop for EnvTestLockGuard {
+        fn drop(&mut self) {
+            let current = std::thread::current().id();
+            let mut state = self.lock.state.lock().expect("env test lock poisoned");
+            debug_assert_eq!(state.owner, Some(current));
+            state.depth = state.depth.saturating_sub(1);
+            if state.depth == 0 {
+                state.owner = None;
+                self.lock.cvar.notify_all();
+            }
+        }
+    }
+
+    pub(crate) fn with_env_read_lock<T>(f: impl FnOnce() -> T) -> T {
+        let _guard = lock_env_for_test();
+        f()
+    }
+
+    pub(crate) fn var_os(key: &str) -> Option<OsString> {
+        with_env_read_lock(|| std::env::var_os(key))
+    }
+
+    pub(crate) fn var(key: &str) -> Result<String, std::env::VarError> {
+        with_env_read_lock(|| std::env::var(key))
+    }
+}
+
+#[cfg(test)]
+pub(crate) use env_access::{
+    lock_env_for_test, var as env_var, var_os as env_var_os, with_env_read_lock, EnvTestLockGuard,
+};
+
+#[cfg(not(test))]
+pub(crate) fn env_var_os(key: &str) -> Option<std::ffi::OsString> {
+    std::env::var_os(key)
+}
+
+#[cfg(not(test))]
+pub(crate) fn env_var(key: &str) -> Result<String, std::env::VarError> {
+    std::env::var(key)
+}
+
+#[cfg(test)]
 pub(crate) use connection::{
     handle_connection, handle_connection_with_limits, handle_connection_with_write_timeout,
     lagged_notice, read_limited_line, stream_events, ReadLineError,
@@ -548,33 +638,33 @@ pub async fn dispatch(
         "system.ping" => Ok(system_runtime::ping()),
         "system.capabilities" => Ok(system_runtime::capabilities()),
         "system.identify" => system_runtime::identify(state, &params),
-        "context.snapshot" => context_runtime::snapshot(state, &params),
+        "context.snapshot" => context_runtime::snapshot(state, &params).await,
         "feed.approval.respond" => feed_runtime::approval_respond(state, &params),
         "feed.list" => feed_runtime::list(state, &params),
-        "workflow.list" => workflow_runtime::list(state, &params),
-        "workflow.get" => workflow_runtime::get(state, &params),
-        "workflow.upsert" => workflow_runtime::upsert(state, &params),
-        "workflow.loop.set" => workflow_runtime::loop_set(state, &params),
-        "workflow.plan.set" => workflow_runtime::plan_set(state, &params),
-        "workflow.evidence.add" => workflow_runtime::evidence_add(state, &params),
-        "workflow.replay" => workflow_runtime::replay(state, &params),
-        "team.list" => team_runtime::list(state, &params),
-        "team.get" => team_runtime::get(state, &params),
-        "team.upsert" => team_runtime::upsert(state, &params),
+        "workflow.list" => workflow_runtime::list(state, &params).await,
+        "workflow.get" => workflow_runtime::get(state, &params).await,
+        "workflow.upsert" => workflow_runtime::upsert(state, &params).await,
+        "workflow.loop.set" => workflow_runtime::loop_set(state, &params).await,
+        "workflow.plan.set" => workflow_runtime::plan_set(state, &params).await,
+        "workflow.evidence.add" => workflow_runtime::evidence_add(state, &params).await,
+        "workflow.replay" => workflow_runtime::replay(state, &params).await,
+        "team.list" => team_runtime::list(state, &params).await,
+        "team.get" => team_runtime::get(state, &params).await,
+        "team.upsert" => team_runtime::upsert(state, &params).await,
         "team.finish" => team_runtime::finish(state, &params).await,
-        "team.worker.upsert" => team_runtime::worker_upsert(state, &params),
-        "team.worker.heartbeat" => team_runtime::worker_heartbeat(state, &params),
+        "team.worker.upsert" => team_runtime::worker_upsert(state, &params).await,
+        "team.worker.heartbeat" => team_runtime::worker_heartbeat(state, &params).await,
         "team.worker.launch" => team_runtime::worker_launch(state, &params).await,
-        "team.worker.health" => team_runtime::worker_health(state, &params),
-        "team.worker.nudge" => team_runtime::worker_nudge(state, &params),
+        "team.worker.health" => team_runtime::worker_health(state, &params).await,
+        "team.worker.nudge" => team_runtime::worker_nudge(state, &params).await,
         "team.worker.shutdown" => team_runtime::worker_shutdown(state, &params).await,
-        "team.task.upsert" => team_runtime::task_upsert(state, &params),
-        "team.message.send" => team_runtime::message_send(state, &params),
+        "team.task.upsert" => team_runtime::task_upsert(state, &params).await,
+        "team.message.send" => team_runtime::message_send(state, &params).await,
         "team.message.dispatch" => team_runtime::message_dispatch(state, &params).await,
-        "team.message.ack" => team_runtime::message_ack(state, &params),
-        "team.inbox" => team_runtime::inbox(state, &params),
-        "team.summary" => team_runtime::summary(state, &params),
-        "team.events" => team_runtime::events(state, &params),
+        "team.message.ack" => team_runtime::message_ack(state, &params).await,
+        "team.inbox" => team_runtime::inbox(state, &params).await,
+        "team.summary" => team_runtime::summary(state, &params).await,
+        "team.events" => team_runtime::events(state, &params).await,
 
         "agent.health" => agent_runtime::health(state, &params),
         "agent.hibernate" => agent_runtime::hibernate(state, &params),
@@ -1695,6 +1785,37 @@ mod tests {
     }
 
     #[test]
+    fn env_guard_serializes_with_guarded_readers() {
+        let original_path = with_env_read_lock(|| std::env::var("PATH").ok());
+        let dir = tempfile::tempdir().unwrap();
+        let temp_path = dir.path().to_str().unwrap().to_string();
+        let (writer_ready_tx, writer_ready_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            let _path = EnvGuard::set("PATH", &temp_path);
+            writer_ready_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        writer_ready_rx.recv().unwrap();
+
+        let (reader_tx, reader_rx) = mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            reader_tx
+                .send(with_env_read_lock(|| std::env::var("PATH").ok()))
+                .unwrap();
+        });
+        assert!(
+            reader_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+            "guarded env readers must wait while EnvGuard holds a temporary value"
+        );
+        release_tx.send(()).unwrap();
+        writer.join().unwrap();
+        let observed_path = reader_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        reader.join().unwrap();
+        assert_eq!(observed_path, original_path);
+    }
+
+    #[test]
     fn team_worker_launch_rejects_removed_gemini_provider() {
         let err = team_worker_launch_command("gemini", None, Vec::new()).unwrap_err();
         assert!(
@@ -2202,16 +2323,22 @@ mod tests {
     /// Use together with `#[serial_test::serial]` so that tests touching
     /// process-global env vars do not race with each other.
     struct EnvGuard {
+        _guard: EnvTestLockGuard,
         key: &'static str,
         prev: Option<String>,
     }
 
     impl EnvGuard {
         fn set(key: &'static str, val: &str) -> Self {
+            let guard = lock_env_for_test();
             let prev = std::env::var(key).ok();
-            // SAFETY: test-only; access serialized via #[serial_test::serial].
+            // SAFETY: test-only; access serialized by ENV_TEST_LOCK.
             unsafe { std::env::set_var(key, val) };
-            Self { key, prev }
+            Self {
+                _guard: guard,
+                key,
+                prev,
+            }
         }
     }
 
@@ -6790,6 +6917,57 @@ mod tests {
         assert!(err.to_string().contains("leader_surface_id"));
     }
 
+    #[test]
+    fn team_store_update_does_not_block_current_thread_runtime() {
+        let (mut state, _backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        let store_path = dir.path().join("team-v1.json");
+        let lock_file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(store_path.with_extension("lock"))
+            .unwrap();
+        lock_file.lock().unwrap();
+        state.team_store_path = Some(store_path);
+
+        let (ping_tx, ping_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let runtime_state = state.clone();
+        let thread = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async move {
+                let update_state = runtime_state.clone();
+                let update = tokio::spawn(async move {
+                    dispatch(
+                        &update_state,
+                        "team.upsert",
+                        json!({"team_id": "team-1", "name": "Runtime", "status": "active"}),
+                    )
+                    .await
+                });
+                tokio::task::yield_now().await;
+                let ping = dispatch(&runtime_state, "system.ping", json!({})).await;
+                ping_tx.send(ping.is_ok()).unwrap();
+                done_tx.send(update.await.unwrap().is_ok()).unwrap();
+            });
+        });
+
+        let ping_before_unlock = ping_rx
+            .recv_timeout(Duration::from_millis(200))
+            .unwrap_or(false);
+        drop(lock_file);
+        assert!(done_rx.recv_timeout(Duration::from_secs(2)).unwrap());
+        thread.join().unwrap();
+        assert!(
+            ping_before_unlock,
+            "team store I/O must not block unrelated socket work on a current-thread runtime"
+        );
+    }
+
     #[tokio::test]
     async fn dispatches_workflow_control_plane_methods() {
         let (state, _) = test_state();
@@ -6891,6 +7069,57 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(error.code(), "invalid_param");
+    }
+
+    #[test]
+    fn workflow_store_update_does_not_block_current_thread_runtime() {
+        let (state, _backend) = test_state();
+        let dir = tempfile::tempdir().unwrap();
+        let store_path = dir.path().join("workflow-v1.json");
+        let lock_file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(store_path.with_extension("lock"))
+            .unwrap();
+        lock_file.lock().unwrap();
+        let state = state.with_workflow_store_path(store_path);
+
+        let (ping_tx, ping_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let runtime_state = state.clone();
+        let thread = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async move {
+                let update_state = runtime_state.clone();
+                let update = tokio::spawn(async move {
+                    dispatch(
+                        &update_state,
+                        "workflow.upsert",
+                        json!({"workflow_id": "workflow-1", "status": "active"}),
+                    )
+                    .await
+                });
+                tokio::task::yield_now().await;
+                let ping = dispatch(&runtime_state, "system.ping", json!({})).await;
+                ping_tx.send(ping.is_ok()).unwrap();
+                done_tx.send(update.await.unwrap().is_ok()).unwrap();
+            });
+        });
+
+        let ping_before_unlock = ping_rx
+            .recv_timeout(Duration::from_millis(200))
+            .unwrap_or(false);
+        drop(lock_file);
+        assert!(done_rx.recv_timeout(Duration::from_secs(2)).unwrap());
+        thread.join().unwrap();
+        assert!(
+            ping_before_unlock,
+            "workflow store I/O must not block unrelated socket work on a current-thread runtime"
+        );
     }
 
     #[tokio::test]

@@ -17,7 +17,8 @@ All notable changes to ForkTTY are documented here.
   splits started during a close cannot leave orphan terminal runtimes behind.
 - Fixed team and workflow store updates to coordinate through per-store lock
   files, preventing lost updates when multiple ForkTTY processes share a state
-  directory.
+  directory, and moved socket store I/O onto Tokio's blocking pool so slow
+  filesystems do not stall unrelated socket requests.
 - Fixed `events.subscribe` validation for non-boolean `replay` values and
   capped event subscribers separately from the general socket request budget.
 - Fixed MCP tool metadata and `SPEC.md` drift for workflow loop state and

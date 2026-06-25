@@ -11,7 +11,10 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-pub(crate) fn snapshot(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+pub(crate) async fn snapshot(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<Value, DispatchError> {
     let request = ContextSnapshotRequest::decode(state, params)?;
     let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
     let now_ms = current_unix_epoch_ms();
@@ -105,9 +108,11 @@ pub(crate) fn snapshot(state: &SocketAppState, params: &Value) -> Result<Value, 
         state,
         &request.workspace_id,
         request.include_workflow_details,
-    )?;
+    )
+    .await?;
     let (teams, team_summaries) =
-        context_snapshot_team_state(state, &request.workspace_id, request.include_team_details)?;
+        context_snapshot_team_state(state, &request.workspace_id, request.include_team_details)
+            .await?;
     let risk_flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
         status: &status,
         agent_health: &agent_health,
@@ -222,7 +227,7 @@ fn context_snapshot_terminal_tails(
     (tails, errors)
 }
 
-fn context_snapshot_workflows(
+async fn context_snapshot_workflows(
     state: &SocketAppState,
     workspace_id: &str,
     include_workflow_details: bool,
@@ -230,7 +235,7 @@ fn context_snapshot_workflows(
     let Some(store_access) = store_access::optional_workflow_store_access(state) else {
         return Ok((json!([]), json!([]), json!([])));
     };
-    let store = store_access.load().map_err(workflow_runtime::error)?;
+    let store = store_access.load().await.map_err(workflow_runtime::error)?;
     let workflows = store
         .list(&WorkflowQuery {
             workspace_id: Some(workspace_id.to_string()),
@@ -439,7 +444,7 @@ pub(crate) fn workspace_effective_project_cwd(
         .unwrap_or_else(|| workspace.working_dir.clone())
 }
 
-fn context_snapshot_team_state(
+async fn context_snapshot_team_state(
     state: &SocketAppState,
     workspace_id: &str,
     include_team_details: bool,
@@ -447,7 +452,7 @@ fn context_snapshot_team_state(
     let Some(store_access) = store_access::optional_team_store_access(state) else {
         return Ok((json!([]), json!([])));
     };
-    let store = store_access.load().map_err(DispatchError::from)?;
+    let store = store_access.load().await.map_err(DispatchError::from)?;
     let teams = store.list(&forktty_core::TeamQuery {
         workspace_id: Some(workspace_id.to_string()),
         status: None,

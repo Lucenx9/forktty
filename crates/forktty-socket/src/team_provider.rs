@@ -1,4 +1,4 @@
-use crate::{provider_runtime, DispatchError};
+use crate::{env_var_os, provider_runtime, DispatchError};
 use forktty_core::config;
 use serde_json::{json, Value};
 use std::ffi::OsStr;
@@ -22,7 +22,7 @@ pub(crate) fn select_team_worker_provider(
     requested_agent: Option<&str>,
 ) -> Result<TeamWorkerProviderSelection, DispatchError> {
     let app_config = config::load_config().unwrap_or_default();
-    let path = std::env::var_os("PATH");
+    let path = env_var_os("PATH");
     select_team_worker_provider_with_path(requested_agent, &app_config.team, path.as_deref())
 }
 
