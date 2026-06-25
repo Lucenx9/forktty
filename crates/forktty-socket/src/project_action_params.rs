@@ -1,8 +1,8 @@
 use serde_json::Value;
 
 use crate::{
-    ensure_max_text_size, required_trimmed_string, resolve_open_repo_cwd_param, DispatchError,
-    SocketAppState,
+    ensure_max_text_size, path_resolver::resolve_open_repo_cwd_param, required_trimmed_string,
+    DispatchError, SocketAppState,
 };
 
 pub(crate) struct ProjectActionListRequest {

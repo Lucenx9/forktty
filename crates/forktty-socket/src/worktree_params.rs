@@ -1,7 +1,8 @@
 use serde_json::Value;
 
 use crate::{
-    resolve_open_repo_cwd_param, worktree_name_from_params, DispatchError, SocketAppState,
+    path_resolver::{resolve_open_repo_cwd_param, worktree_name_from_params},
+    DispatchError, SocketAppState,
 };
 
 pub(crate) struct WorktreeRepoRequest {

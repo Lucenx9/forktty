@@ -3,12 +3,12 @@ use forktty_terminal::TerminalTextCapture;
 use serde_json::Value;
 use std::path::PathBuf;
 
+use crate::path_resolver::resolve_workspace_cwd_param;
 use crate::{
     optional_workspace_create_name_from_params, required_ssh_host_param, required_string_param,
-    required_surface_id, resolve_workspace_cwd_param, split_axis_from_params,
-    terminal_tail_lines_from_params, terminal_text_capture_from_params,
-    terminal_text_max_bytes_from_params, workspace_selector_from_params, DispatchError,
-    MAX_SEND_TEXT_BYTES,
+    required_surface_id, split_axis_from_params, terminal_tail_lines_from_params,
+    terminal_text_capture_from_params, terminal_text_max_bytes_from_params,
+    workspace_selector_from_params, DispatchError, MAX_SEND_TEXT_BYTES,
 };
 
 pub(crate) struct WorkspaceCreateRequest {

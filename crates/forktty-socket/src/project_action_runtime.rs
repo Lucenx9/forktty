@@ -1,5 +1,5 @@
 use crate::{
-    canonical_repo_common_dir,
+    path_resolver::canonical_repo_common_dir,
     project_action_params::{ProjectActionListRequest, ProjectActionRunRequest},
     rollback_surface_creation, DispatchError, SocketAppState,
 };

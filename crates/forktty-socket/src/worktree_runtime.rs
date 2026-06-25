@@ -2,8 +2,9 @@ use crate::{
     close_replacement_terminal_surface_if_present, close_terminal_surfaces_or_restore,
     ensure_terminal_for_active_workspace, evict_hook_session_targets_for_surfaces,
     notification_dispatch::notify_worktree_setup_warning,
+    path_resolver::worktree_layout,
     rollback_replacement_if_redundant, rollback_workspace_creation, spawn_terminal_surfaces,
-    spawn_workspace_terminal, worktree_layout,
+    spawn_workspace_terminal,
     worktree_params::{WorktreeNamedRequest, WorktreeRepoRequest, WorktreeStatusRequest},
     DispatchError, SocketAppState,
 };

@@ -17,6 +17,7 @@ mod metadata_params;
 mod metadata_runtime;
 mod methods;
 mod notification_dispatch;
+mod path_resolver;
 mod project_action_params;
 mod project_action_runtime;
 mod provider_runtime;
@@ -67,17 +68,16 @@ use forktty_core::JsonRpcResponse;
 #[cfg(all(test, feature = "browser"))]
 use forktty_core::MAX_BROWSER_URL_BYTES;
 use forktty_core::{
-    agent_resume_command_with_cwd_and_permission_mode, command_safety::is_valid_ssh_host, config,
-    validate_worktree_name, AgentKind, AgentSessionLifecycle, BrowserCommand, FeedApprovalState,
-    FeedStore, LogLevel, NotificationItem, NotificationKind, SplitAxis, StatusHookMetadata,
-    WorkspaceModel, WorkspaceSelector,
+    agent_resume_command_with_cwd_and_permission_mode, command_safety::is_valid_ssh_host,
+    AgentKind, AgentSessionLifecycle, BrowserCommand, FeedApprovalState, FeedStore, LogLevel,
+    NotificationItem, NotificationKind, SplitAxis, StatusHookMetadata, WorkspaceModel,
+    WorkspaceSelector,
 };
 #[cfg(test)]
 use forktty_core::{FeedEntry, FeedEntryType};
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError, TerminalTextCapture};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
-use std::fs;
 use std::io;
 #[cfg(all(test, feature = "browser"))]
 use std::io::{Seek, SeekFrom};
@@ -1114,194 +1114,6 @@ pub(crate) async fn ensure_terminal_for_active_workspace(
     spawn_workspace_terminal(state, &workspace)
 }
 
-fn resolve_workspace_cwd_param(params: &Value) -> Result<PathBuf, String> {
-    resolve_existing_dir_param(params, &["workingDir", "working_dir", "cwd"])
-}
-
-#[cfg(test)]
-fn resolve_cwd_param(params: &Value) -> Result<String, String> {
-    Ok(resolve_existing_dir_param(params, &["cwd"])?
-        .to_string_lossy()
-        .to_string())
-}
-
-async fn resolve_open_repo_cwd_param(
-    state: &SocketAppState,
-    params: &Value,
-    keys: &[&str],
-    missing_param: &'static str,
-) -> Result<String, DispatchError> {
-    let cwd = resolve_required_existing_dir_param(params, keys, missing_param)?;
-    // Copy the visible open-workspace/surface roots out under the lock, then
-    // run the git2 discovery off the runtime: it walks the filesystem once per
-    // open root plus once for the candidate. Hook-reported resume cwd metadata
-    // is deliberately excluded from this authorization boundary.
-    let working_dirs = open_workspace_git_boundary_dirs(state)?;
-    let candidate = cwd.clone();
-    match tokio::task::spawn_blocking(move || {
-        validate_cwd_against_working_dirs(&working_dirs, &candidate)
-    })
-    .await
-    {
-        Ok(result) => result.map_err(DispatchError::PreconditionFailed)?,
-        Err(err) => return Err(format!("Validation task failed: {err}").into()),
-    }
-    Ok(cwd.to_string_lossy().to_string())
-}
-
-fn open_workspace_git_boundary_dirs(state: &SocketAppState) -> Result<Vec<PathBuf>, DispatchError> {
-    let model = state
-        .model
-        .lock()
-        .map_err(|_| "Lock poisoned".to_string())?;
-    let mut dirs = Vec::new();
-    for workspace in model.list_workspaces() {
-        dirs.push(workspace.working_dir.clone());
-        dirs.extend(
-            model
-                .list_surfaces(Some(&workspace.id))
-                .into_iter()
-                .map(|surface| surface.cwd),
-        );
-    }
-    Ok(dirs)
-}
-
-fn resolve_required_existing_dir_param(
-    params: &Value,
-    keys: &[&str],
-    missing_param: &'static str,
-) -> Result<PathBuf, DispatchError> {
-    let found = keys
-        .iter()
-        .filter_map(|key| params.get(*key).map(|value| (*key, value)))
-        .collect::<Vec<_>>();
-    if found.len() > 1 {
-        return Err(format!(
-            "Ambiguous path parameter: cannot combine {}",
-            format_param_names(found.iter().map(|(key, _)| *key))
-        )
-        .into());
-    }
-    let Some((key, value)) = found.first() else {
-        return Err(DispatchError::MissingParam(missing_param));
-    };
-    let raw = value
-        .as_str()
-        .ok_or_else(|| format!("Invalid parameter {key}: expected path string"))?;
-    if raw.trim().is_empty() {
-        return Err(format!("Invalid parameter {key}: path must not be empty").into());
-    }
-    canonical_existing_dir(Path::new(raw), key).map_err(DispatchError::from)
-}
-
-fn resolve_existing_dir_param(params: &Value, keys: &[&str]) -> Result<PathBuf, String> {
-    let found = keys
-        .iter()
-        .filter_map(|key| params.get(*key).map(|value| (*key, value)))
-        .collect::<Vec<_>>();
-    if found.len() > 1 {
-        return Err(format!(
-            "Ambiguous path parameter: cannot combine {}",
-            format_param_names(found.iter().map(|(key, _)| *key))
-        ));
-    }
-    let Some((key, value)) = found.first() else {
-        return Ok(fallback_cwd());
-    };
-    let raw = value
-        .as_str()
-        .ok_or_else(|| format!("Invalid parameter {key}: expected path string"))?;
-    if raw.trim().is_empty() {
-        return Err(format!("Invalid parameter {key}: path must not be empty"));
-    }
-    canonical_existing_dir(Path::new(raw), key)
-}
-
-fn canonical_existing_dir(path: &Path, key: &str) -> Result<PathBuf, String> {
-    let canonical = fs::canonicalize(path)
-        .map_err(|err| format!("Invalid parameter {key}: cannot resolve path: {err}"))?;
-    let metadata = fs::metadata(&canonical)
-        .map_err(|err| format!("Invalid parameter {key}: cannot read path metadata: {err}"))?;
-    if !metadata.is_dir() {
-        return Err(format!("Invalid parameter {key}: path must be a directory"));
-    }
-    Ok(canonical)
-}
-
-fn validate_cwd_against_working_dirs(working_dirs: &[PathBuf], cwd: &Path) -> Result<(), String> {
-    let candidate = canonical_repo_common_dir(cwd)?;
-    let allowed = working_dirs
-        .iter()
-        .filter_map(|working_dir| canonical_repo_common_dir(working_dir).ok())
-        .any(|open_repo| open_repo == candidate);
-    if allowed {
-        Ok(())
-    } else {
-        let roots = working_dirs
-            .iter()
-            .map(|dir| dir.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        Err(format!(
-            "cwd is not inside the git repository of any open workspace; \
-             open a workspace on the repo first (`forktty create-workspace \
-             --working-dir <repo>`). Open workspace roots: {roots}"
-        ))
-    }
-}
-
-fn canonical_repo_common_dir(path: &Path) -> Result<PathBuf, String> {
-    let repo = git2::Repository::discover(path)
-        .map_err(|_| format!("cwd must be inside a git repository: {}", path.display()))?;
-    fs::canonicalize(repo.commondir())
-        .map_err(|err| format!("Cannot resolve git common directory: {err}"))
-}
-
-fn fallback_cwd() -> PathBuf {
-    std::env::current_dir()
-        .ok()
-        .and_then(|path| canonical_existing_dir(&path, "cwd").ok())
-        .unwrap_or_else(|| PathBuf::from("/"))
-}
-
-fn worktree_name_from_params<'a>(
-    params: &'a Value,
-    keys: &[&str],
-    missing_label: &'static str,
-) -> Result<&'a str, DispatchError> {
-    let mut found = Vec::new();
-    for key in keys {
-        let Some(value) = params.get(*key) else {
-            continue;
-        };
-        let Some(name) = value.as_str() else {
-            return Err(format!("Invalid parameter {key}: expected string").into());
-        };
-        let name = validate_worktree_name(name).map_err(DispatchError::from)?;
-        found.push((*key, name));
-    }
-    if found.is_empty() {
-        return Err(DispatchError::MissingParam(missing_label));
-    }
-    if found.len() > 1 {
-        return Err(format!(
-            "Ambiguous worktree selector: cannot combine {}",
-            format_param_names(found.iter().map(|(key, _)| *key))
-        )
-        .into());
-    }
-    Ok(found[0].1)
-}
-
-pub(crate) fn worktree_layout() -> String {
-    config::load_config()
-        .ok()
-        .map(|config| config.general.worktree_layout)
-        .filter(|layout| !layout.is_empty())
-        .unwrap_or_else(|| "nested".to_string())
-}
-
 fn required_string<'a>(params: &'a Value, key: &'static str) -> Result<&'a str, DispatchError> {
     let Some(value) = params.get(key) else {
         return Err(DispatchError::MissingParam(key));
@@ -1732,7 +1544,7 @@ fn optional_hook_session_cwd(params: &Value) -> Result<Option<PathBuf>, Dispatch
     ensure_max_text_size("hook_session_cwd", raw)?;
     let path = Path::new(raw);
     if path.is_absolute() {
-        match canonical_existing_dir(path, "hook_session_cwd") {
+        match path_resolver::canonical_existing_dir(path, "hook_session_cwd") {
             Ok(canonical) => return Ok(Some(canonical)),
             Err(_) => return Ok(None),
         }
@@ -2060,6 +1872,7 @@ pub fn bootstrap_default_workspace(state: &SocketAppState, cwd: PathBuf) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use forktty_core::validate_worktree_name;
     use forktty_terminal::{
         HeadlessTerminalBackend, TerminalBackend, TerminalError, TerminalSurfaceState,
         TerminalTextCapture, TerminalTextSnapshot,
@@ -11852,7 +11665,7 @@ mod tests {
         let info = worktree::create(
             repo_dir.path().to_str().unwrap(),
             &branch_name,
-            &worktree_layout(),
+            &path_resolver::worktree_layout(),
         )
         .unwrap();
         let worktree_cwd = PathBuf::from(&info.path);
@@ -11924,7 +11737,7 @@ mod tests {
         let info = worktree::create(
             repo_dir.path().to_str().unwrap(),
             &branch_name,
-            &worktree_layout(),
+            &path_resolver::worktree_layout(),
         )
         .unwrap();
         let worktree_cwd = PathBuf::from(&info.path);
@@ -12567,11 +12380,12 @@ mod tests {
     #[test]
     fn resolves_cwd_params_to_existing_directories() {
         let dir = tempfile::tempdir().unwrap();
-        let resolved = resolve_workspace_cwd_param(&json!({"workingDir": dir.path()})).unwrap();
+        let resolved =
+            path_resolver::resolve_workspace_cwd_param(&json!({"workingDir": dir.path()})).unwrap();
         assert_eq!(resolved, fs::canonicalize(dir.path()).unwrap());
 
         let missing = dir.path().join("missing");
-        let error = resolve_cwd_param(&json!({"cwd": missing})).unwrap_err();
+        let error = path_resolver::resolve_cwd_param(&json!({"cwd": missing})).unwrap_err();
         assert!(error.contains("cannot resolve path"));
     }
 
@@ -12580,7 +12394,7 @@ mod tests {
         let first = tempfile::tempdir().unwrap();
         let second = tempfile::tempdir().unwrap();
 
-        let workspace_error = resolve_workspace_cwd_param(&json!({
+        let workspace_error = path_resolver::resolve_workspace_cwd_param(&json!({
             "workingDir": first.path(),
             "cwd": second.path(),
         }))
@@ -12589,7 +12403,7 @@ mod tests {
         assert!(workspace_error.contains("Ambiguous path parameter"));
         assert!(workspace_error.contains("workingDir and cwd"));
 
-        let repo_error = resolve_required_existing_dir_param(
+        let repo_error = path_resolver::resolve_required_existing_dir_param(
             &json!({
                 "path": first.path(),
                 "cwd": second.path(),
