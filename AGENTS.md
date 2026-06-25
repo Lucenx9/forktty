@@ -97,6 +97,20 @@ Use Rust's module system intentionally: group related functionality, keep implem
 - Add or keep behavior-boundary tests during extraction: CLI output tests, socket JSON responses, MCP schemas, and model/store invariants should remain the proof that the move was behavior-preserving.
 - Use web references for external behavior, but ground internal Rust structure in local code plus the Rust Book, Cargo Book, Rust API Guidelines, small-change review practice, and incremental replacement patterns.
 
+## LLM-readable code rules
+
+Optimize for future readers who arrive with `rg`, type signatures, tests, and this file as their map. Code that is easy for an agent to locate and verify is usually easier for humans to review too.
+
+- Prefer descriptive domain names over abbreviations. Public socket/MCP method names, command names, event names, and state-machine states should appear as searchable constants or enum variants, not only as dynamically assembled strings.
+- Put a short `//!` module summary on new non-trivial modules explaining responsibility, primary entry points, and the important invariants. For public Rust APIs, use rustdoc with purpose, examples when useful, and `# Errors`, `# Panics`, or `# Safety` sections when they apply.
+- Comments should explain why, invariants, ordering constraints, external contracts, and surprising edge cases. Do not add comments that merely restate the next line of code.
+- Make data contracts explicit with structs, enums, newtypes, and typed errors instead of loose maps, booleans with unclear meaning, or stringly typed state. Derive or implement `Debug` for public and boundary-crossing types when practical.
+- Keep feature entry points easy to trace: dispatcher arms should name the helper they delegate to, helpers should live in the feature module, and tests should use behavior names that can be found with `rg <method_or_command>`.
+- Avoid hiding important behavior behind broad macros, global mutable state, callbacks, or trait objects unless the indirection is necessary. When it is necessary, leave a narrow comment or module summary that points to the runtime path.
+- Mark generated, vendored, embedded, or source-of-truth files clearly. If an agent should edit a generator/template instead of generated output, say that near the generated include or in the nearest module docs.
+- Keep examples, fixtures, and docs executable or obviously illustrative. If a command in docs is the validation path for agents, keep it current when code moves.
+- When adding a new module or moving ownership, update the relevant architecture note, module summary, tests, and command/help references in the same change so future agents do not follow stale maps.
+
 ## Conventions
 
 - Surgical edits only: don't reformat, restyle, or refactor code unrelated to the change (see CONTRIBUTING.md).
