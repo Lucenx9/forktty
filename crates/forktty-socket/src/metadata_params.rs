@@ -3,9 +3,9 @@ use serde_json::Value;
 use std::path::PathBuf;
 
 use crate::{
-    ensure_max_text_size, log_level_from_params, notification_body_from_params,
-    notification_kind_from_params, notification_title_from_params, optional_f64,
-    optional_hook_session_cwd, optional_hook_status_metadata, optional_non_blank_string_param,
+    ensure_max_text_size, hook_session::optional_hook_session_cwd, log_level_from_params,
+    notification_body_from_params, notification_kind_from_params, notification_title_from_params,
+    optional_f64, optional_hook_status_metadata, optional_non_blank_string_param,
     optional_surface_id_param, required_f64, required_string, required_trimmed_string,
     resolve_notification_target, resolve_workspace_id_for_metadata, status_color_from_params,
     DispatchError, SocketAppState,

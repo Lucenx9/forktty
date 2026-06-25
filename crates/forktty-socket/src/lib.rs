@@ -13,6 +13,7 @@ mod feed_events;
 mod feed_params;
 mod feed_runtime;
 mod feed_view;
+mod hook_session;
 mod metadata_params;
 mod metadata_runtime;
 mod methods;
@@ -77,7 +78,6 @@ use forktty_core::{
 use forktty_core::{FeedEntry, FeedEntryType};
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError, TerminalTextCapture};
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
 use std::io;
 #[cfg(all(test, feature = "browser"))]
 use std::io::{Seek, SeekFrom};
@@ -339,7 +339,7 @@ pub struct SocketAppState {
     /// browser scripting verbs report unavailable.
     pub browser_cmd: Option<async_channel::Sender<BrowserCommand>>,
     feed_store: Arc<Mutex<Option<FeedStore>>>,
-    hook_session_targets: Arc<Mutex<HookSessionTargets>>,
+    hook_session_targets: Arc<Mutex<hook_session::HookSessionTargets>>,
     coordinator: Arc<SocketCoordinator>,
 }
 
@@ -367,7 +367,7 @@ impl SocketAppState {
             events,
             browser_cmd: None,
             feed_store: Arc::new(Mutex::new(None)),
-            hook_session_targets: Arc::new(Mutex::new(HookSessionTargets::default())),
+            hook_session_targets: Arc::new(Mutex::new(hook_session::HookSessionTargets::default())),
             coordinator: Arc::new(SocketCoordinator::default()),
         }
     }
@@ -429,63 +429,6 @@ impl SocketAppState {
         if let Err(err) = store.mark_approvals(ids, FeedApprovalState::Dismissed) {
             eprintln!("forktty feed history dismiss update failed: {err}");
         }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct HookSessionTarget {
-    workspace_id: String,
-    surface_id: String,
-}
-
-#[derive(Default, Debug)]
-struct HookSessionTargets {
-    entries: HashMap<String, HookSessionTarget>,
-    order: VecDeque<String>,
-}
-
-impl HookSessionTargets {
-    fn learn(&mut self, session_id: String, target: HookSessionTarget) {
-        if self.entries.contains_key(&session_id) {
-            self.entries.insert(session_id.clone(), target);
-            self.order.retain(|existing| existing != &session_id);
-            self.order.push_back(session_id);
-            return;
-        }
-
-        while self.entries.len() >= HOOK_SESSION_TARGET_CAPACITY {
-            let Some(oldest) = self.order.pop_front() else {
-                break;
-            };
-            self.entries.remove(&oldest);
-        }
-
-        self.entries.insert(session_id.clone(), target);
-        self.order.push_back(session_id);
-    }
-
-    fn get(&self, session_id: &str) -> Option<&HookSessionTarget> {
-        self.entries.get(session_id)
-    }
-
-    fn remove_session(&mut self, session_id: &str) {
-        if self.entries.remove(session_id).is_some() {
-            self.order.retain(|existing| existing != session_id);
-        }
-    }
-
-    fn remove_surface(&mut self, surface_id: &str) {
-        let removed = self
-            .entries
-            .iter()
-            .filter(|(_, target)| target.surface_id == surface_id)
-            .map(|(session_id, _)| session_id.clone())
-            .collect::<Vec<_>>();
-        for session_id in removed {
-            self.entries.remove(&session_id);
-        }
-        self.order
-            .retain(|session_id| self.entries.contains_key(session_id));
     }
 }
 
@@ -599,7 +542,7 @@ pub async fn dispatch(
     }
 
     let mut params = params;
-    let _hook_session_end = prepare_hook_session_targets(state, method, &mut params)?;
+    let _hook_session_end = hook_session::prepare_hook_session_targets(state, method, &mut params)?;
 
     match method {
         "system.ping" => Ok(system_runtime::ping()),
@@ -1503,182 +1446,6 @@ fn surface_id_params<'a>(params: &'a Value) -> Result<Vec<SurfaceIdParam<'a>>, D
         }
     }
     Ok(surface_ids)
-}
-
-struct HookSessionEndGuard {
-    targets: Arc<Mutex<HookSessionTargets>>,
-    session_id: Option<String>,
-}
-
-impl HookSessionEndGuard {
-    fn none(state: &SocketAppState) -> Self {
-        Self {
-            targets: state.hook_session_targets.clone(),
-            session_id: None,
-        }
-    }
-
-    fn new(state: &SocketAppState, session_id: Option<String>) -> Self {
-        Self {
-            targets: state.hook_session_targets.clone(),
-            session_id,
-        }
-    }
-}
-
-impl Drop for HookSessionEndGuard {
-    fn drop(&mut self) {
-        let Some(session_id) = self.session_id.as_deref() else {
-            return;
-        };
-        if let Ok(mut targets) = self.targets.lock() {
-            targets.remove_session(session_id);
-        }
-    }
-}
-
-fn optional_hook_session_cwd(params: &Value) -> Result<Option<PathBuf>, DispatchError> {
-    let Some(raw) = optional_non_blank_string_param(params, "hook_session_cwd")? else {
-        return Ok(None);
-    };
-    ensure_max_text_size("hook_session_cwd", raw)?;
-    let path = Path::new(raw);
-    if path.is_absolute() {
-        match path_resolver::canonical_existing_dir(path, "hook_session_cwd") {
-            Ok(canonical) => return Ok(Some(canonical)),
-            Err(_) => return Ok(None),
-        }
-    }
-    Ok(None)
-}
-
-fn prepare_hook_session_targets(
-    state: &SocketAppState,
-    method: &str,
-    params: &mut Value,
-) -> Result<HookSessionEndGuard, DispatchError> {
-    if !is_hook_targetable_method(method) {
-        return Ok(HookSessionEndGuard::none(state));
-    }
-    let Some(session_id) = optional_non_blank_string_param(params, "hook_session_id")? else {
-        return Ok(HookSessionEndGuard::none(state));
-    };
-    ensure_max_text_size("hook_session_id", session_id)?;
-    let session_id = session_id.to_string();
-    let event_name = optional_non_blank_string_param(params, "hook_event_name")?;
-    let evict_on_return = should_evict_hook_session_target_on_return(method, params, event_name)?;
-
-    let surface_id = optional_surface_id_param(params)?.map(str::to_string);
-    let workspace_selectors = workspace_selector_params(params)?;
-    let has_explicit_workspace = !workspace_selectors.is_empty();
-    let workspace_id = workspace_selectors
-        .iter()
-        .find(|selector| {
-            matches!(selector.kind, WorkspaceSelectorKind::Id)
-                && matches!(selector.key, "workspace_id" | "workspaceId")
-        })
-        .map(|selector| selector.value.to_string());
-
-    if let (Some(workspace_id), Some(surface_id)) = (workspace_id.as_deref(), surface_id.as_deref())
-    {
-        let target = HookSessionTarget {
-            workspace_id: workspace_id.to_string(),
-            surface_id: surface_id.to_string(),
-        };
-        if hook_session_target_is_live(state, &target)? {
-            state
-                .hook_session_targets
-                .lock()
-                .map_err(|_| "Lock poisoned".to_string())?
-                .learn(session_id.clone(), target);
-        }
-        return Ok(HookSessionEndGuard::new(
-            state,
-            evict_on_return.then_some(session_id),
-        ));
-    }
-
-    if surface_id.is_none() && !has_explicit_workspace {
-        let mapped = state
-            .hook_session_targets
-            .lock()
-            .map_err(|_| "Lock poisoned".to_string())?
-            .get(&session_id)
-            .cloned();
-        if let Some(target) = mapped {
-            if hook_session_target_is_live(state, &target)? {
-                insert_hook_session_target(params, &target)?;
-            } else {
-                state
-                    .hook_session_targets
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?
-                    .remove_session(&session_id);
-                return Err(DispatchError::NotFound("surface".to_string()));
-            }
-        }
-    }
-
-    Ok(HookSessionEndGuard::new(
-        state,
-        evict_on_return.then_some(session_id),
-    ))
-}
-
-fn should_evict_hook_session_target_on_return(
-    method: &str,
-    params: &Value,
-    event_name: Option<&str>,
-) -> Result<bool, DispatchError> {
-    if event_name != Some("session-end") || method != "metadata.clear_status" {
-        return Ok(false);
-    }
-    let key = optional_non_blank_string_param(params, "key")?;
-    Ok(key.is_none_or(|key| agent_kind_from_status_key(key).is_none()))
-}
-
-fn is_hook_targetable_method(method: &str) -> bool {
-    matches!(
-        method,
-        "metadata.set_status"
-            | "metadata.clear_status"
-            | "metadata.set_progress"
-            | "metadata.log"
-            | "notification.create"
-    )
-}
-
-fn hook_session_target_is_live(
-    state: &SocketAppState,
-    target: &HookSessionTarget,
-) -> Result<bool, DispatchError> {
-    let model = state
-        .model
-        .lock()
-        .map_err(|_| "Lock poisoned".to_string())?;
-    Ok(model
-        .surface(&target.surface_id)
-        .is_some_and(|surface| surface.workspace_id == target.workspace_id))
-}
-
-fn insert_hook_session_target(
-    params: &mut Value,
-    target: &HookSessionTarget,
-) -> Result<(), DispatchError> {
-    let Some(params) = params.as_object_mut() else {
-        return Err(DispatchError::InvalidParam(
-            "Invalid hook target params: expected object".to_string(),
-        ));
-    };
-    params.insert(
-        "workspace_id".to_string(),
-        Value::String(target.workspace_id.clone()),
-    );
-    params.insert(
-        "surface_id".to_string(),
-        Value::String(target.surface_id.clone()),
-    );
-    Ok(())
 }
 
 fn ensure_model_surface_exists(
