@@ -6,6 +6,7 @@ use std::sync::Mutex;
 pub(crate) struct SocketCoordinator {
     pub(crate) team_message_dispatch: tokio::sync::Mutex<()>,
     pub(crate) team_worker_launch: tokio::sync::Mutex<()>,
+    pub(crate) surface_set: tokio::sync::Mutex<()>,
     team_launch_owned_surfaces: Mutex<HashSet<TeamLaunchOwnedSurface>>,
     team_terminal_dispatched_messages: Mutex<HashSet<TeamTerminalDispatchedMessage>>,
 }

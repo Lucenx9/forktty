@@ -105,9 +105,10 @@ pub(crate) fn reclaim(state: &SocketAppState, params: &Value) -> Result<Value, D
     }))
 }
 
-pub(crate) fn resume(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+pub(crate) async fn resume(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = AgentResumeRequest::decode(params)?;
     let source_surface_id = request.source_surface_id;
+    let _surface_set_guard = state.coordinator.surface_set.lock().await;
     let (surface, agent, session_id, program, args, resume_cwd) = {
         let mut model = state
             .model

@@ -371,6 +371,7 @@ pub(crate) async fn worker_launch(
         request.extra_args,
     )?;
     ensure_team_worker_can_launch(state, &request.team_id, &request.worker_id)?;
+    let _surface_set_guard = state.coordinator.surface_set.lock().await;
     let surface = create_team_worker_surface(
         state,
         &request.team_id,

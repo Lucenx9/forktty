@@ -25,6 +25,7 @@ pub(crate) async fn run(state: &SocketAppState, params: &Value) -> Result<Value,
         run_project_action_blocking(move || forktty_core::action_cwd(project_root, &action)).await?
     };
     let source_surface_id = project_action_source_surface_id(state, &project_root)?;
+    let _surface_set_guard = state.coordinator.surface_set.lock().await;
     let surface = {
         let mut model = state
             .model

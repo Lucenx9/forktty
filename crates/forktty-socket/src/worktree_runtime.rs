@@ -96,6 +96,7 @@ pub(crate) async fn remove(state: &SocketAppState, params: &Value) -> Result<Val
         })
         .await?
     };
+    let _surface_set_guard = state.coordinator.surface_set.lock().await;
     let workspace_worktree_name = removal.worktree_name().to_string();
     let (workspace, surfaces, is_last_workspace) = {
         let model = state

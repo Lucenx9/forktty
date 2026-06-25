@@ -13,6 +13,8 @@ All notable changes to ForkTTY are documented here.
   worker so the second call fails before leaving an orphaned worker pane.
 - Fixed `workspace.close` and `worktree.remove` rollback when closing multiple
   surfaces fails after one or more terminal runtimes were already closed.
+- Fixed `workspace.close` and `worktree.remove` surface-set races so tabs or
+  splits started during a close cannot leave orphan terminal runtimes behind.
 - Fixed `events.subscribe` validation for non-boolean `replay` values and
   capped event subscribers separately from the general socket request budget.
 - Fixed MCP tool metadata and `SPEC.md` drift for workflow loop state and

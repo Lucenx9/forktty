@@ -91,6 +91,7 @@ pub(crate) async fn select(state: &SocketAppState, params: &Value) -> Result<Val
 
 pub(crate) async fn close(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = WorkspaceSelectorRequest::decode(params)?;
+    let _surface_set_guard = state.coordinator.surface_set.lock().await;
     let (workspace_id, workspace, surfaces, is_last_workspace) = {
         let model = state
             .model

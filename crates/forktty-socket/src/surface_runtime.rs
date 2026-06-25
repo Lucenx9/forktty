@@ -5,8 +5,9 @@ use crate::{
 };
 use serde_json::{json, Value};
 
-pub(crate) fn split(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+pub(crate) async fn split(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = SurfaceSplitRequest::decode(params)?;
+    let _surface_set_guard = state.coordinator.surface_set.lock().await;
     let surface = {
         let mut model = state
             .model
@@ -23,8 +24,12 @@ pub(crate) fn split(state: &SocketAppState, params: &Value) -> Result<Value, Dis
     Ok(json!(surface))
 }
 
-pub(crate) fn new_tab(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+pub(crate) async fn new_tab(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<Value, DispatchError> {
     let request = SurfaceIdRequest::decode(params)?;
+    let _surface_set_guard = state.coordinator.surface_set.lock().await;
     let surface = {
         let mut model = state
             .model

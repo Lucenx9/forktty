@@ -581,7 +581,7 @@ pub async fn dispatch(
         "agent.list" => agent_runtime::list(state, &params),
         "agent.reclaim.plan" => agent_runtime::reclaim_plan(state, &params),
         "agent.reclaim" => agent_runtime::reclaim(state, &params),
-        "agent.resume" => agent_runtime::resume(state, &params),
+        "agent.resume" => agent_runtime::resume(state, &params).await,
         "status.summary" => status_runtime::summary(state, &params),
         "remote.list" => remote::list(state, &params),
         "remote.status" => remote::status(state, &params),
@@ -604,7 +604,7 @@ pub async fn dispatch(
         "surface.capture_tail" => topology_runtime::surface_capture_tail(state, &params),
         "surface.send_text" => topology_runtime::surface_send_text(state, &params),
         "topology.tree" => topology_runtime::tree(state, &params),
-        "surface.split" => surface_runtime::split(state, &params),
+        "surface.split" => surface_runtime::split(state, &params).await,
         "browser.open" => browser_runtime::open(state, &params),
         "browser.navigate" => browser_runtime::navigate(state, &params),
         "browser.snapshot" => browser_runtime::snapshot(state, &params).await,
@@ -625,7 +625,7 @@ pub async fn dispatch(
         "browser.import.discover" => Ok(browser_import::browser_import_discover_json()),
         "browser.import.preview" => browser_import::browser_import_preview(&params).await,
         "browser.import.run" => browser_import::browser_import_run(state, &params).await,
-        "pane.new_tab" => surface_runtime::new_tab(state, &params),
+        "pane.new_tab" => surface_runtime::new_tab(state, &params).await,
         "pane.select_tab" => surface_runtime::select_tab(state, &params),
         "surface.focus" => surface_runtime::focus(state, &params),
         "surface.close" => surface_runtime::close(state, &params).await,
@@ -891,6 +891,7 @@ pub(crate) async fn close_surface_request(
     state: &SocketAppState,
     surface_id: &str,
 ) -> Result<Value, DispatchError> {
+    let _surface_set_guard = state.coordinator.surface_set.lock().await;
     let root_replacement = {
         let mut model = state
             .model
@@ -1647,7 +1648,7 @@ mod tests {
     use git2::Repository;
     use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
     #[cfg(feature = "browser")]
     use std::sync::Barrier;
     use std::sync::{Arc, Mutex};
@@ -2964,6 +2965,90 @@ mod tests {
     struct FailsSecondCloseBackend {
         inner: HeadlessTerminalBackend,
         close_count: AtomicUsize,
+    }
+
+    #[derive(Debug)]
+    struct BlockingFirstCloseBackend {
+        inner: HeadlessTerminalBackend,
+        close_started: AtomicBool,
+        first_close_started: Mutex<Option<mpsc::Sender<()>>>,
+        release_first_close: Mutex<mpsc::Receiver<()>>,
+        spawn_after_close_started: Mutex<Option<mpsc::Sender<()>>>,
+    }
+
+    impl BlockingFirstCloseBackend {
+        fn new(
+            first_close_started: mpsc::Sender<()>,
+            release_first_close: mpsc::Receiver<()>,
+            spawn_after_close_started: mpsc::Sender<()>,
+        ) -> Self {
+            Self {
+                inner: HeadlessTerminalBackend::new(),
+                close_started: AtomicBool::new(false),
+                first_close_started: Mutex::new(Some(first_close_started)),
+                release_first_close: Mutex::new(release_first_close),
+                spawn_after_close_started: Mutex::new(Some(spawn_after_close_started)),
+            }
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            self.inner.surfaces()
+        }
+    }
+
+    impl TerminalBackend for BlockingFirstCloseBackend {
+        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+            if self.close_started.load(Ordering::SeqCst) {
+                if let Some(started) = self
+                    .spawn_after_close_started
+                    .lock()
+                    .map_err(|_| TerminalError::LockPoisoned)?
+                    .take()
+                {
+                    let _ = started.send(());
+                }
+            }
+            self.inner.spawn(request)
+        }
+
+        fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
+            self.inner.send_text(surface_id, text)
+        }
+
+        fn read_text(
+            &self,
+            surface_id: &str,
+            capture: TerminalTextCapture,
+            max_bytes: usize,
+        ) -> Result<TerminalTextSnapshot, TerminalError> {
+            self.inner.read_text(surface_id, capture, max_bytes)
+        }
+
+        fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
+            self.inner.resize(surface_id, cols, rows)
+        }
+
+        fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+            if let Some(started) = self
+                .first_close_started
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .take()
+            {
+                self.close_started.store(true, Ordering::SeqCst);
+                let _ = started.send(());
+                self.release_first_close
+                    .lock()
+                    .map_err(|_| TerminalError::LockPoisoned)?
+                    .recv()
+                    .map_err(|err| TerminalError::Backend(err.to_string()))?;
+            }
+            self.inner.close(surface_id)
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            self.inner.surfaces()
+        }
     }
 
     impl FailsSecondCloseBackend {
@@ -9419,6 +9504,90 @@ mod tests {
             "the race must leave exactly one workspace, got {workspaces:?}"
         );
         assert_eq!(workspaces[0].name, "main");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn workspace_close_closes_tab_added_while_close_is_in_flight() {
+        let (first_close_started_tx, first_close_started_rx) = mpsc::channel();
+        let (release_first_close_tx, release_first_close_rx) = mpsc::channel();
+        let (spawn_after_close_started_tx, spawn_after_close_started_rx) = mpsc::channel();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let backend = Arc::new(BlockingFirstCloseBackend::new(
+            first_close_started_tx,
+            release_first_close_rx,
+            spawn_after_close_started_tx,
+        ));
+        let state = SocketAppState::new(
+            model,
+            backend.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+        let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+        let workspace_id = workspaces[0]["id"].as_str().unwrap().to_string();
+        let surface_id = workspaces[0]["focused_surface_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let close_state = state.clone();
+        let close = tokio::spawn(async move {
+            dispatch(&close_state, "workspace.close", json!({"id": workspace_id})).await
+        });
+        first_close_started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("workspace.close should reach terminal close");
+
+        let add_tab_state = state.clone();
+        let add_tab = tokio::spawn(async move {
+            dispatch(
+                &add_tab_state,
+                "pane.new_tab",
+                json!({"surface_id": surface_id}),
+            )
+            .await
+        });
+        let spawned_before_close_released = spawn_after_close_started_rx
+            .recv_timeout(Duration::from_millis(200))
+            .is_ok();
+        release_first_close_tx.send(()).unwrap();
+        close.await.unwrap().unwrap();
+        let added_surface_id = match add_tab.await.unwrap() {
+            Ok(added_tab) => Some(added_tab["id"].as_str().unwrap().to_string()),
+            Err(err) => {
+                assert_eq!(err.code(), "not_found");
+                None
+            }
+        };
+
+        let model_surfaces = {
+            let model = state.model.lock().unwrap();
+            model
+                .list_surfaces(None)
+                .into_iter()
+                .map(|surface| surface.id)
+                .collect::<BTreeSet<_>>()
+        };
+        let runtime_surfaces = backend
+            .surfaces()
+            .unwrap()
+            .into_iter()
+            .map(|surface| surface.surface_id)
+            .collect::<BTreeSet<_>>();
+
+        if let Some(added_surface_id) = added_surface_id {
+            assert!(
+                spawned_before_close_released,
+                "successful tab add should have spawned before workspace.close was released"
+            );
+            assert!(
+                !runtime_surfaces.contains(&added_surface_id),
+                "tab added during workspace.close must not remain as an orphan runtime"
+            );
+        }
+        assert_eq!(runtime_surfaces, model_surfaces);
     }
 
     #[tokio::test]
