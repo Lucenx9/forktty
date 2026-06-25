@@ -6,7 +6,7 @@ use crate::{
     rollback_surface_creation, select_team_worker_provider, send_team_submit_enter_after_settle,
     store_access, team_message_dispatch_target,
     team_params::{
-        TeamEventsRequest, TeamGetRequest, TeamInboxRequest, TeamListRequest,
+        TeamEventsRequest, TeamFinishRequest, TeamGetRequest, TeamInboxRequest, TeamListRequest,
         TeamMessageAckRequest, TeamMessageDispatchRequest, TeamMessageSendRequest,
         TeamSummaryRequest, TeamTaskUpsertRequest, TeamUpsertRequest, TeamWorkerHealthRequest,
         TeamWorkerHeartbeatRequest, TeamWorkerLaunchRequest, TeamWorkerNudgeRequest,
@@ -15,10 +15,11 @@ use crate::{
     team_terminal_dispatched_message, team_worker_agent, team_worker_health_rows,
     team_worker_launch_command_with_program, team_worker_launch_owned_surface_id,
     team_worker_provider_selection_value, team_worker_surface_id, terminal_text_and_separate_enter,
-    DispatchError, SocketAppState,
+    terminal_text_with_submit_enter, DispatchError, SocketAppState, DEFAULT_TEAM_WORKER_STALE_MS,
 };
 use forktty_terminal::SpawnRequest;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 
 pub(crate) fn list(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = TeamListRequest::decode(state, params)?;
@@ -45,6 +46,285 @@ pub(crate) fn upsert(state: &SocketAppState, params: &Value) -> Result<Value, Di
         .update(|store| store.upsert_team(request.input, forktty_core::team_now_ms()))
         .map_err(DispatchError::from)?;
     Ok(json!(team))
+}
+
+pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let request = TeamFinishRequest::decode(params)?;
+    let team_id = request.team_id;
+    let dry_run = request.dry_run;
+    let close_workers = request.close_workers;
+    let force = request.force;
+    let store = store_access::team_store_access(state)?
+        .load()
+        .map_err(DispatchError::from)?;
+    let team = store
+        .get(&team_id)
+        .ok_or(DispatchError::NotFound("team".to_string()))?;
+    let summary_before = json!(store.summary(&team_id).map_err(DispatchError::from)?);
+    let health_before = team_worker_health_rows(state, &team, DEFAULT_TEAM_WORKER_STALE_MS)?;
+    let finish_actions = team_finish_actions(&health_before, close_workers);
+    let active_workers = team_finish_active_workers(&health_before);
+    let mut blockers = Vec::new();
+    if summary_u64(&summary_before, "tasks_open") > 0 {
+        blockers.push("open_tasks");
+    }
+    if summary_u64(&summary_before, "messages_pending") > 0 {
+        blockers.push("pending_messages");
+    }
+    if !active_workers.is_empty() && !close_workers {
+        blockers.push("active_workers");
+    }
+
+    let mut close_targets = Vec::new();
+    let mut cleanup_errors = Vec::new();
+    if close_workers {
+        let planned_shutdown_worker_ids = finish_actions
+            .iter()
+            .filter(|action| {
+                action.get("action").and_then(Value::as_str) == Some("shutdown_worker")
+            })
+            .filter_map(|action| {
+                action
+                    .get("worker_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect::<HashSet<_>>();
+        for worker_id in active_workers
+            .iter()
+            .filter(|worker_id| !planned_shutdown_worker_ids.contains(*worker_id))
+        {
+            cleanup_errors.push(json!({
+                "worker_id": worker_id,
+                "error": "active worker has no launch-owned surface to close",
+            }));
+        }
+        for action in finish_actions.iter().filter(|action| {
+            action.get("action").and_then(Value::as_str) == Some("shutdown_worker")
+        }) {
+            let worker_id = action
+                .get("worker_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            match team_worker_launch_owned_surface_id(state, &team_id, worker_id) {
+                Ok(surface_id) => close_targets.push((worker_id.to_string(), surface_id)),
+                Err(err) => cleanup_errors.push(json!({
+                    "worker_id": worker_id,
+                    "error": err.to_string(),
+                })),
+            }
+        }
+    }
+
+    if dry_run {
+        return Ok(json!({
+            "team_id": team_id,
+            "dry_run": true,
+            "finished": false,
+            "close_workers": close_workers,
+            "force": force,
+            "summary_before": summary_before,
+            "worker_health_before": health_before,
+            "actions": finish_actions,
+            "blockers": blockers,
+            "cleanup_errors": cleanup_errors,
+        }));
+    }
+    if !force && !blockers.is_empty() {
+        return Err(DispatchError::PreconditionFailed(format!(
+            "team.finish blocked by {}; use force after reviewing team.summary and team.worker.health",
+            blockers.join(",")
+        )));
+    }
+    if !force && !cleanup_errors.is_empty() {
+        return Err(DispatchError::PreconditionFailed(format!(
+            "team.finish cannot close all workers: {}",
+            cleanup_errors
+                .iter()
+                .filter_map(|error| error.get("error").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("; ")
+        )));
+    }
+
+    let mut closed = Vec::new();
+    for action in finish_actions
+        .iter()
+        .filter(|action| action.get("action").and_then(Value::as_str) == Some("mark_worker_closed"))
+    {
+        let Some(worker_id) = action.get("worker_id").and_then(Value::as_str) else {
+            continue;
+        };
+        let worker_id_for_store = worker_id.to_string();
+        let team_id_for_store = team_id.clone();
+        store_access::team_store_access(state)?
+            .update(|store| {
+                store.upsert_worker(
+                    forktty_core::TeamWorkerUpsert {
+                        team_id: team_id_for_store,
+                        worker_id: worker_id_for_store,
+                        role: None,
+                        agent: None,
+                        surface_id: None,
+                        worktree_name: None,
+                        status: Some("closed".to_string()),
+                        assigned_task_id: None,
+                    },
+                    forktty_core::team_now_ms(),
+                )
+            })
+            .map_err(DispatchError::from)?;
+    }
+    for (worker_id, surface_id) in close_targets {
+        let text =
+            terminal_text_with_submit_enter("Team finished by leader. You can stop now.", true);
+        state
+            .terminal
+            .send_text(&surface_id, &text)
+            .map_err(DispatchError::from)?;
+        let worker_id_for_store = worker_id.clone();
+        let team_id_for_store = team_id.clone();
+        let worker = store_access::team_store_access(state)?
+            .update(|store| {
+                store.request_worker_shutdown(
+                    forktty_core::TeamWorkerAction {
+                        team_id: team_id_for_store,
+                        worker_id: worker_id_for_store,
+                    },
+                    forktty_core::team_now_ms(),
+                )
+            })
+            .map_err(DispatchError::from)?;
+        let closed_surface = close_surface_request(state, &surface_id).await?;
+        closed.push(json!({
+            "worker_id": worker_id,
+            "surface_id": surface_id,
+            "worker": worker,
+            "closed": closed_surface,
+        }));
+    }
+
+    let team_id_for_store = team_id.clone();
+    let team = store_access::team_store_access(state)?
+        .update(|store| {
+            store.upsert_team(
+                forktty_core::TeamUpsert {
+                    team_id: team_id_for_store,
+                    workspace_id: None,
+                    leader_surface_id: None,
+                    name: None,
+                    status: Some("done".to_string()),
+                    goal: None,
+                },
+                forktty_core::team_now_ms(),
+            )
+        })
+        .map_err(DispatchError::from)?;
+    let store = store_access::team_store_access(state)?
+        .load()
+        .map_err(DispatchError::from)?;
+    let summary_after = json!(store.summary(&team_id).map_err(DispatchError::from)?);
+    let team_after = store
+        .get(&team_id)
+        .ok_or(DispatchError::NotFound("team".to_string()))?;
+    let health_after = team_worker_health_rows(state, &team_after, DEFAULT_TEAM_WORKER_STALE_MS)?;
+    Ok(json!({
+        "team_id": team_id,
+        "dry_run": false,
+        "finished": true,
+        "close_workers": close_workers,
+        "force": force,
+        "summary_before": summary_before,
+        "worker_health_before": health_before,
+        "actions": finish_actions,
+        "blockers": blockers,
+        "cleanup_errors": cleanup_errors,
+        "closed": closed,
+        "team": team,
+        "summary_after": summary_after,
+        "worker_health_after": health_after,
+    }))
+}
+
+fn summary_u64(summary: &Value, key: &str) -> u64 {
+    summary.get(key).and_then(Value::as_u64).unwrap_or(0)
+}
+
+fn team_finish_actions(health: &Value, close_workers: bool) -> Vec<Value> {
+    let mut actions = vec![json!({"action": "mark_team_done"})];
+    for worker in health
+        .get("workers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if worker.get("final_state").and_then(Value::as_str) != Some("surface_missing") {
+            continue;
+        }
+        if matches!(
+            worker.get("status").and_then(Value::as_str),
+            Some("closed" | "done")
+        ) {
+            continue;
+        }
+        let Some(worker_id) = worker.get("worker_id").and_then(Value::as_str) else {
+            continue;
+        };
+        actions.push(json!({
+            "action": "mark_worker_closed",
+            "worker_id": worker_id,
+            "reason": "surface_missing",
+        }));
+    }
+    if close_workers {
+        for worker in health
+            .get("workers")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if matches!(
+                worker.get("final_state").and_then(Value::as_str),
+                Some("closed" | "surface_missing")
+            ) {
+                continue;
+            }
+            let Some(worker_id) = worker.get("worker_id").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(surface_id) = worker.get("surface_id").and_then(Value::as_str) else {
+                continue;
+            };
+            actions.push(json!({
+                "action": "shutdown_worker",
+                "worker_id": worker_id,
+                "surface_id": surface_id,
+                "close_surface": true,
+            }));
+        }
+    }
+    actions
+}
+
+fn team_finish_active_workers(health: &Value) -> Vec<String> {
+    health
+        .get("workers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|worker| {
+            matches!(
+                worker.get("final_state").and_then(Value::as_str),
+                Some("running" | "needs_input" | "starting" | "stale" | "shutdown_requested")
+            )
+        })
+        .filter_map(|worker| {
+            worker
+                .get("worker_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .collect()
 }
 
 pub(crate) fn worker_upsert(
