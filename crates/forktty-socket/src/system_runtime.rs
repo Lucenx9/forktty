@@ -1,11 +1,30 @@
 use crate::{
     agent_session_identify_row, ensure_max_text_size, optional_non_blank_string_param,
-    optional_surface_id_param, surface_effective_project_cwd, workspace_effective_project_cwd,
-    workspace_selector_from_params, DispatchError, SocketAppState,
+    optional_surface_id_param, provider_runtime, surface_effective_project_cwd,
+    workspace_effective_project_cwd, workspace_selector_from_params, DispatchError, SocketAppState,
 };
 use forktty_terminal::TerminalSurfaceState;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+
+pub(crate) fn ping() -> Value {
+    json!("pong")
+}
+
+pub(crate) fn capabilities() -> Value {
+    let config = forktty_core::config::load_config().unwrap_or_default();
+    let path = std::env::var_os("PATH");
+    json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "methods": crate::methods::capability_method_names(),
+        "provider_capabilities": provider_runtime::capabilities(path.as_deref(), &config.team),
+        "team_provider_policy": provider_runtime::team_policy(&config.team),
+        "pty_persistence": provider_runtime::pty_persistence(
+            path.as_deref(),
+            config.general.persist_terminal_processes,
+        ),
+    })
+}
 
 pub(crate) fn identify(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let requested_surface_id = optional_surface_id_param(params)?.map(str::to_string);

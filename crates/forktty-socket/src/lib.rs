@@ -17,6 +17,7 @@ mod methods;
 mod notification_dispatch;
 mod project_action_params;
 mod project_action_runtime;
+mod provider_runtime;
 mod remote;
 mod response_encoding;
 mod socket_bind;
@@ -68,10 +69,7 @@ use forktty_core::{
     NotificationKind, SplitAxis, StatusHookMetadata, WorkflowEvidenceInput, WorkflowLoopGateInput,
     WorkflowLoopStateInput, WorkflowPlanStepInput, WorkspaceModel, WorkspaceSelector,
 };
-use forktty_terminal::{
-    spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
-    TerminalTextCapture,
-};
+use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError, TerminalTextCapture};
 use notification_dispatch::notify_worktree_setup_warning;
 use project_action_params::{ProjectActionListRequest, ProjectActionRunRequest};
 use project_action_runtime::{
@@ -754,129 +752,6 @@ fn notification_kind_name(kind: NotificationKind) -> &'static str {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct ProviderCapability {
-    agent: &'static str,
-    program: &'static str,
-    aliases: &'static [&'static str],
-    safe_resume: bool,
-    cwd_resume_flag: bool,
-    permission_bypass_resume: bool,
-}
-
-const PROVIDER_CAPABILITIES: &[ProviderCapability] = &[
-    ProviderCapability {
-        agent: "codex",
-        program: "codex",
-        aliases: &["codex"],
-        safe_resume: true,
-        cwd_resume_flag: true,
-        permission_bypass_resume: true,
-    },
-    ProviderCapability {
-        agent: "claude",
-        program: "claude",
-        aliases: &["claude", "claude_code", "claude-code"],
-        safe_resume: true,
-        cwd_resume_flag: false,
-        permission_bypass_resume: true,
-    },
-    ProviderCapability {
-        agent: "opencode",
-        program: "opencode",
-        aliases: &["opencode", "open_code", "open-code"],
-        safe_resume: true,
-        cwd_resume_flag: false,
-        permission_bypass_resume: false,
-    },
-    ProviderCapability {
-        agent: "pi",
-        program: "pi",
-        aliases: &["pi"],
-        safe_resume: true,
-        cwd_resume_flag: false,
-        permission_bypass_resume: false,
-    },
-    ProviderCapability {
-        agent: "antigravity",
-        program: "agy",
-        aliases: &["antigravity", "agy"],
-        safe_resume: true,
-        cwd_resume_flag: false,
-        permission_bypass_resume: false,
-    },
-];
-
-fn provider_capabilities(path: Option<&OsStr>, team: &forktty_core::TeamConfig) -> Value {
-    let disabled = team
-        .disabled_agents
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    let mut providers = serde_json::Map::new();
-    for capability in PROVIDER_CAPABILITIES {
-        let resolution = team_provider_program_resolution(capability, team, path);
-        let disabled_by_config = disabled.contains(&capability.agent);
-        let unavailable_reason = if disabled_by_config {
-            Value::String("disabled_by_config".to_string())
-        } else if let Some(reason) = resolution.unavailable_reason.as_ref() {
-            Value::String((*reason).to_string())
-        } else {
-            Value::Null
-        };
-        providers.insert(
-            capability.agent.to_string(),
-            json!({
-                "program": resolution.program.clone(),
-                "default_program": capability.program,
-                "configured_command": resolution.configured.then(|| resolution.program.clone()),
-                "team_worker_launch": true,
-                "launchable": resolution.executable.is_some() && !disabled_by_config,
-                "safe_resume": capability.safe_resume,
-                "cwd_resume_flag": capability.cwd_resume_flag,
-                "permission_bypass_resume": capability.permission_bypass_resume,
-                "aliases": capability.aliases,
-                "available_on_path": resolution.available_on_path,
-                "executable": resolution
-                    .executable
-                    .as_ref()
-                    .map(|path| Value::String(path.to_string_lossy().into_owned()))
-                    .unwrap_or(Value::Null),
-                "disabled_by_config": disabled_by_config,
-                "unavailable_reason": unavailable_reason,
-            }),
-        );
-    }
-    Value::Object(providers)
-}
-
-fn team_provider_policy(team: &forktty_core::TeamConfig) -> Value {
-    json!({
-        "default_agent": team.default_agent,
-        "provider_order": team.provider_order,
-        "auto_fallback": team.auto_fallback,
-        "disabled_agents": team.disabled_agents,
-        "provider_commands": team.provider_commands,
-    })
-}
-
-fn pty_persistence_capability(path: Option<&OsStr>, config_enabled: bool) -> Value {
-    let detected = forktty_core::pty_persistence::detect_with_path(path);
-    let broker = detected.as_ref().map(|persistence| persistence.broker);
-    let broker_executable = detected
-        .as_ref()
-        .map(|persistence| persistence.broker_path.to_string_lossy().into_owned());
-    json!({
-        "config_enabled": config_enabled,
-        "active": config_enabled && detected.is_some(),
-        "available": detected.is_some(),
-        "broker": broker.map(|broker| broker.program_name()),
-        "broker_executable": broker_executable,
-        "scope": "plain_terminal_surfaces",
-        "unavailable_reason": if detected.is_none() { Some("broker_not_found") } else { None },
-    })
-}
-
 pub async fn dispatch(
     state: &SocketAppState,
     method: &str,
@@ -891,21 +766,8 @@ pub async fn dispatch(
     let _hook_session_end = prepare_hook_session_targets(state, method, &mut params)?;
 
     match method {
-        "system.ping" => Ok(json!("pong")),
-        "system.capabilities" => {
-            let config = forktty_core::config::load_config().unwrap_or_default();
-            let path = std::env::var_os("PATH");
-            Ok(json!({
-                "version": env!("CARGO_PKG_VERSION"),
-                "methods": methods::capability_method_names(),
-                "provider_capabilities": provider_capabilities(path.as_deref(), &config.team),
-                "team_provider_policy": team_provider_policy(&config.team),
-                "pty_persistence": pty_persistence_capability(
-                    path.as_deref(),
-                    config.general.persist_terminal_processes,
-                ),
-            }))
-        }
+        "system.ping" => Ok(system_runtime::ping()),
+        "system.capabilities" => Ok(system_runtime::capabilities()),
         "system.identify" => system_runtime::identify(state, &params),
         "context.snapshot" => context_runtime::snapshot(state, &params),
         "feed.approval.respond" => {
@@ -2999,15 +2861,6 @@ struct TeamWorkerProviderSelection {
     considered: Vec<Value>,
 }
 
-#[derive(Debug, Clone)]
-struct TeamProviderProgramResolution {
-    program: String,
-    configured: bool,
-    available_on_path: bool,
-    executable: Option<PathBuf>,
-    unavailable_reason: Option<&'static str>,
-}
-
 fn select_team_worker_provider(
     requested_agent: Option<&str>,
 ) -> Result<TeamWorkerProviderSelection, DispatchError> {
@@ -3050,12 +2903,12 @@ fn select_explicit_team_worker_provider(
             "Team worker provider {agent} is disabled in settings"
         )));
     }
-    let Some(capability) = provider_capability(agent) else {
+    let Some(capability) = provider_runtime::capability(agent) else {
         return Err(DispatchError::InvalidParam(format!(
             "unsupported team worker agent: {requested}"
         )));
     };
-    let resolution = team_provider_program_resolution(capability, team, path);
+    let resolution = provider_runtime::program_resolution(capability, team, path);
     if resolution.executable.is_none() {
         let reason = if resolution.configured {
             "configured command is not executable or not found"
@@ -3074,7 +2927,7 @@ fn select_explicit_team_worker_provider(
         configured_command: resolution.configured.then(|| resolution.program.clone()),
         executable: resolution.executable,
         reason: "explicit_agent".to_string(),
-        considered: vec![provider_considered_row(
+        considered: vec![provider_runtime::considered_row(
             capability, team, true, "selected", path,
         )],
     })
@@ -3087,14 +2940,14 @@ fn select_auto_team_worker_provider(
     let candidates = team_worker_auto_provider_candidates(team);
     let mut considered = Vec::new();
     for (index, agent) in candidates.iter().enumerate() {
-        let Some(capability) = provider_capability(agent) else {
+        let Some(capability) = provider_runtime::capability(agent) else {
             continue;
         };
         let disabled = team
             .disabled_agents
             .iter()
             .any(|disabled| disabled == agent);
-        let resolution = team_provider_program_resolution(capability, team, path);
+        let resolution = provider_runtime::program_resolution(capability, team, path);
         let available = resolution.executable.is_some() && !disabled;
         let reason = if disabled {
             "disabled_by_config"
@@ -3103,7 +2956,7 @@ fn select_auto_team_worker_provider(
         } else {
             "selected"
         };
-        considered.push(provider_considered_row(
+        considered.push(provider_runtime::considered_row(
             capability, team, available, reason, path,
         ));
         if available {
@@ -3146,61 +2999,6 @@ fn team_worker_auto_provider_candidates(team: &forktty_core::TeamConfig) -> Vec<
     candidates
 }
 
-fn provider_capability(agent: &str) -> Option<&'static ProviderCapability> {
-    let canonical = forktty_core::config::canonical_team_provider(agent)?;
-    PROVIDER_CAPABILITIES
-        .iter()
-        .find(|capability| capability.agent == canonical)
-}
-
-fn team_provider_program_resolution(
-    capability: &ProviderCapability,
-    team: &forktty_core::TeamConfig,
-    path: Option<&OsStr>,
-) -> TeamProviderProgramResolution {
-    let configured_command = forktty_core::config::team_provider_command(team, capability.agent);
-    let program = configured_command.unwrap_or(capability.program).to_string();
-    let executable = resolve_child_program(&program, path);
-    let available_on_path = executable.is_some() && !Path::new(&program).is_absolute();
-    let unavailable_reason = if executable.is_some() {
-        None
-    } else if configured_command.is_some() {
-        Some("configured_program_not_found")
-    } else {
-        Some("program_not_found")
-    };
-    TeamProviderProgramResolution {
-        program,
-        configured: configured_command.is_some(),
-        available_on_path,
-        executable,
-        unavailable_reason,
-    }
-}
-
-fn provider_considered_row(
-    capability: &ProviderCapability,
-    team: &forktty_core::TeamConfig,
-    available: bool,
-    reason: &str,
-    path: Option<&OsStr>,
-) -> Value {
-    let resolution = team_provider_program_resolution(capability, team, path);
-    json!({
-        "agent": capability.agent,
-        "program": resolution.program.clone(),
-        "default_program": capability.program,
-        "configured_command": resolution.configured.then(|| resolution.program.clone()),
-        "available": available,
-        "reason": reason,
-        "available_on_path": resolution.available_on_path,
-        "executable": resolution
-            .executable
-            .map(|path| Value::String(path.to_string_lossy().into_owned()))
-            .unwrap_or(Value::Null),
-    })
-}
-
 fn team_worker_provider_selection_value(selection: &TeamWorkerProviderSelection) -> Value {
     json!({
         "requested_agent": selection.requested_agent,
@@ -3223,7 +3021,7 @@ fn team_worker_launch_command(
     role: Option<&str>,
     extra_args: Vec<String>,
 ) -> Result<(String, Vec<String>), DispatchError> {
-    let Some(capability) = provider_capability(agent) else {
+    let Some(capability) = provider_runtime::capability(agent) else {
         return Err(DispatchError::InvalidParam(format!(
             "unsupported team worker agent: {agent}"
         )));
@@ -3237,7 +3035,7 @@ fn team_worker_launch_command_with_program(
     role: Option<&str>,
     extra_args: Vec<String>,
 ) -> Result<(String, Vec<String>), DispatchError> {
-    let Some(capability) = provider_capability(agent) else {
+    let Some(capability) = provider_runtime::capability(agent) else {
         return Err(DispatchError::InvalidParam(format!(
             "unsupported team worker agent: {agent}"
         )));
