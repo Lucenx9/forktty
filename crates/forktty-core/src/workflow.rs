@@ -25,6 +25,11 @@ const MAX_LONG_TEXT_BYTES: usize = 65_536;
 
 static WORKFLOW_STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+#[derive(Debug)]
+struct WorkflowStoreFileLock {
+    _file: fs::File,
+}
+
 #[derive(Error, Debug)]
 pub enum WorkflowError {
     #[error("IO error: {0}")]
@@ -674,6 +679,7 @@ pub fn update_workflows_at_path<F, T>(path: &Path, update: F) -> Result<T, Workf
 where
     F: FnOnce(&mut WorkflowStoreData) -> Result<T, WorkflowError>,
 {
+    let _file_lock = acquire_workflow_store_file_lock(path)?;
     let _guard = WORKFLOW_STORE_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
@@ -683,6 +689,25 @@ where
     validate_store(&data)?;
     save_workflows_to_path(path, &data)?;
     Ok(result)
+}
+
+fn acquire_workflow_store_file_lock(path: &Path) -> Result<WorkflowStoreFileLock, WorkflowError> {
+    let lock_path = workflow_store_lock_path(path);
+    if let Some(parent) = lock_path.parent() {
+        ensure_private_dir(parent)?;
+    }
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)?;
+    apply_private_file_permissions(&lock_path)?;
+    file.lock()?;
+    Ok(WorkflowStoreFileLock { _file: file })
+}
+
+fn workflow_store_lock_path(path: &Path) -> PathBuf {
+    path.with_extension("lock")
 }
 
 pub fn save_workflows_to_path(path: &Path, data: &WorkflowStoreData) -> Result<(), WorkflowError> {
@@ -1094,6 +1119,8 @@ fn sync_parent(path: &Path) -> Result<(), WorkflowError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
 
     #[test]
     fn workflow_store_upserts_plan_evidence_and_replays() {
@@ -1587,5 +1614,51 @@ mod tests {
             let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode, 0o600);
         }
+    }
+
+    #[test]
+    fn update_workflows_at_path_waits_for_external_lock_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("workflow-v1.json");
+        let lock_path = path.with_extension("lock");
+        let lock_file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .mode(0o600)
+            .open(&lock_path)
+            .unwrap();
+        lock_file.lock().unwrap();
+
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let update_path = path.clone();
+        let update_thread = std::thread::spawn(move || {
+            update_workflows_at_path(&update_path, |store| {
+                entered_tx.send(()).unwrap();
+                store.upsert(
+                    WorkflowUpsert {
+                        workflow_id: Some("workflow-1".to_string()),
+                        workspace_id: Some("workspace-1".to_string()),
+                        status: Some("active".to_string()),
+                        ..WorkflowUpsert::default()
+                    },
+                    1,
+                )
+            })
+        });
+
+        assert!(
+            entered_rx
+                .recv_timeout(std::time::Duration::from_millis(100))
+                .is_err(),
+            "update must wait for the external store lock before loading and mutating"
+        );
+        drop(lock_file);
+
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("update should enter after lock release");
+        let workflow = update_thread.join().unwrap().unwrap();
+        assert_eq!(workflow.id, "workflow-1");
     }
 }

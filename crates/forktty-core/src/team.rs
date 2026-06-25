@@ -21,6 +21,11 @@ const DEFAULT_QUERY_LIMIT: usize = 50;
 const MAX_QUERY_LIMIT: usize = 200;
 static TEAM_STORE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+#[derive(Debug)]
+struct TeamStoreFileLock {
+    _file: fs::File,
+}
+
 #[derive(Debug, Error)]
 pub enum TeamError {
     #[error("IO error: {0}")]
@@ -989,6 +994,7 @@ pub fn update_teams_at_path<F, T>(path: &Path, update: F) -> Result<T, TeamError
 where
     F: FnOnce(&mut TeamStoreData) -> Result<T, TeamError>,
 {
+    let _file_lock = acquire_team_store_file_lock(path)?;
     let _guard = TEAM_STORE_LOCK
         .get_or_init(|| Mutex::new(()))
         .lock()
@@ -997,6 +1003,27 @@ where
     let result = update(&mut data)?;
     save_teams_to_path(path, &data)?;
     Ok(result)
+}
+
+fn acquire_team_store_file_lock(path: &Path) -> Result<TeamStoreFileLock, TeamError> {
+    let lock_path = team_store_lock_path(path);
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent)?;
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+    }
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .open(&lock_path)?;
+    fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o600))?;
+    file.lock()?;
+    Ok(TeamStoreFileLock { _file: file })
+}
+
+fn team_store_lock_path(path: &Path) -> PathBuf {
+    path.with_extension("lock")
 }
 
 fn sync_parent_dir(path: &Path) -> Result<(), TeamError> {
@@ -1401,6 +1428,54 @@ mod tests {
                 .len(),
             8
         );
+    }
+
+    #[test]
+    fn update_teams_at_path_waits_for_external_lock_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("team-v1.json");
+        let lock_path = path.with_extension("lock");
+        let lock_file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .mode(0o600)
+            .open(&lock_path)
+            .unwrap();
+        lock_file.lock().unwrap();
+
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let update_path = path.clone();
+        let update_thread = std::thread::spawn(move || {
+            update_teams_at_path(&update_path, |store| {
+                entered_tx.send(()).unwrap();
+                store.upsert_team(
+                    TeamUpsert {
+                        team_id: "team-1".to_string(),
+                        workspace_id: None,
+                        leader_surface_id: None,
+                        name: None,
+                        status: Some("active".to_string()),
+                        goal: None,
+                    },
+                    1,
+                )
+            })
+        });
+
+        assert!(
+            entered_rx
+                .recv_timeout(std::time::Duration::from_millis(100))
+                .is_err(),
+            "update must wait for the external store lock before loading and mutating"
+        );
+        drop(lock_file);
+
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("update should enter after lock release");
+        let team = update_thread.join().unwrap().unwrap();
+        assert_eq!(team.id, "team-1");
     }
 
     #[test]
