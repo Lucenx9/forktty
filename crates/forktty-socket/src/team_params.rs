@@ -1,16 +1,162 @@
 use forktty_core::{
-    TeamEventQuery, TeamHeartbeat, TeamInboxQuery, TeamMessageAck, TeamMessageSend, TeamQuery,
-    TeamTaskUpsert, TeamUpsert, TeamWorkerUpsert,
+    protocol_limits, validate_worktree_name, TeamEventQuery, TeamHeartbeat, TeamInboxQuery,
+    TeamMessageAck, TeamMessageSend, TeamQuery, TeamTaskUpsert, TeamUpsert, TeamWorkerUpsert,
+    WorkspaceSelector,
 };
 use serde_json::Value;
 
 use crate::{
-    optional_bool_param, optional_limit_param, optional_non_blank_string_param,
-    optional_string_array_param, optional_string_param, optional_team_workspace_id,
-    optional_u64_param, required_string_param, required_trimmed_string, team_target_ids,
-    team_worker_action_text, validate_optional_surface_id, validate_optional_worktree_name,
-    DispatchError, SocketAppState, DEFAULT_TEAM_WORKER_STALE_MS,
+    format_param_names, optional_bool_param, optional_limit_param, optional_non_blank_string_param,
+    optional_string_array_param, optional_string_param, optional_u64_param, required_string_param,
+    required_trimmed_string, DispatchError, SocketAppState, DEFAULT_TEAM_WORKER_STALE_MS,
 };
+
+fn optional_team_workspace_id(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<Option<String>, DispatchError> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    match team_workspace_selector_from_params(params)? {
+        Some(selector) => model
+            .workspace_id_for(selector)
+            .map(Some)
+            .ok_or(DispatchError::NotFound("workspace".to_string())),
+        None => Ok(None),
+    }
+}
+
+fn team_target_ids(
+    state: &SocketAppState,
+    params: &Value,
+    surface_key: &'static str,
+) -> Result<(Option<String>, Option<String>), DispatchError> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    let mut workspace_id = match team_workspace_selector_from_params(params)? {
+        Some(selector) => Some(
+            model
+                .workspace_id_for(selector)
+                .ok_or(DispatchError::NotFound("workspace".to_string()))?,
+        ),
+        None => None,
+    };
+    let surface_id = optional_non_blank_string_param(params, surface_key)?.map(str::to_string);
+    if let Some(surface_id) = surface_id.as_deref() {
+        let surface = model
+            .surface(surface_id)
+            .ok_or(DispatchError::NotFound("surface".to_string()))?;
+        if let Some(workspace_id) = workspace_id.as_deref() {
+            if surface.workspace_id != workspace_id {
+                return Err(DispatchError::InvalidParam(format!(
+                    "{surface_key} does not belong to workspace {workspace_id}"
+                )));
+            }
+        } else {
+            workspace_id = Some(surface.workspace_id.clone());
+        }
+    }
+    Ok((workspace_id, surface_id))
+}
+
+#[derive(Clone, Copy)]
+enum TeamWorkspaceSelectorKind {
+    Id,
+    Name,
+    WorktreeName,
+}
+
+struct TeamWorkspaceSelectorParam<'a> {
+    key: &'static str,
+    kind: TeamWorkspaceSelectorKind,
+    value: &'a str,
+}
+
+fn team_workspace_selector_from_params(
+    params: &Value,
+) -> Result<Option<WorkspaceSelector<'_>>, DispatchError> {
+    let mut selectors = Vec::new();
+    for (key, kind) in [
+        ("workspace_id", TeamWorkspaceSelectorKind::Id),
+        ("workspaceId", TeamWorkspaceSelectorKind::Id),
+        ("workspace_name", TeamWorkspaceSelectorKind::Name),
+        ("workspaceName", TeamWorkspaceSelectorKind::Name),
+        ("worktreeName", TeamWorkspaceSelectorKind::WorktreeName),
+        ("worktree_name", TeamWorkspaceSelectorKind::WorktreeName),
+    ] {
+        if let Some(value) = optional_non_blank_string_param(params, key)? {
+            selectors.push(TeamWorkspaceSelectorParam { key, kind, value });
+        }
+    }
+    if selectors.is_empty() {
+        return Ok(None);
+    }
+    if selectors.len() > 1 {
+        return Err(format!(
+            "Ambiguous workspace selector: cannot combine {}",
+            format_param_names(selectors.iter().map(|selector| selector.key))
+        )
+        .into());
+    }
+    let selector = &selectors[0];
+    match selector.kind {
+        TeamWorkspaceSelectorKind::Id => Ok(Some(WorkspaceSelector::Id(selector.value))),
+        TeamWorkspaceSelectorKind::Name => Ok(Some(WorkspaceSelector::Name(selector.value))),
+        TeamWorkspaceSelectorKind::WorktreeName => {
+            Ok(Some(WorkspaceSelector::WorktreeName(selector.value)))
+        }
+    }
+}
+
+fn validate_optional_surface_id(
+    state: &SocketAppState,
+    params: &Value,
+    key: &'static str,
+) -> Result<(), DispatchError> {
+    let Some(surface_id) = optional_non_blank_string_param(params, key)? else {
+        return Ok(());
+    };
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    if model.surface(surface_id).is_some() {
+        Ok(())
+    } else {
+        Err(DispatchError::NotFound("surface".to_string()))
+    }
+}
+
+fn validate_optional_worktree_name(params: &Value) -> Result<(), DispatchError> {
+    if let Some(worktree_name) = optional_non_blank_string_param(params, "worktree_name")? {
+        validate_worktree_name(worktree_name)?;
+    }
+    Ok(())
+}
+
+fn team_worker_action_text(
+    text: Option<&str>,
+    default_text: &'static str,
+) -> Result<String, DispatchError> {
+    let text = text.unwrap_or(default_text);
+    if text.is_empty() {
+        return Err(DispatchError::InvalidParam(
+            "team worker action text must not be empty".to_string(),
+        ));
+    }
+    if text.len() > protocol_limits::SOCKET_SEND_TEXT_MAX_BYTES {
+        return Err(DispatchError::PayloadTooLarge {
+            field: "text",
+            limit: protocol_limits::SOCKET_SEND_TEXT_MAX_BYTES,
+            actual: text.len(),
+        });
+    }
+    Ok(text.to_string())
+}
 
 pub(crate) struct TeamListRequest {
     pub(crate) query: TeamQuery,
