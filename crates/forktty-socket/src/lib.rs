@@ -10,6 +10,7 @@ mod coordinator;
 mod feed_params;
 mod feed_view;
 mod metadata_params;
+mod metadata_runtime;
 mod methods;
 mod notification_dispatch;
 mod project_action_params;
@@ -51,27 +52,19 @@ use forktty_core::JsonRpcResponse;
 #[cfg(all(test, feature = "browser"))]
 use forktty_core::MAX_BROWSER_URL_BYTES;
 use forktty_core::{
-    agent_resume_command_with_cwd_and_permission_mode, close_desktop_notification,
-    codex_session_cwd, command_safety::is_valid_ssh_host, config, normalize_agent_status,
-    validate_worktree_name, worktree, AgentKind, AgentResumeError, AgentSession,
-    AgentSessionLifecycle, AgentStatus, BrowserCommand, BrowserOp, FeedApprovalState, FeedEntry,
-    FeedEntryType, FeedStore, LogLevel, NotificationItem, NotificationKind, ProgressEntry,
-    SplitAxis, StatusEntry, StatusHookMetadata, SurfaceKind, WorkflowEvidenceInput,
-    WorkflowLoopGateInput, WorkflowLoopStateInput, WorkflowPlanStepInput, WorkflowQuery,
-    WorkflowState, WorkspaceModel, WorkspaceSelector,
+    agent_resume_command_with_cwd_and_permission_mode, codex_session_cwd,
+    command_safety::is_valid_ssh_host, config, normalize_agent_status, validate_worktree_name,
+    worktree, AgentKind, AgentResumeError, AgentSession, AgentSessionLifecycle, AgentStatus,
+    BrowserCommand, BrowserOp, FeedApprovalState, FeedEntry, FeedEntryType, FeedStore, LogLevel,
+    NotificationItem, NotificationKind, ProgressEntry, SplitAxis, StatusEntry, StatusHookMetadata,
+    SurfaceKind, WorkflowEvidenceInput, WorkflowLoopGateInput, WorkflowLoopStateInput,
+    WorkflowPlanStepInput, WorkflowQuery, WorkflowState, WorkspaceModel, WorkspaceSelector,
 };
 use forktty_terminal::{
     spawn::resolve_child_program, SharedTerminalBackend, SpawnRequest, TerminalError,
     TerminalSurfaceState, TerminalTextCapture,
 };
-use metadata_params::{
-    MetadataClearKeyRequest, MetadataClearStatusRequest, MetadataLogRequest,
-    MetadataSetProgressRequest, MetadataSetStatusRequest, MetadataWorkspaceRequest,
-    NotificationCreateRequest,
-};
-use notification_dispatch::{
-    dispatch_notification_with_loaded_config, notify_worktree_setup_warning,
-};
+use notification_dispatch::notify_worktree_setup_warning;
 use project_action_params::{ProjectActionListRequest, ProjectActionRunRequest};
 use project_action_runtime::{
     project_action_error, project_action_source_surface_id, project_actions_for_cwd,
@@ -2261,282 +2254,18 @@ pub async fn dispatch(
             let request = SurfaceIdRequest::decode(&params)?;
             close_surface_request(state, &request.surface_id).await
         }
-        "notification.create" => {
-            let request = NotificationCreateRequest::decode(state, &params)?;
-            let item = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                model.create_notification(
-                    &request.title,
-                    &request.body,
-                    request.kind,
-                    request.workspace_id,
-                    request.surface_id,
-                )
-            };
-            if state.notification_dispatch {
-                dispatch_notification_with_loaded_config(&item);
-            }
-            if let Err(err) = record_feed_entry(state, feed_entry_from_notification(&item)) {
-                eprintln!("forktty feed history update failed: {err}");
-            }
-            Ok(json!(item))
-        }
-        "notification.list" => {
-            let model = state
-                .model
-                .lock()
-                .map_err(|_| "Lock poisoned".to_string())?;
-            Ok(json!(model.list_notifications()))
-        }
-        "notification.clear" => {
-            let notifications = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                let notifications = model.list_notifications();
-                model.clear_notifications();
-                notifications
-            };
-            state.mark_notification_feed_entries_dismissed(&notifications);
-            for notification in &notifications {
-                close_desktop_notification(&notification.id);
-                feed_view::send_terminal_notification_close_report(state, notification);
-            }
-            Ok(json!({"cleared": true}))
-        }
-        "metadata.set_status" => {
-            let request = MetadataSetStatusRequest::decode(state, &params)?;
-            let agent_session_lifecycle = agent_session_lifecycle_from_hook(
-                &request.value,
-                request.hook.as_ref().map(|hook| hook.event.as_str()),
-            );
-            let agent = agent_kind_from_status_key(&request.key);
-            let permission_agent = agent_kind_from_permission_status_key(&request.key);
-            let last_activity_ms = current_unix_epoch_ms();
-            let status = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                let (status, status_applied) = model
-                    .set_status_with_hook_metadata_applied(
-                        &request.workspace_id,
-                        &request.key,
-                        &request.label,
-                        &request.value,
-                        request.color,
-                        request.hook,
-                    )
-                    .ok_or(DispatchError::NotFound("workspace".to_string()))?;
-                if status_applied {
-                    if let (Some(agent), Some(surface_id), Some(hook_session_id)) = (
-                        agent,
-                        request.surface_id.as_deref(),
-                        request.hook_session_id.as_deref(),
-                    ) {
-                        if model
-                            .surface(surface_id)
-                            .is_some_and(|surface| surface.workspace_id == request.workspace_id)
-                        {
-                            model.set_surface_agent_session(surface_id, agent, hook_session_id);
-                            if let Some(hook_session_cwd) = request.hook_session_cwd {
-                                model.set_surface_agent_session_resume_cwd(
-                                    surface_id,
-                                    hook_session_cwd,
-                                );
-                            }
-                            model.set_surface_agent_session_lifecycle(
-                                surface_id,
-                                agent_session_lifecycle,
-                            );
-                            model.set_surface_agent_session_last_activity_ms(
-                                surface_id,
-                                last_activity_ms,
-                            );
-                        }
-                    }
-                    if let (Some(agent), Some(surface_id), Some(hook_session_id)) = (
-                        permission_agent,
-                        request.surface_id.as_deref(),
-                        request.hook_session_id.as_deref(),
-                    ) {
-                        if model.surface(surface_id).is_some_and(|surface| {
-                            surface.workspace_id == request.workspace_id
-                                && surface.agent_session.as_ref().is_some_and(|session| {
-                                    session.agent == agent && session.session_id == hook_session_id
-                                })
-                        }) {
-                            model.set_surface_agent_session_permission_mode(
-                                surface_id,
-                                &request.value,
-                            );
-                        }
-                    }
-                }
-                status
-            };
-            Ok(json!(status))
-        }
-        "metadata.list_status" => {
-            let request = MetadataWorkspaceRequest::decode(state, &params)?;
-            let statuses = {
-                let model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                model.list_status(&request.workspace_id)
-            };
-            Ok(json!(statuses))
-        }
-        "metadata.clear_status" => {
-            let request = MetadataClearStatusRequest::decode(state, &params)?;
-            let session_end_agent = request
-                .key
-                .as_deref()
-                .filter(|_| {
-                    request
-                        .hook
-                        .as_ref()
-                        .is_some_and(|hook| hook.event.trim().eq_ignore_ascii_case("session-end"))
-                })
-                .and_then(agent_kind_from_status_key);
-            let last_activity_ms = current_unix_epoch_ms();
-            let cleared = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                let cleared = model.clear_status_with_hook_metadata(
-                    &request.workspace_id,
-                    request.key.as_deref(),
-                    request.hook,
-                );
-                let primary_status_cleared = cleared
-                    && request.key.as_deref().is_some_and(|key| {
-                        model
-                            .list_status(&request.workspace_id)
-                            .iter()
-                            .all(|status| status.key != key)
-                    });
-                if primary_status_cleared {
-                    if let (Some(agent), Some(surface_id), Some(hook_session_id)) = (
-                        session_end_agent,
-                        request.surface_id.as_deref(),
-                        request.hook_session_id.as_deref(),
-                    ) {
-                        if model.surface(surface_id).is_some_and(|surface| {
-                            surface.workspace_id == request.workspace_id
-                                && surface.agent_session.as_ref().is_some_and(|session| {
-                                    session.agent == agent && session.session_id == hook_session_id
-                                })
-                        }) {
-                            model.set_surface_agent_session_lifecycle(
-                                surface_id,
-                                AgentSessionLifecycle::Ended,
-                            );
-                            model.set_surface_agent_session_last_activity_ms(
-                                surface_id,
-                                last_activity_ms,
-                            );
-                        }
-                    }
-                }
-                cleared
-            };
-            if cleared {
-                Ok(json!({"cleared": true}))
-            } else {
-                Err(DispatchError::NotFound("workspace".to_string()))
-            }
-        }
-        "metadata.set_progress" => {
-            let request = MetadataSetProgressRequest::decode(state, &params)?;
-            let progress = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                model
-                    .set_progress(
-                        &request.workspace_id,
-                        &request.key,
-                        &request.label,
-                        request.value,
-                        request.total,
-                    )
-                    .ok_or(DispatchError::NotFound("workspace".to_string()))?
-            };
-            Ok(json!(progress))
-        }
-        "metadata.list_progress" => {
-            let request = MetadataWorkspaceRequest::decode(state, &params)?;
-            let progress = {
-                let model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                model.list_progress(&request.workspace_id)
-            };
-            Ok(json!(progress))
-        }
-        "metadata.clear_progress" => {
-            let request = MetadataClearKeyRequest::decode(state, &params)?;
-            let cleared = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                model.clear_progress(&request.workspace_id, request.key.as_deref())
-            };
-            if cleared {
-                Ok(json!({"cleared": true}))
-            } else {
-                Err(DispatchError::NotFound("workspace".to_string()))
-            }
-        }
-        "metadata.log" => {
-            let request = MetadataLogRequest::decode(state, &params)?;
-            let log = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                model
-                    .append_log(&request.workspace_id, request.level, &request.message)
-                    .ok_or(DispatchError::NotFound("workspace".to_string()))?
-            };
-            Ok(json!(log))
-        }
-        "metadata.list_logs" => {
-            let request = MetadataWorkspaceRequest::decode(state, &params)?;
-            let logs = {
-                let model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                model.list_logs(&request.workspace_id)
-            };
-            Ok(json!(logs))
-        }
-        "metadata.clear_logs" => {
-            let request = MetadataWorkspaceRequest::decode(state, &params)?;
-            let cleared = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                model.clear_logs(&request.workspace_id)
-            };
-            if cleared {
-                Ok(json!({"cleared": true}))
-            } else {
-                Err(DispatchError::NotFound("workspace".to_string()))
-            }
-        }
+        "notification.create" => metadata_runtime::notification_create(state, &params),
+        "notification.list" => metadata_runtime::notification_list(state),
+        "notification.clear" => metadata_runtime::notification_clear(state),
+        "metadata.set_status" => metadata_runtime::set_status(state, &params),
+        "metadata.list_status" => metadata_runtime::list_status(state, &params),
+        "metadata.clear_status" => metadata_runtime::clear_status(state, &params),
+        "metadata.set_progress" => metadata_runtime::set_progress(state, &params),
+        "metadata.list_progress" => metadata_runtime::list_progress(state, &params),
+        "metadata.clear_progress" => metadata_runtime::clear_progress(state, &params),
+        "metadata.log" => metadata_runtime::log(state, &params),
+        "metadata.list_logs" => metadata_runtime::list_logs(state, &params),
+        "metadata.clear_logs" => metadata_runtime::clear_logs(state, &params),
         _ => Err(DispatchError::MethodNotFound(method.to_string())),
     }
 }
