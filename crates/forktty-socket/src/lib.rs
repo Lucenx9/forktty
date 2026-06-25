@@ -96,7 +96,7 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use team_params::{TeamFinishRequest, TeamWorkerLaunchRequest};
+use team_params::TeamFinishRequest;
 use thiserror::Error;
 #[cfg(test)]
 use tokio::io::AsyncBufRead;
@@ -780,66 +780,7 @@ pub async fn dispatch(
         "team.finish" => team_finish(state, &params).await,
         "team.worker.upsert" => team_runtime::worker_upsert(state, &params),
         "team.worker.heartbeat" => team_runtime::worker_heartbeat(state, &params),
-        "team.worker.launch" => {
-            let _launch_guard = state.coordinator.team_worker_launch.lock().await;
-            let request = TeamWorkerLaunchRequest::decode(&params)?;
-            let selection = select_team_worker_provider(request.requested_agent.as_deref())?;
-            let (program, args) = team_worker_launch_command_with_program(
-                &selection.selected_agent,
-                &selection.program,
-                request.role.as_deref(),
-                request.extra_args,
-            )?;
-            ensure_team_worker_can_launch(state, &request.team_id, &request.worker_id)?;
-            let surface = create_team_worker_surface(
-                state,
-                &request.team_id,
-                &request.worker_id,
-                request.worktree_name.as_deref(),
-            )?;
-            let spawn_request =
-                SpawnRequest::for_surface(&surface, program.clone(), state.socket_path.clone())
-                    .with_args(args.clone());
-            if let Err(err) = state.terminal.spawn(spawn_request) {
-                rollback_surface_creation(state, &surface.id)?;
-                return Err(err.into());
-            }
-            let launch = forktty_core::TeamWorkerLaunch {
-                team_id: request.team_id,
-                worker_id: request.worker_id,
-                role: request.role,
-                agent: selection.selected_agent.clone(),
-                surface_id: surface.id.clone(),
-                worktree_name: request.worktree_name,
-                assigned_task_id: request.assigned_task_id,
-            };
-            let launch_team_id = launch.team_id.clone();
-            let launch_worker_id = launch.worker_id.clone();
-            let launch_surface_id = launch.surface_id.clone();
-            let worker = match store_access::team_store_access(state)?
-                .update(|store| store.launch_worker(launch, forktty_core::team_now_ms()))
-            {
-                Ok(worker) => worker,
-                Err(err) => {
-                    let _ = close_terminal_surface_if_present(state, &surface.id);
-                    rollback_surface_creation(state, &surface.id)?;
-                    return Err(DispatchError::from(err));
-                }
-            };
-            remember_team_launch_owned_surface(
-                state,
-                &launch_team_id,
-                &launch_worker_id,
-                &launch_surface_id,
-            )?;
-            let argv = std::iter::once(program).chain(args).collect::<Vec<_>>();
-            Ok(json!({
-                "surface": surface,
-                "worker": worker,
-                "argv": argv,
-                "selection": team_worker_provider_selection_value(&selection),
-            }))
-        }
+        "team.worker.launch" => team_runtime::worker_launch(state, &params).await,
         "team.worker.health" => team_runtime::worker_health(state, &params),
         "team.worker.nudge" => team_runtime::worker_nudge(state, &params),
         "team.worker.shutdown" => team_runtime::worker_shutdown(state, &params).await,
@@ -2120,7 +2061,7 @@ fn spawn_terminal_surfaces(
     Ok(())
 }
 
-fn close_terminal_surface_if_present(
+pub(crate) fn close_terminal_surface_if_present(
     state: &SocketAppState,
     surface_id: &str,
 ) -> Result<(), String> {
@@ -2308,7 +2249,10 @@ fn rollback_replacement_if_redundant(
     Ok(true)
 }
 
-fn rollback_surface_creation(state: &SocketAppState, surface_id: &str) -> Result<(), String> {
+pub(crate) fn rollback_surface_creation(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> Result<(), String> {
     let mut model = state
         .model
         .lock()
@@ -2624,18 +2568,18 @@ fn optional_string_array_param(
 }
 
 #[derive(Debug, Clone)]
-struct TeamWorkerProviderSelection {
-    requested_agent: String,
-    selected_agent: String,
-    program: String,
-    default_program: String,
-    configured_command: Option<String>,
-    executable: Option<PathBuf>,
-    reason: String,
-    considered: Vec<Value>,
+pub(crate) struct TeamWorkerProviderSelection {
+    pub(crate) requested_agent: String,
+    pub(crate) selected_agent: String,
+    pub(crate) program: String,
+    pub(crate) default_program: String,
+    pub(crate) configured_command: Option<String>,
+    pub(crate) executable: Option<PathBuf>,
+    pub(crate) reason: String,
+    pub(crate) considered: Vec<Value>,
 }
 
-fn select_team_worker_provider(
+pub(crate) fn select_team_worker_provider(
     requested_agent: Option<&str>,
 ) -> Result<TeamWorkerProviderSelection, DispatchError> {
     let config = forktty_core::config::load_config().unwrap_or_default();
@@ -2773,7 +2717,9 @@ fn team_worker_auto_provider_candidates(team: &forktty_core::TeamConfig) -> Vec<
     candidates
 }
 
-fn team_worker_provider_selection_value(selection: &TeamWorkerProviderSelection) -> Value {
+pub(crate) fn team_worker_provider_selection_value(
+    selection: &TeamWorkerProviderSelection,
+) -> Value {
     json!({
         "requested_agent": selection.requested_agent,
         "selected_agent": selection.selected_agent,
@@ -2803,7 +2749,7 @@ fn team_worker_launch_command(
     team_worker_launch_command_with_program(agent, capability.program, role, extra_args)
 }
 
-fn team_worker_launch_command_with_program(
+pub(crate) fn team_worker_launch_command_with_program(
     agent: &str,
     program: &str,
     role: Option<&str>,
@@ -3106,7 +3052,7 @@ fn team_workspace_selector_from_params(
     }
 }
 
-fn create_team_worker_surface(
+pub(crate) fn create_team_worker_surface(
     state: &SocketAppState,
     team_id: &str,
     worker_id: &str,
@@ -3166,7 +3112,7 @@ fn create_team_worker_surface(
     Ok(model.surface(&surface.id).cloned().unwrap_or(surface))
 }
 
-fn ensure_team_worker_can_launch(
+pub(crate) fn ensure_team_worker_can_launch(
     state: &SocketAppState,
     team_id: &str,
     worker_id: &str,
@@ -3250,7 +3196,7 @@ pub(crate) fn team_worker_launch_owned_surface_id(
     Ok(surface_id)
 }
 
-fn remember_team_launch_owned_surface(
+pub(crate) fn remember_team_launch_owned_surface(
     state: &SocketAppState,
     team_id: &str,
     worker_id: &str,
@@ -9005,7 +8951,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn team_worker_launch_same_worker_rejects_duplicate_and_rolls_back_surface() {
+        let bin_dir = tempfile::tempdir().unwrap();
+        let _codex = write_fake_codex(bin_dir.path());
+        let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
         let (mut state, backend) = test_state();
         let dir = tempfile::tempdir().unwrap();
         state.team_store_path = Some(dir.path().join("team-v1.json"));

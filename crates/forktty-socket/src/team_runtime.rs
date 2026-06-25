@@ -1,18 +1,23 @@
 use crate::{
-    close_surface_request, dispatch_team_message_text, ensure_team_message_not_terminal_dispatched,
-    forget_team_message_terminal_dispatched, remember_team_message_terminal_dispatched,
-    send_team_submit_enter_after_settle, store_access, team_message_dispatch_target,
+    close_surface_request, close_terminal_surface_if_present, create_team_worker_surface,
+    dispatch_team_message_text, ensure_team_message_not_terminal_dispatched,
+    ensure_team_worker_can_launch, forget_team_message_terminal_dispatched,
+    remember_team_launch_owned_surface, remember_team_message_terminal_dispatched,
+    rollback_surface_creation, select_team_worker_provider, send_team_submit_enter_after_settle,
+    store_access, team_message_dispatch_target,
     team_params::{
         TeamEventsRequest, TeamGetRequest, TeamInboxRequest, TeamListRequest,
         TeamMessageAckRequest, TeamMessageDispatchRequest, TeamMessageSendRequest,
         TeamSummaryRequest, TeamTaskUpsertRequest, TeamUpsertRequest, TeamWorkerHealthRequest,
-        TeamWorkerHeartbeatRequest, TeamWorkerNudgeRequest, TeamWorkerShutdownRequest,
-        TeamWorkerUpsertRequest,
+        TeamWorkerHeartbeatRequest, TeamWorkerLaunchRequest, TeamWorkerNudgeRequest,
+        TeamWorkerShutdownRequest, TeamWorkerUpsertRequest,
     },
     team_terminal_dispatched_message, team_worker_agent, team_worker_health_rows,
-    team_worker_launch_owned_surface_id, team_worker_surface_id, terminal_text_and_separate_enter,
+    team_worker_launch_command_with_program, team_worker_launch_owned_surface_id,
+    team_worker_provider_selection_value, team_worker_surface_id, terminal_text_and_separate_enter,
     DispatchError, SocketAppState,
 };
+use forktty_terminal::SpawnRequest;
 use serde_json::{json, Value};
 
 pub(crate) fn list(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
@@ -62,6 +67,70 @@ pub(crate) fn worker_heartbeat(
         .update(|store| store.heartbeat(request.input, forktty_core::team_now_ms()))
         .map_err(DispatchError::from)?;
     Ok(json!(worker))
+}
+
+pub(crate) async fn worker_launch(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<Value, DispatchError> {
+    let _launch_guard = state.coordinator.team_worker_launch.lock().await;
+    let request = TeamWorkerLaunchRequest::decode(params)?;
+    let selection = select_team_worker_provider(request.requested_agent.as_deref())?;
+    let (program, args) = team_worker_launch_command_with_program(
+        &selection.selected_agent,
+        &selection.program,
+        request.role.as_deref(),
+        request.extra_args,
+    )?;
+    ensure_team_worker_can_launch(state, &request.team_id, &request.worker_id)?;
+    let surface = create_team_worker_surface(
+        state,
+        &request.team_id,
+        &request.worker_id,
+        request.worktree_name.as_deref(),
+    )?;
+    let spawn_request =
+        SpawnRequest::for_surface(&surface, program.clone(), state.socket_path.clone())
+            .with_args(args.clone());
+    if let Err(err) = state.terminal.spawn(spawn_request) {
+        rollback_surface_creation(state, &surface.id)?;
+        return Err(err.into());
+    }
+    let launch = forktty_core::TeamWorkerLaunch {
+        team_id: request.team_id,
+        worker_id: request.worker_id,
+        role: request.role,
+        agent: selection.selected_agent.clone(),
+        surface_id: surface.id.clone(),
+        worktree_name: request.worktree_name,
+        assigned_task_id: request.assigned_task_id,
+    };
+    let launch_team_id = launch.team_id.clone();
+    let launch_worker_id = launch.worker_id.clone();
+    let launch_surface_id = launch.surface_id.clone();
+    let worker = match store_access::team_store_access(state)?
+        .update(|store| store.launch_worker(launch, forktty_core::team_now_ms()))
+    {
+        Ok(worker) => worker,
+        Err(err) => {
+            let _ = close_terminal_surface_if_present(state, &surface.id);
+            rollback_surface_creation(state, &surface.id)?;
+            return Err(DispatchError::from(err));
+        }
+    };
+    remember_team_launch_owned_surface(
+        state,
+        &launch_team_id,
+        &launch_worker_id,
+        &launch_surface_id,
+    )?;
+    let argv = std::iter::once(program).chain(args).collect::<Vec<_>>();
+    Ok(json!({
+        "surface": surface,
+        "worker": worker,
+        "argv": argv,
+        "selection": team_worker_provider_selection_value(&selection),
+    }))
 }
 
 pub(crate) fn worker_health(
