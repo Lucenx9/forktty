@@ -26,6 +26,7 @@ mod status_runtime;
 mod store_access;
 mod system_runtime;
 mod team_params;
+mod team_runtime;
 mod topology_params;
 mod topology_view;
 mod workflow_params;
@@ -96,11 +97,8 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use team_params::{
-    TeamEventsRequest, TeamFinishRequest, TeamGetRequest, TeamInboxRequest, TeamListRequest,
-    TeamMessageAckRequest, TeamMessageDispatchRequest, TeamMessageSendRequest, TeamSummaryRequest,
-    TeamTaskUpsertRequest, TeamUpsertRequest, TeamWorkerHealthRequest, TeamWorkerHeartbeatRequest,
+    TeamFinishRequest, TeamMessageDispatchRequest, TeamWorkerHealthRequest,
     TeamWorkerLaunchRequest, TeamWorkerNudgeRequest, TeamWorkerShutdownRequest,
-    TeamWorkerUpsertRequest,
 };
 use thiserror::Error;
 #[cfg(test)]
@@ -779,45 +777,12 @@ pub async fn dispatch(
         "workflow.plan.set" => workflow_runtime::plan_set(state, &params),
         "workflow.evidence.add" => workflow_runtime::evidence_add(state, &params),
         "workflow.replay" => workflow_runtime::replay(state, &params),
-        "team.list" => {
-            let request = TeamListRequest::decode(state, &params)?;
-            let store = store_access::team_store_access(state)?
-                .load()
-                .map_err(DispatchError::from)?;
-            Ok(json!(store.list(&request.query)))
-        }
-        "team.get" => {
-            let request = TeamGetRequest::decode(&params)?;
-            let store = store_access::team_store_access(state)?
-                .load()
-                .map_err(DispatchError::from)?;
-            store
-                .get(&request.team_id)
-                .map(|team| json!(team))
-                .ok_or(DispatchError::NotFound("team".to_string()))
-        }
-        "team.upsert" => {
-            let request = TeamUpsertRequest::decode(state, &params)?;
-            let team = store_access::team_store_access(state)?
-                .update(|store| store.upsert_team(request.input, forktty_core::team_now_ms()))
-                .map_err(DispatchError::from)?;
-            Ok(json!(team))
-        }
+        "team.list" => team_runtime::list(state, &params),
+        "team.get" => team_runtime::get(state, &params),
+        "team.upsert" => team_runtime::upsert(state, &params),
         "team.finish" => team_finish(state, &params).await,
-        "team.worker.upsert" => {
-            let request = TeamWorkerUpsertRequest::decode(state, &params)?;
-            let worker = store_access::team_store_access(state)?
-                .update(|store| store.upsert_worker(request.input, forktty_core::team_now_ms()))
-                .map_err(DispatchError::from)?;
-            Ok(json!(worker))
-        }
-        "team.worker.heartbeat" => {
-            let request = TeamWorkerHeartbeatRequest::decode(&params)?;
-            let worker = store_access::team_store_access(state)?
-                .update(|store| store.heartbeat(request.input, forktty_core::team_now_ms()))
-                .map_err(DispatchError::from)?;
-            Ok(json!(worker))
-        }
+        "team.worker.upsert" => team_runtime::worker_upsert(state, &params),
+        "team.worker.heartbeat" => team_runtime::worker_heartbeat(state, &params),
         "team.worker.launch" => {
             let _launch_guard = state.coordinator.team_worker_launch.lock().await;
             let request = TeamWorkerLaunchRequest::decode(&params)?;
@@ -954,20 +919,8 @@ pub async fn dispatch(
                 "closed": closed,
             }))
         }
-        "team.task.upsert" => {
-            let request = TeamTaskUpsertRequest::decode(&params)?;
-            let task = store_access::team_store_access(state)?
-                .update(|store| store.upsert_task(request.input, forktty_core::team_now_ms()))
-                .map_err(DispatchError::from)?;
-            Ok(json!(task))
-        }
-        "team.message.send" => {
-            let request = TeamMessageSendRequest::decode(&params)?;
-            let message = store_access::team_store_access(state)?
-                .update(|store| store.send_message(request.input, forktty_core::team_now_ms()))
-                .map_err(DispatchError::from)?;
-            Ok(json!(message))
-        }
+        "team.task.upsert" => team_runtime::task_upsert(state, &params),
+        "team.message.send" => team_runtime::message_send(state, &params),
         "team.message.dispatch" => {
             let request = TeamMessageDispatchRequest::decode(&params)?;
             let _dispatch_guard = state.coordinator.team_message_dispatch.lock().await;
@@ -1004,39 +957,10 @@ pub async fn dispatch(
                 "message": message
             }))
         }
-        "team.message.ack" => {
-            let request = TeamMessageAckRequest::decode(&params)?;
-            let message = store_access::team_store_access(state)?
-                .update(|store| store.ack_message(request.input, forktty_core::team_now_ms()))
-                .map_err(DispatchError::from)?;
-            Ok(json!(message))
-        }
-        "team.inbox" => {
-            let request = TeamInboxRequest::decode(&params)?;
-            let store = store_access::team_store_access(state)?
-                .load()
-                .map_err(DispatchError::from)?;
-            let messages = store.inbox(&request.query).map_err(DispatchError::from)?;
-            Ok(json!(messages))
-        }
-        "team.summary" => {
-            let request = TeamSummaryRequest::decode(&params)?;
-            let store = store_access::team_store_access(state)?
-                .load()
-                .map_err(DispatchError::from)?;
-            let summary = store
-                .summary(&request.team_id)
-                .map_err(DispatchError::from)?;
-            Ok(json!(summary))
-        }
-        "team.events" => {
-            let request = TeamEventsRequest::decode(&params)?;
-            let store = store_access::team_store_access(state)?
-                .load()
-                .map_err(DispatchError::from)?;
-            let events = store.events(&request.query).map_err(DispatchError::from)?;
-            Ok(json!(events))
-        }
+        "team.message.ack" => team_runtime::message_ack(state, &params),
+        "team.inbox" => team_runtime::inbox(state, &params),
+        "team.summary" => team_runtime::summary(state, &params),
+        "team.events" => team_runtime::events(state, &params),
 
         "agent.health" => agent_runtime::health(state, &params),
         "agent.hibernate" => agent_runtime::hibernate(state, &params),
