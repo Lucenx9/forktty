@@ -96,10 +96,7 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use team_params::{
-    TeamFinishRequest, TeamMessageDispatchRequest, TeamWorkerLaunchRequest,
-    TeamWorkerShutdownRequest,
-};
+use team_params::{TeamFinishRequest, TeamMessageDispatchRequest, TeamWorkerLaunchRequest};
 use thiserror::Error;
 #[cfg(test)]
 use tokio::io::AsyncBufRead;
@@ -845,48 +842,7 @@ pub async fn dispatch(
         }
         "team.worker.health" => team_runtime::worker_health(state, &params),
         "team.worker.nudge" => team_runtime::worker_nudge(state, &params),
-        "team.worker.shutdown" => {
-            let request = TeamWorkerShutdownRequest::decode(&params)?;
-            let surface_id = if request.close_surface {
-                team_worker_launch_owned_surface_id(state, &request.team_id, &request.worker_id)?
-            } else {
-                team_worker_surface_id(state, &request.team_id, &request.worker_id)?
-            };
-            let agent = team_worker_agent(state, &request.team_id, &request.worker_id)?;
-            let (text, separate_enter) =
-                terminal_text_and_separate_enter(&request.text, request.submit, agent.as_deref());
-            state
-                .terminal
-                .send_text(&surface_id, &text)
-                .map_err(DispatchError::from)?;
-            if separate_enter {
-                send_team_submit_enter_after_settle(state, &surface_id).await?;
-            }
-            let worker = store_access::team_store_access(state)?
-                .update(|store| {
-                    store.request_worker_shutdown(
-                        forktty_core::TeamWorkerAction {
-                            team_id: request.team_id,
-                            worker_id: request.worker_id,
-                        },
-                        forktty_core::team_now_ms(),
-                    )
-                })
-                .map_err(DispatchError::from)?;
-            let closed = if request.close_surface {
-                Some(close_surface_request(state, &surface_id).await?)
-            } else {
-                None
-            };
-            Ok(json!({
-                "sent": true,
-                "submitted": request.submit,
-                "closed_surface": request.close_surface,
-                "surface_id": surface_id,
-                "worker": worker,
-                "closed": closed,
-            }))
-        }
+        "team.worker.shutdown" => team_runtime::worker_shutdown(state, &params).await,
         "team.task.upsert" => team_runtime::task_upsert(state, &params),
         "team.message.send" => team_runtime::message_send(state, &params),
         "team.message.dispatch" => {
@@ -2254,7 +2210,7 @@ fn close_terminal_surfaces_or_restore(
     Ok(())
 }
 
-async fn close_surface_request(
+pub(crate) async fn close_surface_request(
     state: &SocketAppState,
     surface_id: &str,
 ) -> Result<Value, DispatchError> {
@@ -3014,7 +2970,7 @@ async fn dispatch_team_message_text(
     Ok(())
 }
 
-async fn send_team_submit_enter_after_settle(
+pub(crate) async fn send_team_submit_enter_after_settle(
     state: &SocketAppState,
     surface_id: &str,
 ) -> Result<(), DispatchError> {
@@ -3036,7 +2992,7 @@ fn terminal_text_with_submit_enter(text: &str, submit: bool) -> String {
     }
 }
 
-fn terminal_text_and_separate_enter(
+pub(crate) fn terminal_text_and_separate_enter(
     text: &str,
     submit: bool,
     agent: Option<&str>,
@@ -3296,7 +3252,7 @@ pub(crate) fn team_worker_surface_id(
     Ok(surface_id)
 }
 
-fn team_worker_launch_owned_surface_id(
+pub(crate) fn team_worker_launch_owned_surface_id(
     state: &SocketAppState,
     team_id: &str,
     worker_id: &str,
@@ -3478,7 +3434,7 @@ fn team_message_dispatch_target(
     ))
 }
 
-fn team_worker_agent(
+pub(crate) fn team_worker_agent(
     state: &SocketAppState,
     team_id: &str,
     worker_id: &str,

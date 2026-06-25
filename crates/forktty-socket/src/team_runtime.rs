@@ -1,12 +1,13 @@
 use crate::{
-    store_access,
+    close_surface_request, send_team_submit_enter_after_settle, store_access,
     team_params::{
         TeamEventsRequest, TeamGetRequest, TeamInboxRequest, TeamListRequest,
         TeamMessageAckRequest, TeamMessageSendRequest, TeamSummaryRequest, TeamTaskUpsertRequest,
         TeamUpsertRequest, TeamWorkerHealthRequest, TeamWorkerHeartbeatRequest,
-        TeamWorkerNudgeRequest, TeamWorkerUpsertRequest,
+        TeamWorkerNudgeRequest, TeamWorkerShutdownRequest, TeamWorkerUpsertRequest,
     },
-    team_worker_health_rows, team_worker_surface_id, DispatchError, SocketAppState,
+    team_worker_agent, team_worker_health_rows, team_worker_launch_owned_surface_id,
+    team_worker_surface_id, terminal_text_and_separate_enter, DispatchError, SocketAppState,
 };
 use serde_json::{json, Value};
 
@@ -92,6 +93,52 @@ pub(crate) fn worker_nudge(state: &SocketAppState, params: &Value) -> Result<Val
         })
         .map_err(DispatchError::from)?;
     Ok(json!({"sent": true, "surface_id": surface_id, "worker": worker}))
+}
+
+pub(crate) async fn worker_shutdown(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<Value, DispatchError> {
+    let request = TeamWorkerShutdownRequest::decode(params)?;
+    let surface_id = if request.close_surface {
+        team_worker_launch_owned_surface_id(state, &request.team_id, &request.worker_id)?
+    } else {
+        team_worker_surface_id(state, &request.team_id, &request.worker_id)?
+    };
+    let agent = team_worker_agent(state, &request.team_id, &request.worker_id)?;
+    let (text, separate_enter) =
+        terminal_text_and_separate_enter(&request.text, request.submit, agent.as_deref());
+    state
+        .terminal
+        .send_text(&surface_id, &text)
+        .map_err(DispatchError::from)?;
+    if separate_enter {
+        send_team_submit_enter_after_settle(state, &surface_id).await?;
+    }
+    let worker = store_access::team_store_access(state)?
+        .update(|store| {
+            store.request_worker_shutdown(
+                forktty_core::TeamWorkerAction {
+                    team_id: request.team_id,
+                    worker_id: request.worker_id,
+                },
+                forktty_core::team_now_ms(),
+            )
+        })
+        .map_err(DispatchError::from)?;
+    let closed = if request.close_surface {
+        Some(close_surface_request(state, &surface_id).await?)
+    } else {
+        None
+    };
+    Ok(json!({
+        "sent": true,
+        "submitted": request.submit,
+        "closed_surface": request.close_surface,
+        "surface_id": surface_id,
+        "worker": worker,
+        "closed": closed,
+    }))
 }
 
 pub(crate) fn task_upsert(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
