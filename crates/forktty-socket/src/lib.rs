@@ -22,6 +22,7 @@ mod team_params;
 mod topology_params;
 mod topology_view;
 mod workflow_params;
+mod workflow_runtime;
 mod worktree_params;
 mod worktree_runtime;
 
@@ -111,10 +112,6 @@ use topology_params::{
     OptionalWorkspaceRequest, SurfaceCaptureTailRequest, SurfaceIdRequest, SurfaceReadTextRequest,
     SurfaceSendTextRequest, SurfaceSplitRequest, WorkspaceCreateRequest, WorkspaceCreateSshRequest,
     WorkspaceSelectorRequest,
-};
-use workflow_params::{
-    WorkflowEvidenceAddRequest, WorkflowGetRequest, WorkflowListRequest, WorkflowLoopSetRequest,
-    WorkflowPlanSetRequest, WorkflowReplayRequest, WorkflowUpsertRequest,
 };
 use worktree_params::{WorktreeNamedRequest, WorktreeRepoRequest, WorktreeStatusRequest};
 use worktree_runtime::{finish_removal_blocking, run_worktree_blocking};
@@ -1140,13 +1137,13 @@ pub async fn dispatch(
                 request.limit
             )))
         }
-        "workflow.list" => workflow_list(state, &params),
-        "workflow.get" => workflow_get(state, &params),
-        "workflow.upsert" => workflow_upsert(state, &params),
-        "workflow.loop.set" => workflow_loop_set(state, &params),
-        "workflow.plan.set" => workflow_plan_set(state, &params),
-        "workflow.evidence.add" => workflow_evidence_add(state, &params),
-        "workflow.replay" => workflow_replay(state, &params),
+        "workflow.list" => workflow_runtime::list(state, &params),
+        "workflow.get" => workflow_runtime::get(state, &params),
+        "workflow.upsert" => workflow_runtime::upsert(state, &params),
+        "workflow.loop.set" => workflow_runtime::loop_set(state, &params),
+        "workflow.plan.set" => workflow_runtime::plan_set(state, &params),
+        "workflow.evidence.add" => workflow_runtime::evidence_add(state, &params),
+        "workflow.replay" => workflow_runtime::replay(state, &params),
         "team.list" => {
             let request = TeamListRequest::decode(state, &params)?;
             let store = team_store_access(state)?
@@ -2766,7 +2763,7 @@ fn context_snapshot_workflows(
     let Some(store_access) = optional_workflow_store_access(state) else {
         return Ok((json!([]), json!([]), json!([])));
     };
-    let store = store_access.load().map_err(workflow_error)?;
+    let store = store_access.load().map_err(workflow_runtime::error)?;
     let workflows = store
         .list(&WorkflowQuery {
             workspace_id: Some(workspace_id.to_string()),
@@ -3931,83 +3928,6 @@ fn progress_entries_with_source(entries: Vec<ProgressEntry>) -> Vec<Value> {
         .collect()
 }
 
-fn workflow_list(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let request = WorkflowListRequest::decode(state, params)?;
-    let store = workflow_store_access(state)?
-        .load()
-        .map_err(workflow_error)?;
-    Ok(json!(store.list(&request.query)))
-}
-
-fn workflow_get(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let request = WorkflowGetRequest::decode(params)?;
-    let store = workflow_store_access(state)?
-        .load()
-        .map_err(workflow_error)?;
-    store
-        .get(&request.workflow_id)
-        .map(|workflow| json!(workflow))
-        .ok_or_else(|| DispatchError::NotFound("workflow".to_string()))
-}
-
-fn workflow_upsert(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let request = WorkflowUpsertRequest::decode(state, params)?;
-    let workflow = workflow_store_access(state)?
-        .update(|store| store.upsert(request.input, forktty_core::workflow_now_ms()))
-        .map_err(workflow_error)?;
-    Ok(json!(workflow))
-}
-
-fn workflow_loop_set(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let request = WorkflowLoopSetRequest::decode(params)?;
-    let workflow = workflow_store_access(state)?
-        .update(|store| {
-            store.set_loop_state(
-                &request.workflow_id,
-                request.input,
-                forktty_core::workflow_now_ms(),
-            )
-        })
-        .map_err(workflow_error)?;
-    Ok(json!(workflow))
-}
-
-fn workflow_plan_set(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let request = WorkflowPlanSetRequest::decode(params)?;
-    let workflow = workflow_store_access(state)?
-        .update(|store| {
-            store.set_plan(
-                &request.workflow_id,
-                request.steps,
-                forktty_core::workflow_now_ms(),
-            )
-        })
-        .map_err(workflow_error)?;
-    Ok(json!(workflow))
-}
-
-fn workflow_evidence_add(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let request = WorkflowEvidenceAddRequest::decode(params)?;
-    let workflow = workflow_store_access(state)?
-        .update(|store| {
-            store.add_evidence(
-                &request.workflow_id,
-                request.evidence,
-                forktty_core::workflow_now_ms(),
-            )
-        })
-        .map_err(workflow_error)?;
-    Ok(json!(workflow))
-}
-
-fn workflow_replay(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let request = WorkflowReplayRequest::decode(params)?;
-    let store = workflow_store_access(state)?
-        .load()
-        .map_err(workflow_error)?;
-    Ok(json!(store.replay(&request.query)))
-}
-
 fn optional_workflow_store_access(
     state: &SocketAppState,
 ) -> Option<store_access::WorkflowStoreAccess<'_>> {
@@ -4017,7 +3937,7 @@ fn optional_workflow_store_access(
         .map(store_access::WorkflowStoreAccess::new)
 }
 
-fn workflow_store_access(
+pub(crate) fn workflow_store_access(
     state: &SocketAppState,
 ) -> Result<store_access::WorkflowStoreAccess<'_>, DispatchError> {
     optional_workflow_store_access(state).ok_or_else(|| {
@@ -4222,14 +4142,6 @@ fn optional_object_string<'a>(
         None => Err(DispatchError::InvalidParam(format!(
             "Invalid parameter {parent}.{key}: expected string"
         ))),
-    }
-}
-
-fn workflow_error(err: forktty_core::WorkflowError) -> DispatchError {
-    match err {
-        forktty_core::WorkflowError::NotFound => DispatchError::NotFound("workflow".to_string()),
-        forktty_core::WorkflowError::InvalidData(message) => DispatchError::InvalidParam(message),
-        other => DispatchError::Other(other.to_string()),
     }
 }
 
