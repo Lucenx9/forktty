@@ -97,8 +97,8 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use team_params::{
-    TeamFinishRequest, TeamMessageDispatchRequest, TeamWorkerHealthRequest,
-    TeamWorkerLaunchRequest, TeamWorkerNudgeRequest, TeamWorkerShutdownRequest,
+    TeamFinishRequest, TeamMessageDispatchRequest, TeamWorkerLaunchRequest, TeamWorkerNudgeRequest,
+    TeamWorkerShutdownRequest,
 };
 use thiserror::Error;
 #[cfg(test)]
@@ -843,20 +843,7 @@ pub async fn dispatch(
                 "selection": team_worker_provider_selection_value(&selection),
             }))
         }
-        "team.worker.health" => {
-            let request = TeamWorkerHealthRequest::decode(&params)?;
-            let store = store_access::team_store_access(state)?
-                .load()
-                .map_err(DispatchError::from)?;
-            let team = store
-                .get(&request.team_id)
-                .ok_or(DispatchError::NotFound("team".to_string()))?;
-            Ok(team_worker_health_rows(
-                state,
-                &team,
-                request.stale_after_ms,
-            )?)
-        }
+        "team.worker.health" => team_runtime::worker_health(state, &params),
         "team.worker.nudge" => {
             let request = TeamWorkerNudgeRequest::decode(&params)?;
             let surface_id = team_worker_surface_id(state, &request.team_id, &request.worker_id)?;
@@ -3808,7 +3795,7 @@ fn team_finish_active_workers(health: &Value) -> Vec<String> {
         .collect()
 }
 
-fn team_worker_health_rows(
+pub(crate) fn team_worker_health_rows(
     state: &SocketAppState,
     team: &forktty_core::TeamState,
     stale_after_ms: u64,

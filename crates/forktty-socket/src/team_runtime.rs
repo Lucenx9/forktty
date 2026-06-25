@@ -3,9 +3,10 @@ use crate::{
     team_params::{
         TeamEventsRequest, TeamGetRequest, TeamInboxRequest, TeamListRequest,
         TeamMessageAckRequest, TeamMessageSendRequest, TeamSummaryRequest, TeamTaskUpsertRequest,
-        TeamUpsertRequest, TeamWorkerHeartbeatRequest, TeamWorkerUpsertRequest,
+        TeamUpsertRequest, TeamWorkerHealthRequest, TeamWorkerHeartbeatRequest,
+        TeamWorkerUpsertRequest,
     },
-    DispatchError, SocketAppState,
+    team_worker_health_rows, DispatchError, SocketAppState,
 };
 use serde_json::{json, Value};
 
@@ -56,6 +57,20 @@ pub(crate) fn worker_heartbeat(
         .update(|store| store.heartbeat(request.input, forktty_core::team_now_ms()))
         .map_err(DispatchError::from)?;
     Ok(json!(worker))
+}
+
+pub(crate) fn worker_health(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<Value, DispatchError> {
+    let request = TeamWorkerHealthRequest::decode(params)?;
+    let store = store_access::team_store_access(state)?
+        .load()
+        .map_err(DispatchError::from)?;
+    let team = store
+        .get(&request.team_id)
+        .ok_or(DispatchError::NotFound("team".to_string()))?;
+    team_worker_health_rows(state, &team, request.stale_after_ms)
 }
 
 pub(crate) fn task_upsert(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
