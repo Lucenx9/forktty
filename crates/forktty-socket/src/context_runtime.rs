@@ -1,8 +1,8 @@
 use crate::context_params::ContextSnapshotRequest;
 use crate::{
     agent_health_rows, agent_session_rows, current_unix_epoch_ms, feed_view, remote,
-    status_summary_at, store_access, surface_effective_project_cwd, topology_view,
-    workflow_runtime, DispatchError, SocketAppState, MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES,
+    status_runtime, store_access, surface_effective_project_cwd, topology_view, workflow_runtime,
+    DispatchError, SocketAppState, MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES,
     MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_SURFACES,
 };
 use forktty_core::{SurfaceKind, WorkflowQuery, WorkflowState};
@@ -85,7 +85,8 @@ pub(crate) fn snapshot(state: &SocketAppState, params: &Value) -> Result<Value, 
                 Some(&request.workspace_id),
                 terminal_surfaces.clone(),
             ),
-            status_summary_at(&model, &request.workspace_id, now_ms).unwrap_or(Value::Null),
+            status_runtime::status_summary_at(&model, &request.workspace_id, now_ms)
+                .unwrap_or(Value::Null),
             agent_session_rows(&model, Some(&request.workspace_id), now_ms),
             agent_health_rows(&model, Some(&request.workspace_id), now_ms),
             feed,
