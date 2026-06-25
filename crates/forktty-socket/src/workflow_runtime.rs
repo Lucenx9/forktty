@@ -2,18 +2,22 @@ use crate::workflow_params::{
     WorkflowEvidenceAddRequest, WorkflowGetRequest, WorkflowListRequest, WorkflowLoopSetRequest,
     WorkflowPlanSetRequest, WorkflowReplayRequest, WorkflowUpsertRequest,
 };
-use crate::{workflow_store_access, DispatchError, SocketAppState};
+use crate::{store_access, DispatchError, SocketAppState};
 use serde_json::{json, Value};
 
 pub(crate) fn list(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = WorkflowListRequest::decode(state, params)?;
-    let store = workflow_store_access(state)?.load().map_err(error)?;
+    let store = store_access::workflow_store_access(state)?
+        .load()
+        .map_err(error)?;
     Ok(json!(store.list(&request.query)))
 }
 
 pub(crate) fn get(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = WorkflowGetRequest::decode(params)?;
-    let store = workflow_store_access(state)?.load().map_err(error)?;
+    let store = store_access::workflow_store_access(state)?
+        .load()
+        .map_err(error)?;
     store
         .get(&request.workflow_id)
         .map(|workflow| json!(workflow))
@@ -22,7 +26,7 @@ pub(crate) fn get(state: &SocketAppState, params: &Value) -> Result<Value, Dispa
 
 pub(crate) fn upsert(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = WorkflowUpsertRequest::decode(state, params)?;
-    let workflow = workflow_store_access(state)?
+    let workflow = store_access::workflow_store_access(state)?
         .update(|store| store.upsert(request.input, forktty_core::workflow_now_ms()))
         .map_err(error)?;
     Ok(json!(workflow))
@@ -30,7 +34,7 @@ pub(crate) fn upsert(state: &SocketAppState, params: &Value) -> Result<Value, Di
 
 pub(crate) fn loop_set(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = WorkflowLoopSetRequest::decode(params)?;
-    let workflow = workflow_store_access(state)?
+    let workflow = store_access::workflow_store_access(state)?
         .update(|store| {
             store.set_loop_state(
                 &request.workflow_id,
@@ -44,7 +48,7 @@ pub(crate) fn loop_set(state: &SocketAppState, params: &Value) -> Result<Value, 
 
 pub(crate) fn plan_set(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = WorkflowPlanSetRequest::decode(params)?;
-    let workflow = workflow_store_access(state)?
+    let workflow = store_access::workflow_store_access(state)?
         .update(|store| {
             store.set_plan(
                 &request.workflow_id,
@@ -58,7 +62,7 @@ pub(crate) fn plan_set(state: &SocketAppState, params: &Value) -> Result<Value, 
 
 pub(crate) fn evidence_add(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = WorkflowEvidenceAddRequest::decode(params)?;
-    let workflow = workflow_store_access(state)?
+    let workflow = store_access::workflow_store_access(state)?
         .update(|store| {
             store.add_evidence(
                 &request.workflow_id,
@@ -72,7 +76,9 @@ pub(crate) fn evidence_add(state: &SocketAppState, params: &Value) -> Result<Val
 
 pub(crate) fn replay(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = WorkflowReplayRequest::decode(params)?;
-    let store = workflow_store_access(state)?.load().map_err(error)?;
+    let store = store_access::workflow_store_access(state)?
+        .load()
+        .map_err(error)?;
     Ok(json!(store.replay(&request.query)))
 }
 

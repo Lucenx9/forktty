@@ -1146,14 +1146,14 @@ pub async fn dispatch(
         "workflow.replay" => workflow_runtime::replay(state, &params),
         "team.list" => {
             let request = TeamListRequest::decode(state, &params)?;
-            let store = team_store_access(state)?
+            let store = store_access::team_store_access(state)?
                 .load()
                 .map_err(DispatchError::from)?;
             Ok(json!(store.list(&request.query)))
         }
         "team.get" => {
             let request = TeamGetRequest::decode(&params)?;
-            let store = team_store_access(state)?
+            let store = store_access::team_store_access(state)?
                 .load()
                 .map_err(DispatchError::from)?;
             store
@@ -1163,7 +1163,7 @@ pub async fn dispatch(
         }
         "team.upsert" => {
             let request = TeamUpsertRequest::decode(state, &params)?;
-            let team = team_store_access(state)?
+            let team = store_access::team_store_access(state)?
                 .update(|store| store.upsert_team(request.input, forktty_core::team_now_ms()))
                 .map_err(DispatchError::from)?;
             Ok(json!(team))
@@ -1171,14 +1171,14 @@ pub async fn dispatch(
         "team.finish" => team_finish(state, &params).await,
         "team.worker.upsert" => {
             let request = TeamWorkerUpsertRequest::decode(state, &params)?;
-            let worker = team_store_access(state)?
+            let worker = store_access::team_store_access(state)?
                 .update(|store| store.upsert_worker(request.input, forktty_core::team_now_ms()))
                 .map_err(DispatchError::from)?;
             Ok(json!(worker))
         }
         "team.worker.heartbeat" => {
             let request = TeamWorkerHeartbeatRequest::decode(&params)?;
-            let worker = team_store_access(state)?
+            let worker = store_access::team_store_access(state)?
                 .update(|store| store.heartbeat(request.input, forktty_core::team_now_ms()))
                 .map_err(DispatchError::from)?;
             Ok(json!(worker))
@@ -1219,7 +1219,7 @@ pub async fn dispatch(
             let launch_team_id = launch.team_id.clone();
             let launch_worker_id = launch.worker_id.clone();
             let launch_surface_id = launch.surface_id.clone();
-            let worker = match team_store_access(state)?
+            let worker = match store_access::team_store_access(state)?
                 .update(|store| store.launch_worker(launch, forktty_core::team_now_ms()))
             {
                 Ok(worker) => worker,
@@ -1245,7 +1245,7 @@ pub async fn dispatch(
         }
         "team.worker.health" => {
             let request = TeamWorkerHealthRequest::decode(&params)?;
-            let store = team_store_access(state)?
+            let store = store_access::team_store_access(state)?
                 .load()
                 .map_err(DispatchError::from)?;
             let team = store
@@ -1264,7 +1264,7 @@ pub async fn dispatch(
                 .terminal
                 .send_text(&surface_id, &request.text)
                 .map_err(DispatchError::from)?;
-            let worker = team_store_access(state)?
+            let worker = store_access::team_store_access(state)?
                 .update(|store| {
                     store.mark_worker_nudged(
                         forktty_core::TeamWorkerAction {
@@ -1294,7 +1294,7 @@ pub async fn dispatch(
             if separate_enter {
                 send_team_submit_enter_after_settle(state, &surface_id).await?;
             }
-            let worker = team_store_access(state)?
+            let worker = store_access::team_store_access(state)?
                 .update(|store| {
                     store.request_worker_shutdown(
                         forktty_core::TeamWorkerAction {
@@ -1321,14 +1321,14 @@ pub async fn dispatch(
         }
         "team.task.upsert" => {
             let request = TeamTaskUpsertRequest::decode(&params)?;
-            let task = team_store_access(state)?
+            let task = store_access::team_store_access(state)?
                 .update(|store| store.upsert_task(request.input, forktty_core::team_now_ms()))
                 .map_err(DispatchError::from)?;
             Ok(json!(task))
         }
         "team.message.send" => {
             let request = TeamMessageSendRequest::decode(&params)?;
-            let message = team_store_access(state)?
+            let message = store_access::team_store_access(state)?
                 .update(|store| store.send_message(request.input, forktty_core::team_now_ms()))
                 .map_err(DispatchError::from)?;
             Ok(json!(message))
@@ -1348,7 +1348,7 @@ pub async fn dispatch(
             dispatch_team_message_text(state, &surface_id, &text, request.submit, agent.as_deref())
                 .await?;
             remember_team_message_terminal_dispatched(state, terminal_message.clone())?;
-            let message = team_store_access(state)?
+            let message = store_access::team_store_access(state)?
                 .update(|store| {
                     store.ack_message(
                         forktty_core::TeamMessageAck {
@@ -1371,14 +1371,14 @@ pub async fn dispatch(
         }
         "team.message.ack" => {
             let request = TeamMessageAckRequest::decode(&params)?;
-            let message = team_store_access(state)?
+            let message = store_access::team_store_access(state)?
                 .update(|store| store.ack_message(request.input, forktty_core::team_now_ms()))
                 .map_err(DispatchError::from)?;
             Ok(json!(message))
         }
         "team.inbox" => {
             let request = TeamInboxRequest::decode(&params)?;
-            let store = team_store_access(state)?
+            let store = store_access::team_store_access(state)?
                 .load()
                 .map_err(DispatchError::from)?;
             let messages = store.inbox(&request.query).map_err(DispatchError::from)?;
@@ -1386,7 +1386,7 @@ pub async fn dispatch(
         }
         "team.summary" => {
             let request = TeamSummaryRequest::decode(&params)?;
-            let store = team_store_access(state)?
+            let store = store_access::team_store_access(state)?
                 .load()
                 .map_err(DispatchError::from)?;
             let summary = store
@@ -1396,7 +1396,7 @@ pub async fn dispatch(
         }
         "team.events" => {
             let request = TeamEventsRequest::decode(&params)?;
-            let store = team_store_access(state)?
+            let store = store_access::team_store_access(state)?
                 .load()
                 .map_err(DispatchError::from)?;
             let events = store.events(&request.query).map_err(DispatchError::from)?;
@@ -2760,7 +2760,7 @@ fn context_snapshot_workflows(
     workspace_id: &str,
     include_workflow_details: bool,
 ) -> Result<(Value, Value, Value), DispatchError> {
-    let Some(store_access) = optional_workflow_store_access(state) else {
+    let Some(store_access) = store_access::optional_workflow_store_access(state) else {
         return Ok((json!([]), json!([]), json!([])));
     };
     let store = store_access.load().map_err(workflow_runtime::error)?;
@@ -2985,7 +2985,7 @@ fn context_snapshot_team_state(
     workspace_id: &str,
     include_team_details: bool,
 ) -> Result<(Value, Value), DispatchError> {
-    let Some(store_access) = optional_team_store_access(state) else {
+    let Some(store_access) = store_access::optional_team_store_access(state) else {
         return Ok((json!([]), json!([])));
     };
     let store = store_access.load().map_err(DispatchError::from)?;
@@ -3926,25 +3926,6 @@ fn progress_entries_with_source(entries: Vec<ProgressEntry>) -> Vec<Value> {
             })
         })
         .collect()
-}
-
-fn optional_workflow_store_access(
-    state: &SocketAppState,
-) -> Option<store_access::WorkflowStoreAccess<'_>> {
-    state
-        .workflow_store_path
-        .as_deref()
-        .map(store_access::WorkflowStoreAccess::new)
-}
-
-pub(crate) fn workflow_store_access(
-    state: &SocketAppState,
-) -> Result<store_access::WorkflowStoreAccess<'_>, DispatchError> {
-    optional_workflow_store_access(state).ok_or_else(|| {
-        DispatchError::PreconditionFailed(
-            "Workflow store path is unavailable on this system".to_string(),
-        )
-    })
 }
 
 fn workflow_target_ids(
@@ -5333,20 +5314,6 @@ async fn send_team_message_body_when_ready(
     }
 }
 
-fn optional_team_store_access(state: &SocketAppState) -> Option<store_access::TeamStoreAccess<'_>> {
-    state
-        .team_store_path
-        .as_deref()
-        .map(store_access::TeamStoreAccess::new)
-}
-
-fn team_store_access(
-    state: &SocketAppState,
-) -> Result<store_access::TeamStoreAccess<'_>, DispatchError> {
-    optional_team_store_access(state)
-        .ok_or_else(|| DispatchError::Other("Team store is unavailable".to_string()))
-}
-
 fn optional_team_workspace_id(
     state: &SocketAppState,
     params: &Value,
@@ -5441,7 +5408,7 @@ fn create_team_worker_surface(
     worker_id: &str,
     worktree_name: Option<&str>,
 ) -> Result<forktty_core::Surface, DispatchError> {
-    let store = team_store_access(state)?
+    let store = store_access::team_store_access(state)?
         .load()
         .map_err(DispatchError::from)?;
     let team = store
@@ -5500,7 +5467,7 @@ fn ensure_team_worker_can_launch(
     team_id: &str,
     worker_id: &str,
 ) -> Result<(), DispatchError> {
-    let store = team_store_access(state)?
+    let store = store_access::team_store_access(state)?
         .load()
         .map_err(DispatchError::from)?;
     let Some(surface_id) = store.get(team_id).and_then(|team| {
@@ -5528,7 +5495,7 @@ fn team_worker_surface_id(
     team_id: &str,
     worker_id: &str,
 ) -> Result<String, DispatchError> {
-    let store = team_store_access(state)?
+    let store = store_access::team_store_access(state)?
         .load()
         .map_err(DispatchError::from)?;
     let team = store
@@ -5551,7 +5518,7 @@ fn team_worker_launch_owned_surface_id(
     team_id: &str,
     worker_id: &str,
 ) -> Result<String, DispatchError> {
-    let store = team_store_access(state)?
+    let store = store_access::team_store_access(state)?
         .load()
         .map_err(DispatchError::from)?;
     let team = store
@@ -5636,7 +5603,7 @@ fn team_terminal_dispatched_message(
     message_id: &str,
 ) -> Result<TeamTerminalDispatchedMessage, DispatchError> {
     Ok(TeamTerminalDispatchedMessage::new(
-        team_store_access(state)?.path().to_path_buf(),
+        store_access::team_store_access(state)?.path().to_path_buf(),
         team_id,
         message_id,
     ))
@@ -5678,7 +5645,7 @@ fn team_message_dispatch_target(
     message_id: &str,
     worker_id: Option<&str>,
 ) -> Result<(String, String, String, Option<String>), DispatchError> {
-    let store = team_store_access(state)?
+    let store = store_access::team_store_access(state)?
         .load()
         .map_err(DispatchError::from)?;
     let team = store
@@ -5733,7 +5700,7 @@ fn team_worker_agent(
     team_id: &str,
     worker_id: &str,
 ) -> Result<Option<String>, DispatchError> {
-    let store = team_store_access(state)?
+    let store = store_access::team_store_access(state)?
         .load()
         .map_err(DispatchError::from)?;
     let team = store
@@ -5753,7 +5720,7 @@ async fn team_finish(state: &SocketAppState, params: &Value) -> Result<Value, Di
     let dry_run = request.dry_run;
     let close_workers = request.close_workers;
     let force = request.force;
-    let store = team_store_access(state)?
+    let store = store_access::team_store_access(state)?
         .load()
         .map_err(DispatchError::from)?;
     let team = store
@@ -5856,7 +5823,7 @@ async fn team_finish(state: &SocketAppState, params: &Value) -> Result<Value, Di
         };
         let worker_id_for_store = worker_id.to_string();
         let team_id_for_store = team_id.clone();
-        team_store_access(state)?
+        store_access::team_store_access(state)?
             .update(|store| {
                 store.upsert_worker(
                     forktty_core::TeamWorkerUpsert {
@@ -5883,7 +5850,7 @@ async fn team_finish(state: &SocketAppState, params: &Value) -> Result<Value, Di
             .map_err(DispatchError::from)?;
         let worker_id_for_store = worker_id.clone();
         let team_id_for_store = team_id.clone();
-        let worker = team_store_access(state)?
+        let worker = store_access::team_store_access(state)?
             .update(|store| {
                 store.request_worker_shutdown(
                     forktty_core::TeamWorkerAction {
@@ -5904,7 +5871,7 @@ async fn team_finish(state: &SocketAppState, params: &Value) -> Result<Value, Di
     }
 
     let team_id_for_store = team_id.clone();
-    let team = team_store_access(state)?
+    let team = store_access::team_store_access(state)?
         .update(|store| {
             store.upsert_team(
                 forktty_core::TeamUpsert {
@@ -5919,7 +5886,7 @@ async fn team_finish(state: &SocketAppState, params: &Value) -> Result<Value, Di
             )
         })
         .map_err(DispatchError::from)?;
-    let store = team_store_access(state)?
+    let store = store_access::team_store_access(state)?
         .load()
         .map_err(DispatchError::from)?;
     let summary_after = json!(store.summary(&team_id).map_err(DispatchError::from)?);
