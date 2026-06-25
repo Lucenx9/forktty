@@ -24,6 +24,7 @@ mod response_encoding;
 mod socket_bind;
 mod status_runtime;
 mod store_access;
+mod surface_runtime;
 mod system_runtime;
 mod team_params;
 mod team_runtime;
@@ -99,7 +100,7 @@ use thiserror::Error;
 use tokio::io::AsyncBufRead;
 use tokio::net::UnixListener;
 use tokio::sync::{broadcast, Semaphore};
-use topology_params::{SurfaceIdRequest, SurfaceSplitRequest};
+use topology_params::SurfaceIdRequest;
 
 #[cfg(test)]
 pub(crate) use connection::{
@@ -811,23 +812,7 @@ pub async fn dispatch(
         "surface.capture_tail" => topology_runtime::surface_capture_tail(state, &params),
         "surface.send_text" => topology_runtime::surface_send_text(state, &params),
         "topology.tree" => topology_runtime::tree(state, &params),
-        "surface.split" => {
-            let request = SurfaceSplitRequest::decode(&params)?;
-            let surface = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                model
-                    .split_surface(&request.surface_id, request.axis)
-                    .ok_or(DispatchError::NotFound("surface".to_string()))?
-            };
-            if let Err(err) = spawn_surface_terminal(state, &surface) {
-                rollback_surface_creation(state, &surface.id)?;
-                return Err(err.into());
-            }
-            Ok(json!(surface))
-        }
+        "surface.split" => surface_runtime::split(state, &params),
         "browser.open" => {
             let request = BrowserOpenRequest::decode(&params)?;
             let surface = {
@@ -1033,38 +1018,8 @@ pub async fn dispatch(
         "browser.import.discover" => Ok(browser_import::browser_import_discover_json()),
         "browser.import.preview" => browser_import::browser_import_preview(&params).await,
         "browser.import.run" => browser_import::browser_import_run(state, &params).await,
-        "pane.new_tab" => {
-            let request = SurfaceIdRequest::decode(&params)?;
-            let surface = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                model
-                    .add_tab(&request.surface_id)
-                    .ok_or(DispatchError::NotFound("surface".to_string()))?
-            };
-            if let Err(err) = spawn_surface_terminal(state, &surface) {
-                rollback_surface_creation(state, &surface.id)?;
-                return Err(err.into());
-            }
-            Ok(json!(surface))
-        }
-        "pane.select_tab" => {
-            let request = SurfaceIdRequest::decode(&params)?;
-            let selected = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                model.select_tab(&request.surface_id)
-            };
-            if selected {
-                Ok(json!({"selected": true}))
-            } else {
-                Err(DispatchError::NotFound("surface".to_string()))
-            }
-        }
+        "pane.new_tab" => surface_runtime::new_tab(state, &params),
+        "pane.select_tab" => surface_runtime::select_tab(state, &params),
         "surface.focus" => {
             let request = SurfaceIdRequest::decode(&params)?;
             let focused = {
@@ -1339,7 +1294,7 @@ pub(crate) fn spawn_workspace_terminal(
     state.terminal.spawn(request).map_err(|err| err.to_string())
 }
 
-fn spawn_surface_terminal(
+pub(crate) fn spawn_surface_terminal(
     state: &SocketAppState,
     surface: &forktty_core::Surface,
 ) -> Result<(), String> {
