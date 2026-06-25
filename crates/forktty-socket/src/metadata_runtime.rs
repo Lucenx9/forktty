@@ -5,8 +5,10 @@ use crate::metadata_params::{
 };
 use crate::{
     agent_kind_from_permission_status_key, agent_kind_from_status_key,
-    agent_session_lifecycle_from_hook, current_unix_epoch_ms, feed_entry_from_notification,
-    feed_view, notification_dispatch::dispatch_notification_with_loaded_config, record_feed_entry,
+    agent_session_lifecycle_from_hook, current_unix_epoch_ms,
+    feed_events::{feed_entry_from_notification, record_feed_entry},
+    feed_view,
+    notification_dispatch::dispatch_notification_with_loaded_config,
     DispatchError, SocketAppState,
 };
 use forktty_core::{close_desktop_notification, AgentSessionLifecycle};
