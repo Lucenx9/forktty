@@ -28,6 +28,7 @@ mod system_runtime;
 mod team_params;
 mod team_runtime;
 mod topology_params;
+mod topology_runtime;
 mod topology_view;
 mod workflow_params;
 mod workflow_runtime;
@@ -102,8 +103,7 @@ use tokio::io::AsyncBufRead;
 use tokio::net::UnixListener;
 use tokio::sync::{broadcast, Semaphore};
 use topology_params::{
-    OptionalWorkspaceRequest, SurfaceCaptureTailRequest, SurfaceIdRequest, SurfaceReadTextRequest,
-    SurfaceSendTextRequest, SurfaceSplitRequest, WorkspaceCreateRequest, WorkspaceCreateSshRequest,
+    SurfaceIdRequest, SurfaceSplitRequest, WorkspaceCreateRequest, WorkspaceCreateSshRequest,
     WorkspaceSelectorRequest,
 };
 use worktree_params::{WorktreeNamedRequest, WorktreeRepoRequest, WorktreeStatusRequest};
@@ -800,34 +800,8 @@ pub async fn dispatch(
         "status.summary" => status_runtime::summary(state, &params),
         "remote.list" => remote::list(state, &params),
         "remote.status" => remote::status(state, &params),
-        "system.top" => {
-            let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
-            let model = state
-                .model
-                .lock()
-                .map_err(|_| "Lock poisoned".to_string())?;
-            let workspace_id = match workspace_selector_from_params(&params) {
-                Ok(selector) => Some(
-                    model
-                        .workspace_id_for(selector)
-                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
-                ),
-                Err(DispatchError::MissingParam(_)) => None,
-                Err(err) => return Err(err),
-            };
-            Ok(topology_view::system_top(
-                &model,
-                workspace_id.as_deref(),
-                terminal_surfaces,
-            ))
-        }
-        "workspace.list" => {
-            let model = state
-                .model
-                .lock()
-                .map_err(|_| "Lock poisoned".to_string())?;
-            Ok(json!(model.list_workspaces()))
-        }
+        "system.top" => topology_runtime::system_top(state, &params),
+        "workspace.list" => topology_runtime::workspace_list(state),
         "workspace.create" => {
             let request = WorkspaceCreateRequest::decode(&params)?;
             let (workspace, previous_active_id) = {
@@ -1281,60 +1255,11 @@ pub async fn dispatch(
                 "argv": std::iter::once(program).chain(argv.into_iter()).collect::<Vec<_>>(),
             }))
         }
-        "surface.list" => {
-            let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
-            let model = state
-                .model
-                .lock()
-                .map_err(|_| "Lock poisoned".to_string())?;
-            let request = OptionalWorkspaceRequest::decode(&model, &params)?;
-            Ok(topology_view::surface_list_rows(
-                &model,
-                request.workspace_id.as_deref(),
-                terminal_surfaces,
-            ))
-        }
-        "surface.read_text" => {
-            let request = SurfaceReadTextRequest::decode(&params)?;
-            ensure_model_surface_exists(state, &request.surface_id)?;
-            let snapshot = state
-                .terminal
-                .read_text(&request.surface_id, request.capture, request.max_bytes)
-                .map_err(DispatchError::from)?;
-            Ok(json!(snapshot))
-        }
-        "surface.capture_tail" => {
-            let request = SurfaceCaptureTailRequest::decode(&params)?;
-            ensure_model_surface_exists(state, &request.surface_id)?;
-            let snapshot = state
-                .terminal
-                .read_text(
-                    &request.surface_id,
-                    TerminalTextCapture::Tail {
-                        lines: request.lines,
-                    },
-                    request.max_bytes,
-                )
-                .map_err(DispatchError::from)?;
-            Ok(json!(snapshot))
-        }
-        "surface.send_text" => {
-            let request = SurfaceSendTextRequest::decode(&params)?;
-            ensure_model_surface_exists(state, &request.surface_id)?;
-            state
-                .terminal
-                .send_text(&request.surface_id, &request.text)
-                .map_err(DispatchError::from)?;
-            Ok(json!({"sent": true}))
-        }
-        "topology.tree" => {
-            let model = state
-                .model
-                .lock()
-                .map_err(|_| "Lock poisoned".to_string())?;
-            let request = OptionalWorkspaceRequest::decode(&model, &params)?;
-            Ok(topology_view::tree(&model, request.workspace_id.as_deref()))
-        }
+        "surface.list" => topology_runtime::surface_list(state, &params),
+        "surface.read_text" => topology_runtime::surface_read_text(state, &params),
+        "surface.capture_tail" => topology_runtime::surface_capture_tail(state, &params),
+        "surface.send_text" => topology_runtime::surface_send_text(state, &params),
+        "topology.tree" => topology_runtime::tree(state, &params),
         "surface.split" => {
             let request = SurfaceSplitRequest::decode(&params)?;
             let surface = {
