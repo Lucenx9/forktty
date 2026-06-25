@@ -49,12 +49,6 @@ pub(crate) use agent_runtime::{
 use browser_import::browser_import_spool_data;
 #[cfg(all(test, feature = "browser"))]
 use browser_import_params::browser_import_source_id;
-use browser_params::{
-    BrowserBookmarkAddRequest, BrowserBookmarkRemoveRequest, BrowserClickRequest,
-    BrowserFillRequest, BrowserHistoryListRequest, BrowserHistorySearchRequest,
-    BrowserNavigateRequest, BrowserOpenRequest, BrowserProfileCreateRequest,
-    BrowserProfileDeleteRequest, BrowserProfileRequest, BrowserSurfaceRequest,
-};
 use connection::{handle_connection_with_event_limit, reject_over_capacity_connection};
 pub(crate) use context_runtime::workspace_effective_project_cwd;
 #[cfg(test)]
@@ -70,10 +64,10 @@ use forktty_core::JsonRpcResponse;
 use forktty_core::MAX_BROWSER_URL_BYTES;
 use forktty_core::{
     agent_resume_command_with_cwd_and_permission_mode, command_safety::is_valid_ssh_host, config,
-    validate_worktree_name, AgentKind, AgentSessionLifecycle, BrowserCommand, BrowserOp,
-    FeedApprovalState, FeedEntry, FeedEntryType, FeedStore, LogLevel, NotificationItem,
-    NotificationKind, SplitAxis, StatusHookMetadata, WorkflowEvidenceInput, WorkflowLoopGateInput,
-    WorkflowLoopStateInput, WorkflowPlanStepInput, WorkspaceModel, WorkspaceSelector,
+    validate_worktree_name, AgentKind, AgentSessionLifecycle, BrowserCommand, FeedApprovalState,
+    FeedEntry, FeedEntryType, FeedStore, LogLevel, NotificationItem, NotificationKind, SplitAxis,
+    StatusHookMetadata, WorkflowEvidenceInput, WorkflowLoopGateInput, WorkflowLoopStateInput,
+    WorkflowPlanStepInput, WorkspaceModel, WorkspaceSelector,
 };
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError, TerminalTextCapture};
 use serde_json::{json, Value};
@@ -812,208 +806,23 @@ pub async fn dispatch(
         "surface.send_text" => topology_runtime::surface_send_text(state, &params),
         "topology.tree" => topology_runtime::tree(state, &params),
         "surface.split" => surface_runtime::split(state, &params),
-        "browser.open" => {
-            let request = BrowserOpenRequest::decode(&params)?;
-            let surface = {
-                let _profile_store_guard = state
-                    .profile_store_lock
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                let profile = match params.get("profile") {
-                    Some(value) => {
-                        let profile_name = value.as_str().ok_or_else(|| {
-                            DispatchError::InvalidParam(
-                                "Invalid parameter profile: expected string".to_string(),
-                            )
-                        })?;
-                        browser_profile::profiles_store()?
-                            .resolve(profile_name)
-                            .ok_or(DispatchError::NotFound("profile".to_string()))?
-                    }
-                    None => forktty_core::ProfileId::default(),
-                };
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                model
-                    .open_browser(&request.workspace_id, &request.url, profile, request.axis)
-                    .ok_or(DispatchError::NotFound("workspace".to_string()))?
-            };
-            Ok(json!(surface))
-        }
-        "browser.navigate" => {
-            let request = BrowserNavigateRequest::decode(&params)?;
-            let updated = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                model.set_surface_url(&request.surface_id, &request.url)
-            };
-            if updated {
-                Ok(json!({"navigated": true}))
-            } else {
-                Err(DispatchError::NotFound("surface".to_string()))
-            }
-        }
-        "browser.snapshot" => {
-            let request = BrowserSurfaceRequest::decode(&params)?;
-            browser_runtime::dispatch_cmd(state, request.surface_id, BrowserOp::Snapshot).await
-        }
-        "browser.click" => {
-            let request = BrowserClickRequest::decode(&params)?;
-            browser_runtime::dispatch_cmd(
-                state,
-                request.surface_id,
-                BrowserOp::Click {
-                    reference: request.reference,
-                },
-            )
-            .await
-        }
-        "browser.fill" => {
-            let request = BrowserFillRequest::decode(&params)?;
-            browser_runtime::dispatch_cmd(
-                state,
-                request.surface_id,
-                BrowserOp::Fill {
-                    reference: request.reference,
-                    value: request.value,
-                },
-            )
-            .await
-        }
-        "browser.back" => {
-            let request = BrowserSurfaceRequest::decode(&params)?;
-            browser_runtime::dispatch_cmd(state, request.surface_id, BrowserOp::Back).await
-        }
-        "browser.forward" => {
-            let request = BrowserSurfaceRequest::decode(&params)?;
-            browser_runtime::dispatch_cmd(state, request.surface_id, BrowserOp::Forward).await
-        }
-        "browser.reload" => {
-            let request = BrowserSurfaceRequest::decode(&params)?;
-            browser_runtime::dispatch_cmd(state, request.surface_id, BrowserOp::Reload).await
-        }
-        "browser.profile.list" => {
-            let _profile_store_guard = state
-                .profile_store_lock
-                .lock()
-                .map_err(|_| "Lock poisoned".to_string())?;
-            let store = browser_profile::profiles_store()?;
-            let out: Vec<_> = store
-                .list()
-                .iter()
-                .map(|p| {
-                    json!({
-                        "id": p.id.to_string(),
-                        "display_name": p.display_name,
-                        "is_default": p.is_default,
-                    })
-                })
-                .collect();
-            Ok(json!(out))
-        }
-        "browser.profile.create" => {
-            let request = BrowserProfileCreateRequest::decode(&params)?;
-            let _profile_store_guard = state
-                .profile_store_lock
-                .lock()
-                .map_err(|_| "Lock poisoned".to_string())?;
-            let mut store = browser_profile::profiles_store()?;
-            let meta = store
-                .create(&request.display_name)
-                .map_err(|e| DispatchError::from(e.to_string()))?;
-            Ok(json!({ "id": meta.id.to_string(), "display_name": meta.display_name }))
-        }
-        "browser.profile.delete" => {
-            let request = BrowserProfileDeleteRequest::decode(&params)?;
-            let _profile_store_guard = state
-                .profile_store_lock
-                .lock()
-                .map_err(|_| "Lock poisoned".to_string())?;
-            {
-                let model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                let in_use = model.list_surfaces(None).iter().any(|s| {
-                    matches!(
-                        &s.kind,
-                        forktty_core::SurfaceKind::Browser { profile, .. } if *profile == request.id
-                    )
-                });
-                if in_use {
-                    return Err(DispatchError::Conflict(
-                        "profile in use by an open browser pane".to_string(),
-                    ));
-                }
-            }
-            let mut store = browser_profile::profiles_store()?;
-            // on-disk data dir cleanup deferred to the GUI profile manager (P4)
-            store.delete(&request.id).map_err(|e| match e {
-                forktty_core::ProfileError::NotFound => {
-                    DispatchError::NotFound("profile".to_string())
-                }
-                forktty_core::ProfileError::CannotDeleteDefault => {
-                    DispatchError::Conflict("the default profile cannot be deleted".to_string())
-                }
-                other => DispatchError::from(other.to_string()),
-            })?;
-            Ok(json!({ "deleted": true }))
-        }
-        "browser.history.list" => {
-            let request = BrowserHistoryListRequest::decode(&params)?;
-            let store = forktty_core::HistoryStore::for_profile(request.profile)
-                .map_err(|e| DispatchError::from(e.to_string()))?;
-            let rows = store
-                .list(request.limit)
-                .map_err(|e| DispatchError::from(e.to_string()))?;
-            Ok(json!(rows))
-        }
-        "browser.history.search" => {
-            let request = BrowserHistorySearchRequest::decode(&params)?;
-            let store = forktty_core::HistoryStore::for_profile(request.profile)
-                .map_err(|e| DispatchError::from(e.to_string()))?;
-            let rows = store
-                .search(&request.query, request.limit)
-                .map_err(|e| DispatchError::from(e.to_string()))?;
-            Ok(json!(rows))
-        }
-        "browser.history.clear" => {
-            let request = BrowserProfileRequest::decode(&params)?;
-            let store = forktty_core::HistoryStore::for_profile(request.profile)
-                .map_err(|e| DispatchError::from(e.to_string()))?;
-            store
-                .clear()
-                .map_err(|e| DispatchError::from(e.to_string()))?;
-            Ok(json!({ "cleared": true }))
-        }
-        "browser.bookmark.add" => {
-            let request = BrowserBookmarkAddRequest::decode(&params)?;
-            let mut store = forktty_core::BookmarkStore::for_profile(request.profile)
-                .map_err(|e| DispatchError::from(e.to_string()))?;
-            store
-                .add(&request.url, &request.title)
-                .map_err(|e| DispatchError::from(e.to_string()))?;
-            Ok(json!({ "added": true }))
-        }
-        "browser.bookmark.list" => {
-            let request = BrowserProfileRequest::decode(&params)?;
-            let store = forktty_core::BookmarkStore::for_profile(request.profile)
-                .map_err(|e| DispatchError::from(e.to_string()))?;
-            Ok(json!(store.list()))
-        }
-        "browser.bookmark.remove" => {
-            let request = BrowserBookmarkRemoveRequest::decode(&params)?;
-            let mut store = forktty_core::BookmarkStore::for_profile(request.profile)
-                .map_err(|e| DispatchError::from(e.to_string()))?;
-            let removed = store
-                .remove(&request.url)
-                .map_err(|e| DispatchError::from(e.to_string()))?;
-            Ok(json!({ "removed": removed }))
-        }
+        "browser.open" => browser_runtime::open(state, &params),
+        "browser.navigate" => browser_runtime::navigate(state, &params),
+        "browser.snapshot" => browser_runtime::snapshot(state, &params).await,
+        "browser.click" => browser_runtime::click(state, &params).await,
+        "browser.fill" => browser_runtime::fill(state, &params).await,
+        "browser.back" => browser_runtime::back(state, &params).await,
+        "browser.forward" => browser_runtime::forward(state, &params).await,
+        "browser.reload" => browser_runtime::reload(state, &params).await,
+        "browser.profile.list" => browser_runtime::profile_list(state, &params),
+        "browser.profile.create" => browser_runtime::profile_create(state, &params),
+        "browser.profile.delete" => browser_runtime::profile_delete(state, &params),
+        "browser.history.list" => browser_runtime::history_list(state, &params),
+        "browser.history.search" => browser_runtime::history_search(state, &params),
+        "browser.history.clear" => browser_runtime::history_clear(state, &params),
+        "browser.bookmark.add" => browser_runtime::bookmark_add(state, &params),
+        "browser.bookmark.list" => browser_runtime::bookmark_list(state, &params),
+        "browser.bookmark.remove" => browser_runtime::bookmark_remove(state, &params),
         "browser.import.discover" => Ok(browser_import::browser_import_discover_json()),
         "browser.import.preview" => browser_import::browser_import_preview(&params).await,
         "browser.import.run" => browser_import::browser_import_run(state, &params).await,
