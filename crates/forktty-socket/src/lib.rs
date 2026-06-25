@@ -97,7 +97,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use team_params::{
-    TeamFinishRequest, TeamMessageDispatchRequest, TeamWorkerLaunchRequest, TeamWorkerNudgeRequest,
+    TeamFinishRequest, TeamMessageDispatchRequest, TeamWorkerLaunchRequest,
     TeamWorkerShutdownRequest,
 };
 use thiserror::Error;
@@ -844,26 +844,7 @@ pub async fn dispatch(
             }))
         }
         "team.worker.health" => team_runtime::worker_health(state, &params),
-        "team.worker.nudge" => {
-            let request = TeamWorkerNudgeRequest::decode(&params)?;
-            let surface_id = team_worker_surface_id(state, &request.team_id, &request.worker_id)?;
-            state
-                .terminal
-                .send_text(&surface_id, &request.text)
-                .map_err(DispatchError::from)?;
-            let worker = store_access::team_store_access(state)?
-                .update(|store| {
-                    store.mark_worker_nudged(
-                        forktty_core::TeamWorkerAction {
-                            team_id: request.team_id,
-                            worker_id: request.worker_id,
-                        },
-                        forktty_core::team_now_ms(),
-                    )
-                })
-                .map_err(DispatchError::from)?;
-            Ok(json!({"sent": true, "surface_id": surface_id, "worker": worker}))
-        }
+        "team.worker.nudge" => team_runtime::worker_nudge(state, &params),
         "team.worker.shutdown" => {
             let request = TeamWorkerShutdownRequest::decode(&params)?;
             let surface_id = if request.close_surface {
@@ -3292,7 +3273,7 @@ fn ensure_team_worker_can_launch(
     Ok(())
 }
 
-fn team_worker_surface_id(
+pub(crate) fn team_worker_surface_id(
     state: &SocketAppState,
     team_id: &str,
     worker_id: &str,

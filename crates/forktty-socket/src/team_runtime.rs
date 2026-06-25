@@ -4,9 +4,9 @@ use crate::{
         TeamEventsRequest, TeamGetRequest, TeamInboxRequest, TeamListRequest,
         TeamMessageAckRequest, TeamMessageSendRequest, TeamSummaryRequest, TeamTaskUpsertRequest,
         TeamUpsertRequest, TeamWorkerHealthRequest, TeamWorkerHeartbeatRequest,
-        TeamWorkerUpsertRequest,
+        TeamWorkerNudgeRequest, TeamWorkerUpsertRequest,
     },
-    team_worker_health_rows, DispatchError, SocketAppState,
+    team_worker_health_rows, team_worker_surface_id, DispatchError, SocketAppState,
 };
 use serde_json::{json, Value};
 
@@ -71,6 +71,27 @@ pub(crate) fn worker_health(
         .get(&request.team_id)
         .ok_or(DispatchError::NotFound("team".to_string()))?;
     team_worker_health_rows(state, &team, request.stale_after_ms)
+}
+
+pub(crate) fn worker_nudge(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let request = TeamWorkerNudgeRequest::decode(params)?;
+    let surface_id = team_worker_surface_id(state, &request.team_id, &request.worker_id)?;
+    state
+        .terminal
+        .send_text(&surface_id, &request.text)
+        .map_err(DispatchError::from)?;
+    let worker = store_access::team_store_access(state)?
+        .update(|store| {
+            store.mark_worker_nudged(
+                forktty_core::TeamWorkerAction {
+                    team_id: request.team_id,
+                    worker_id: request.worker_id,
+                },
+                forktty_core::team_now_ms(),
+            )
+        })
+        .map_err(DispatchError::from)?;
+    Ok(json!({"sent": true, "surface_id": surface_id, "worker": worker}))
 }
 
 pub(crate) fn task_upsert(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
