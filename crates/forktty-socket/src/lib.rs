@@ -96,7 +96,7 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use team_params::{TeamFinishRequest, TeamMessageDispatchRequest, TeamWorkerLaunchRequest};
+use team_params::{TeamFinishRequest, TeamWorkerLaunchRequest};
 use thiserror::Error;
 #[cfg(test)]
 use tokio::io::AsyncBufRead;
@@ -845,42 +845,7 @@ pub async fn dispatch(
         "team.worker.shutdown" => team_runtime::worker_shutdown(state, &params).await,
         "team.task.upsert" => team_runtime::task_upsert(state, &params),
         "team.message.send" => team_runtime::message_send(state, &params),
-        "team.message.dispatch" => {
-            let request = TeamMessageDispatchRequest::decode(&params)?;
-            let _dispatch_guard = state.coordinator.team_message_dispatch.lock().await;
-            let (surface_id, resolved_worker_id, text, agent) = team_message_dispatch_target(
-                state,
-                &request.team_id,
-                &request.message_id,
-                request.worker_id.as_deref(),
-            )?;
-            let terminal_message =
-                team_terminal_dispatched_message(state, &request.team_id, &request.message_id)?;
-            ensure_team_message_not_terminal_dispatched(state, &terminal_message)?;
-            dispatch_team_message_text(state, &surface_id, &text, request.submit, agent.as_deref())
-                .await?;
-            remember_team_message_terminal_dispatched(state, terminal_message.clone())?;
-            let message = store_access::team_store_access(state)?
-                .update(|store| {
-                    store.ack_message(
-                        forktty_core::TeamMessageAck {
-                            team_id: request.team_id,
-                            message_id: request.message_id,
-                            worker_id: Some(resolved_worker_id.clone()),
-                        },
-                        forktty_core::team_now_ms(),
-                    )
-                })
-                .map_err(DispatchError::from)?;
-            let _ = forget_team_message_terminal_dispatched(state, &terminal_message);
-            Ok(json!({
-                "sent": true,
-                "submitted": request.submit,
-                "surface_id": surface_id,
-                "worker_id": resolved_worker_id,
-                "message": message
-            }))
-        }
+        "team.message.dispatch" => team_runtime::message_dispatch(state, &params).await,
         "team.message.ack" => team_runtime::message_ack(state, &params),
         "team.inbox" => team_runtime::inbox(state, &params),
         "team.summary" => team_runtime::summary(state, &params),
@@ -2954,7 +2919,7 @@ fn team_worker_action_text(
     Ok(text.to_string())
 }
 
-async fn dispatch_team_message_text(
+pub(crate) async fn dispatch_team_message_text(
     state: &SocketAppState,
     surface_id: &str,
     body: &str,
@@ -3336,7 +3301,7 @@ fn forget_team_launch_owned_surfaces_for_surfaces(
         .map_err(DispatchError::from)
 }
 
-fn team_terminal_dispatched_message(
+pub(crate) fn team_terminal_dispatched_message(
     state: &SocketAppState,
     team_id: &str,
     message_id: &str,
@@ -3348,7 +3313,7 @@ fn team_terminal_dispatched_message(
     ))
 }
 
-fn ensure_team_message_not_terminal_dispatched(
+pub(crate) fn ensure_team_message_not_terminal_dispatched(
     state: &SocketAppState,
     message: &TeamTerminalDispatchedMessage,
 ) -> Result<(), DispatchError> {
@@ -3358,7 +3323,7 @@ fn ensure_team_message_not_terminal_dispatched(
         .map_err(DispatchError::Conflict)
 }
 
-fn remember_team_message_terminal_dispatched(
+pub(crate) fn remember_team_message_terminal_dispatched(
     state: &SocketAppState,
     message: TeamTerminalDispatchedMessage,
 ) -> Result<(), DispatchError> {
@@ -3368,7 +3333,7 @@ fn remember_team_message_terminal_dispatched(
         .map_err(DispatchError::from)
 }
 
-fn forget_team_message_terminal_dispatched(
+pub(crate) fn forget_team_message_terminal_dispatched(
     state: &SocketAppState,
     message: &TeamTerminalDispatchedMessage,
 ) -> Result<(), DispatchError> {
@@ -3378,7 +3343,7 @@ fn forget_team_message_terminal_dispatched(
         .map_err(DispatchError::from)
 }
 
-fn team_message_dispatch_target(
+pub(crate) fn team_message_dispatch_target(
     state: &SocketAppState,
     team_id: &str,
     message_id: &str,

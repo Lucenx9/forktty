@@ -1,13 +1,17 @@
 use crate::{
-    close_surface_request, send_team_submit_enter_after_settle, store_access,
+    close_surface_request, dispatch_team_message_text, ensure_team_message_not_terminal_dispatched,
+    forget_team_message_terminal_dispatched, remember_team_message_terminal_dispatched,
+    send_team_submit_enter_after_settle, store_access, team_message_dispatch_target,
     team_params::{
         TeamEventsRequest, TeamGetRequest, TeamInboxRequest, TeamListRequest,
-        TeamMessageAckRequest, TeamMessageSendRequest, TeamSummaryRequest, TeamTaskUpsertRequest,
-        TeamUpsertRequest, TeamWorkerHealthRequest, TeamWorkerHeartbeatRequest,
-        TeamWorkerNudgeRequest, TeamWorkerShutdownRequest, TeamWorkerUpsertRequest,
+        TeamMessageAckRequest, TeamMessageDispatchRequest, TeamMessageSendRequest,
+        TeamSummaryRequest, TeamTaskUpsertRequest, TeamUpsertRequest, TeamWorkerHealthRequest,
+        TeamWorkerHeartbeatRequest, TeamWorkerNudgeRequest, TeamWorkerShutdownRequest,
+        TeamWorkerUpsertRequest,
     },
-    team_worker_agent, team_worker_health_rows, team_worker_launch_owned_surface_id,
-    team_worker_surface_id, terminal_text_and_separate_enter, DispatchError, SocketAppState,
+    team_terminal_dispatched_message, team_worker_agent, team_worker_health_rows,
+    team_worker_launch_owned_surface_id, team_worker_surface_id, terminal_text_and_separate_enter,
+    DispatchError, SocketAppState,
 };
 use serde_json::{json, Value};
 
@@ -155,6 +159,45 @@ pub(crate) fn message_send(state: &SocketAppState, params: &Value) -> Result<Val
         .update(|store| store.send_message(request.input, forktty_core::team_now_ms()))
         .map_err(DispatchError::from)?;
     Ok(json!(message))
+}
+
+pub(crate) async fn message_dispatch(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<Value, DispatchError> {
+    let request = TeamMessageDispatchRequest::decode(params)?;
+    let _dispatch_guard = state.coordinator.team_message_dispatch.lock().await;
+    let (surface_id, resolved_worker_id, text, agent) = team_message_dispatch_target(
+        state,
+        &request.team_id,
+        &request.message_id,
+        request.worker_id.as_deref(),
+    )?;
+    let terminal_message =
+        team_terminal_dispatched_message(state, &request.team_id, &request.message_id)?;
+    ensure_team_message_not_terminal_dispatched(state, &terminal_message)?;
+    dispatch_team_message_text(state, &surface_id, &text, request.submit, agent.as_deref()).await?;
+    remember_team_message_terminal_dispatched(state, terminal_message.clone())?;
+    let message = store_access::team_store_access(state)?
+        .update(|store| {
+            store.ack_message(
+                forktty_core::TeamMessageAck {
+                    team_id: request.team_id,
+                    message_id: request.message_id,
+                    worker_id: Some(resolved_worker_id.clone()),
+                },
+                forktty_core::team_now_ms(),
+            )
+        })
+        .map_err(DispatchError::from)?;
+    let _ = forget_team_message_terminal_dispatched(state, &terminal_message);
+    Ok(json!({
+        "sent": true,
+        "submitted": request.submit,
+        "surface_id": surface_id,
+        "worker_id": resolved_worker_id,
+        "message": message
+    }))
 }
 
 pub(crate) fn message_ack(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
