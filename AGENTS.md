@@ -82,6 +82,21 @@ Five workspace crates plus `xtask`, with a strict dependency flow: `forktty-core
 
 Useful CLI for inspecting a running instance: `forktty doctor`, `forktty --json doctor`, `forktty capabilities`, `forktty identify`, `forktty context-snapshot`, `forktty top`, `forktty surfaces`, `forktty agents`, `forktty agent-health`, `forktty teams`, `forktty team-summary`, `forktty workflows`, `forktty workflow-loop-set`, `forktty feed`, `forktty events`, and `forktty wait agent-status`.
 
+## Rust modularity and anti-monolith rules
+
+Use Rust's module system intentionally: group related functionality, keep implementation details private, and expose the smallest useful API. Follow Cargo's normal layout conventions before inventing local structure.
+
+- Treat files above roughly 1,500 lines, or files mixing unrelated command families, as extraction candidates. When touching `crates/forktty-ui-gtk/src/socket_cli.rs`, `crates/forktty-ui-gtk/src/mcp_server.rs`, `crates/forktty-socket/src/lib.rs`, `crates/forktty-ui-gtk/src/gtk_app/controller.rs`, or another orchestrator, first decide whether the change belongs in an existing feature module or a new sibling module.
+- Orchestrator files should parse, route, and coordinate. Feature behavior, request/response shaping, text formatting, and feature-local tests should live in the feature module (`socket_cli/team.rs`, `socket_cli/worktree.rs`, `gtk_app/...`, etc.).
+- Prefer `pub(crate)` and narrow helper APIs. Do not make helpers public for convenience, and do not create broad `utils` modules for single-use code.
+- Extract incrementally: move one cohesive family at a time, preserve public strings, JSON shapes, ordering, aliases, and error behavior first, then run targeted tests before any behavior change. Split large refactors into small commits that can be reviewed and rolled back independently.
+- Keep crate boundaries meaningful. Add a crate only for a stable ownership/dependency boundary, feature-gating need, or reuse across existing crates; otherwise prefer modules within the current crate.
+- Keep dependency flow intact: domain logic stays in `forktty-core`, socket protocol/server behavior in `forktty-socket`, terminal boundaries in `forktty-terminal`, and GTK/CLI/MCP presentation in `forktty-ui-gtk`. Do not pull GUI or process/runtime dependencies into lower crates.
+- Model recoverable failures with `Result` and meaningful error context. Reserve `panic!`, `unwrap`, and `expect` for tests or impossible internal invariants, and explain non-obvious `expect` messages.
+- Follow Rust naming and API conventions (`as_`/`to_`/`into_`, `iter`/`iter_mut`/`into_iter`, standard conversion traits, common derived traits where appropriate). Prefer types and enums over stringly typed state when the value crosses module boundaries.
+- Add or keep behavior-boundary tests during extraction: CLI output tests, socket JSON responses, MCP schemas, and model/store invariants should remain the proof that the move was behavior-preserving.
+- Use web references for external behavior, but ground internal Rust structure in local code plus the Rust Book, Cargo Book, Rust API Guidelines, small-change review practice, and incremental replacement patterns.
+
 ## Conventions
 
 - Surgical edits only: don't reformat, restyle, or refactor code unrelated to the change (see CONTRIBUTING.md).
