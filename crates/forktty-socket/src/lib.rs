@@ -75,11 +75,6 @@ use forktty_core::{
     WorkflowLoopStateInput, WorkflowPlanStepInput, WorkspaceModel, WorkspaceSelector,
 };
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError, TerminalTextCapture};
-use project_action_params::{ProjectActionListRequest, ProjectActionRunRequest};
-use project_action_runtime::{
-    project_action_error, project_action_source_surface_id, project_actions_for_cwd,
-    resolve_project_action_program, run_project_action_blocking,
-};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsStr;
@@ -809,53 +804,8 @@ pub async fn dispatch(
         "worktree.attach" => worktree_runtime::attach(state, &params).await,
         "worktree.remove" => worktree_runtime::remove(state, &params).await,
         "worktree.merge" => worktree_runtime::merge(state, &params).await,
-        "project.action.list" => {
-            let request = ProjectActionListRequest::decode(state, &params).await?;
-            let (_, actions) = project_actions_for_cwd(request.cwd).await?;
-            Ok(json!(actions))
-        }
-        "project.action.run" => {
-            let request = ProjectActionRunRequest::decode(state, &params).await?;
-            let (project_root, actions) = project_actions_for_cwd(request.cwd).await?;
-            let action =
-                forktty_core::find_action(&actions, &request.id).map_err(project_action_error)?;
-            let action_cwd = {
-                let project_root = project_root.clone();
-                let action = action.clone();
-                run_project_action_blocking(move || forktty_core::action_cwd(project_root, &action))
-                    .await?
-            };
-            let source_surface_id = project_action_source_surface_id(state, &project_root)?;
-            let surface = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                let surface = model
-                    .add_tab(&source_surface_id)
-                    .ok_or(DispatchError::NotFound("surface".to_string()))?;
-                model.set_surface_title(&surface.id, action.label.clone());
-                model.set_surface_cwd(&surface.id, action_cwd.clone());
-                model.surface(&surface.id).cloned().unwrap_or(surface)
-            };
-            let mut argv = action.argv.clone();
-            let program = resolve_project_action_program(&action_cwd, &argv.remove(0))?;
-            let request =
-                SpawnRequest::for_surface(&surface, program.clone(), state.socket_path.clone())
-                    .with_args(argv.clone());
-            if let Err(err) = state.terminal.spawn(request) {
-                rollback_surface_creation(state, &surface.id)?;
-                return Err(err.into());
-            }
-            Ok(json!({
-                "id": action.id,
-                "label": action.label,
-                "surface_id": surface.id,
-                "workspace_id": surface.workspace_id,
-                "cwd": action_cwd,
-                "argv": std::iter::once(program).chain(argv.into_iter()).collect::<Vec<_>>(),
-            }))
-        }
+        "project.action.list" => project_action_runtime::list(state, &params).await,
+        "project.action.run" => project_action_runtime::run(state, &params).await,
         "surface.list" => topology_runtime::surface_list(state, &params),
         "surface.read_text" => topology_runtime::surface_read_text(state, &params),
         "surface.capture_tail" => topology_runtime::surface_capture_tail(state, &params),

@@ -1,7 +1,59 @@
-use crate::{canonical_repo_common_dir, DispatchError, SocketAppState};
+use crate::{
+    canonical_repo_common_dir,
+    project_action_params::{ProjectActionListRequest, ProjectActionRunRequest},
+    rollback_surface_creation, DispatchError, SocketAppState,
+};
 use forktty_core::{ProjectAction, ProjectActionError};
+use forktty_terminal::SpawnRequest;
+use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+pub(crate) async fn list(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let request = ProjectActionListRequest::decode(state, params).await?;
+    let (_, actions) = project_actions_for_cwd(request.cwd).await?;
+    Ok(json!(actions))
+}
+
+pub(crate) async fn run(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let request = ProjectActionRunRequest::decode(state, params).await?;
+    let (project_root, actions) = project_actions_for_cwd(request.cwd).await?;
+    let action = forktty_core::find_action(&actions, &request.id).map_err(project_action_error)?;
+    let action_cwd = {
+        let project_root = project_root.clone();
+        let action = action.clone();
+        run_project_action_blocking(move || forktty_core::action_cwd(project_root, &action)).await?
+    };
+    let source_surface_id = project_action_source_surface_id(state, &project_root)?;
+    let surface = {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        let surface = model
+            .add_tab(&source_surface_id)
+            .ok_or(DispatchError::NotFound("surface".to_string()))?;
+        model.set_surface_title(&surface.id, action.label.clone());
+        model.set_surface_cwd(&surface.id, action_cwd.clone());
+        model.surface(&surface.id).cloned().unwrap_or(surface)
+    };
+    let mut argv = action.argv.clone();
+    let program = resolve_project_action_program(&action_cwd, &argv.remove(0))?;
+    let request = SpawnRequest::for_surface(&surface, program.clone(), state.socket_path.clone())
+        .with_args(argv.clone());
+    if let Err(err) = state.terminal.spawn(request) {
+        rollback_surface_creation(state, &surface.id)?;
+        return Err(err.into());
+    }
+    Ok(json!({
+        "id": action.id,
+        "label": action.label,
+        "surface_id": surface.id,
+        "workspace_id": surface.workspace_id,
+        "cwd": action_cwd,
+        "argv": std::iter::once(program).chain(argv.into_iter()).collect::<Vec<_>>(),
+    }))
+}
 
 pub(crate) async fn run_project_action_blocking<T, F>(task: F) -> Result<T, DispatchError>
 where
