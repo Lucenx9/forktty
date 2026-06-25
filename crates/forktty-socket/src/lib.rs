@@ -100,7 +100,6 @@ use thiserror::Error;
 use tokio::io::AsyncBufRead;
 use tokio::net::UnixListener;
 use tokio::sync::{broadcast, Semaphore};
-use topology_params::SurfaceIdRequest;
 
 #[cfg(test)]
 pub(crate) use connection::{
@@ -1020,25 +1019,8 @@ pub async fn dispatch(
         "browser.import.run" => browser_import::browser_import_run(state, &params).await,
         "pane.new_tab" => surface_runtime::new_tab(state, &params),
         "pane.select_tab" => surface_runtime::select_tab(state, &params),
-        "surface.focus" => {
-            let request = SurfaceIdRequest::decode(&params)?;
-            let focused = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                model.focus_surface(&request.surface_id)
-            };
-            if focused {
-                Ok(json!({"focused": true}))
-            } else {
-                Err(DispatchError::NotFound("surface".to_string()))
-            }
-        }
-        "surface.close" => {
-            let request = SurfaceIdRequest::decode(&params)?;
-            close_surface_request(state, &request.surface_id).await
-        }
+        "surface.focus" => surface_runtime::focus(state, &params),
+        "surface.close" => surface_runtime::close(state, &params).await,
         "notification.create" => metadata_runtime::notification_create(state, &params),
         "notification.list" => metadata_runtime::notification_list(state),
         "notification.clear" => metadata_runtime::notification_clear(state),
