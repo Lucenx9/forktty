@@ -2,16 +2,20 @@ use crate::team_provider::{
     select_team_worker_provider, team_worker_launch_command_with_program,
     team_worker_provider_selection_value,
 };
+use crate::team_state::{
+    create_team_worker_surface, ensure_team_message_not_terminal_dispatched,
+    ensure_team_worker_can_launch, forget_team_message_terminal_dispatched,
+    remember_team_launch_owned_surface, remember_team_message_terminal_dispatched,
+    team_message_dispatch_target, team_terminal_dispatched_message, team_worker_agent,
+    team_worker_health_rows, team_worker_launch_owned_surface_id, team_worker_surface_id,
+};
 use crate::{
-    close_surface_request, close_terminal_surface_if_present, create_team_worker_surface,
-    ensure_team_message_not_terminal_dispatched, ensure_team_worker_can_launch,
-    forget_team_message_terminal_dispatched, remember_team_launch_owned_surface,
-    remember_team_message_terminal_dispatched, rollback_surface_creation, store_access,
+    close_surface_request, close_terminal_surface_if_present, rollback_surface_creation,
+    store_access,
     team_dispatch::{
         dispatch_team_message_text, send_team_submit_enter_after_settle,
         terminal_text_and_separate_enter, terminal_text_with_submit_enter,
     },
-    team_message_dispatch_target,
     team_params::{
         TeamEventsRequest, TeamFinishRequest, TeamGetRequest, TeamInboxRequest, TeamListRequest,
         TeamMessageAckRequest, TeamMessageDispatchRequest, TeamMessageSendRequest,
@@ -19,9 +23,7 @@ use crate::{
         TeamWorkerHeartbeatRequest, TeamWorkerLaunchRequest, TeamWorkerNudgeRequest,
         TeamWorkerShutdownRequest, TeamWorkerUpsertRequest,
     },
-    team_terminal_dispatched_message, team_worker_agent, team_worker_health_rows,
-    team_worker_launch_owned_surface_id, team_worker_surface_id, DispatchError, SocketAppState,
-    DEFAULT_TEAM_WORKER_STALE_MS,
+    DispatchError, SocketAppState, DEFAULT_TEAM_WORKER_STALE_MS,
 };
 use forktty_terminal::SpawnRequest;
 use serde_json::{json, Value};
