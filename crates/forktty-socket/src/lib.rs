@@ -10,6 +10,7 @@ mod context_params;
 mod context_runtime;
 mod coordinator;
 mod feed_params;
+mod feed_runtime;
 mod feed_view;
 mod metadata_params;
 mod metadata_runtime;
@@ -55,7 +56,6 @@ pub(crate) use context_runtime::workspace_effective_project_cwd;
 #[cfg(test)]
 pub(crate) use context_runtime::{context_snapshot_risk_flags, ContextSnapshotRiskInputs};
 use coordinator::{SocketCoordinator, TeamTerminalDispatchedMessage};
-use feed_params::{FeedApprovalRespondRequest, FeedListRequest};
 use forktty_core::events::{self, ModelEvent, Snapshot};
 use forktty_core::protocol_limits;
 #[cfg(test)]
@@ -770,47 +770,8 @@ pub async fn dispatch(
         "system.capabilities" => Ok(system_runtime::capabilities()),
         "system.identify" => system_runtime::identify(state, &params),
         "context.snapshot" => context_runtime::snapshot(state, &params),
-        "feed.approval.respond" => {
-            let request = FeedApprovalRespondRequest::decode(&params)?;
-            let mut store = state
-                .feed_store
-                .lock()
-                .map_err(|_| "Lock poisoned".to_string())?;
-            let Some(store) = store.as_mut() else {
-                return Err(DispatchError::NotReady(
-                    "Feed history is not available".to_string(),
-                ));
-            };
-            store
-                .decide_approval(&request.id, request.decision)
-                .map(|entry| json!(entry))
-                .map_err(|err| match err {
-                    forktty_core::FeedError::NotFound(_) => {
-                        DispatchError::NotFound("feed entry".to_string())
-                    }
-                    other => DispatchError::Other(other.to_string()),
-                })
-        }
-        "feed.list" => {
-            let model = state
-                .model
-                .lock()
-                .map_err(|_| "Lock poisoned".to_string())?;
-            let request = FeedListRequest::decode(&params, &model)?;
-            let stored_entries = state.feed_store.lock().ok().and_then(|store| {
-                store
-                    .as_ref()
-                    .map(|store| store.list(request.workspace_id.as_deref(), request.limit))
-            });
-            if let Some(entries) = stored_entries {
-                return Ok(json!(feed_view::entries_for_model(&model, entries)));
-            }
-            Ok(json!(feed_view::list(
-                &model,
-                request.workspace_id.as_deref(),
-                request.limit
-            )))
-        }
+        "feed.approval.respond" => feed_runtime::approval_respond(state, &params),
+        "feed.list" => feed_runtime::list(state, &params),
         "workflow.list" => workflow_runtime::list(state, &params),
         "workflow.get" => workflow_runtime::get(state, &params),
         "workflow.upsert" => workflow_runtime::upsert(state, &params),
