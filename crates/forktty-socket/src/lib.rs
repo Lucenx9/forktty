@@ -27,6 +27,7 @@ mod store_access;
 mod surface_runtime;
 mod system_runtime;
 mod team_params;
+mod team_provider;
 mod team_runtime;
 mod topology_params;
 mod topology_runtime;
@@ -71,7 +72,6 @@ use forktty_core::{
 use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError, TerminalTextCapture};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::ffi::OsStr;
 use std::fs;
 use std::io;
 #[cfg(all(test, feature = "browser"))]
@@ -105,6 +105,8 @@ pub(crate) use socket_bind::{
     default_socket_dir_from_env, effective_uid, probe_forktty_socket_with_timeout,
     PROBE_RESPONSE_MAX_BYTES,
 };
+#[cfg(test)]
+pub(crate) use team_provider::{team_worker_launch_command, CLAUDE_TEAM_REVIEW_ALLOWED_TOOLS};
 
 const MAX_REQUEST_SIZE: usize = protocol_limits::SOCKET_REQUEST_MAX_BYTES;
 const MAX_SEND_TEXT_BYTES: usize = protocol_limits::SOCKET_SEND_TEXT_MAX_BYTES;
@@ -150,7 +152,6 @@ const RESPONSE_WRITE_TIMEOUT: Duration = protocol_limits::SOCKET_RESPONSE_WRITE_
 const HOOK_SESSION_TARGET_CAPACITY: usize = 256;
 const DEFAULT_AGENT_RECLAIM_MIN_IDLE_MS: u64 = 10 * 60 * 1_000;
 const DEFAULT_TEAM_WORKER_STALE_MS: u64 = 5 * 60 * 1_000;
-const CLAUDE_TEAM_REVIEW_ALLOWED_TOOLS: &str = "Read,Grep,Glob";
 
 #[derive(Error, Debug)]
 pub enum SocketError {
@@ -1538,284 +1539,6 @@ fn optional_string_array_param(
         Some(Value::Null) | None => Ok(None),
         Some(_) => Err(format!("Invalid parameter {key}: expected array").into()),
     }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct TeamWorkerProviderSelection {
-    pub(crate) requested_agent: String,
-    pub(crate) selected_agent: String,
-    pub(crate) program: String,
-    pub(crate) default_program: String,
-    pub(crate) configured_command: Option<String>,
-    pub(crate) executable: Option<PathBuf>,
-    pub(crate) reason: String,
-    pub(crate) considered: Vec<Value>,
-}
-
-pub(crate) fn select_team_worker_provider(
-    requested_agent: Option<&str>,
-) -> Result<TeamWorkerProviderSelection, DispatchError> {
-    let config = forktty_core::config::load_config().unwrap_or_default();
-    let path = std::env::var_os("PATH");
-    select_team_worker_provider_with_path(requested_agent, &config.team, path.as_deref())
-}
-
-fn select_team_worker_provider_with_path(
-    requested_agent: Option<&str>,
-    team: &forktty_core::TeamConfig,
-    path: Option<&OsStr>,
-) -> Result<TeamWorkerProviderSelection, DispatchError> {
-    let requested = requested_agent
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(forktty_core::config::TEAM_AGENT_AUTO);
-    let normalized =
-        forktty_core::config::normalize_team_agent_choice(requested).ok_or_else(|| {
-            DispatchError::InvalidParam(format!("unsupported team worker agent: {requested}"))
-        })?;
-    if normalized != forktty_core::config::TEAM_AGENT_AUTO {
-        return select_explicit_team_worker_provider(&normalized, requested, team, path);
-    }
-    select_auto_team_worker_provider(team, path)
-}
-
-fn select_explicit_team_worker_provider(
-    agent: &str,
-    requested: &str,
-    team: &forktty_core::TeamConfig,
-    path: Option<&OsStr>,
-) -> Result<TeamWorkerProviderSelection, DispatchError> {
-    if team
-        .disabled_agents
-        .iter()
-        .any(|disabled| disabled == agent)
-    {
-        return Err(DispatchError::PreconditionFailed(format!(
-            "Team worker provider {agent} is disabled in settings"
-        )));
-    }
-    let Some(capability) = provider_runtime::capability(agent) else {
-        return Err(DispatchError::InvalidParam(format!(
-            "unsupported team worker agent: {requested}"
-        )));
-    };
-    let resolution = provider_runtime::program_resolution(capability, team, path);
-    if resolution.executable.is_none() {
-        let reason = if resolution.configured {
-            "configured command is not executable or not found"
-        } else {
-            "is not available on PATH"
-        };
-        return Err(DispatchError::PreconditionFailed(format!(
-            "Team worker provider {agent} {reason}"
-        )));
-    }
-    Ok(TeamWorkerProviderSelection {
-        requested_agent: requested.to_string(),
-        selected_agent: agent.to_string(),
-        program: resolution.program.clone(),
-        default_program: capability.program.to_string(),
-        configured_command: resolution.configured.then(|| resolution.program.clone()),
-        executable: resolution.executable,
-        reason: "explicit_agent".to_string(),
-        considered: vec![provider_runtime::considered_row(
-            capability, team, true, "selected", path,
-        )],
-    })
-}
-
-fn select_auto_team_worker_provider(
-    team: &forktty_core::TeamConfig,
-    path: Option<&OsStr>,
-) -> Result<TeamWorkerProviderSelection, DispatchError> {
-    let candidates = team_worker_auto_provider_candidates(team);
-    let mut considered = Vec::new();
-    for (index, agent) in candidates.iter().enumerate() {
-        let Some(capability) = provider_runtime::capability(agent) else {
-            continue;
-        };
-        let disabled = team
-            .disabled_agents
-            .iter()
-            .any(|disabled| disabled == agent);
-        let resolution = provider_runtime::program_resolution(capability, team, path);
-        let available = resolution.executable.is_some() && !disabled;
-        let reason = if disabled {
-            "disabled_by_config"
-        } else if let Some(reason) = resolution.unavailable_reason.as_ref() {
-            *reason
-        } else {
-            "selected"
-        };
-        considered.push(provider_runtime::considered_row(
-            capability, team, available, reason, path,
-        ));
-        if available {
-            let selection_reason =
-                if index == 0 && team.default_agent != forktty_core::config::TEAM_AGENT_AUTO {
-                    "configured_default"
-                } else {
-                    "provider_order"
-                };
-            return Ok(TeamWorkerProviderSelection {
-                requested_agent: forktty_core::config::TEAM_AGENT_AUTO.to_string(),
-                selected_agent: agent.clone(),
-                program: resolution.program.clone(),
-                default_program: capability.program.to_string(),
-                configured_command: resolution.configured.then(|| resolution.program.clone()),
-                executable: resolution.executable,
-                reason: selection_reason.to_string(),
-                considered,
-            });
-        }
-    }
-    Err(DispatchError::PreconditionFailed(
-        "No team worker provider is available from the configured provider order".to_string(),
-    ))
-}
-
-fn team_worker_auto_provider_candidates(team: &forktty_core::TeamConfig) -> Vec<String> {
-    let mut candidates = Vec::new();
-    if team.default_agent != forktty_core::config::TEAM_AGENT_AUTO {
-        candidates.push(team.default_agent.clone());
-        if !team.auto_fallback {
-            return candidates;
-        }
-    }
-    for agent in &team.provider_order {
-        if !candidates.iter().any(|candidate| candidate == agent) {
-            candidates.push(agent.clone());
-        }
-    }
-    candidates
-}
-
-pub(crate) fn team_worker_provider_selection_value(
-    selection: &TeamWorkerProviderSelection,
-) -> Value {
-    json!({
-        "requested_agent": selection.requested_agent,
-        "selected_agent": selection.selected_agent,
-        "program": selection.program,
-        "default_program": selection.default_program,
-        "configured_command": selection.configured_command,
-        "executable": selection.executable
-            .as_ref()
-            .map(|path| Value::String(path.to_string_lossy().into_owned()))
-            .unwrap_or(Value::Null),
-        "reason": selection.reason,
-        "considered": selection.considered,
-    })
-}
-
-#[cfg(test)]
-fn team_worker_launch_command(
-    agent: &str,
-    role: Option<&str>,
-    extra_args: Vec<String>,
-) -> Result<(String, Vec<String>), DispatchError> {
-    let Some(capability) = provider_runtime::capability(agent) else {
-        return Err(DispatchError::InvalidParam(format!(
-            "unsupported team worker agent: {agent}"
-        )));
-    };
-    team_worker_launch_command_with_program(agent, capability.program, role, extra_args)
-}
-
-pub(crate) fn team_worker_launch_command_with_program(
-    agent: &str,
-    program: &str,
-    role: Option<&str>,
-    extra_args: Vec<String>,
-) -> Result<(String, Vec<String>), DispatchError> {
-    let Some(capability) = provider_runtime::capability(agent) else {
-        return Err(DispatchError::InvalidParam(format!(
-            "unsupported team worker agent: {agent}"
-        )));
-    };
-    if extra_args.len() > 64 {
-        return Err(DispatchError::InvalidParam(
-            "team worker launch args exceed 64 entries".to_string(),
-        ));
-    }
-    for arg in &extra_args {
-        if arg.len() > 4096 || arg.chars().any(char::is_control) {
-            return Err(DispatchError::InvalidParam(
-                "team worker launch args must be non-control UTF-8 strings under 4096 bytes"
-                    .to_string(),
-            ));
-        }
-    }
-    let mut args =
-        if capability.agent == "claude" && !claude_args_have_permission_override(&extra_args) {
-            claude_team_permission_args(role)
-        } else if capability.agent == "pi"
-            && role.is_some_and(team_role_is_review)
-            && !pi_args_have_tool_override(&extra_args)
-        {
-            vec!["--tools".to_string(), "read,grep,find,ls".to_string()]
-        } else {
-            Vec::new()
-        };
-    args.extend(extra_args);
-    if forktty_core::command_safety::is_shell_trampoline(program, &args) {
-        return Err(DispatchError::InvalidParam(
-            "team worker launch rejects shell trampolines".to_string(),
-        ));
-    }
-    Ok((program.to_string(), args))
-}
-
-fn claude_args_have_permission_override(args: &[String]) -> bool {
-    args.iter().any(|arg| {
-        let option = arg.split_once('=').map_or(arg.as_str(), |(key, _)| key);
-        matches!(
-            option,
-            "--permission-mode"
-                | "--dangerously-skip-permissions"
-                | "--allow-dangerously-skip-permissions"
-                | "--allowedTools"
-                | "--allowed-tools"
-                | "--disallowedTools"
-                | "--disallowed-tools"
-                | "--settings"
-        )
-    })
-}
-
-fn pi_args_have_tool_override(args: &[String]) -> bool {
-    args.iter().any(|arg| {
-        let option = arg.split_once('=').map_or(arg.as_str(), |(key, _)| key);
-        matches!(
-            option,
-            "--tools"
-                | "-t"
-                | "--exclude-tools"
-                | "-xt"
-                | "--no-builtin-tools"
-                | "-nbt"
-                | "--no-tools"
-                | "-nt"
-        )
-    })
-}
-
-fn claude_team_permission_args(role: Option<&str>) -> Vec<String> {
-    if role.is_some_and(team_role_is_review) {
-        vec![
-            "--permission-mode".to_string(),
-            "dontAsk".to_string(),
-            "--allowedTools".to_string(),
-            CLAUDE_TEAM_REVIEW_ALLOWED_TOOLS.to_string(),
-        ]
-    } else {
-        vec!["--permission-mode".to_string(), "auto".to_string()]
-    }
-}
-
-fn team_role_is_review(role: &str) -> bool {
-    role.split(|ch: char| !ch.is_ascii_alphanumeric())
-        .any(|token| token.to_ascii_lowercase().starts_with("review"))
 }
 
 pub(crate) async fn dispatch_team_message_text(
