@@ -32,6 +32,7 @@ mod topology_runtime;
 mod topology_view;
 mod workflow_params;
 mod workflow_runtime;
+mod workspace_runtime;
 mod worktree_params;
 mod worktree_runtime;
 
@@ -102,10 +103,7 @@ use thiserror::Error;
 use tokio::io::AsyncBufRead;
 use tokio::net::UnixListener;
 use tokio::sync::{broadcast, Semaphore};
-use topology_params::{
-    SurfaceIdRequest, SurfaceSplitRequest, WorkspaceCreateRequest, WorkspaceCreateSshRequest,
-    WorkspaceSelectorRequest,
-};
+use topology_params::{SurfaceIdRequest, SurfaceSplitRequest};
 use worktree_params::{WorktreeNamedRequest, WorktreeRepoRequest, WorktreeStatusRequest};
 use worktree_runtime::{finish_removal_blocking, run_worktree_blocking};
 
@@ -802,184 +800,10 @@ pub async fn dispatch(
         "remote.status" => remote::status(state, &params),
         "system.top" => topology_runtime::system_top(state, &params),
         "workspace.list" => topology_runtime::workspace_list(state),
-        "workspace.create" => {
-            let request = WorkspaceCreateRequest::decode(&params)?;
-            let (workspace, previous_active_id) = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                let previous_active_id = model.active_workspace_id();
-                let workspace = match request.name.as_deref() {
-                    Some(name) => model.create_workspace(name, request.cwd),
-                    None => model.create_auto_named_workspace(request.cwd),
-                };
-                (workspace, previous_active_id)
-            };
-            if let Err(err) = spawn_workspace_terminal(state, &workspace) {
-                rollback_workspace_creation(state, &workspace.id, previous_active_id)?;
-                return Err(err.into());
-            }
-            Ok(json!(workspace))
-        }
-        "workspace.create_ssh" => {
-            let request = WorkspaceCreateSshRequest::decode(&params)?;
-            let (workspace, previous_active_id) = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                let previous_active_id = model.active_workspace_id();
-                let workspace = match request.name.as_deref() {
-                    Some(name) => model.create_ssh_workspace(name, request.cwd, request.host),
-                    None => model.create_auto_named_ssh_workspace(request.cwd, request.host),
-                };
-                (workspace, previous_active_id)
-            };
-            if let Err(err) = spawn_workspace_terminal(state, &workspace) {
-                rollback_workspace_creation(state, &workspace.id, previous_active_id)?;
-                return Err(err.into());
-            }
-            Ok(json!(workspace))
-        }
-        "workspace.select" => {
-            let request = WorkspaceSelectorRequest::decode(&params)?;
-            let (workspace, previous_active_id) = {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                let previous_active_id = model.active_workspace_id();
-                (
-                    model
-                        .select_workspace(request.selector)
-                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
-                    previous_active_id,
-                )
-            };
-            if let Err(err) = ensure_terminal_for_active_workspace(state).await {
-                let mut err = err;
-                if previous_active_id.as_deref() != Some(workspace.id.as_str()) {
-                    if let Some(previous_active_id) = previous_active_id.as_deref() {
-                        let restored = {
-                            let mut model = state
-                                .model
-                                .lock()
-                                .map_err(|_| "Lock poisoned".to_string())?;
-                            model.select_workspace(WorkspaceSelector::Id(previous_active_id))
-                        };
-                        if restored.is_none() {
-                            err = format!(
-                                "{err}; failed to restore previous workspace {previous_active_id}"
-                            );
-                        }
-                    }
-                }
-                return Err(err.into());
-            }
-            Ok(json!(workspace))
-        }
-        "workspace.close" => {
-            let request = WorkspaceSelectorRequest::decode(&params)?;
-            let (workspace_id, workspace, surfaces, is_last_workspace) = {
-                let model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                let workspace_id = model
-                    .workspace_id_for(request.selector)
-                    .ok_or(DispatchError::NotFound("workspace".to_string()))?;
-                let surfaces = model.list_surfaces(Some(&workspace_id));
-                let workspace = model
-                    .list_workspaces()
-                    .into_iter()
-                    .find(|workspace| workspace.id == workspace_id)
-                    .ok_or(DispatchError::NotFound("workspace".to_string()))?;
-                let is_last_workspace = model.list_workspaces().len() == 1;
-                (workspace_id, workspace, surfaces, is_last_workspace)
-            };
-            let surface_ids = surfaces
-                .iter()
-                .map(|surface| surface.id.clone())
-                .collect::<Vec<_>>();
-            if is_last_workspace {
-                let (replacement, previous_active_id) = {
-                    let mut model = state
-                        .model
-                        .lock()
-                        .map_err(|_| "Lock poisoned".to_string())?;
-                    let previous_active_id = model.active_workspace_id();
-                    (
-                        model.create_workspace("main", workspace.working_dir.clone()),
-                        previous_active_id,
-                    )
-                };
-                if let Err(err) = spawn_workspace_terminal(state, &replacement) {
-                    rollback_workspace_creation(state, &replacement.id, previous_active_id)?;
-                    return Err(err.into());
-                }
-                if let Err(err) = close_terminal_surfaces_or_restore(state, &surfaces) {
-                    let mut err = err;
-                    if let Err(cleanup_err) = close_replacement_terminal_surface_if_present(
-                        state,
-                        &replacement.focused_surface_id,
-                    ) {
-                        err = format!("{err}; replacement cleanup failed: {cleanup_err}");
-                    }
-                    if let Err(rollback_err) =
-                        rollback_workspace_creation(state, &replacement.id, previous_active_id)
-                    {
-                        err = format!("{err}; workspace rollback failed: {rollback_err}");
-                    }
-                    return Err(err.into());
-                }
-                let closed = {
-                    let mut model = state
-                        .model
-                        .lock()
-                        .map_err(|_| "Lock poisoned".to_string())?;
-                    model.close_workspace(WorkspaceSelector::Id(&workspace_id))
-                };
-                if closed.is_none() {
-                    // A concurrent close won the race: the workspace is
-                    // already gone, and if the winner spawned its own
-                    // replacement ours is a duplicate that must be rolled
-                    // back instead of leaving two "main" workspaces behind.
-                    let rolled_back = rollback_replacement_if_redundant(
-                        state,
-                        &replacement.id,
-                        previous_active_id,
-                    )?;
-                    if rolled_back {
-                        if let Err(cleanup_err) = close_replacement_terminal_surface_if_present(
-                            state,
-                            &replacement.focused_surface_id,
-                        ) {
-                            return Err(format!(
-                                "Workspace not found; replacement cleanup failed: {cleanup_err}"
-                            )
-                            .into());
-                        }
-                    }
-                    return Err(DispatchError::NotFound("workspace".to_string()));
-                }
-                evict_hook_session_targets_for_surfaces(state, &surface_ids)?;
-                return Ok(json!(workspace));
-            }
-            close_terminal_surfaces_or_restore(state, &surfaces)?;
-            {
-                let mut model = state
-                    .model
-                    .lock()
-                    .map_err(|_| "Lock poisoned".to_string())?;
-                model
-                    .close_workspace(WorkspaceSelector::Id(&workspace_id))
-                    .ok_or(DispatchError::NotFound("workspace".to_string()))?;
-            }
-            evict_hook_session_targets_for_surfaces(state, &surface_ids)?;
-            ensure_terminal_for_active_workspace(state).await?;
-            Ok(json!(workspace))
-        }
+        "workspace.create" => workspace_runtime::create(state, &params),
+        "workspace.create_ssh" => workspace_runtime::create_ssh(state, &params),
+        "workspace.select" => workspace_runtime::select(state, &params).await,
+        "workspace.close" => workspace_runtime::close(state, &params).await,
         "worktree.list" => {
             let request = WorktreeRepoRequest::decode_list(state, &params).await?;
             let worktrees = run_worktree_blocking(move || worktree::list(&request.cwd)).await?;
@@ -1829,7 +1653,7 @@ fn rollback_created_worktree_after_spawn_failure(
     }
 }
 
-fn spawn_workspace_terminal(
+pub(crate) fn spawn_workspace_terminal(
     state: &SocketAppState,
     workspace: &forktty_core::Workspace,
 ) -> Result<(), String> {
@@ -2005,7 +1829,7 @@ fn forget_terminal_surface_if_present(
     }
 }
 
-fn close_replacement_terminal_surface_if_present(
+pub(crate) fn close_replacement_terminal_surface_if_present(
     state: &SocketAppState,
     surface_id: &str,
 ) -> Result<(), String> {
@@ -2021,7 +1845,7 @@ fn close_replacement_terminal_surface_if_present(
     }
 }
 
-fn close_terminal_surfaces_or_restore(
+pub(crate) fn close_terminal_surfaces_or_restore(
     state: &SocketAppState,
     surfaces: &[forktty_core::Surface],
 ) -> Result<(), String> {
@@ -2113,7 +1937,7 @@ fn evict_hook_session_targets_for_surface(
     Ok(())
 }
 
-fn evict_hook_session_targets_for_surfaces(
+pub(crate) fn evict_hook_session_targets_for_surfaces(
     state: &SocketAppState,
     surface_ids: &[String],
 ) -> Result<(), DispatchError> {
@@ -2129,7 +1953,7 @@ fn evict_hook_session_targets_for_surfaces(
     Ok(())
 }
 
-fn rollback_workspace_creation(
+pub(crate) fn rollback_workspace_creation(
     state: &SocketAppState,
     workspace_id: &str,
     previous_active_id: Option<String>,
@@ -2154,7 +1978,7 @@ fn rollback_workspace_creation(
 /// share one lock so the model can never end up empty. Returns whether the
 /// replacement was removed (the caller must then forget its terminal
 /// surface).
-fn rollback_replacement_if_redundant(
+pub(crate) fn rollback_replacement_if_redundant(
     state: &SocketAppState,
     replacement_id: &str,
     previous_active_id: Option<String>,
@@ -2185,7 +2009,9 @@ pub(crate) fn rollback_surface_creation(
     Ok(())
 }
 
-async fn ensure_terminal_for_active_workspace(state: &SocketAppState) -> Result<(), String> {
+pub(crate) async fn ensure_terminal_for_active_workspace(
+    state: &SocketAppState,
+) -> Result<(), String> {
     let workspace = {
         let model = state
             .model
