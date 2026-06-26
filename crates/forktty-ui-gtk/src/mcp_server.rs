@@ -8,6 +8,7 @@ use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
 mod tool_calls;
+mod tool_params;
 mod tool_specs;
 #[cfg(test)]
 pub(crate) use tool_calls::build_socket_call_for_test;
