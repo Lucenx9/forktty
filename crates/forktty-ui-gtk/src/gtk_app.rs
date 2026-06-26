@@ -74,6 +74,7 @@ mod app;
 mod backend;
 #[cfg(feature = "browser")]
 mod browser_bridge;
+mod chrome_refresh;
 mod command_palette;
 mod controller;
 mod embedded_controls;
@@ -119,6 +120,7 @@ use app::*;
 use backend::*;
 #[cfg(feature = "browser")]
 use browser_bridge::*;
+use chrome_refresh::*;
 use command_palette::*;
 use controller::*;
 use embedded_controls::*;
