@@ -1,3 +1,5 @@
+//! Durable workflow plans, evidence, loop coordination metadata, and event state.
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fs;

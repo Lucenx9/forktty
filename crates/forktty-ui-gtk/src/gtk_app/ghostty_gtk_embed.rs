@@ -1,3 +1,5 @@
+//! Dynamic loader and safe GTK wrapper for the embedded Ghostty GTK surface library.
+
 use forktty_terminal::{
     TerminalError, TerminalTextCapture, TerminalTextSnapshot, TerminalTextSnapshotParts,
 };

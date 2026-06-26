@@ -1,3 +1,5 @@
+//! Socket CLI team command regression tests for list, task, worker, message, and finish flows.
+
 use super::*;
 
 #[test]

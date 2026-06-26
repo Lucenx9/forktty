@@ -1,3 +1,5 @@
+//! Local stdio MCP bridge that maps MCP requests to ForkTTY socket JSON-RPC calls.
+
 use crate::agent_guide;
 use crate::socket_cli::{send_socket_request_with_timeout, CliResult};
 use forktty_core::protocol_limits;

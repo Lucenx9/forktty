@@ -1,3 +1,5 @@
+//! GTK worktree dialogs and background git task plumbing.
+
 use super::*;
 
 pub(super) struct WorktreeDialogChoice {

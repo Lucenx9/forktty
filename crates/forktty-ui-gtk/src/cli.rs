@@ -1,3 +1,5 @@
+//! Top-level native CLI parser, diagnostics, and built-in command dispatch.
+
 use forktty_core::command_safety::is_executable_file;
 use forktty_socket::socket_path_from_env;
 use serde_json::json;

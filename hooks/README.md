@@ -7,6 +7,21 @@ socket API. The preferred path is the installed ForkTTY CLI:
 forktty hooks setup
 ```
 
+## Repository ownership
+
+This README describes the installed hook/MCP/skill behavior and the user-facing
+config destinations. The executable hook installer lives in
+`crates/forktty-ui-gtk/src/socket_cli/hooks.rs` and
+`crates/forktty-ui-gtk/src/socket_cli/hooks/install.rs`; runtime hook event
+handling lives in `crates/forktty-ui-gtk/src/socket_cli/hooks/event.rs`.
+Provider taxonomy and cross-agent capability notes live in `docs/agents.md`.
+Managed skill content lives in `.agents/skills/forktty-agent-orchestration/`
+and is embedded by `crates/forktty-ui-gtk/src/socket_cli/skills.rs`.
+
+When changing hook, MCP, or skill setup behavior, update the owning Rust module
+first, then keep this README, `docs/agents.md`, `SPEC.md`, `README.md`, and
+the public website context aligned.
+
 That writes default agent-specific hook config into the user config for Codex,
 Claude Code, Antigravity CLI, and OpenCode:
 

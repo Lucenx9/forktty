@@ -1,3 +1,5 @@
+//! Persistent session snapshots, legacy migration, recovery, and process lock handling.
+
 use crate::backup::BackupReservationKind;
 use crate::command_safety::is_valid_ssh_host;
 use crate::model::{

@@ -1,3 +1,5 @@
+//! GTK terminal signal wiring for focus, metadata, notifications, status, and socket events.
+
 use super::*;
 use base64::Engine;
 #[cfg(feature = "gtk-ghostty")]

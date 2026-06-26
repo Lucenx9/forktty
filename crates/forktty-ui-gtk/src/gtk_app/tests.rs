@@ -1,3 +1,5 @@
+//! GTK app regression tests for controller behavior, styling, dialogs, and renderer helpers.
+
 use super::*;
 
 use git2::Repository;

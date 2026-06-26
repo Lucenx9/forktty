@@ -1,3 +1,5 @@
+//! Git worktree create, attach, remove, merge, hook, and repository safety operations.
+
 use git2::{BranchType, MergeAnalysis, Repository, StatusOptions};
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};

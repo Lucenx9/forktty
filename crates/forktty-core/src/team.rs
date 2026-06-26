@@ -1,3 +1,5 @@
+//! Durable provider-neutral team, worker, task, message, and event state store.
+
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fs;

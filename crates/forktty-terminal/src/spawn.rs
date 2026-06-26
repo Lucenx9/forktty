@@ -1,3 +1,5 @@
+//! Terminal child argv/environment construction for shells, PTYs, AppImage, and Ghostty resources.
+
 use crate::SpawnRequest;
 use forktty_core::command_safety::is_executable_file;
 use forktty_core::pty_persistence::PtyPersistencePlan;

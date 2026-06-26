@@ -1,3 +1,5 @@
+//! Settings dialog UI, validation, and config update plumbing.
+
 use super::*;
 
 const SETTINGS_SETUP_POLL_INTERVAL: Duration = Duration::from_millis(150);

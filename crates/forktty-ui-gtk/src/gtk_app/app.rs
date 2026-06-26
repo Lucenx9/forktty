@@ -1,3 +1,5 @@
+//! GTK application bootstrap, window chrome, actions, and runtime service wiring.
+
 use super::*;
 
 const TERMINAL_FRAME_INTERVAL: Duration = Duration::from_millis(16);

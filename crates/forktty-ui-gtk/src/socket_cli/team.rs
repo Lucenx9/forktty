@@ -1,3 +1,5 @@
+//! Team CLI commands and formatting for workers, tasks, messages, review, and finish flows.
+
 use super::{
     bool_option, build_target_params, comma_list_option, handle_help,
     insert_optional_cli_raw_string_param, insert_optional_cli_string_param,

@@ -1,3 +1,5 @@
+//! Config loading, validation, normalization, and private on-disk persistence.
+
 use crate::backup::BackupReservationKind;
 use crate::command_safety::{is_executable_file, is_shell_trampoline};
 use serde::{Deserialize, Serialize};

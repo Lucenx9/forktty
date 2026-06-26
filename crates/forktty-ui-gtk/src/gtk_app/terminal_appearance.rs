@@ -1,3 +1,5 @@
+//! Terminal appearance mapping from ForkTTY/Ghostty config into renderer and widget settings.
+
 use super::*;
 use forktty_terminal::ghostty::core::TerminalCursorStyle;
 use std::cell::RefCell;

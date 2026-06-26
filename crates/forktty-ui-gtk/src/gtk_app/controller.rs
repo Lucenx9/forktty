@@ -1,3 +1,5 @@
+//! GTK workspace controller that keeps the model, pane widgets, and socket state in sync.
+
 use super::*;
 
 pub(super) struct PaneChrome {

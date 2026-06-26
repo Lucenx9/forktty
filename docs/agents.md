@@ -6,6 +6,27 @@ terminals.
 
 This is a baseline taxonomy for safe future integration. It does not change how ForkTTY launches agents, writes hook config, gates permissions, or reports UI/socket state by itself.
 
+## Source of truth
+
+This file is the provider taxonomy and review map. Executable behavior lives in
+the owning Rust modules and agent-facing setup docs:
+
+- Provider identity, normalized status, and provider command defaults:
+  `crates/forktty-core/src/agents.rs`.
+- Hook setup, removal, doctor checks, and hook event payload handling:
+  `crates/forktty-ui-gtk/src/socket_cli/hooks.rs`,
+  `crates/forktty-ui-gtk/src/socket_cli/hooks/install.rs`, and
+  `crates/forktty-ui-gtk/src/socket_cli/hooks/event.rs`.
+- MCP setup and MCP tool exposure: `crates/forktty-ui-gtk/src/mcp_server.rs`
+  plus the socket methods in `crates/forktty-socket/src/`.
+- Managed agent skill content: `.agents/skills/forktty-agent-orchestration/`,
+  embedded by `crates/forktty-ui-gtk/src/socket_cli/skills.rs`.
+- User-facing hook/MCP/skill setup guidance: `hooks/README.md`, `README.md`,
+  `SPEC.md`, and the separate `forktty-site` checkout when public docs change.
+
+When provider behavior changes, update the owning module first, then keep this
+taxonomy and the agent-facing docs aligned in the same change.
+
 ## Documentation areas reviewed (June 19, 2026)
 
 - OpenAI Codex docs: hooks and configuration references

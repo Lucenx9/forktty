@@ -1,3 +1,5 @@
+//! Agents/status panel UI for provider sessions, permissions, progress, and resume actions.
+
 use super::*;
 use forktty_core::agent_resume_command_with_cwd_and_permission_mode;
 use forktty_socket::dispatch;

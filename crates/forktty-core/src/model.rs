@@ -1,3 +1,5 @@
+//! In-memory workspace, pane, surface, and per-surface runtime metadata model.
+
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;

@@ -1,3 +1,5 @@
+//! Workspace sidebar state, rows, popovers, and status/location summaries.
+
 use super::*;
 use std::collections::BTreeSet;
 use std::path::Path;

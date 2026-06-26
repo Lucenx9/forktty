@@ -1,3 +1,5 @@
+//! Legacy Cairo/Pango terminal renderer for classic panes and renderer behavior tests.
+
 use super::terminal_geometry::{terminal_grid_geometry, TerminalGridGeometry, TERMINAL_PADDING_PX};
 use super::*;
 use forktty_terminal::ghostty::core::{

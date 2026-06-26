@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 
 const AGENT_SKILL_NAME: &str = "forktty-agent-orchestration";
 pub(super) const AGENT_SKILL_MARKER: &str = "<!-- forktty-managed-agent-skill -->";
+// Source of truth: edit the files under .agents/skills/forktty-agent-orchestration/,
+// then verify the embedded checksums with the final forktty binary.
 pub(super) const AGENT_SKILL_MD: &str =
     include_str!("../../../../.agents/skills/forktty-agent-orchestration/SKILL.md");
 pub(super) const AGENT_SKILL_OPENAI_YAML: &str =

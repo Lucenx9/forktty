@@ -1,3 +1,5 @@
+//! Socket CLI hook behavior regression tests for setup, event handling, and transport limits.
+
 use super::*;
 
 #[test]

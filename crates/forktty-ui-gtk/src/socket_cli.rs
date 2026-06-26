@@ -1,3 +1,5 @@
+//! Socket CLI transport, command routing, formatting, and JSON-RPC wrappers.
+
 use forktty_core::protocol_limits;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;

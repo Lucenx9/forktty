@@ -1,3 +1,5 @@
+//! Terminal notification filtering, command validation, and notification payload helpers.
+
 use crate::command_safety::{is_executable_file, is_shell_trampoline};
 use crate::{AppConfig, NotificationItem, NotificationKind};
 use std::collections::VecDeque;

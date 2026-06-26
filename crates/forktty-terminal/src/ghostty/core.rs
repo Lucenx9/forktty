@@ -1,3 +1,5 @@
+//! Safe wrapper around libghostty-vt terminal state, snapshots, input encoding, and events.
+
 use super::{events::GhosttyEvent, metadata::MetadataParser};
 use libghostty_vt::{
     fmt::{Format, Formatter, FormatterOptions},

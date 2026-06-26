@@ -1,3 +1,5 @@
+//! Legacy classic terminal widget glue around libghostty-vt state, input, and rendering.
+
 use super::terminal_geometry::{
     padded_cell_for_position, padded_cell_for_position_clamped, padded_mouse_position,
     terminal_grid_cells_for_allocation, terminal_grid_geometry, TerminalGridGeometry,

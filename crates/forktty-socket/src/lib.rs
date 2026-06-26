@@ -1,3 +1,5 @@
+//! Owner-only Unix socket JSON-RPC server, method dispatcher, and shared runtime state.
+
 mod agent_params;
 mod agent_runtime;
 mod browser_import;
