@@ -82,6 +82,34 @@ Five workspace crates plus `xtask`, with a strict dependency flow: `forktty-core
 
 Useful CLI for inspecting a running instance: `forktty doctor`, `forktty --json doctor`, `forktty capabilities`, `forktty identify`, `forktty context-snapshot`, `forktty top`, `forktty surfaces`, `forktty agents`, `forktty agent-health`, `forktty teams`, `forktty team-summary`, `forktty workflows`, `forktty workflow-loop-set`, `forktty feed`, `forktty events`, and `forktty wait agent-status`.
 
+## GitHub repository structure
+
+ForkTTY uses standard GitHub community/automation locations plus a small set of root source-of-truth docs. Keep the repository shape predictable for GitHub, contributors, release automation, and coding agents.
+
+- Keep root-level project docs stable and purpose-specific: `README.md` for user-facing overview/install/usage, `CONTRIBUTING.md` for contributor workflow, `SECURITY.md` for private vulnerability reporting, `RELEASING.md` for maintainer release steps, `CHANGELOG.md` for user-visible changes, `LICENSE` for licensing, and `AGENTS.md` for coding-agent operating rules. Do not bury these in feature directories.
+- Keep `.github/` for GitHub-native metadata only: workflows in `.github/workflows/`, ownership in `.github/CODEOWNERS`, dependency automation in `.github/dependabot.yml`, and future issue/PR templates under `.github/ISSUE_TEMPLATE/` or `.github/PULL_REQUEST_TEMPLATE/`. Do not put product docs, release notes, or generated app assets there.
+- Treat GitHub community health files as discoverability contracts. GitHub recognizes `README`, `LICENSE`, `CONTRIBUTING`, `CODE_OF_CONDUCT`, security policy files, and issue/PR templates from supported locations; in this repo, prefer root files for ForkTTY-specific policies and `.github/` for templates/automation. Adding a new governance file such as `CODE_OF_CONDUCT.md` is an owner/product decision, not a drive-by cleanup.
+- Keep `.github/workflows/*.yml` small and task-focused. Shared command knowledge belongs in scripts, `xtask`, or this file; workflows should call those commands instead of duplicating long shell logic. When changing workflow behavior, update the matching local command/check section above so CI and local guidance do not drift.
+- Keep GitHub templates actionable and short. Issue templates should ask for environment, version/build, reproduction steps, logs/screenshots when relevant, and expected/actual behavior. PR templates should ask for scope, user-visible changes, linked issues, tests run, and release/docs impact. Avoid broad checklists that contributors cannot verify.
+- Keep security entry points explicit. `SECURITY.md` is the public source for vulnerability reporting and supported versions; `.github/workflows/security.yml`, `.github/workflows/codeql.yml`, `cargo audit`, and Dependabot are automation, not substitutes for the policy.
+- Keep release entry points explicit. `RELEASING.md`, `CHANGELOG.md`, packaging scripts, and `.github/workflows/*` must tell one consistent story about artifacts, features, signing/checksums, and post-release verification.
+- Prefer adding a new top-level directory only for a durable category of repo content (`crates/`, `scripts/`, `packaging/`, `hooks/`, `vendor/`, `docs/` if introduced). If a file exists only to support one crate or feature, keep it near that owner instead of creating a new root bucket.
+- Keep the separate `forktty-site` checkout as the public website source, not a shadow docs tree in this repo. When README-facing behavior, install flows, screenshots, public security/privacy wording, hooks/MCP setup, or release assets change, update the site in the same task or report the exact site update still needed.
+- When adding or moving GitHub-facing files, verify both the GitHub convention and the local contract: use GitHub Docs for supported filenames/locations, then run the relevant local check (`cargo run -p xtask -- check`, workflow syntax checks if available, or docs/site tests when touched).
+
+## Rust workspace structure
+
+ForkTTY is a Cargo workspace, so prefer standard Cargo/Rust layout before inventing local structure. The root `Cargo.toml` owns workspace membership, shared dependency/version/lint policy, resolver behavior, and release profile choices; each crate `Cargo.toml` owns only crate-specific dependencies, features, and metadata.
+
+- Keep Rust packages under `crates/<package>/` unless the package is an explicit repo tool such as `xtask`. Do not add ad hoc top-level Rust packages for one feature.
+- Inside each package, follow Cargo conventions: `src/lib.rs` for library entry points, `src/main.rs` or `src/bin/*.rs` for binaries, `tests/` for integration tests against public behavior, `examples/` for runnable examples, and `benches/` only when benchmarked by the local toolchain.
+- Keep module paths predictable. Prefer the existing modern Rust layout (`feature.rs` plus `feature/*.rs` children, as in `socket_cli.rs` and `socket_cli/...`) over adding new `mod.rs` trees, unless the surrounding subtree already uses `mod.rs`.
+- Name modules by domain or feature boundary (`team`, `workflow`, `worktree`, `socket_cli/hooks`) instead of generic buckets such as `common`, `misc`, `helpers`, or `utils`. Shared helpers should remain crate-private and sit near their owning feature until two or more real owners justify extraction.
+- Put unit tests next to private implementation when they need private access; put integration tests in the crate's `tests/` directory when they pin public CLI/socket/MCP/model behavior. Shared test fixtures belong in a clearly named crate-local `test_support` module or `tests/support`, not in production `utils`.
+- Keep feature flags additive and compile-tested. Optional UI/browser/provider code must stay behind the matching `#[cfg(feature = "...")]`, and lower crates must not gain GUI or binary-only dependencies to make an upper-crate feature easier.
+- Add dependencies at the narrowest crate that needs them. Prefer workspace dependency declarations for version consistency, but do not expose a dependency through `forktty-core` just because multiple upper crates use it.
+- Keep generated, vendored, and embedded assets out of normal source paths when possible: generated outputs should point back to the generator/template, vendored code belongs under `vendor/`, and embedded agent/hook assets must preserve the checksum/rebuild workflow described above.
+
 ## Rust modularity and anti-monolith rules
 
 Use Rust's module system intentionally: group related functionality, keep implementation details private, and expose the smallest useful API. Follow Cargo's normal layout conventions before inventing local structure.
