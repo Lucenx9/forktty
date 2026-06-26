@@ -39,6 +39,7 @@ mod team_params;
 mod team_provider;
 mod team_runtime;
 mod team_state;
+mod terminal_text_params;
 mod topology_params;
 mod topology_runtime;
 mod topology_view;
@@ -84,7 +85,7 @@ use forktty_core::{
 };
 #[cfg(test)]
 use forktty_core::{FeedEntry, FeedEntryType};
-use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError, TerminalTextCapture};
+use forktty_terminal::{SharedTerminalBackend, SpawnRequest, TerminalError};
 use serde_json::{json, Value};
 use std::io;
 #[cfg(all(test, feature = "browser"))]
@@ -226,12 +227,13 @@ pub(crate) use socket_bind::{
 };
 #[cfg(test)]
 pub(crate) use team_provider::{team_worker_launch_command, CLAUDE_TEAM_REVIEW_ALLOWED_TOOLS};
+pub(crate) use terminal_text_params::{
+    terminal_tail_lines_from_params, terminal_text_capture_from_params,
+    terminal_text_max_bytes_from_params, MAX_CAPTURE_TAIL_LINES, MAX_TERMINAL_TEXT_BYTES,
+};
 
 const MAX_REQUEST_SIZE: usize = protocol_limits::SOCKET_REQUEST_MAX_BYTES;
 const MAX_SEND_TEXT_BYTES: usize = protocol_limits::SOCKET_SEND_TEXT_MAX_BYTES;
-const MAX_TERMINAL_TEXT_BYTES: usize = protocol_limits::SOCKET_TERMINAL_TEXT_MAX_BYTES;
-const DEFAULT_CAPTURE_TAIL_LINES: usize = 80;
-const MAX_CAPTURE_TAIL_LINES: usize = 5_000;
 const DEFAULT_CONTEXT_SNAPSHOT_TAIL_LINES: usize = 40;
 const DEFAULT_CONTEXT_SNAPSHOT_TAIL_MAX_BYTES: usize =
     protocol_limits::DEFAULT_CONTEXT_SNAPSHOT_TAIL_MAX_BYTES;
@@ -989,44 +991,6 @@ pub(crate) async fn ensure_terminal_for_active_workspace(
         return Ok(());
     }
     spawn_workspace_terminal(state, &workspace)
-}
-
-fn terminal_text_capture_from_params(params: &Value) -> Result<TerminalTextCapture, DispatchError> {
-    match params.get("scope") {
-        None | Some(Value::Null) => Ok(TerminalTextCapture::Visible),
-        Some(Value::String(scope)) => match scope.trim() {
-            "" | "visible" => Ok(TerminalTextCapture::Visible),
-            "all" | "full" => Ok(TerminalTextCapture::All),
-            other => Err(DispatchError::InvalidParam(format!(
-                "Invalid parameter scope: expected visible or all, got {other:?}"
-            ))),
-        },
-        Some(_) => Err(DispatchError::InvalidParam(
-            "Invalid parameter scope: expected string".to_string(),
-        )),
-    }
-}
-
-fn terminal_text_max_bytes_from_params(params: &Value) -> Result<usize, DispatchError> {
-    let Some(value) = optional_u64_param(params, "max_bytes")? else {
-        return Ok(MAX_TERMINAL_TEXT_BYTES);
-    };
-    if value == 0 || value > MAX_TERMINAL_TEXT_BYTES as u64 {
-        return Err(DispatchError::InvalidParam(format!(
-            "Invalid parameter max_bytes: expected 1..={MAX_TERMINAL_TEXT_BYTES}"
-        )));
-    }
-    Ok(value as usize)
-}
-
-fn terminal_tail_lines_from_params(params: &Value) -> Result<usize, DispatchError> {
-    let lines = optional_u64_param(params, "lines")?.unwrap_or(DEFAULT_CAPTURE_TAIL_LINES as u64);
-    if lines == 0 || lines > MAX_CAPTURE_TAIL_LINES as u64 {
-        return Err(DispatchError::InvalidParam(format!(
-            "Invalid parameter lines: expected 1..={MAX_CAPTURE_TAIL_LINES}"
-        )));
-    }
-    Ok(lines as usize)
 }
 
 fn ensure_model_surface_exists(
