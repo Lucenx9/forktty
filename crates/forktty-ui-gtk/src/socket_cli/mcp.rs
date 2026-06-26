@@ -1,13 +1,16 @@
 //! MCP stdio bridge registration CLI setup, removal, and config merge helpers.
 
+use super::hooks::{
+    antigravity_config_dir, codex_home_dir, home_dir, legacy_gemini_config_path,
+    normalize_agent_name,
+};
 use super::integration_files::{
     atomic_write_file, backup_file, ensure_parent_dir, hook_config_write_path,
     read_json_file_with_limit, read_text_config_with_limit, stable_hook_launcher_path,
 };
 use super::{
-    antigravity_config_dir, bool_option, codex_home_dir, home_dir, legacy_gemini_config_path,
-    normalize_agent_name, parse_flags, print_json, reject_unknown_options, write_stdout_line,
-    CliContext, CliError, CliResult,
+    bool_option, parse_flags, print_json, reject_unknown_options, write_stdout_line, CliContext,
+    CliError, CliResult,
 };
 use serde_json::{json, Map, Value};
 use std::fs;

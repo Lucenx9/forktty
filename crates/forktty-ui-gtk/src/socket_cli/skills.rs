@@ -1,11 +1,12 @@
 //! Managed agent skill CLI setup, removal, status, and checksum helpers.
 
+use super::hooks::home_dir;
 use super::integration_files::{
     atomic_write_file, ensure_parent_dir, read_text_config, MAX_HOOK_CONFIG_SIZE_BYTES,
 };
 use super::{
-    bool_option, home_dir, inspect_path, next_file_nonce, parse_flags, print_json,
-    reject_unknown_options, trimmed_env, write_stdout_line, CliContext, CliError, CliResult,
+    bool_option, inspect_path, next_file_nonce, parse_flags, print_json, reject_unknown_options,
+    trimmed_env, write_stdout_line, CliContext, CliError, CliResult,
 };
 use serde_json::{json, Value};
 use std::fs::{self, File};

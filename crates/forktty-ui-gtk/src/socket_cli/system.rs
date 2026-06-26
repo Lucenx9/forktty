@@ -1,5 +1,6 @@
 //! General socket CLI commands, diagnostics, completions, and wait helpers.
 
+use super::hooks::AGENTS;
 use super::integration_files::stable_hook_launcher_path;
 use super::mcp::MCP_AGENTS;
 use super::skills::{inspect_skill_target, SKILL_TARGETS};
@@ -9,7 +10,7 @@ use super::{
     print_result_or_json, read_stdin_text, reject_unknown_options, require_no_args,
     safe_string_field, sanitize_for_terminal, send_socket_request, should_read_stdin,
     socket_path_from_env, string_field, string_option, target_selector_values, trimmed_env,
-    write_stdout_line, write_stdout_text, CliContext, CliError, CliResult, FlagValue, AGENTS,
+    write_stdout_line, write_stdout_text, CliContext, CliError, CliResult, FlagValue,
     AGENT_HELP_TEXT, EXAMPLES_TEXT, STATUS_HELP_TEXT, TEAM_HELP_TEXT, WORKFLOW_HELP_TEXT,
 };
 use super::{COMPLETION_COMMANDS, STATUS_SUBCOMMANDS, TEAM_SUBCOMMANDS};
