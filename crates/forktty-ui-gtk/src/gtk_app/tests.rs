@@ -5080,7 +5080,7 @@ fn app_menu_source_uses_packaged_icon_and_guarded_f10_shortcut() {
 
 #[test]
 fn embedded_ghostty_surface_marks_terminal_focus_boundary() {
-    let source = include_str!("controller.rs");
+    let source = include_str!("embedded_runtime.rs");
 
     assert!(source.contains("surface.add_css_class(\"forktty-terminal-focus-boundary\")"));
     assert!(source.contains("build_embedded_ghostty_scroll_view"));
