@@ -18,6 +18,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod agent;
 #[cfg(any(feature = "browser", test))]
 mod browser;
+mod feed;
+mod remote;
 mod status;
 mod surface;
 mod team;
@@ -36,6 +38,8 @@ use agent::{
 };
 #[cfg(any(feature = "browser", test))]
 use browser::handle_browser;
+use feed::handle_feed;
+use remote::{handle_remote_status, handle_remotes};
 #[cfg(test)]
 use status::{
     context_snapshot_params, format_context_snapshot_explain_line, format_notification_line,
@@ -2473,82 +2477,6 @@ fn should_read_stdin(
     !matches!(options.get(text_option), Some(FlagValue::String(_))) && positionals.is_empty()
 }
 
-fn handle_remotes(context: &CliContext, args: Vec<String>) -> CliResult<()> {
-    let parsed = parse_flags(args, &[]);
-    require_no_args(&parsed.positionals, "remotes")?;
-    reject_unknown_options(
-        &parsed.options,
-        &["workspace-id", "workspace-name", "worktree-name"],
-        "remotes",
-    )?;
-    let result = send_socket_request(
-        &context.socket_path,
-        "remote.list",
-        Value::Object(build_target_params(&parsed.options, "remotes")?),
-    )?;
-    if context.json {
-        return print_json(&result);
-    }
-    let Some(items) = result.as_array() else {
-        return Ok(());
-    };
-    if items.is_empty() {
-        write_stdout_line("No remotes")?;
-    } else {
-        for remote in items {
-            write_stdout_line(&format_remote_line(remote))?;
-        }
-    }
-    Ok(())
-}
-
-fn handle_remote_status(context: &CliContext, args: Vec<String>) -> CliResult<()> {
-    let parsed = parse_flags(args, &[]);
-    require_no_args(&parsed.positionals, "remote-status")?;
-    reject_unknown_options(
-        &parsed.options,
-        &[
-            "surface-id",
-            "workspace-id",
-            "workspace-name",
-            "worktree-name",
-        ],
-        "remote-status",
-    )?;
-    let mut params = build_target_params(&parsed.options, "remote-status")?;
-    if let Some(surface_id) =
-        non_blank_string_option(&parsed.options, "surface-id", "--surface-id")?
-    {
-        params.insert(
-            "surface_id".to_string(),
-            Value::String(surface_id.trim().to_string()),
-        );
-    }
-    let result = send_socket_request(&context.socket_path, "remote.status", Value::Object(params))?;
-    if context.json {
-        return print_json(&result);
-    }
-    write_stdout_line(&format_remote_line(&result))
-}
-
-fn format_remote_line(remote: &Value) -> String {
-    let host = safe_string_field(remote, "host").unwrap_or_else(|| "(unknown)".to_string());
-    let workspace = safe_string_field(remote, "workspace_name")
-        .or_else(|| safe_string_field(remote, "workspace_id"))
-        .unwrap_or_default();
-    let surface = safe_string_field(remote, "surface_id").unwrap_or_default();
-    let state = if remote
-        .get("connected")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        "connected"
-    } else {
-        "disconnected"
-    };
-    format!("{host} [{workspace}] {surface} {state}")
-}
-
 fn required_positionals(
     positionals: &[String],
     command: &str,
@@ -2657,84 +2585,6 @@ fn comma_list_option(
         return Err(CliError::new(format!("{option_name} requires a value")));
     }
     Ok(Some(values))
-}
-
-fn handle_feed(context: &CliContext, args: Vec<String>) -> CliResult<()> {
-    let parsed = parse_flags(args, &[]);
-    if parsed
-        .positionals
-        .first()
-        .is_some_and(|arg| arg == "respond")
-    {
-        return handle_feed_respond(context, parsed);
-    }
-    require_no_args(&parsed.positionals, "feed")?;
-    reject_unknown_options(
-        &parsed.options,
-        &["workspace-id", "workspace-name", "worktree-name", "limit"],
-        "feed",
-    )?;
-    let mut params = build_target_params(&parsed.options, "feed")?;
-    if let Some(limit) = parse_u64_option(&parsed.options, "limit", "--limit")? {
-        params.insert("limit".to_string(), Value::Number(limit.into()));
-    }
-    let result = send_socket_request(&context.socket_path, "feed.list", Value::Object(params))?;
-    if context.json {
-        return print_json(&result);
-    }
-    let Some(items) = result.as_array() else {
-        return Ok(());
-    };
-    if items.is_empty() {
-        return write_stdout_line("No feed items");
-    }
-    for item in items {
-        write_stdout_line(&format_feed_line(item))?;
-    }
-    Ok(())
-}
-
-fn handle_feed_respond(context: &CliContext, parsed: ParsedFlags) -> CliResult<()> {
-    if parsed.positionals.len() != 2 {
-        return Err(CliError::new(
-            "feed respond: expected feed respond <approval-id> --decision approve|deny",
-        ));
-    }
-    reject_unknown_options(&parsed.options, &["decision"], "feed respond")?;
-    let decision = non_blank_string_option(&parsed.options, "decision", "--decision")?
-        .ok_or_else(|| CliError::new("feed respond: missing --decision approve|deny"))?;
-    if !matches!(decision.trim(), "approve" | "approved" | "deny" | "denied") {
-        return Err(CliError::new(
-            "feed respond: --decision must be approve or deny",
-        ));
-    }
-    let result = send_socket_request(
-        &context.socket_path,
-        "feed.approval.respond",
-        json!({
-            "id": parsed.positionals[1],
-            "decision": decision,
-        }),
-    )?;
-    if context.json {
-        return print_json(&result);
-    }
-    write_stdout_line(&format!(
-        "Recorded {} for {}",
-        safe_string_field(&result, "approval_state").unwrap_or_else(|| "decision".to_string()),
-        safe_string_field(&result, "id").unwrap_or_else(|| "approval".to_string())
-    ))
-}
-
-fn format_feed_line(item: &Value) -> String {
-    let item_type = safe_string_field(item, "type").unwrap_or_else(|| "item".to_string());
-    let workspace = safe_string_field(item, "workspace_id").unwrap_or_else(|| "global".to_string());
-    let title = safe_string_field(item, "title").unwrap_or_else(|| "(untitled)".to_string());
-    let body = safe_string_field(item, "body")
-        .filter(|body| !body.is_empty())
-        .map(|body| format!(" — {body}"))
-        .unwrap_or_default();
-    format!("[{item_type}] {workspace} · {title}{body}")
 }
 
 fn surface_id_from_args(parsed: &ParsedFlags, command: &str) -> CliResult<Option<String>> {
