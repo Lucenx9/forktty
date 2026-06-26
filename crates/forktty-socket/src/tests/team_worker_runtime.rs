@@ -1,0 +1,571 @@
+//! Team worker launch/shutdown runtime socket method regression tests.
+
+use super::*;
+
+#[tokio::test]
+#[serial_test::serial]
+async fn dispatches_team_orchestration_runtime_methods() {
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_codex(bin_dir.path());
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let (mut state, backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    let leader_resume_cwd = tempfile::tempdir().unwrap();
+    let leader_surface_cwd = {
+        let model = state.model.lock().unwrap();
+        model.surface(surface_id).unwrap().cwd.clone()
+    };
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.set_surface_agent_session(surface_id, AgentKind::Codex, "codex-session-1",));
+        assert!(model.set_surface_agent_session_resume_cwd(
+            surface_id,
+            leader_resume_cwd.path().to_path_buf(),
+        ));
+    }
+
+    let team = dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "leader_surface_id": surface_id,
+            "name": "Launch",
+            "goal": "ship runtime"
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(team["workspace_id"], workspace_id);
+    assert_eq!(team["leader_surface_id"], surface_id);
+
+    let worker = dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex",
+            "surface_id": surface_id,
+            "role": "implementer",
+            "status": "idle"
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(worker["surface_id"], surface_id);
+
+    let task = dispatch(
+        &state,
+        "team.task.upsert",
+        json!({
+            "team_id": "team-1",
+            "task_id": "task-1",
+            "title": "Build team runtime",
+            "assigned_worker_id": "worker-1"
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(task["assigned_worker_id"], "worker-1");
+
+    let launched = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-2",
+            "agent": "codex",
+            "role": "reviewer",
+            "assigned_task_id": "task-1",
+            "args": ["--model", "test"]
+        }),
+    )
+    .await
+    .unwrap();
+    let launched_surface_id = launched["surface"]["id"].as_str().unwrap();
+    assert_eq!(launched["worker"]["surface_id"], launched_surface_id);
+    assert_eq!(backend.spawn_shell(launched_surface_id).unwrap(), "codex");
+    let launched_runtime_surface = backend
+        .surfaces()
+        .unwrap()
+        .into_iter()
+        .find(|surface| surface.surface_id == launched_surface_id)
+        .unwrap();
+    assert_eq!(launched_runtime_surface.cwd, leader_surface_cwd);
+    assert_eq!(
+        backend.spawn_args(launched_surface_id).unwrap(),
+        vec!["--model".to_string(), "test".to_string()]
+    );
+
+    let heartbeat = dispatch(
+        &state,
+        "team.worker.heartbeat",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "status": "running",
+            "assigned_task_id": "task-1"
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(heartbeat["status"], "running");
+    assert!(heartbeat["last_heartbeat_ms"].as_u64().unwrap() > 0);
+
+    let message = dispatch(
+        &state,
+        "team.message.send",
+        json!({
+            "team_id": "team-1",
+            "message_id": "msg-1",
+            "from": "leader",
+            "to_worker_id": "worker-1",
+            "task_id": "task-1",
+            "body": "continue\n"
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(message["delivered"], false);
+
+    let inbox = dispatch(
+        &state,
+        "team.inbox",
+        json!({"team_id": "team-1", "worker_id": "worker-1"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(inbox.as_array().unwrap().len(), 1);
+
+    let ack = dispatch(
+        &state,
+        "team.message.ack",
+        json!({"team_id": "team-1", "message_id": "msg-1", "worker_id": "worker-1"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(ack["delivered"], true);
+
+    let dispatchable = dispatch(
+        &state,
+        "team.message.send",
+        json!({
+            "team_id": "team-1",
+            "message_id": "msg-2",
+            "from": "leader",
+            "to_worker_id": "worker-2",
+            "body": "review this\r"
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(dispatchable["delivered"], false);
+    let dispatched = dispatch(
+        &state,
+        "team.message.dispatch",
+        json!({"team_id": "team-1", "message_id": "msg-2"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(dispatched["message"]["delivered"], true);
+    assert_eq!(
+        backend.sent_text(launched_surface_id).unwrap(),
+        vec!["review this\r".to_string()]
+    );
+
+    let nudged = dispatch(
+        &state,
+        "team.worker.nudge",
+        json!({"team_id": "team-1", "worker_id": "worker-2", "text": "ping\r"}),
+    )
+    .await
+    .unwrap();
+    assert!(nudged["worker"]["last_nudge_ms"].as_u64().unwrap() > 0);
+    let shutdown = dispatch(
+        &state,
+        "team.worker.shutdown",
+        json!({"team_id": "team-1", "worker_id": "worker-2", "text": "stop"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(shutdown["worker"]["status"], "shutdown_requested");
+    assert_eq!(shutdown["submitted"], true);
+    assert_eq!(shutdown["closed_surface"], false);
+    assert_eq!(
+        backend.sent_text(launched_surface_id).unwrap(),
+        vec![
+            "review this\r".to_string(),
+            "ping\r".to_string(),
+            "stop\r".to_string()
+        ]
+    );
+
+    let health = dispatch(
+        &state,
+        "team.worker.health",
+        json!({"team_id": "team-1", "stale_after_ms": 1_000_000}),
+    )
+    .await
+    .unwrap();
+    let worker_health = health["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|worker| worker["worker_id"] == "worker-2")
+        .unwrap();
+    assert_eq!(worker_health["lifecycle"], "shutdown_requested");
+    assert_eq!(worker_health["final_state"], "shutdown_requested");
+    assert_eq!(worker_health["surface_alive"], true);
+
+    let summary = dispatch(&state, "team.summary", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    assert_eq!(summary["workers_total"], 2);
+    assert_eq!(summary["workers_active"], 1);
+    assert_eq!(summary["tasks_open"], 1);
+    assert_eq!(summary["messages_pending"], 0);
+
+    let listed = dispatch(&state, "team.list", json!({"workspace_id": workspace_id}))
+        .await
+        .unwrap();
+    assert_eq!(listed[0]["id"], "team-1");
+    let fetched = dispatch(&state, "team.get", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    assert_eq!(fetched["workers"].as_array().unwrap().len(), 2);
+    let events = dispatch(&state, "team.events", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    assert!(events.as_array().unwrap().len() >= 10);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn team_worker_shutdown_can_close_launch_owned_worker_surface() {
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_codex(bin_dir.path());
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let (mut state, backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace_id = state.model.lock().unwrap().active_workspace().unwrap().id;
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "name": "Close Workers",
+            "workspace_id": workspace_id,
+        }),
+    )
+    .await
+    .unwrap();
+    let launched = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex",
+        }),
+    )
+    .await
+    .unwrap();
+    let surface_id = launched["surface"]["id"].as_str().unwrap().to_string();
+
+    let shutdown = dispatch(
+        &state,
+        "team.worker.shutdown",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "text": "stop now",
+            "close_surface": true,
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(shutdown["sent"], true);
+    assert_eq!(shutdown["submitted"], true);
+    assert_eq!(shutdown["closed_surface"], true);
+    assert!(backend.sent_text(&surface_id).is_err());
+    let health = dispatch(
+        &state,
+        "team.worker.health",
+        json!({"team_id": "team-1", "stale_after_ms": 1_000_000}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(health["workers"][0]["final_state"], "closed");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn team_worker_launch_does_not_promote_resume_cwd_to_worktree_boundary() {
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_codex(bin_dir.path());
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let open_repo = make_temp_repo();
+    let unopened_repo = make_temp_repo();
+    let (mut state, backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "open", "workingDir": open_repo.path()}),
+    )
+    .await
+    .unwrap();
+    let workspace_id = workspace["id"].as_str().unwrap();
+    let surface_id = workspace["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "workspace_id": workspace_id,
+            "surface_id": surface_id,
+            "key": "agent:codex",
+            "label": "Codex",
+            "value": "Running",
+            "hook_session_id": "spoofed-session",
+            "hook_session_cwd": unopened_repo.path(),
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "leader_surface_id": surface_id,
+            "workspace_id": workspace_id,
+        }),
+    )
+    .await
+    .unwrap();
+
+    let launched = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex",
+        }),
+    )
+    .await
+    .unwrap();
+    let worker_surface_id = launched["surface"]["id"].as_str().unwrap();
+    let spawned = backend
+        .surfaces()
+        .unwrap()
+        .into_iter()
+        .find(|surface| surface.surface_id == worker_surface_id)
+        .unwrap();
+    assert_eq!(spawned.cwd, open_repo.path());
+
+    let error = dispatch(
+        &state,
+        "worktree.list",
+        json!({"cwd": unopened_repo.path()}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code(), "precondition_failed");
+}
+
+#[tokio::test]
+async fn team_worker_shutdown_rejects_close_for_manually_attached_surface() {
+    let (mut state, backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let surface_id = state
+        .model
+        .lock()
+        .unwrap()
+        .active_workspace()
+        .unwrap()
+        .focused_surface_id;
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "name": "Manual Worker",
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex",
+            "surface_id": surface_id,
+            "status": "running",
+        }),
+    )
+    .await
+    .unwrap();
+
+    let err = dispatch(
+        &state,
+        "team.worker.shutdown",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "text": "stop now",
+            "close_surface": true,
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "precondition_failed");
+    assert!(backend.sent_text(&surface_id).unwrap().is_empty());
+    assert!(state.model.lock().unwrap().surface(&surface_id).is_some());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn team_worker_shutdown_rejects_close_after_manual_surface_upsert() {
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_codex(bin_dir.path());
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let (mut state, backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let (workspace_id, manual_surface_id) = {
+        let model = state.model.lock().unwrap();
+        let workspace = model.active_workspace().unwrap();
+        (workspace.id.clone(), workspace.focused_surface_id.clone())
+    };
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "name": "Manual Reattach",
+            "workspace_id": workspace_id,
+        }),
+    )
+    .await
+    .unwrap();
+    let launched = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex",
+        }),
+    )
+    .await
+    .unwrap();
+    let launched_surface_id = launched["surface"]["id"].as_str().unwrap().to_string();
+
+    let worker = dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "surface_id": manual_surface_id,
+            "status": "running",
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(worker["surface_id"], manual_surface_id);
+    assert_eq!(worker["launched_surface_id"], Value::Null);
+
+    let err = dispatch(
+        &state,
+        "team.worker.shutdown",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "text": "stop now",
+            "close_surface": true,
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "precondition_failed");
+    assert!(backend.sent_text(&manual_surface_id).unwrap().is_empty());
+    assert!(backend.sent_text(&launched_surface_id).unwrap().is_empty());
+    let model = state.model.lock().unwrap();
+    assert!(model.surface(&manual_surface_id).is_some());
+    assert!(model.surface(&launched_surface_id).is_some());
+}
+
+#[tokio::test]
+async fn team_worker_shutdown_rejects_close_for_persisted_launch_without_runtime_ownership() {
+    let (mut state, backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let (workspace_id, surface_id) = {
+        let model = state.model.lock().unwrap();
+        let workspace = model.active_workspace().unwrap();
+        (workspace.id.clone(), workspace.focused_surface_id.clone())
+    };
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "name": "Stale Runtime Ownership",
+            "workspace_id": workspace_id,
+        }),
+    )
+    .await
+    .unwrap();
+    forktty_core::update_teams_at_path(state.team_store_path.as_ref().unwrap(), |store| {
+        store.launch_worker(
+            forktty_core::TeamWorkerLaunch {
+                team_id: "team-1".to_string(),
+                worker_id: "worker-1".to_string(),
+                role: None,
+                agent: "codex".to_string(),
+                surface_id: surface_id.clone(),
+                worktree_name: None,
+                assigned_task_id: None,
+            },
+            forktty_core::team_now_ms(),
+        )
+    })
+    .unwrap();
+
+    let err = dispatch(
+        &state,
+        "team.worker.shutdown",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "text": "stop now",
+            "close_surface": true,
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "precondition_failed");
+    assert!(backend.sent_text(&surface_id).unwrap().is_empty());
+    assert!(state.model.lock().unwrap().surface(&surface_id).is_some());
+}
