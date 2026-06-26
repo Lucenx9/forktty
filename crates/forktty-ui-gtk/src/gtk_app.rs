@@ -74,6 +74,8 @@ mod app;
 mod backend;
 #[cfg(feature = "browser")]
 mod browser_bridge;
+#[cfg(feature = "browser")]
+mod browser_import_dialog;
 mod chrome_refresh;
 mod command_palette;
 mod controller;
@@ -123,6 +125,8 @@ use app::*;
 use backend::*;
 #[cfg(feature = "browser")]
 use browser_bridge::*;
+#[cfg(feature = "browser")]
+use browser_import_dialog::*;
 use chrome_refresh::*;
 use command_palette::*;
 use controller::*;
