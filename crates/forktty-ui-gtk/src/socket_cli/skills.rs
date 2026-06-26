@@ -1,9 +1,11 @@
 //! Managed agent skill CLI setup, removal, status, and checksum helpers.
 
+use super::integration_files::{
+    atomic_write_file, ensure_parent_dir, read_text_config, MAX_HOOK_CONFIG_SIZE_BYTES,
+};
 use super::{
-    atomic_write_file, bool_option, ensure_parent_dir, home_dir, inspect_path, next_file_nonce,
-    parse_flags, print_json, read_text_config, reject_unknown_options, trimmed_env,
-    write_stdout_line, CliContext, CliError, CliResult,
+    bool_option, home_dir, inspect_path, next_file_nonce, parse_flags, print_json,
+    reject_unknown_options, trimmed_env, write_stdout_line, CliContext, CliError, CliResult,
 };
 use serde_json::{json, Value};
 use std::fs::{self, File};
@@ -16,7 +18,7 @@ pub(super) const AGENT_SKILL_MD: &str =
     include_str!("../../../../.agents/skills/forktty-agent-orchestration/SKILL.md");
 pub(super) const AGENT_SKILL_OPENAI_YAML: &str =
     include_str!("../../../../.agents/skills/forktty-agent-orchestration/agents/openai.yaml");
-const MAX_AGENT_SKILL_FILE_BYTES: u64 = super::MAX_HOOK_CONFIG_SIZE_BYTES;
+const MAX_AGENT_SKILL_FILE_BYTES: u64 = MAX_HOOK_CONFIG_SIZE_BYTES;
 
 #[derive(Clone, Copy)]
 pub(super) struct SkillTargetSpec {
