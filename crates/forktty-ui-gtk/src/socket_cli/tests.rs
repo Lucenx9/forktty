@@ -1,5 +1,6 @@
 use super::*;
 use crate::test_env::{with_current_dir, with_env};
+use std::io::Write;
 use std::thread;
 
 mod browser;
