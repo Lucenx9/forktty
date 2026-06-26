@@ -46,8 +46,12 @@ use agent::{
 #[cfg(any(feature = "browser", test))]
 use browser::handle_browser;
 use feed::handle_feed;
+#[cfg(test)]
+use hooks::event::*;
 use hooks::handle_hooks;
 pub(crate) use hooks::hook_setup_reminder_message;
+#[cfg(test)]
+use hooks::install::*;
 #[cfg(test)]
 use hooks::*;
 #[cfg(test)]
