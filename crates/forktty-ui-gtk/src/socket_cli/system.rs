@@ -1,14 +1,15 @@
 //! General socket CLI commands, diagnostics, completions, and wait helpers.
 
+use super::skills::{inspect_skill_target, SKILL_TARGETS};
 use super::{
     build_target_params, format_doctor_path, format_option_names, insert_optional_cli_string_param,
-    inspect_path, inspect_skill_target, non_blank_string_option, parse_flags, parse_u64_option,
-    print_help, print_json, print_result_or_json, read_stdin_text, reject_unknown_options,
-    require_no_args, safe_string_field, sanitize_for_terminal, send_socket_request,
-    should_read_stdin, socket_path_from_env, stable_hook_launcher_path, string_field,
-    string_option, target_selector_values, trimmed_env, write_stdout_line, write_stdout_text,
-    CliContext, CliError, CliResult, FlagValue, AGENTS, AGENT_HELP_TEXT, EXAMPLES_TEXT, MCP_AGENTS,
-    SKILL_TARGETS, STATUS_HELP_TEXT, TEAM_HELP_TEXT, WORKFLOW_HELP_TEXT,
+    inspect_path, non_blank_string_option, parse_flags, parse_u64_option, print_help, print_json,
+    print_result_or_json, read_stdin_text, reject_unknown_options, require_no_args,
+    safe_string_field, sanitize_for_terminal, send_socket_request, should_read_stdin,
+    socket_path_from_env, stable_hook_launcher_path, string_field, string_option,
+    target_selector_values, trimmed_env, write_stdout_line, write_stdout_text, CliContext,
+    CliError, CliResult, FlagValue, AGENTS, AGENT_HELP_TEXT, EXAMPLES_TEXT, MCP_AGENTS,
+    STATUS_HELP_TEXT, TEAM_HELP_TEXT, WORKFLOW_HELP_TEXT,
 };
 use super::{COMPLETION_COMMANDS, STATUS_SUBCOMMANDS, TEAM_SUBCOMMANDS};
 use super::{DEFAULT_AGENT_WAIT_INTERVAL_MS, DEFAULT_AGENT_WAIT_TIMEOUT_MS};
