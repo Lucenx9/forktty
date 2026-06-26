@@ -1,12 +1,13 @@
 //! Team CLI commands and formatting for workers, tasks, messages, review, and finish flows.
 
+use super::system::handle_help;
 use super::{
-    bool_option, build_target_params, comma_list_option, handle_help,
-    insert_optional_cli_raw_string_param, insert_optional_cli_string_param,
-    insert_optional_cli_u64_param, non_blank_string_option, parse_flags, print_json,
-    print_result_or_json, reject_unknown_options, require_no_args, required_positionals,
-    safe_string_field, sanitize_for_terminal, send_socket_request, string_option, trimmed_env,
-    trimmed_positional, write_stdout_line, CliContext, CliError, CliResult, FlagValue,
+    bool_option, build_target_params, comma_list_option, insert_optional_cli_raw_string_param,
+    insert_optional_cli_string_param, insert_optional_cli_u64_param, non_blank_string_option,
+    parse_flags, print_json, print_result_or_json, reject_unknown_options, require_no_args,
+    required_positionals, safe_string_field, sanitize_for_terminal, send_socket_request,
+    string_option, trimmed_env, trimmed_positional, write_stdout_line, CliContext, CliError,
+    CliResult, FlagValue,
 };
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;

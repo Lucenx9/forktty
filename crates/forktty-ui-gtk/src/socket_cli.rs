@@ -29,6 +29,7 @@ mod hooks;
 mod integration_files;
 mod mcp;
 mod remote;
+mod router;
 mod skills;
 mod status;
 mod surface;
@@ -44,6 +45,7 @@ use agent::{
     format_agent_health_line, format_agent_hibernate_line, format_agent_reclaim_line,
     format_agent_reclaim_plan_line, format_agent_resume_line, format_agent_session_line,
 };
+#[cfg(test)]
 use agent::{
     handle_agent_health, handle_agent_reclaim_plan, handle_agents, handle_hibernate_agent,
     handle_reclaim_agents, handle_resume_agent,
@@ -60,8 +62,9 @@ use args::{
 };
 #[cfg(any(feature = "browser", test))]
 use args::{insert_optional_trimmed_string_param, required_trimmed_arg};
-#[cfg(any(feature = "browser", test))]
+#[cfg(test)]
 use browser::handle_browser;
+#[cfg(test)]
 use feed::handle_feed;
 #[cfg(test)]
 use help::HELP_TEXT;
@@ -71,6 +74,7 @@ use help::{
 };
 #[cfg(test)]
 use hooks::event::*;
+#[cfg(test)]
 use hooks::handle_hooks;
 pub(crate) use hooks::hook_setup_reminder_message;
 #[cfg(test)]
@@ -82,15 +86,14 @@ use integration_files::{
     atomic_write_file, ensure_parent_dir, read_json_file, stable_hook_launcher_path_from_env,
     MAX_HOOK_CONFIG_SIZE_BYTES,
 };
-use mcp::handle_mcp;
 #[cfg(test)]
 use mcp::{
     antigravity_mcp_config_path, build_mcp_remove_plan, build_mcp_setup_plan,
     claude_mcp_config_path, codex_mcp_config_path, handle_mcp_remove, handle_mcp_setup,
     json_mcp_server_config, mcp_agent_spec, McpRemoveAction, MCP_MANAGED_ENV, MCP_SERVER_NAME,
 };
+#[cfg(test)]
 use remote::{handle_remote_status, handle_remotes};
-use skills::handle_skills;
 #[cfg(test)]
 use skills::{
     agent_skills_dir, build_skill_setup_plan, claude_skill_dir, handle_skills_remove,
@@ -102,39 +105,34 @@ use status::{
     context_snapshot_params, format_context_snapshot_explain_line, format_notification_line,
     format_progress_line, format_status_line, format_status_summary_line,
 };
-use status::{
-    handle_clear_logs, handle_clear_notifications, handle_clear_progress, handle_clear_status,
-    handle_context_snapshot, handle_list_progress, handle_list_status, handle_log, handle_logs,
-    handle_notifications, handle_set_progress, handle_set_status, handle_status, handle_statusline,
-};
+#[cfg(test)]
+use status::{handle_context_snapshot, handle_set_status, handle_status, handle_statusline};
 #[cfg(test)]
 use surface::format_surface_line;
-use surface::{
-    handle_capture_tail, handle_close_surface, handle_focus_surface, handle_new_tab,
-    handle_read_screen, handle_select_tab, handle_send_text, handle_split_surface, handle_surfaces,
-    handle_top, handle_tree,
-};
+#[cfg(test)]
+use surface::{handle_capture_tail, handle_read_screen, handle_top, handle_tree};
 #[cfg(test)]
 use system::{
     agent_wait_interval_ms_from_options, agent_wait_status_from_cli,
     agent_wait_timeout_ms_from_options, build_socket_doctor_report, completion_script_for_test,
     format_capabilities_lines, format_socket_doctor_text, identify_params,
 };
+#[cfg(test)]
 use system::{
     handle_capabilities, handle_completions, handle_events, handle_examples, handle_help,
-    handle_identify, handle_notify, handle_ping, handle_socket_doctor, handle_wait,
+    handle_identify, handle_notify, handle_wait,
 };
 #[cfg(test)]
 use team::{
     format_team_ask_flow_line, format_team_summary_line, format_team_worker_health_line,
     format_team_worker_launch_line,
 };
+#[cfg(test)]
 use team::{
-    handle_team, handle_team_events, handle_team_get, handle_team_inbox, handle_team_list,
-    handle_team_message_ack, handle_team_message_dispatch, handle_team_message_send,
-    handle_team_summary, handle_team_task_upsert, handle_team_upsert, handle_team_worker_health,
-    handle_team_worker_heartbeat, handle_team_worker_launch, handle_team_worker_nudge,
-    handle_team_worker_shutdown, handle_team_worker_upsert,
+    handle_team, handle_team_inbox, handle_team_list, handle_team_message_dispatch,
+    handle_team_message_send, handle_team_task_upsert, handle_team_upsert,
+    handle_team_worker_health, handle_team_worker_heartbeat, handle_team_worker_launch,
+    handle_team_worker_nudge, handle_team_worker_shutdown,
 };
 pub(crate) use transport::send_socket_request_with_timeout;
 #[cfg(test)]
@@ -142,19 +140,17 @@ use transport::{
     connect_unix_stream_with_timeout, format_socket_connect_error, lagged_dropped_count,
     unix_socket_address,
 };
+#[cfg(test)]
 use workflow::{
-    handle_workflow_evidence_add, handle_workflow_get, handle_workflow_loop_set,
-    handle_workflow_plan_set, handle_workflow_replay, handle_workflow_upsert, handle_workflows,
+    handle_workflow_evidence_add, handle_workflow_loop_set, handle_workflow_plan_set,
+    handle_workflow_replay, handle_workflow_upsert, handle_workflows,
 };
 #[cfg(test)]
 use workspace::format_workspace_line;
-use workspace::{
-    handle_close_workspace, handle_create_workspace, handle_focus, handle_list, handle_ssh,
-};
-use worktree::{
-    handle_project_action_list, handle_project_action_run, handle_worktree_list,
-    handle_worktree_merge, handle_worktree_open, handle_worktree_remove, handle_worktree_status,
-};
+#[cfg(test)]
+use workspace::{handle_create_workspace, handle_ssh};
+#[cfg(test)]
+use worktree::{handle_project_action_list, handle_project_action_run, handle_worktree_status};
 const SOCKET_TIMEOUT: Duration = protocol_limits::OFFICIAL_SOCKET_TIMEOUT;
 const DEFAULT_AGENT_WAIT_TIMEOUT_MS: u64 = 30_000;
 const MAX_AGENT_WAIT_TIMEOUT_MS: u64 = 120_000;
@@ -243,161 +239,7 @@ fn run_inner(args: Vec<OsString>) -> CliResult<()> {
         verbose: parsed.verbose,
     };
 
-    match command.as_str() {
-        "list" => handle_list(&context, args),
-        "create-workspace" => handle_create_workspace(&context, args),
-        "focus" => handle_focus(&context, args),
-        "close-workspace" => handle_close_workspace(&context, args),
-        "notify" => handle_notify(&context, args),
-        "surfaces" | "surface-list" | "surface:list" => handle_surfaces(&context, args),
-        "agents" | "agent-list" | "agent:list" => handle_agents(&context, args),
-        "agent-health" | "agent:health" => handle_agent_health(&context, args),
-        "agent-reclaim-plan" | "agent:reclaim-plan" | "agent.reclaim.plan" => {
-            handle_agent_reclaim_plan(&context, args)
-        }
-        "hibernate-agent" | "agent-hibernate" | "agent:hibernate" | "agent.hibernate" => {
-            handle_hibernate_agent(&context, args)
-        }
-        "reclaim-agents" | "agent-reclaim" | "agent:reclaim" | "agent.reclaim" => {
-            handle_reclaim_agents(&context, args)
-        }
-        "resume-agent" | "agent-resume" | "agent:resume" => handle_resume_agent(&context, args),
-        "team" => handle_team(&context, args),
-        "teams" | "team-list" | "team:list" | "team.list" => handle_team_list(&context, args),
-        "team-get" | "team:get" | "team.get" => handle_team_get(&context, args),
-        "team-upsert" | "team:upsert" | "team.upsert" => handle_team_upsert(&context, args),
-        "team-worker-upsert" | "team:worker-upsert" | "team.worker.upsert" => {
-            handle_team_worker_upsert(&context, args)
-        }
-        "team-worker-heartbeat" | "team:worker-heartbeat" | "team.worker.heartbeat" => {
-            handle_team_worker_heartbeat(&context, args)
-        }
-        "team-worker-launch" | "team:worker-launch" | "team.worker.launch" => {
-            handle_team_worker_launch(&context, args)
-        }
-        "team-worker-health" | "team:worker-health" | "team.worker.health" => {
-            handle_team_worker_health(&context, args)
-        }
-        "team-worker-nudge" | "team:worker-nudge" | "team.worker.nudge" => {
-            handle_team_worker_nudge(&context, args)
-        }
-        "team-worker-shutdown" | "team:worker-shutdown" | "team.worker.shutdown" => {
-            handle_team_worker_shutdown(&context, args)
-        }
-        "team-task-upsert" | "team:task-upsert" | "team.task.upsert" => {
-            handle_team_task_upsert(&context, args)
-        }
-        "team-message-send" | "team:message-send" | "team.message.send" => {
-            handle_team_message_send(&context, args)
-        }
-        "team-message-dispatch" | "team:message-dispatch" | "team.message.dispatch" => {
-            handle_team_message_dispatch(&context, args)
-        }
-        "team-message-ack" | "team:message-ack" | "team.message.ack" => {
-            handle_team_message_ack(&context, args)
-        }
-        "team-inbox" | "team:inbox" | "team.inbox" => handle_team_inbox(&context, args),
-        "team-summary" | "team:summary" | "team.summary" => handle_team_summary(&context, args),
-        "team-events" | "team:events" | "team.events" => handle_team_events(&context, args),
-        "split-surface" | "surface-split" | "surface:split" => handle_split_surface(&context, args),
-        "focus-surface" | "surface-focus" | "surface:focus" => handle_focus_surface(&context, args),
-        "close-surface" | "surface-close" | "surface:close" => handle_close_surface(&context, args),
-        "new-tab" | "pane-new-tab" | "pane:new-tab" => handle_new_tab(&context, args),
-        "select-tab" | "pane-select-tab" | "pane:select-tab" => handle_select_tab(&context, args),
-        "send-text" | "send_text" => handle_send_text(&context, args),
-        "read-screen" | "read_screen" | "surface-read-text" | "surface:read-text" => {
-            handle_read_screen(&context, args)
-        }
-        "capture-tail" | "capture_tail" | "surface-capture-tail" | "surface:capture-tail" => {
-            handle_capture_tail(&context, args)
-        }
-        "tree" | "topology-tree" | "topology:tree" | "topology.tree" => handle_tree(&context, args),
-        "top" => handle_top(&context, args),
-        "remotes" | "remote-list" | "remote:list" | "remote.list" => handle_remotes(&context, args),
-        "remote-status" | "remote:status" | "remote.status" => handle_remote_status(&context, args),
-        "worktree-list" | "worktree:list" | "worktree.list" => handle_worktree_list(&context, args),
-        "worktree-status" | "worktree:status" | "worktree.status" => {
-            handle_worktree_status(&context, args)
-        }
-        "worktree-create" | "worktree:create" | "worktree.create" => {
-            handle_worktree_open(&context, args, "worktree.create", "worktree-create")
-        }
-        "worktree-attach" | "worktree:attach" | "worktree.attach" => {
-            handle_worktree_open(&context, args, "worktree.attach", "worktree-attach")
-        }
-        "worktree-remove" | "worktree:remove" | "worktree.remove" => {
-            handle_worktree_remove(&context, args)
-        }
-        "worktree-merge" | "worktree:merge" | "worktree.merge" => {
-            handle_worktree_merge(&context, args)
-        }
-        "actions" | "project-actions" | "project:action:list" | "project.action.list" => {
-            handle_project_action_list(&context, args)
-        }
-        "action-run" | "project-action-run" | "project:action:run" | "project.action.run" => {
-            handle_project_action_run(&context, args)
-        }
-        "set-status" => handle_set_status(&context, args),
-        "list-status" => handle_list_status(&context, args),
-        "clear-status" => handle_clear_status(&context, args),
-        "set-progress" => handle_set_progress(&context, args),
-        "list-progress" => handle_list_progress(&context, args),
-        "clear-progress" => handle_clear_progress(&context, args),
-        "status" => handle_status(&context, args),
-        "statusline" | "status-line" | "status:summary" => handle_statusline(&context, args),
-        "context-snapshot" | "context_snapshot" | "context:snapshot" | "context.snapshot" => {
-            handle_context_snapshot(&context, args)
-        }
-        "feed" | "feed-list" | "feed:list" => handle_feed(&context, args),
-        "workflows" | "workflow-list" | "workflow:list" | "workflow.list" => {
-            handle_workflows(&context, args)
-        }
-        "workflow-get" | "workflow:get" | "workflow.get" => handle_workflow_get(&context, args),
-        "workflow-upsert" | "workflow:upsert" | "workflow.upsert" => {
-            handle_workflow_upsert(&context, args)
-        }
-        "workflow-loop-set" | "workflow:loop:set" | "workflow.loop.set" | "loop-set" => {
-            handle_workflow_loop_set(&context, args)
-        }
-        "workflow-plan-set" | "workflow:plan-set" | "workflow.plan.set" => {
-            handle_workflow_plan_set(&context, args)
-        }
-        "workflow-evidence-add" | "workflow:evidence-add" | "workflow.evidence.add" => {
-            handle_workflow_evidence_add(&context, args)
-        }
-        "workflow-replay" | "workflow:replay" | "workflow.replay" => {
-            handle_workflow_replay(&context, args)
-        }
-        "log" => handle_log(&context, args),
-        "logs" | "list-logs" => handle_logs(&context, args),
-        "clear-logs" => handle_clear_logs(&context, args),
-        "notifications" => handle_notifications(&context, args),
-        "clear-notifications" | "notifications-clear" | "notification:clear" => {
-            handle_clear_notifications(&context, args)
-        }
-        "hooks" => handle_hooks(&context, args),
-        "mcp" => handle_mcp(&context, args),
-        "skills" | "skill" => handle_skills(&context, args),
-        "doctor" => handle_socket_doctor(&context, args),
-        "ping" => handle_ping(&context, args),
-        "identify" | "system-identify" | "system:identify" | "system.identify" => {
-            handle_identify(&context, args)
-        }
-        "capabilities" => handle_capabilities(&context, args),
-        "wait" => handle_wait(&context, args),
-        "events" => handle_events(&context, args),
-        "examples" => handle_examples(&context, args),
-        "completion" | "completions" => handle_completions(&context, args),
-        #[cfg(feature = "browser")]
-        "browser" => handle_browser(&context, args),
-        #[cfg(not(feature = "browser"))]
-        "browser" => Err(CliError::new(
-            "browser commands require building ForkTTY from source with --features browser",
-        )),
-        "ssh" => handle_ssh(&context, args),
-        "help" => handle_help(&context, args),
-        other => Err(CliError::new(format!("Unknown command: {other}"))),
-    }
+    router::dispatch_command(&context, &command, args)
 }
 
 fn next_request_id() -> String {
