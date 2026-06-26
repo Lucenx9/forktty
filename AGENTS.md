@@ -101,14 +101,16 @@ Use Rust's module system intentionally: group related functionality, keep implem
 
 Optimize for future readers who arrive with `rg`, type signatures, tests, and this file as their map. Code that is easy for an agent to locate and verify is usually easier for humans to review too.
 
+- Keep repo guidance concise, current, and scoped. Put broad rules in this root file; if a subtree needs special setup or review rules, add a nearer `AGENTS.md`/`AGENTS.override.md` instead of expanding the root with path-specific detail.
+- State the source of truth when several files describe the same behavior. If generated docs, embedded strings, CLI help, MCP schema text, and Rust code can drift, name which file/template should be edited first.
 - Prefer descriptive domain names over abbreviations. Public socket/MCP method names, command names, event names, and state-machine states should appear as searchable constants or enum variants, not only as dynamically assembled strings.
 - Put a short `//!` module summary on new non-trivial modules explaining responsibility, primary entry points, and the important invariants. For public Rust APIs, use rustdoc with purpose, examples when useful, and `# Errors`, `# Panics`, or `# Safety` sections when they apply.
 - Comments should explain why, invariants, ordering constraints, external contracts, and surprising edge cases. Do not add comments that merely restate the next line of code.
 - Make data contracts explicit with structs, enums, newtypes, and typed errors instead of loose maps, booleans with unclear meaning, or stringly typed state. Derive or implement `Debug` for public and boundary-crossing types when practical.
 - Keep feature entry points easy to trace: dispatcher arms should name the helper they delegate to, helpers should live in the feature module, and tests should use behavior names that can be found with `rg <method_or_command>`.
+- Keep examples small, realistic, and adjacent to the API or command they explain. Favor executable doctests or CLI/socket tests when possible; otherwise make clear that an example is illustrative.
 - Avoid hiding important behavior behind broad macros, global mutable state, callbacks, or trait objects unless the indirection is necessary. When it is necessary, leave a narrow comment or module summary that points to the runtime path.
 - Mark generated, vendored, embedded, or source-of-truth files clearly. If an agent should edit a generator/template instead of generated output, say that near the generated include or in the nearest module docs.
-- Keep examples, fixtures, and docs executable or obviously illustrative. If a command in docs is the validation path for agents, keep it current when code moves.
 - When adding a new module or moving ownership, update the relevant architecture note, module summary, tests, and command/help references in the same change so future agents do not follow stale maps.
 
 ## Conventions
