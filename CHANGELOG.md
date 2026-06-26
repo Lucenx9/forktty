@@ -5,6 +5,8 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Fixed
+- Fixed OpenCode hook setup so the generated JavaScript plugin no longer
+  contains Rust visibility prefixes before `const` declarations.
 - Fixed official CLI/MCP socket clients timing out before slower server-side
   operations complete or rejecting valid bounded responses larger than 1 MiB.
 - Fixed `team.message.dispatch` so concurrent or post-send/failed-ack retries

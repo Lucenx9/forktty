@@ -76,6 +76,9 @@ fn hook_setup_writes_all_agent_configs_and_is_idempotent() {
             assert!(opencode.contains("\"tool.execute.before\""));
             assert!(opencode.contains("const MAX_INPUT_BYTES = 1048576"));
             assert!(opencode.contains("const MAX_SANITIZE_NODES = 4096"));
+            assert!(opencode.contains("const eventMap = {"));
+            assert!(!opencode.contains("pub(super) const"));
+            assert!(!opencode.contains("pub(in crate::socket_cli) const"));
             assert!(opencode.contains("function makeBudget"));
             assert!(opencode.contains("function sanitizeJson"));
             assert!(opencode.contains("input: hookInput(body)"));
