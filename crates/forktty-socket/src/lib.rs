@@ -11,6 +11,7 @@ mod connection;
 mod context_params;
 mod context_runtime;
 mod coordinator;
+mod dispatcher;
 mod errors;
 mod feed_events;
 mod feed_params;
@@ -92,6 +93,7 @@ use forktty_terminal::SharedTerminalBackend;
 use forktty_terminal::SpawnRequest;
 #[cfg(test)]
 use serde_json::json;
+#[cfg(test)]
 use serde_json::Value;
 use std::io;
 #[cfg(all(test, feature = "browser"))]
@@ -208,6 +210,8 @@ pub(crate) use connection::{
     handle_connection, handle_connection_with_limits, handle_connection_with_write_timeout,
     lagged_notice, read_limited_line, stream_events, ReadLineError,
 };
+pub use dispatcher::dispatch;
+pub(crate) use dispatcher::method_allowed_from_socket;
 pub use errors::{DispatchError, SocketError};
 pub(crate) use metadata_helpers::{
     agent_kind_from_permission_status_key, agent_kind_from_status_key, log_level_from_params,
@@ -494,124 +498,6 @@ fn current_snapshot(model: &Arc<Mutex<WorkspaceModel>>) -> Snapshot {
         // next healthy tick re-asserts the true state anyway.
         Err(poisoned) => events::snapshot(&poisoned.into_inner()),
     }
-}
-
-pub async fn dispatch(
-    state: &SocketAppState,
-    method: &str,
-    params: Value,
-) -> Result<Value, DispatchError> {
-    #[cfg(not(feature = "browser"))]
-    if method.starts_with("browser.") {
-        return Err(DispatchError::MethodNotFound(method.to_string()));
-    }
-
-    let mut params = params;
-    let _hook_session_end = hook_session::prepare_hook_session_targets(state, method, &mut params)?;
-
-    match method {
-        "system.ping" => Ok(system_runtime::ping()),
-        "system.capabilities" => Ok(system_runtime::capabilities()),
-        "system.identify" => system_runtime::identify(state, &params),
-        "context.snapshot" => context_runtime::snapshot(state, &params).await,
-        "feed.approval.respond" => feed_runtime::approval_respond(state, &params),
-        "feed.list" => feed_runtime::list(state, &params),
-        "workflow.list" => workflow_runtime::list(state, &params).await,
-        "workflow.get" => workflow_runtime::get(state, &params).await,
-        "workflow.upsert" => workflow_runtime::upsert(state, &params).await,
-        "workflow.loop.set" => workflow_runtime::loop_set(state, &params).await,
-        "workflow.plan.set" => workflow_runtime::plan_set(state, &params).await,
-        "workflow.evidence.add" => workflow_runtime::evidence_add(state, &params).await,
-        "workflow.replay" => workflow_runtime::replay(state, &params).await,
-        "team.list" => team_runtime::list(state, &params).await,
-        "team.get" => team_runtime::get(state, &params).await,
-        "team.upsert" => team_runtime::upsert(state, &params).await,
-        "team.finish" => team_runtime::finish(state, &params).await,
-        "team.worker.upsert" => team_runtime::worker_upsert(state, &params).await,
-        "team.worker.heartbeat" => team_runtime::worker_heartbeat(state, &params).await,
-        "team.worker.launch" => team_runtime::worker_launch(state, &params).await,
-        "team.worker.health" => team_runtime::worker_health(state, &params).await,
-        "team.worker.nudge" => team_runtime::worker_nudge(state, &params).await,
-        "team.worker.shutdown" => team_runtime::worker_shutdown(state, &params).await,
-        "team.task.upsert" => team_runtime::task_upsert(state, &params).await,
-        "team.message.send" => team_runtime::message_send(state, &params).await,
-        "team.message.dispatch" => team_runtime::message_dispatch(state, &params).await,
-        "team.message.ack" => team_runtime::message_ack(state, &params).await,
-        "team.inbox" => team_runtime::inbox(state, &params).await,
-        "team.summary" => team_runtime::summary(state, &params).await,
-        "team.events" => team_runtime::events(state, &params).await,
-
-        "agent.health" => agent_runtime::health(state, &params),
-        "agent.hibernate" => agent_runtime::hibernate(state, &params),
-        "agent.list" => agent_runtime::list(state, &params),
-        "agent.reclaim.plan" => agent_runtime::reclaim_plan(state, &params),
-        "agent.reclaim" => agent_runtime::reclaim(state, &params),
-        "agent.resume" => agent_runtime::resume(state, &params).await,
-        "status.summary" => status_runtime::summary(state, &params),
-        "remote.list" => remote::list(state, &params),
-        "remote.status" => remote::status(state, &params),
-        "system.top" => topology_runtime::system_top(state, &params),
-        "workspace.list" => topology_runtime::workspace_list(state),
-        "workspace.create" => workspace_runtime::create(state, &params),
-        "workspace.create_ssh" => workspace_runtime::create_ssh(state, &params),
-        "workspace.select" => workspace_runtime::select(state, &params).await,
-        "workspace.close" => workspace_runtime::close(state, &params).await,
-        "worktree.list" => worktree_runtime::list(state, &params).await,
-        "worktree.status" => worktree_runtime::status(state, &params).await,
-        "worktree.create" => worktree_runtime::create(state, &params).await,
-        "worktree.attach" => worktree_runtime::attach(state, &params).await,
-        "worktree.remove" => worktree_runtime::remove(state, &params).await,
-        "worktree.merge" => worktree_runtime::merge(state, &params).await,
-        "project.action.list" => project_action_runtime::list(state, &params).await,
-        "project.action.run" => project_action_runtime::run(state, &params).await,
-        "surface.list" => topology_runtime::surface_list(state, &params),
-        "surface.read_text" => topology_runtime::surface_read_text(state, &params),
-        "surface.capture_tail" => topology_runtime::surface_capture_tail(state, &params),
-        "surface.send_text" => topology_runtime::surface_send_text(state, &params),
-        "topology.tree" => topology_runtime::tree(state, &params),
-        "surface.split" => surface_runtime::split(state, &params).await,
-        "browser.open" => browser_runtime::open(state, &params),
-        "browser.navigate" => browser_runtime::navigate(state, &params),
-        "browser.snapshot" => browser_runtime::snapshot(state, &params).await,
-        "browser.click" => browser_runtime::click(state, &params).await,
-        "browser.fill" => browser_runtime::fill(state, &params).await,
-        "browser.back" => browser_runtime::back(state, &params).await,
-        "browser.forward" => browser_runtime::forward(state, &params).await,
-        "browser.reload" => browser_runtime::reload(state, &params).await,
-        "browser.profile.list" => browser_runtime::profile_list(state, &params),
-        "browser.profile.create" => browser_runtime::profile_create(state, &params),
-        "browser.profile.delete" => browser_runtime::profile_delete(state, &params),
-        "browser.history.list" => browser_runtime::history_list(state, &params),
-        "browser.history.search" => browser_runtime::history_search(state, &params),
-        "browser.history.clear" => browser_runtime::history_clear(state, &params),
-        "browser.bookmark.add" => browser_runtime::bookmark_add(state, &params),
-        "browser.bookmark.list" => browser_runtime::bookmark_list(state, &params),
-        "browser.bookmark.remove" => browser_runtime::bookmark_remove(state, &params),
-        "browser.import.discover" => Ok(browser_import::browser_import_discover_json()),
-        "browser.import.preview" => browser_import::browser_import_preview(&params).await,
-        "browser.import.run" => browser_import::browser_import_run(state, &params).await,
-        "pane.new_tab" => surface_runtime::new_tab(state, &params).await,
-        "pane.select_tab" => surface_runtime::select_tab(state, &params),
-        "surface.focus" => surface_runtime::focus(state, &params),
-        "surface.close" => surface_runtime::close(state, &params).await,
-        "notification.create" => metadata_runtime::notification_create(state, &params),
-        "notification.list" => metadata_runtime::notification_list(state),
-        "notification.clear" => metadata_runtime::notification_clear(state),
-        "metadata.set_status" => metadata_runtime::set_status(state, &params),
-        "metadata.list_status" => metadata_runtime::list_status(state, &params),
-        "metadata.clear_status" => metadata_runtime::clear_status(state, &params),
-        "metadata.set_progress" => metadata_runtime::set_progress(state, &params),
-        "metadata.list_progress" => metadata_runtime::list_progress(state, &params),
-        "metadata.clear_progress" => metadata_runtime::clear_progress(state, &params),
-        "metadata.log" => metadata_runtime::log(state, &params),
-        "metadata.list_logs" => metadata_runtime::list_logs(state, &params),
-        "metadata.clear_logs" => metadata_runtime::clear_logs(state, &params),
-        _ => Err(DispatchError::MethodNotFound(method.to_string())),
-    }
-}
-
-fn method_allowed_from_socket(method: &str) -> bool {
-    methods::allowed_from_socket(method)
 }
 
 fn current_unix_epoch_ms() -> u64 {
