@@ -85,6 +85,7 @@ mod placeholders;
 mod settings_dialog;
 mod sidebar;
 mod socket_server;
+mod tab_drag;
 #[allow(dead_code)]
 mod terminal_appearance;
 #[allow(dead_code)]
@@ -127,6 +128,7 @@ use placeholders::*;
 use settings_dialog::*;
 use sidebar::*;
 use socket_server::*;
+use tab_drag::*;
 use terminal_appearance::*;
 use terminal_clipboard::*;
 use terminal_input::*;
