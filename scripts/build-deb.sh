@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+umask 022
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="${FORKTTY_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -1)}"
 DEB_VERSION="${FORKTTY_DEB_VERSION:-$VERSION}"
@@ -210,6 +212,7 @@ verify_forktty_icon_assets "$PKG_ROOT"
 "$ROOT_DIR/scripts/write-package-legal-docs.sh" "$PKG_ROOT"
 
 mkdir -p "$PKG_ROOT/DEBIAN"
+chmod 755 "$PKG_ROOT/DEBIAN"
 INSTALLED_SIZE="$(du -sk "$PKG_ROOT/usr" | awk '{print $1}')"
 cat > "$PKG_ROOT/DEBIAN/control" <<CONTROL
 Package: $PKG_NAME

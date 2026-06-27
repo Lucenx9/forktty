@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+umask 022
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="${FORKTTY_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -1)}"
 TARGET_DIR="$ROOT_DIR/target/packaging/appimage"

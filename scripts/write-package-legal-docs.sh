@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+umask 022
+
 if [[ "$#" -ne 1 ]]; then
   echo "usage: $0 <package-root>" >&2
   exit 2
