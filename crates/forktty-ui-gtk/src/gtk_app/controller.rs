@@ -1162,33 +1162,31 @@ mod tests {
 
     #[test]
     fn embedded_ghostty_view_wraps_surface_in_vertical_scroller() {
-        if gtk::init().is_err() {
-            return;
-        }
-
-        let surface = gtk::TextView::new().upcast::<gtk::Widget>();
-        let view = build_embedded_ghostty_scroll_view(&surface, GhosttyScrollbarPolicy::System);
-        let scroller = view
-            .downcast::<gtk::ScrolledWindow>()
-            .expect("embedded view should be a scrolled window");
-
-        assert_eq!(
-            scroller.policy(),
-            (gtk::PolicyType::Never, gtk::PolicyType::Automatic)
-        );
-        assert!(scroller.property::<bool>("overlay-scrolling"));
-        assert_eq!(scroller.child().as_ref(), Some(&surface));
-        assert!(surface.property::<bool>("hexpand"));
-        assert!(surface.property::<bool>("vexpand"));
-
-        let hidden_surface = gtk::TextView::new().upcast::<gtk::Widget>();
-        let hidden =
-            build_embedded_ghostty_scroll_view(&hidden_surface, GhosttyScrollbarPolicy::Never)
+        let _ = crate::test_env::with_gtk_test(|| {
+            let surface = gtk::TextView::new().upcast::<gtk::Widget>();
+            let view = build_embedded_ghostty_scroll_view(&surface, GhosttyScrollbarPolicy::System);
+            let scroller = view
                 .downcast::<gtk::ScrolledWindow>()
-                .expect("hidden policy still uses a scrolled window");
-        assert_eq!(
-            hidden.policy(),
-            (gtk::PolicyType::Never, gtk::PolicyType::Never)
-        );
+                .expect("embedded view should be a scrolled window");
+
+            assert_eq!(
+                scroller.policy(),
+                (gtk::PolicyType::Never, gtk::PolicyType::Automatic)
+            );
+            assert!(scroller.property::<bool>("overlay-scrolling"));
+            assert_eq!(scroller.child().as_ref(), Some(&surface));
+            assert!(surface.property::<bool>("hexpand"));
+            assert!(surface.property::<bool>("vexpand"));
+
+            let hidden_surface = gtk::TextView::new().upcast::<gtk::Widget>();
+            let hidden =
+                build_embedded_ghostty_scroll_view(&hidden_surface, GhosttyScrollbarPolicy::Never)
+                    .downcast::<gtk::ScrolledWindow>()
+                    .expect("hidden policy still uses a scrolled window");
+            assert_eq!(
+                hidden.policy(),
+                (gtk::PolicyType::Never, gtk::PolicyType::Never)
+            );
+        });
     }
 }

@@ -649,19 +649,17 @@ mod tests {
 
     #[test]
     fn pane_action_strip_places_close_pane_at_trailing_edge() {
-        if gtk::init().is_err() {
-            return;
-        }
+        let _ = crate::test_env::with_gtk_test(|| {
+            let strip = build_pane_action_strip();
+            let children = direct_children(&strip.actions);
 
-        let strip = build_pane_action_strip();
-        let children = direct_children(&strip.actions);
-
-        assert!(children
-            .last()
-            .expect("action strip should have children")
-            .has_css_class("pane-close-action"));
-        assert!(children[children.len() - 2].has_css_class("pane-action-separator"));
-        assert!(children[children.len() - 3].property::<bool>("hexpand"));
+            assert!(children
+                .last()
+                .expect("action strip should have children")
+                .has_css_class("pane-close-action"));
+            assert!(children[children.len() - 2].has_css_class("pane-action-separator"));
+            assert!(children[children.len() - 3].property::<bool>("hexpand"));
+        });
     }
 
     #[test]

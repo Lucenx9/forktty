@@ -20,7 +20,7 @@ cargo fmt --all                # CI runs --check
 cargo run -p xtask -- check    # repo consistency (hook templates, release automation)
 cargo test --workspace --all-targets --no-default-features --features gtk-ghostty
 cargo clippy --workspace --all-targets --no-default-features --features gtk-ghostty -- -D warnings
-cargo test -p forktty-ui-gtk --all-targets --no-default-features --features browser
+cargo test -p forktty-ui-gtk --all-targets --no-default-features --features browser -- --test-threads=1
 cargo clippy -p forktty-ui-gtk --all-targets --no-default-features --features browser -- -D warnings
 ```
 

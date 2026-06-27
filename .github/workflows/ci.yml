@@ -131,7 +131,7 @@ jobs:
           workspaces: .
 
       - name: Browser feature tests
-        run: cargo test -p forktty-ui-gtk --all-targets --no-default-features --features browser
+        run: cargo test -p forktty-ui-gtk --all-targets --no-default-features --features browser -- --test-threads=1
 
       - name: Browser feature clippy
         run: cargo clippy -p forktty-ui-gtk --all-targets --no-default-features --features browser -- -D warnings
