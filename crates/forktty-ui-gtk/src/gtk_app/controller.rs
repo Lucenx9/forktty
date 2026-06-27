@@ -171,7 +171,6 @@ impl TerminalController {
                 }
             }
             GtkTerminalCommand::Close { surface_id } => {
-                self.cleanup_pty_persistence_session(&surface_id);
                 self.pending_spawns.remove(&surface_id);
                 if let (Some(embedder), Some(pane)) = (
                     self.embedded_ghostty.as_ref(),
@@ -188,6 +187,7 @@ impl TerminalController {
                         persistent_scrollback_lines,
                     );
                 }
+                self.cleanup_pty_persistence_session(&surface_id);
                 if let Some(chrome) = self.chromes.remove(&surface_id) {
                     detach_widget(&chrome.pane.clone().upcast::<gtk::Widget>());
                 }
@@ -211,10 +211,23 @@ impl TerminalController {
         let Some(runtime_dir) = state.socket_path.parent() else {
             return;
         };
-        if let Err(err) =
-            forktty_core::pty_persistence::cleanup_session_socket(runtime_dir, surface_id)
-        {
-            eprintln!("ForkTTY: failed to remove PTY persistence socket for {surface_id}: {err}");
+        match forktty_core::pty_persistence::cleanup_managed_session(runtime_dir, surface_id) {
+            Ok(summary)
+                if summary.sockets_removed > 0
+                    || summary.processes_signaled > 0
+                    || summary.process_signal_errors > 0 =>
+            {
+                eprintln!(
+                    "ForkTTY: PTY persistence cleanup for {surface_id} removed {} socket(s), signaled {} process(es), {} signal error(s)",
+                    summary.sockets_removed,
+                    summary.processes_signaled,
+                    summary.process_signal_errors
+                );
+            }
+            Ok(_) => {}
+            Err(err) => {
+                eprintln!("ForkTTY: failed to clean up PTY persistence for {surface_id}: {err}");
+            }
         }
     }
 

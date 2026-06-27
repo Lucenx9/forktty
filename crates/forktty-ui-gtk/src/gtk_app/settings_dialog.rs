@@ -33,9 +33,6 @@ pub(super) fn show_settings_dialog_page(
     on_apply: SettingsApplyCallback,
     initial_page: SettingsInitialPage,
 ) {
-    #[cfg(not(feature = "browser"))]
-    let _ = state;
-
     let window = gtk::Window::builder()
         .title("Settings")
         .transient_for(parent)
@@ -531,17 +528,28 @@ pub(super) fn show_settings_dialog_page(
         let current = current.clone();
         let on_apply = on_apply.clone();
         let suppress_updates = suppress_updates.clone();
+        let state = state.clone();
         move |row: &adw::SwitchRow, _| {
             if suppress_updates.get() {
                 return;
             }
-            persist_settings_change(
+            let was_enabled = current.borrow().general.persist_terminal_processes;
+            let is_enabled = row.is_active();
+            let saved = persist_settings_change(
                 &dialog,
                 &current,
                 &on_apply,
-                |config| config.general.persist_terminal_processes = row.is_active(),
+                |config| config.general.persist_terminal_processes = is_enabled,
                 "PTY process persistence updated.",
             );
+            if saved && was_enabled && !is_enabled {
+                let summary = cleanup_pty_persistence_sessions(&state, true);
+                if summary.sockets_removed > 0 || summary.processes_signaled > 0 {
+                    dialog.add_toast(adw::Toast::new(
+                        "Detached terminal persistence sessions cleaned up.",
+                    ));
+                }
+            }
         }
     });
     team_default_agent.connect_selected_notify({

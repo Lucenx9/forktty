@@ -2495,7 +2495,8 @@ fn settings_dialog_exposes_pty_persistence_toggle() {
     let source = include_str!("settings_dialog.rs");
 
     assert!(source.contains("Persist terminal processes"));
-    assert!(source.contains("config.general.persist_terminal_processes = row.is_active()"));
+    assert!(source.contains("config.general.persist_terminal_processes = is_enabled"));
+    assert!(source.contains("cleanup_pty_persistence_sessions(&state, true)"));
     assert!(source.contains("PTY process persistence updated."));
 }
 

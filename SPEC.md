@@ -136,9 +136,12 @@ the complete socket path is capped below Linux's Unix-domain `sun_path` limit.
 ForkTTY never wraps a `sh -c` command — the no-`sh -c` argv policy holds across
 the broker boundary. The broker program itself is resolved only from absolute
 `PATH` entries, matching terminal child-program resolution. Explicit surface
-close/restart invalidates the per-surface broker socket before dropping the
-embedded client so a future reused surface id cannot attach to stale detached
-state; UI process exit does not take that cleanup path, preserving the intended
+close/restart terminates the matching ForkTTY-managed broker process tree and
+removes the per-surface broker socket so a future reused surface id cannot
+attach to stale detached state. Disabling the setting live cleans stale
+detached sessions while preserving currently visible surfaces; startup with the
+flag off cleans old managed sessions before restore. Normal UI process exit
+with the flag on does not take that cleanup path, preserving the intended
 restart/relaunch reattach behavior.
 
 ## Config

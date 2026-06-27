@@ -710,11 +710,15 @@ pub(super) fn build_ui(app: &adw::Application) {
     let pr_model_for_bootstrap = state.model.clone();
     let pr_in_flight_for_bootstrap = pr_in_flight.clone();
     let enable_pr_lookup_on_startup = app_config.general.enable_pr_lookup;
+    let persist_terminal_processes_on_startup = app_config.general.persist_terminal_processes;
     let alive_for_bootstrap = ui_alive.clone();
     let socket_server_for_bootstrap = socket_server_handle.clone();
     glib::idle_add_local_once(move || {
         if !alive_for_bootstrap.get() {
             return;
+        }
+        if !persist_terminal_processes_on_startup {
+            cleanup_pty_persistence_sessions(&state_for_bootstrap, false);
         }
         if let Err(err) = restore_or_bootstrap_workspaces(&state_for_bootstrap, startup_dir) {
             eprintln!("Failed to restore workspace session: {err}");
@@ -1010,6 +1014,54 @@ pub(super) fn apply_color_scheme(_config: &config::AppConfig) {
 
 pub(super) fn is_executable_shell(shell: &str) -> bool {
     !shell.is_empty() && is_executable_file(Path::new(shell))
+}
+
+pub(super) fn cleanup_pty_persistence_sessions(
+    state: &SocketAppState,
+    preserve_live_surfaces: bool,
+) -> forktty_core::pty_persistence::PtyPersistenceCleanup {
+    let Some(runtime_dir) = state.socket_path.parent() else {
+        return forktty_core::pty_persistence::PtyPersistenceCleanup::default();
+    };
+    let preserve_surface_ids = if preserve_live_surfaces {
+        state
+            .model
+            .lock()
+            .ok()
+            .map(|model| {
+                model
+                    .list_surfaces(None)
+                    .into_iter()
+                    .map(|surface| surface.id)
+                    .collect::<BTreeSet<_>>()
+            })
+            .unwrap_or_default()
+    } else {
+        BTreeSet::new()
+    };
+    match forktty_core::pty_persistence::cleanup_managed_sessions(
+        runtime_dir,
+        &preserve_surface_ids,
+    ) {
+        Ok(summary) => {
+            if summary.sockets_removed > 0
+                || summary.processes_signaled > 0
+                || summary.process_signal_errors > 0
+            {
+                eprintln!(
+                    "ForkTTY: PTY persistence cleanup removed {} socket(s), signaled {} process(es), {} signal error(s)",
+                    summary.sockets_removed,
+                    summary.processes_signaled,
+                    summary.process_signal_errors
+                );
+            }
+            summary
+        }
+        Err(err) => {
+            eprintln!("ForkTTY: failed to clean up PTY persistence sessions: {err}");
+            forktty_core::pty_persistence::PtyPersistenceCleanup::default()
+        }
+    }
 }
 
 pub(super) fn restore_or_bootstrap_workspaces(

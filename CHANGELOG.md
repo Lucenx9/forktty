@@ -16,6 +16,10 @@ All notable changes to ForkTTY are documented here.
 - Fixed AppImage terminal launches with opt-in PTY process persistence so
   detached `dtach` brokers do not inherit AppImage runtime file descriptors and
   keep the FUSE mount alive after the GTK window closes.
+- Fixed opt-in PTY process persistence cleanup so disabling the setting,
+  starting with it disabled, or explicitly closing/restarting a pane terminates
+  stale ForkTTY-managed `dtach` brokers and their child process trees instead
+  of leaving detached terminals behind.
 - Fixed generated OpenCode hook plugins so they contain valid JavaScript
   constants instead of Rust visibility prefixes.
 - Fixed official CLI/MCP socket clients timing out before slower server-side
