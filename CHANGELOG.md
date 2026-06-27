@@ -7,6 +7,9 @@ All notable changes to ForkTTY are documented here.
 ## [0.2.0-alpha.16] - 2026-06-27
 
 ### Fixed
+- Fixed GTK window close so the embedded Unix-socket server receives a shutdown
+  signal instead of keeping the ForkTTY GUI/AppImage process alive after the
+  last window is closed.
 - Fixed hook and MCP setup from AppImage launches so generated ForkTTY CLI
   commands set `APPIMAGE_EXTRACT_AND_RUN=1`, preventing short hook calls and
   persistent MCP servers from leaving FUSE AppImage runtime mounts behind.

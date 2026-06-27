@@ -95,6 +95,7 @@ use forktty_terminal::SpawnRequest;
 use serde_json::json;
 #[cfg(test)]
 use serde_json::Value;
+use std::future::Future;
 use std::io;
 #[cfg(all(test, feature = "browser"))]
 use std::io::{Seek, SeekFrom};
@@ -330,23 +331,45 @@ impl SocketAppState {
 }
 
 pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(), SocketError> {
+    serve_until_shutdown(listener, state, std::future::pending()).await
+}
+
+/// Serve socket connections until `shutdown` resolves.
+///
+/// The plain [`serve`] wrapper is intentionally endless for tests and
+/// embeddings that own the process lifetime. GUI hosts should use this variant
+/// so closing the last window can stop the socket thread cleanly.
+pub async fn serve_until_shutdown(
+    listener: StdUnixListener,
+    state: SocketAppState,
+    shutdown: impl Future<Output = ()>,
+) -> Result<(), SocketError> {
     let listener = UnixListener::from_std(listener)?;
     spawn_event_tick(state.clone());
     let connection_limit = Arc::new(Semaphore::new(MAX_SOCKET_CONNECTIONS));
     let event_subscription_limit = Arc::new(Semaphore::new(MAX_EVENT_SUBSCRIBERS));
+    tokio::pin!(shutdown);
     loop {
-        let stream = match listener.accept().await {
-            Ok((stream, _)) => stream,
-            // A client aborting mid-handshake (or a transient kernel hiccup)
-            // must not take the whole IPC server down for the rest of the
-            // process lifetime; only give up on genuinely fatal errors.
-            Err(err) if is_transient_accept_error(&err) => {
-                // Brief pause so accept() does not hot-spin while fds are
-                // exhausted (EMFILE/ENFILE persists until something closes).
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                continue;
+        let stream = tokio::select! {
+            _ = &mut shutdown => return Ok(()),
+            accepted = listener.accept() => {
+                match accepted {
+                    Ok((stream, _)) => stream,
+                    // A client aborting mid-handshake (or a transient kernel hiccup)
+                    // must not take the whole IPC server down for the rest of the
+                    // process lifetime; only give up on genuinely fatal errors.
+                    Err(err) if is_transient_accept_error(&err) => {
+                        // Brief pause so accept() does not hot-spin while fds are
+                        // exhausted (EMFILE/ENFILE persists until something closes).
+                        tokio::select! {
+                            _ = &mut shutdown => return Ok(()),
+                            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                        }
+                        continue;
+                    }
+                    Err(err) => return Err(err.into()),
+                }
             }
-            Err(err) => return Err(err.into()),
         };
         let state = state.clone();
         let event_subscription_limit = event_subscription_limit.clone();

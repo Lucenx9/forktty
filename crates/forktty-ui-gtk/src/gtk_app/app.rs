@@ -176,6 +176,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         create_global_notification(&state, "Config Issue", message, NotificationKind::Error);
     }
     let ui_alive = Rc::new(Cell::new(true));
+    let socket_server_handle = Rc::new(RefCell::new(None::<SocketServerHandle>));
 
     let header = adw::HeaderBar::new();
     header.set_decoration_layout(Some(":minimize,maximize,close"));
@@ -669,8 +670,12 @@ pub(super) fn build_ui(app: &adw::Application) {
     }
     let state_for_close = state.clone();
     let alive_for_close = ui_alive.clone();
+    let socket_server_for_close = socket_server_handle.clone();
     window.connect_close_request(move |_| {
         alive_for_close.set(false);
+        if let Some(mut server) = socket_server_for_close.borrow_mut().take() {
+            server.shutdown();
+        }
         save_session_from_state(&state_for_close);
         glib::Propagation::Proceed
     });
@@ -705,7 +710,12 @@ pub(super) fn build_ui(app: &adw::Application) {
     let pr_model_for_bootstrap = state.model.clone();
     let pr_in_flight_for_bootstrap = pr_in_flight.clone();
     let enable_pr_lookup_on_startup = app_config.general.enable_pr_lookup;
+    let alive_for_bootstrap = ui_alive.clone();
+    let socket_server_for_bootstrap = socket_server_handle.clone();
     glib::idle_add_local_once(move || {
+        if !alive_for_bootstrap.get() {
+            return;
+        }
         if let Err(err) = restore_or_bootstrap_workspaces(&state_for_bootstrap, startup_dir) {
             eprintln!("Failed to restore workspace session: {err}");
             create_global_notification(
@@ -728,7 +738,8 @@ pub(super) fn build_ui(app: &adw::Application) {
         if enable_pr_lookup_on_startup {
             spawn_pr_refresh(pr_model_for_bootstrap, pr_in_flight_for_bootstrap);
         }
-        start_socket_server(state_for_bootstrap.clone());
+        *socket_server_for_bootstrap.borrow_mut() =
+            start_socket_server(state_for_bootstrap.clone());
     });
 }
 

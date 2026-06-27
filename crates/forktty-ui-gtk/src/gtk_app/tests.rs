@@ -2515,6 +2515,15 @@ fn settings_agents_nav_uses_agent_semantic_icon() {
 }
 
 #[test]
+fn window_close_shuts_down_socket_server_handle() {
+    let source = include_str!("app.rs");
+
+    assert!(source.contains("socket_server_for_close.borrow_mut().take()"));
+    assert!(source.contains("server.shutdown();"));
+    assert!(source.contains("start_socket_server(state_for_bootstrap.clone())"));
+}
+
+#[test]
 fn chrome_micro_polish_css_stays_gtk_414_compatible() {
     let source = include_str!("../style.css");
 

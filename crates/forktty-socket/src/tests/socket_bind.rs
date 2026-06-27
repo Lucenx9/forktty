@@ -115,6 +115,30 @@ fn transient_accept_errors_cover_fd_exhaustion() {
     )));
 }
 
+#[tokio::test]
+async fn serve_exits_when_shutdown_fires_without_client_activity() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket_path = dir.path().join("forktty.sock");
+    let listener = bind_socket_listener(&socket_path, false).unwrap();
+    let (state, _backend) = test_state();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    let server = tokio::spawn(async move {
+        serve_until_shutdown(listener, state, async {
+            let _ = shutdown_rx.await;
+        })
+        .await
+    });
+
+    shutdown_tx.send(()).unwrap();
+
+    tokio::time::timeout(Duration::from_secs(1), server)
+        .await
+        .expect("socket server should stop promptly")
+        .expect("socket server task should not panic")
+        .expect("socket server shutdown should be clean");
+}
+
 #[test]
 fn bind_socket_listener_rejects_broken_socket_symlink() {
     use std::os::unix::fs::symlink;

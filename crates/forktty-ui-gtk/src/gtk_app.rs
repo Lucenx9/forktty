@@ -8,7 +8,8 @@ use forktty_core::{
 #[cfg(test)]
 use forktty_socket::default_socket_path;
 use forktty_socket::{
-    bind_socket_listener, bootstrap_default_workspace, serve, socket_path_from_env, SocketAppState,
+    bind_socket_listener, bootstrap_default_workspace, serve_until_shutdown, socket_path_from_env,
+    SocketAppState,
 };
 use forktty_terminal::{
     SpawnRequest, TerminalBackend, TerminalError, TerminalSurfaceState, TerminalTextCapture,
