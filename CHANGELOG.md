@@ -13,6 +13,9 @@ All notable changes to ForkTTY are documented here.
 - Fixed hook and MCP setup from AppImage launches so generated ForkTTY CLI
   commands set `APPIMAGE_EXTRACT_AND_RUN=1`, preventing short hook calls and
   persistent MCP servers from leaving FUSE AppImage runtime mounts behind.
+- Fixed AppImage terminal launches with opt-in PTY process persistence so
+  detached `dtach` brokers do not inherit AppImage runtime file descriptors and
+  keep the FUSE mount alive after the GTK window closes.
 - Fixed generated OpenCode hook plugins so they contain valid JavaScript
   constants instead of Rust visibility prefixes.
 - Fixed official CLI/MCP socket clients timing out before slower server-side

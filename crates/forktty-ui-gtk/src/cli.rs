@@ -1,13 +1,16 @@
 //! Top-level native CLI parser, diagnostics, and built-in command dispatch.
 
+mod appimage_child_exec;
 mod doctor;
 mod remote_helper;
 mod socket_commands;
 
+pub use appimage_child_exec::run_appimage_child_exec;
 pub use doctor::run_doctor;
 pub use remote_helper::{print_remote_helper_hello, run_remote_helper_pty};
 use std::ffi::OsString;
 
+use appimage_child_exec::parse_appimage_child_exec_args;
 use doctor::parse_doctor_options;
 
 #[cfg(test)]
@@ -64,6 +67,7 @@ pub enum CliAction {
     GhosttyGtkProbe,
     Doctor(DoctorOptions),
     RemoteHelper(RemoteHelperCommand),
+    AppImageChildExec { argv: Vec<OsString> },
     SocketCli(Vec<OsString>),
     Unknown(String),
 }
@@ -115,6 +119,12 @@ where
             Ok(command) => CliAction::RemoteHelper(command),
             Err(message) => CliAction::Unknown(message),
         },
+        Some(forktty_terminal::spawn::APPIMAGE_CHILD_EXEC_SUBCOMMAND) => {
+            match parse_appimage_child_exec_args(&rest[1..]) {
+                Ok(argv) => CliAction::AppImageChildExec { argv },
+                Err(message) => CliAction::Unknown(message),
+            }
+        }
         Some(command) if is_socket_cli_command(command) => return CliAction::SocketCli(rest),
         Some(option) if is_socket_cli_global_option(option) => return CliAction::SocketCli(rest),
         Some(other) => return CliAction::Unknown(unknown_argument(other)),
@@ -129,6 +139,7 @@ where
             CliAction::SocketCli(_)
                 | CliAction::Doctor(_)
                 | CliAction::RemoteHelper(_)
+                | CliAction::AppImageChildExec { .. }
                 | CliAction::Unknown(_)
         )
     {
@@ -234,6 +245,39 @@ mod tests {
         assert_eq!(
             parse::<_, &str>(["forktty", "remote-helper", "pty", "--"]),
             CliAction::Unknown("remote-helper pty requires -- <program> [args...]".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_appimage_child_exec_preserves_argv() {
+        assert_eq!(
+            parse::<_, &str>([
+                "forktty",
+                "appimage-child-exec",
+                "--",
+                "/usr/bin/dtach",
+                "-A",
+                "/run/user/1000/forktty-pty/surface-1.sock"
+            ]),
+            CliAction::AppImageChildExec {
+                argv: vec![
+                    OsString::from("/usr/bin/dtach"),
+                    OsString::from("-A"),
+                    OsString::from("/run/user/1000/forktty-pty/surface-1.sock")
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn parse_appimage_child_exec_requires_separator_and_argv() {
+        assert_eq!(
+            parse::<_, &str>(["forktty", "appimage-child-exec", "/usr/bin/dtach"]),
+            CliAction::Unknown("appimage-child-exec requires -- <program> [args...]".to_string())
+        );
+        assert_eq!(
+            parse::<_, &str>(["forktty", "appimage-child-exec", "--"]),
+            CliAction::Unknown("appimage-child-exec requires -- <program> [args...]".to_string())
         );
     }
 

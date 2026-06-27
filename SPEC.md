@@ -116,9 +116,12 @@ keeps the real program and its descendants under its own PTY in a detached
 daemon; the embedded surface runs only the broker client, which dies with the
 GTK process. On relaunch ForkTTY spawns a fresh client that re-attaches to the
 surviving daemon, so the shell, dev servers, REPLs, editors, and long-running
-commands continue. The reattach is keyed by a per-surface socket path derived
-from the persisted surface id, so no extra session state is serialized; if no
-daemon survived (the program exited), the broker creates a fresh session.
+commands continue. AppImage-launched broker commands are first passed through
+ForkTTY's internal child-exec helper so inherited AppImage runtime file
+descriptors are closed before `dtach` starts and detached brokers do not keep a
+FUSE AppImage mount alive. The reattach is keyed by a per-surface socket path
+derived from the persisted surface id, so no extra session state is serialized;
+if no daemon survived (the program exited), the broker creates a fresh session.
 
 Scope and boundaries: persistence applies only to spawns explicitly marked as
 plain interactive `Terminal` shells. Agent panes persist through provider

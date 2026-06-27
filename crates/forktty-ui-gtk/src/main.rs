@@ -38,6 +38,9 @@ fn main() -> ExitCode {
         cli::CliAction::RemoteHelper(cli::RemoteHelperCommand::Pty { argv }) => {
             ExitCode::from(cli::run_remote_helper_pty(argv).clamp(0, 255) as u8)
         }
+        cli::CliAction::AppImageChildExec { argv } => {
+            ExitCode::from(cli::run_appimage_child_exec(argv).clamp(0, 255) as u8)
+        }
         cli::CliAction::GhosttyGtkProbe => launch_ghostty_gtk_probe(),
         cli::CliAction::SocketCli(args) => {
             ExitCode::from(socket_cli::run(args).clamp(0, 255) as u8)

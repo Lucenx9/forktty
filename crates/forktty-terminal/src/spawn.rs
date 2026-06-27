@@ -9,6 +9,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub const APPIMAGE_CHILD_EXEC_SUBCOMMAND: &str = "appimage-child-exec";
+
 pub fn child_environment(request: &SpawnRequest) -> Vec<String> {
     let ghostty_resources = ghostty_resources_dir();
     child_environment_with_ghostty_resources(request, ghostty_resources.as_deref())
@@ -113,6 +115,14 @@ pub fn embedded_ghostty_command_argv_with_persistence(
             .wrap_command(argv)
             .map_err(|err| format!("cannot persist embedded Ghostty command: {err}"))?;
     }
+    if let Some(helper) = appimage_child_exec_helper() {
+        let mut wrapped = Vec::with_capacity(argv.len() + 3);
+        wrapped.push(helper);
+        wrapped.push(APPIMAGE_CHILD_EXEC_SUBCOMMAND.to_string());
+        wrapped.push("--".to_string());
+        wrapped.extend(argv);
+        argv = wrapped;
+    }
 
     let env = embedded_ghostty_appimage_env_atoms()
         .into_iter()
@@ -133,6 +143,17 @@ pub fn embedded_ghostty_command_argv_with_persistence(
         .chain(env)
         .chain(argv)
         .collect())
+}
+
+fn appimage_child_exec_helper() -> Option<String> {
+    if appimage_runtime_dirs().is_empty() {
+        return None;
+    }
+    let current_exe = std::env::current_exe().ok()?;
+    if !current_exe.is_absolute() || !is_executable_file(&current_exe) {
+        return None;
+    }
+    current_exe.to_str().map(ToOwned::to_owned)
 }
 
 fn embedded_ghostty_command_atom(value: &str) -> Result<String, String> {
@@ -987,6 +1008,62 @@ mod tests {
         assert_eq!(argv.last(), Some(&resolved));
         // ForkTTY env still survives ahead of the broker.
         assert!(argv.contains(&"FORKTTY_SURFACE_ID=surface-1".to_string()));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn embedded_ghostty_command_argv_wraps_appimage_children_with_fd_cleaner() {
+        use forktty_core::pty_persistence::{PtyBroker, PtyPersistence, PtyPersistencePlan};
+
+        let trusted = TestDir::new("appimage-persist-bin");
+        let shell = trusted.path().join("bash");
+        fs::write(&shell, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&shell, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let appimage_dir = "/tmp/.mount_forktty";
+        let plan = PtyPersistencePlan::new(
+            &PtyPersistence {
+                broker: PtyBroker::Dtach,
+                broker_path: PathBuf::from("/usr/bin/dtach"),
+            },
+            PathBuf::from("/run/user/1000/forktty-pty/surface-1.sock"),
+        )
+        .unwrap();
+
+        let argv = with_env(
+            &[
+                ("PATH", Some(trusted.path().to_str().unwrap())),
+                ("APPDIR", Some(appimage_dir)),
+                ("FORKTTY_APPIMAGE_DIR", Some(appimage_dir)),
+                ("APPIMAGE", Some("/home/me/ForkTTY.AppImage")),
+            ],
+            || {
+                let mut request = spawn_request();
+                request.shell = "bash".to_string();
+                request.args.clear();
+                embedded_ghostty_command_argv_with_persistence(&request, Some(&plan))
+                    .expect("command argv")
+            },
+        );
+
+        let helper = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let helper_index = argv
+            .iter()
+            .position(|atom| atom == &helper)
+            .expect("AppImage child fd-cleaner helper is inserted");
+        assert_eq!(
+            argv.get(helper_index + 1).map(String::as_str),
+            Some("appimage-child-exec")
+        );
+        assert_eq!(argv.get(helper_index + 2).map(String::as_str), Some("--"));
+        assert_eq!(
+            argv.get(helper_index + 3).map(String::as_str),
+            Some("/usr/bin/dtach")
+        );
+        assert!(argv[helper_index + 3..].ends_with(&[shell.to_string_lossy().into_owned()]));
     }
 
     #[test]
