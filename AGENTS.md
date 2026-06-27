@@ -38,6 +38,9 @@ cargo audit
 ```
 
 Both `gtk-ghostty` and `browser` feature combinations must stay compiling even when you only touch one.
+GitHub CI sets `FORKTTY_SKIP_GTK_WIDGET_TESTS=1` because headless runners can
+segfault in GTK widget construction even after `gtk::init()` succeeds; local
+widget tests remain opt-in by running without that variable.
 
 Single test / single crate:
 

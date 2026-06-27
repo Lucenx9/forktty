@@ -45,6 +45,12 @@ pub(crate) fn with_current_dir<T>(dir: &Path, f: impl FnOnce() -> T) -> T {
 
 #[cfg(feature = "gtk-ghostty")]
 pub(crate) fn with_gtk_test<T>(f: impl FnOnce() -> T) -> Option<T> {
+    // GitHub's headless runner can report successful GTK initialization and
+    // still segfault during widget construction. Keep those tests opt-in there.
+    if std::env::var_os("FORKTTY_SKIP_GTK_WIDGET_TESTS").is_some() {
+        return None;
+    }
+
     let _guard = GTK_LOCK.lock().unwrap();
     // gtk-rs records the initializing thread; widget tests on other test
     // worker threads must skip instead of calling gtk::init again.
