@@ -4,6 +4,8 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.16] - 2026-06-27
+
 ### Fixed
 - Fixed hook and MCP setup from AppImage launches so generated ForkTTY CLI
   commands set `APPIMAGE_EXTRACT_AND_RUN=1`, preventing short hook calls and
