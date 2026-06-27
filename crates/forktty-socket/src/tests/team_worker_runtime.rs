@@ -690,3 +690,96 @@ async fn team_worker_shutdown_submit_uses_separate_enter_for_claude() {
     );
     assert_eq!(backend.entered_surfaces(), vec![surface_id.to_string()]);
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn team_worker_launch_uses_requested_worktree_workspace() {
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let (mut state, backend) = test_state();
+    let team_store = tempfile::tempdir().unwrap();
+    let worktree_dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(team_store.path().join("team-v1.json"));
+    let main = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let main_workspace_id = main[0]["id"].as_str().unwrap().to_string();
+    let (worktree_workspace_id, worktree_surface_id) = {
+        let mut model = state.model.lock().unwrap();
+        let workspace =
+            model.create_worktree_workspace("feature", worktree_dir.path(), "feature", "feature-x");
+        (workspace.id, workspace.focused_surface_id)
+    };
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "workspace_id": main_workspace_id,
+            "name": "Launch",
+        }),
+    )
+    .await
+    .unwrap();
+
+    let launched = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex",
+            "worktree_name": "feature-x",
+        }),
+    )
+    .await
+    .unwrap();
+
+    let launched_surface_id = launched["surface"]["id"].as_str().unwrap();
+    assert_eq!(launched["worker"]["worktree_name"], "feature-x");
+    assert_ne!(launched_surface_id, worktree_surface_id);
+    assert_eq!(launched["surface"]["workspace_id"], worktree_workspace_id);
+    let spawned = backend
+        .surfaces()
+        .unwrap()
+        .into_iter()
+        .find(|surface| surface.surface_id == launched_surface_id)
+        .unwrap();
+    assert_eq!(spawned.cwd, worktree_dir.path());
+}
+
+#[tokio::test]
+async fn team_worker_launch_rejects_invalid_worktree_name() {
+    let (mut state, _backend) = test_state();
+    let team_store = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(team_store.path().join("team-v1.json"));
+    let main = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let main_workspace_id = main[0]["id"].as_str().unwrap().to_string();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "workspace_id": main_workspace_id,
+            "name": "Launch",
+        }),
+    )
+    .await
+    .unwrap();
+
+    let err = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex",
+            "worktree_name": "../escape",
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+}
