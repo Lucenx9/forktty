@@ -467,7 +467,9 @@ summaries, pane split/focus/send-text, worktree create/attach/remove/merge,
 notifications, and `status_set`.
 Codex MCP setup preserves hand-edited TOML comments/formatting and uses the
 larger MCP config size budget for `$CODEX_HOME/config.toml` or
-`~/.codex/config.toml`.
+`~/.codex/config.toml`. If setup registers an AppImage launcher, the managed
+MCP server env includes `APPIMAGE_EXTRACT_AND_RUN=1` so persistent MCP clients
+do not keep a FUSE AppImage mount alive.
 `FORKTTY_SOCKET_PATH`,
 `FORKTTY_WORKSPACE_ID`, and `FORKTTY_SURFACE_ID` are honored as defaults when
 the MCP host launches from a ForkTTY pane, except `identify` treats workspace and
@@ -539,10 +541,13 @@ forktty hooks remove opencode             # remove ForkTTY-managed hooks/plugin
 forktty hooks remove gemini               # cleanup legacy Gemini config only
 ```
 
-`--dry-run` prints the would-be diff without touching disk. Claude Code setup
-uses the lifecycle profile by default, avoiding blocking per-tool hooks on every
-tool call; pass `--full` to include `PreToolUse`, `PostToolUse`,
-`PostToolUseFailure`, and `PostToolBatch`. Re-running setup migrates Claude to
+`--dry-run` prints the would-be diff without touching disk. When setup records
+an AppImage launcher, generated hook commands set `APPIMAGE_EXTRACT_AND_RUN=1`
+for the ForkTTY CLI child so short hooks do not keep a FUSE AppImage mount
+alive. Claude Code setup uses the lifecycle profile by default, avoiding
+blocking per-tool hooks on every tool call; pass `--full` to include
+`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, and `PostToolBatch`.
+Re-running setup migrates Claude to
 the lifecycle profile unless `--full` is passed. `hooks remove` removes only
 ForkTTY-managed entries/plugins and leaves unrelated agent hooks in place.
 `hooks remove gemini` is kept only to clean legacy ForkTTY-managed

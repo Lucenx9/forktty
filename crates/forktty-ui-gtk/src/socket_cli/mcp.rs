@@ -6,7 +6,8 @@ use super::hooks::{
 };
 use super::integration_files::{
     atomic_write_file, backup_file, ensure_parent_dir, hook_config_write_path,
-    read_json_file_with_limit, read_text_config_with_limit, stable_hook_launcher_path,
+    launcher_uses_appimage_runtime, read_json_file_with_limit, read_text_config_with_limit,
+    stable_hook_launcher_path, APPIMAGE_EXTRACT_AND_RUN_ENV, APPIMAGE_EXTRACT_AND_RUN_VALUE,
 };
 use super::{
     bool_option, parse_flags, print_json, reject_unknown_options, write_stdout_line, CliContext,
@@ -418,17 +419,29 @@ fn codex_mcp_server_item(launcher: &Path) -> toml_edit::Item {
     table.insert("env_vars", toml_edit::value(env_vars));
     let mut env = toml_edit::Table::new();
     env.insert(MCP_MANAGED_ENV, toml_edit::value(MCP_SERVER_NAME));
+    if launcher_uses_appimage_runtime(launcher) {
+        env.insert(
+            APPIMAGE_EXTRACT_AND_RUN_ENV,
+            toml_edit::value(APPIMAGE_EXTRACT_AND_RUN_VALUE),
+        );
+    }
     table.insert("env", toml_edit::Item::Table(env));
     toml_edit::Item::Table(table)
 }
 
 pub(super) fn json_mcp_server_config(launcher: &Path) -> Value {
+    let mut env = Map::new();
+    env.insert(MCP_MANAGED_ENV.to_string(), json!(MCP_SERVER_NAME));
+    if launcher_uses_appimage_runtime(launcher) {
+        env.insert(
+            APPIMAGE_EXTRACT_AND_RUN_ENV.to_string(),
+            json!(APPIMAGE_EXTRACT_AND_RUN_VALUE),
+        );
+    }
     json!({
         "command": launcher.display().to_string(),
         "args": ["mcp"],
-        "env": {
-            MCP_MANAGED_ENV: MCP_SERVER_NAME,
-        },
+        "env": Value::Object(env),
     })
 }
 

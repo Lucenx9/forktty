@@ -54,6 +54,43 @@ fn mcp_codex_setup_allows_config_above_hook_config_limit() {
 }
 
 #[test]
+fn mcp_setup_sets_extract_and_run_for_appimage_launchers() {
+    let home = tempfile::tempdir().unwrap();
+    let codex_home = tempfile::tempdir().unwrap();
+    let home = home.path().to_string_lossy().to_string();
+    let codex_home = codex_home.path().to_string_lossy().to_string();
+    with_env(
+        &[
+            ("HOME", Some(home.as_str())),
+            ("CODEX_HOME", Some(codex_home.as_str())),
+        ],
+        || {
+            let launcher = Path::new("/home/me/AppImages/forktty.appimage");
+
+            let codex = mcp_agent_spec("codex").unwrap();
+            let plan = build_mcp_setup_plan(codex, launcher).unwrap();
+            let codex_config: toml::Table = plan.content.parse().unwrap();
+            let codex_server = &codex_config["mcp_servers"]["forktty"];
+            assert_eq!(
+                codex_server["command"].as_str(),
+                Some(launcher.to_str().unwrap())
+            );
+            assert_eq!(
+                codex_server["env"]["APPIMAGE_EXTRACT_AND_RUN"].as_str(),
+                Some("1")
+            );
+
+            let claude = mcp_agent_spec("claude").unwrap();
+            let plan = build_mcp_setup_plan(claude, launcher).unwrap();
+            let claude_config: Value = serde_json::from_str(&plan.content).unwrap();
+            let claude_server = &claude_config["mcpServers"]["forktty"];
+            assert_eq!(claude_server["command"], launcher.to_str().unwrap());
+            assert_eq!(claude_server["env"]["APPIMAGE_EXTRACT_AND_RUN"], "1");
+        },
+    );
+}
+
+#[test]
 fn mcp_remove_preserves_foreign_servers_and_is_idempotent() {
     let home = tempfile::tempdir().unwrap();
     let codex_home = tempfile::tempdir().unwrap();
@@ -401,6 +438,24 @@ fn parse_launcher_extracts_path_from_managed_command() {
         parse_launcher_from_managed_command(&command, spec).as_deref(),
         Some("/home/me/ForkTTY/forktty.AppImage")
     );
+}
+
+#[test]
+fn appimage_hook_commands_use_extract_and_run_env() {
+    let spec = agent_spec("codex").unwrap();
+    let launcher = Path::new("/home/me/AppImages/forktty.appimage");
+    let command = build_hook_shell_command(launcher, spec, "pre-tool");
+
+    assert!(command.contains(
+        "&& APPIMAGE_EXTRACT_AND_RUN=1 '/home/me/AppImages/forktty.appimage' hooks codex pre-tool"
+    ));
+    assert_eq!(
+        parse_launcher_from_managed_command(&command, spec).as_deref(),
+        Some("/home/me/AppImages/forktty.appimage")
+    );
+
+    let native = build_hook_shell_command(Path::new("/usr/bin/forktty"), spec, "pre-tool");
+    assert!(!native.contains("APPIMAGE_EXTRACT_AND_RUN"));
 }
 
 #[test]

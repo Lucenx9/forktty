@@ -2,7 +2,7 @@
 
 use super::integration_files::{
     atomic_write_file, backup_file, ensure_parent_dir, hook_config_write_path, read_json_file,
-    stable_hook_launcher_path,
+    stable_hook_launcher_path, APPIMAGE_EXTRACT_AND_RUN_ENV,
 };
 use super::{
     bool_option, format_doctor_path, inspect_path, parse_flags, print_json, reject_unknown_options,
@@ -664,9 +664,12 @@ pub(super) fn parse_launcher_from_managed_command(
     command: &str,
     spec: &AgentSpec,
 ) -> Option<String> {
-    let marker = "&& '";
+    let marker = "&& ";
     let start = command.find(marker)? + marker.len();
     let rest = &command[start..];
+    let appimage_prefix = format!("{APPIMAGE_EXTRACT_AND_RUN_ENV}=1 ");
+    let rest = rest.strip_prefix(&appimage_prefix).unwrap_or(rest);
+    let rest = rest.strip_prefix('\'')?;
     let mut launcher = String::new();
     let mut chars = rest.char_indices();
     while let Some((idx, ch)) = chars.next() {

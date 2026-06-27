@@ -55,6 +55,26 @@ fn antigravity_setup_plan_writes_named_group_and_wrapper_scripts() {
 }
 
 #[test]
+fn antigravity_appimage_wrappers_use_extract_and_run_env() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().display().to_string();
+    with_env(&[("HOME", Some(home.as_str()))], || {
+        let spec = agent_spec("antigravity").unwrap();
+        let plan =
+            build_hook_setup_plan(spec, Path::new("/home/me/AppImages/forktty.appimage")).unwrap();
+
+        let (_, content) = plan
+            .scripts
+            .iter()
+            .find(|(path, _)| path == &antigravity_script_path("before-model"))
+            .unwrap();
+        assert!(content.contains(
+            "APPIMAGE_EXTRACT_AND_RUN=1 '/home/me/AppImages/forktty.appimage' hooks antigravity before-model"
+        ));
+    });
+}
+
+#[test]
 fn antigravity_setup_preserves_foreign_groups_and_is_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().display().to_string();
@@ -373,12 +393,23 @@ fn opencode_plugin_plan_is_idempotent_and_protects_unmanaged_files() {
             let first = build_hook_setup_plan(spec, launcher).unwrap();
             assert!(first.changed);
             assert!(first.content.contains(OPENCODE_PLUGIN_TAG));
+            assert!(!first.content.contains("pub(in crate::socket_cli)"));
             assert!(first.content.contains("const HOOK_TIMEOUT_MS = 30000;"));
             assert!(first.content.contains("timeout: HOOK_TIMEOUT_MS,"));
             assert_eq!(
                 extract_launcher_from_opencode_plugin(&first.content).as_deref(),
                 Some("/usr/bin/forktty")
             );
+
+            let appimage =
+                build_hook_setup_plan(spec, Path::new("/home/me/AppImages/forktty.appimage"))
+                    .unwrap();
+            assert!(appimage
+                .content
+                .contains("const APPIMAGE_EXTRACT_AND_RUN = true;"));
+            assert!(appimage
+                .content
+                .contains(r#""APPIMAGE_EXTRACT_AND_RUN": "1""#));
 
             ensure_parent_dir(&first.config_path).unwrap();
             atomic_write_file(&first.config_path, first.content.as_bytes()).unwrap();

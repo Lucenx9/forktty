@@ -380,7 +380,18 @@ Error responses include a structured `code` field so clients can branch on outco
 | `invalid_param` | A supplied parameter has the wrong type or an invalid value. |
 | `error` | Catch-all for other failures (carries a `message`). |
 
-`forktty --json hooks doctor <agent>` and `forktty --json hooks test <agent>` emit a stable machine-readable report: a `version` field (currently 1) with additive-only evolution, an overall `ok` boolean, and — for `hooks test` — per-method `{method, ok, error?}` entries from a real socket round-trip that always includes `notification.create`. Both commands exit 0 when every check passes and 1 otherwise, so CI can gate on the exit code alone; the human-readable output is rendered from the same report.
+`forktty hooks setup` writes provider hook commands that invoke the stable
+ForkTTY launcher path rather than a volatile AppImage mount path. When that
+stable launcher is an AppImage file, the generated hook command sets
+`APPIMAGE_EXTRACT_AND_RUN=1` for the ForkTTY CLI child so short hook invocations
+run from temporary extraction instead of opening a FUSE AppImage mount; normal
+GUI AppImage launches are unchanged. `forktty --json hooks doctor <agent>` and
+`forktty --json hooks test <agent>` emit a stable machine-readable report: a
+`version` field (currently 1) with additive-only evolution, an overall `ok`
+boolean, and — for `hooks test` — per-method `{method, ok, error?}` entries from
+a real socket round-trip that always includes `notification.create`. Both
+commands exit 0 when every check passes and 1 otherwise, so CI can gate on the
+exit code alone; the human-readable output is rendered from the same report.
 
 `forktty remote-helper hello` is a no-socket stdio handshake intended to run
 through SSH as `ssh <host> forktty remote-helper hello`. It emits one JSON
@@ -431,7 +442,10 @@ config locations for Codex (`$CODEX_HOME/config.toml` or
 formatting and uses the MCP config size budget, so large hand-edited Codex
 configs are not constrained by the smaller hook-template limit. Registration
 writes a ForkTTY-managed server named `forktty`, preserves foreign MCP servers,
-writes atomically, and creates a `.bak-*` backup when content changes.
+writes atomically, and creates a `.bak-*` backup when content changes. When the
+registered launcher is an AppImage file, the managed server environment sets
+`APPIMAGE_EXTRACT_AND_RUN=1` so persistent MCP servers do not keep a FUSE
+AppImage mount alive.
 `forktty mcp remove` removes only that managed server entry. `forktty mcp
 remove gemini` is kept only to clean legacy ForkTTY-managed server entries
 from `~/.gemini/settings.json`; Gemini MCP setup remains unsupported.

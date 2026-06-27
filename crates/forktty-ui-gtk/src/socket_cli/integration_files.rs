@@ -9,6 +9,8 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 pub(super) const MAX_HOOK_CONFIG_SIZE_BYTES: u64 = 1024 * 1024;
+pub(super) const APPIMAGE_EXTRACT_AND_RUN_ENV: &str = "APPIMAGE_EXTRACT_AND_RUN";
+pub(super) const APPIMAGE_EXTRACT_AND_RUN_VALUE: &str = "1";
 
 pub(super) fn stable_hook_launcher_path() -> Option<PathBuf> {
     let current_exe = std::env::current_exe().ok();
@@ -49,6 +51,13 @@ pub(super) fn stable_hook_launcher_path_from_env(
         }
     }
     current_exe.map(Path::to_path_buf)
+}
+
+pub(super) fn launcher_uses_appimage_runtime(launcher: &Path) -> bool {
+    launcher
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("appimage"))
 }
 
 pub(super) fn read_json_file(path: &Path) -> CliResult<Value> {

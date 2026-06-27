@@ -5,6 +5,11 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Fixed
+- Fixed hook and MCP setup from AppImage launches so generated ForkTTY CLI
+  commands set `APPIMAGE_EXTRACT_AND_RUN=1`, preventing short hook calls and
+  persistent MCP servers from leaving FUSE AppImage runtime mounts behind.
+- Fixed generated OpenCode hook plugins so they contain valid JavaScript
+  constants instead of Rust visibility prefixes.
 - Fixed official CLI/MCP socket clients timing out before slower server-side
   operations complete or rejecting valid bounded responses larger than 1 MiB.
 - Fixed `team.message.dispatch` so concurrent or post-send/failed-ack retries
