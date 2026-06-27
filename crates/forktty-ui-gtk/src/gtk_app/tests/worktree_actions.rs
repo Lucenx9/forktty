@@ -2,6 +2,44 @@
 
 use super::*;
 
+struct IsolatedUserDirs {
+    state_home: PathBuf,
+}
+
+impl IsolatedUserDirs {
+    fn session_path(&self) -> PathBuf {
+        self.state_home.join("forktty").join("session-v2.json")
+    }
+}
+
+fn with_isolated_user_dirs<T>(f: impl FnOnce(&IsolatedUserDirs) -> T) -> T {
+    let home_dir = tempfile::tempdir().unwrap();
+    let home_path = home_dir.path().to_path_buf();
+    let state_home = home_path.join("state");
+    let data_home = home_path.join("data");
+    let config_home = home_path.join("config");
+    let cache_home = home_path.join("cache");
+    let dirs = IsolatedUserDirs {
+        state_home: state_home.clone(),
+    };
+    let home = home_path.to_string_lossy().into_owned();
+    let state = state_home.to_string_lossy().into_owned();
+    let data = data_home.to_string_lossy().into_owned();
+    let config = config_home.to_string_lossy().into_owned();
+    let cache = cache_home.to_string_lossy().into_owned();
+
+    crate::test_env::with_env(
+        &[
+            ("HOME", Some(home.as_str())),
+            ("XDG_STATE_HOME", Some(state.as_str())),
+            ("XDG_DATA_HOME", Some(data.as_str())),
+            ("XDG_CONFIG_HOME", Some(config.as_str())),
+            ("XDG_CACHE_HOME", Some(cache.as_str())),
+        ],
+        || f(&dirs),
+    )
+}
+
 #[test]
 fn close_worktree_workspace_keeps_model_when_backend_close_fails() {
     let project_dir = tempfile::tempdir().unwrap();
@@ -117,7 +155,9 @@ fn worktree_create_removes_created_worktree_when_spawn_fails() {
     )
     .with_notification_dispatch(false);
 
-    let error = open_worktree_from_gtk(&state, &branch_name, WorktreeAction::Create).unwrap_err();
+    let error = with_isolated_user_dirs(|_| {
+        open_worktree_from_gtk(&state, &branch_name, WorktreeAction::Create).unwrap_err()
+    });
 
     assert!(error.contains("sending on a closed channel"));
     assert!(worktree::list(repo_dir.path().to_str().unwrap())
@@ -156,7 +196,9 @@ fn worktree_create_preserves_existing_branch_when_gtk_spawn_fails() {
     )
     .with_notification_dispatch(false);
 
-    let error = open_worktree_from_gtk(&state, &branch_name, WorktreeAction::Create).unwrap_err();
+    let error = with_isolated_user_dirs(|_| {
+        open_worktree_from_gtk(&state, &branch_name, WorktreeAction::Create).unwrap_err()
+    });
 
     assert!(error.contains("sending on a closed channel"));
     assert!(worktree::list(repo_dir.path().to_str().unwrap())
@@ -195,7 +237,9 @@ fn worktree_create_preserves_existing_worktree_when_gtk_spawn_fails() {
     )
     .with_notification_dispatch(false);
 
-    let error = open_worktree_from_gtk(&state, &branch_name, WorktreeAction::Create).unwrap_err();
+    let error = with_isolated_user_dirs(|_| {
+        open_worktree_from_gtk(&state, &branch_name, WorktreeAction::Create).unwrap_err()
+    });
 
     assert!(error.contains("sending on a closed channel"));
     assert!(Path::new(&existing_path).exists());
@@ -229,14 +273,17 @@ fn worktree_open_uses_captured_base_cwd_after_active_workspace_changes() {
         model.create_workspace("active-now", repo_two.path());
     }
 
-    glib::MainContext::new()
-        .block_on(open_worktree_from_gtk_async_at_cwd(
-            &state,
-            &captured_cwd,
-            &branch_name,
-            WorktreeAction::Create,
-        ))
-        .unwrap();
+    with_isolated_user_dirs(|dirs| {
+        glib::MainContext::new()
+            .block_on(open_worktree_from_gtk_async_at_cwd(
+                &state,
+                &captured_cwd,
+                &branch_name,
+                WorktreeAction::Create,
+            ))
+            .unwrap();
+        assert!(dirs.session_path().exists());
+    });
 
     assert!(repo_one.path().join(".worktrees").exists());
     assert!(!repo_two.path().join(".worktrees").exists());
@@ -337,7 +384,9 @@ fn gtk_worktree_remove_keeps_worktree_when_terminal_close_fails() {
     )
     .with_notification_dispatch(false);
 
-    open_worktree_from_gtk(&state, &branch_name, WorktreeAction::Create).unwrap();
+    with_isolated_user_dirs(|_| {
+        open_worktree_from_gtk(&state, &branch_name, WorktreeAction::Create).unwrap();
+    });
     let info = worktree::list(repo_dir.path().to_str().unwrap())
         .unwrap()
         .into_iter()
