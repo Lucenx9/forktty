@@ -499,3 +499,311 @@ async fn surface_list_includes_runtime_pid_when_known() {
     assert_eq!(surfaces[0]["cols"], 120);
     assert_eq!(surfaces[0]["rows"], 40);
 }
+
+#[tokio::test]
+async fn workspace_create_rolls_back_model_when_spawn_fails() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let bootstrap_backend = Arc::new(HeadlessTerminalBackend::new());
+    let bootstrap_state = SocketAppState::new(
+        model.clone(),
+        bootstrap_backend,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&bootstrap_state, PathBuf::from("/tmp")).unwrap();
+    let state = SocketAppState::new(
+        model,
+        Arc::new(FailingSpawnBackend),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+
+    let error = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "failed", "workingDir": "/tmp"}),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("spawn failed"));
+    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    assert_eq!(workspaces.as_array().unwrap().len(), 1);
+    assert_eq!(workspaces[0]["name"], "main");
+    assert_eq!(workspaces[0]["active"], true);
+}
+
+#[tokio::test]
+async fn surface_split_rolls_back_model_when_spawn_fails() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let bootstrap_backend = Arc::new(HeadlessTerminalBackend::new());
+    let bootstrap_state = SocketAppState::new(
+        model.clone(),
+        bootstrap_backend,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&bootstrap_state, PathBuf::from("/tmp")).unwrap();
+    let state = SocketAppState::new(
+        model,
+        Arc::new(FailingSpawnBackend),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+    let error = dispatch(
+        &state,
+        "surface.split",
+        json!({"surface_id": surface_id, "axis": "vertical"}),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("spawn failed"));
+    let surfaces = dispatch(
+        &state,
+        "surface.list",
+        json!({"workspace_id": workspaces[0]["id"]}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(surfaces.as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn surface_close_keeps_model_when_backend_close_fails() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(FailingCloseBackend::default());
+    let state = SocketAppState::new(
+        model,
+        backend,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+    let error = dispatch(&state, "surface.close", json!({"surface_id": surface_id}))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("close failed"));
+    let surfaces = dispatch(
+        &state,
+        "surface.list",
+        json!({"workspace_id": workspaces[0]["id"]}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(surfaces.as_array().unwrap().len(), 1);
+    assert_eq!(surfaces[0]["id"], surface_id);
+}
+
+#[tokio::test]
+async fn surface_close_root_keeps_old_surface_when_replacement_spawn_fails() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_cwd = fs::canonicalize(project_dir.path()).unwrap();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let workspace = {
+        let mut model = model.lock().unwrap();
+        model.create_workspace("project", &project_cwd)
+    };
+    let surface_id = workspace.focused_surface_id.clone();
+    let backend = Arc::new(SpawnFailsCloseSucceedsBackend::new(TerminalSurfaceState {
+        surface_id: surface_id.clone(),
+        workspace_id: workspace.id.clone(),
+        cwd: project_cwd,
+        shell: "/bin/sh".to_string(),
+        cols: 80,
+        rows: 24,
+        pid: None,
+    }));
+    let state = SocketAppState::new(
+        model,
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+
+    let error = dispatch(&state, "surface.close", json!({"surface_id": surface_id}))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("spawn failed"));
+    let surfaces = dispatch(
+        &state,
+        "surface.list",
+        json!({"workspace_id": workspace.id}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(surfaces.as_array().unwrap().len(), 1);
+    assert_eq!(surfaces[0]["id"], surface_id);
+    assert_eq!(backend.surfaces().unwrap().len(), 1);
+    assert_eq!(backend.surfaces().unwrap()[0].surface_id, surface_id);
+}
+
+#[tokio::test]
+async fn surface_close_root_cleans_replacement_when_model_close_fails() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let project_cwd = fs::canonicalize(project_dir.path()).unwrap();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let workspace = {
+        let mut model = model.lock().unwrap();
+        model.create_workspace("project", &project_cwd)
+    };
+    let surface_id = workspace.focused_surface_id.clone();
+    let backend = Arc::new(CloseMutatesModelBackend::new(
+        TerminalSurfaceState {
+            surface_id: surface_id.clone(),
+            workspace_id: workspace.id.clone(),
+            cwd: project_cwd,
+            shell: "/bin/sh".to_string(),
+            cols: 80,
+            rows: 24,
+            pid: None,
+        },
+        model.clone(),
+    ));
+    let state = SocketAppState::new(
+        model,
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+
+    let error = dispatch(&state, "surface.close", json!({"surface_id": surface_id}))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(!error.is_empty());
+    assert_eq!(backend.surfaces().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn workspace_close_keeps_model_when_backend_close_fails() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(FailingCloseBackend::default());
+    let state = SocketAppState::new(
+        model,
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspaces[0]["id"].as_str().unwrap();
+    let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+    let error = dispatch(&state, "workspace.close", json!({"id": workspace_id}))
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("close failed"));
+    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    assert_eq!(workspaces.as_array().unwrap().len(), 1);
+    assert_eq!(workspaces[0]["id"], workspace_id);
+    let surfaces = dispatch(
+        &state,
+        "surface.list",
+        json!({"workspace_id": workspace_id}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(surfaces.as_array().unwrap().len(), 1);
+    assert_eq!(surfaces[0]["id"], surface_id);
+    assert_eq!(backend.surfaces().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn workspace_close_restores_already_closed_surfaces_when_later_close_fails() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(FailsSecondCloseBackend::default());
+    let state = SocketAppState::new(
+        model,
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspaces[0]["id"].as_str().unwrap().to_string();
+    let first_surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+    let second = dispatch(
+        &state,
+        "surface.split",
+        json!({"surface_id": first_surface_id, "axis": "horizontal"}),
+    )
+    .await
+    .unwrap();
+    let second_surface_id = second["id"].as_str().unwrap().to_string();
+
+    let error = dispatch(&state, "workspace.close", json!({"id": workspace_id}))
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code(), "error");
+    assert!(error.to_string().contains("second close failed"));
+    let model_surfaces = dispatch(
+        &state,
+        "surface.list",
+        json!({"workspace_id": workspace_id}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(model_surfaces.as_array().unwrap().len(), 2);
+    let runtime_surfaces = backend
+        .surfaces()
+        .unwrap()
+        .into_iter()
+        .map(|surface| surface.surface_id)
+        .collect::<Vec<_>>();
+    assert!(runtime_surfaces.contains(&first_surface_id.to_string()));
+    assert!(runtime_surfaces.contains(&second_surface_id));
+    assert_eq!(runtime_surfaces.len(), 2);
+}
+
+#[tokio::test]
+async fn surface_close_removes_model_surface_when_backend_already_missing() {
+    let (state, backend) = test_state();
+    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspaces[0]["id"].as_str().unwrap();
+    let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+    backend.close(surface_id).unwrap();
+
+    dispatch(&state, "surface.close", json!({"surface_id": surface_id}))
+        .await
+        .unwrap();
+
+    let surfaces = dispatch(
+        &state,
+        "surface.list",
+        json!({"workspace_id": workspace_id}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(surfaces.as_array().unwrap().len(), 1);
+    assert_ne!(surfaces[0]["id"], surface_id);
+    assert!(backend.sent_text(surface_id).is_err());
+    assert!(backend
+        .sent_text(surfaces[0]["id"].as_str().unwrap())
+        .is_ok());
+}
