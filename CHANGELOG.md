@@ -19,7 +19,8 @@ All notable changes to ForkTTY are documented here.
 - Fixed opt-in PTY process persistence cleanup so disabling the setting,
   starting with it disabled, or explicitly closing/restarting a pane terminates
   stale ForkTTY-managed `dtach` brokers and their child process trees instead
-  of leaving detached terminals behind.
+  of leaving detached terminals behind; closing the GTK window after disabling
+  persistence now also cleans visible managed brokers.
 - Fixed generated OpenCode hook plugins so they contain valid JavaScript
   constants instead of Rust visibility prefixes.
 - Fixed official CLI/MCP socket clients timing out before slower server-side

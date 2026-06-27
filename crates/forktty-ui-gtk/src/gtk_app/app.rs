@@ -677,6 +677,12 @@ pub(super) fn build_ui(app: &adw::Application) {
             server.shutdown();
         }
         save_session_from_state(&state_for_close);
+        let cleanup_pty_persistence_on_close = config::load_config()
+            .map(|config| !config.general.persist_terminal_processes)
+            .unwrap_or(false);
+        if cleanup_pty_persistence_on_close {
+            cleanup_pty_persistence_sessions(&state_for_close, false);
+        }
         glib::Propagation::Proceed
     });
 

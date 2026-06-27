@@ -139,10 +139,11 @@ the broker boundary. The broker program itself is resolved only from absolute
 close/restart terminates the matching ForkTTY-managed broker process tree and
 removes the per-surface broker socket so a future reused surface id cannot
 attach to stale detached state. Disabling the setting live cleans stale
-detached sessions while preserving currently visible surfaces; startup with the
-flag off cleans old managed sessions before restore. Normal UI process exit
-with the flag on does not take that cleanup path, preserving the intended
-restart/relaunch reattach behavior.
+detached sessions while preserving currently visible surfaces until they close;
+closing the GTK window with the flag off cleans visible managed broker sessions
+too. Startup with the flag off cleans old managed sessions before restore.
+Normal UI process exit with the flag on does not take that cleanup path,
+preserving the intended restart/relaunch reattach behavior.
 
 ## Config
 

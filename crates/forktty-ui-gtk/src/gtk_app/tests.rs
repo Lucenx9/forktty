@@ -2525,6 +2525,15 @@ fn window_close_shuts_down_socket_server_handle() {
 }
 
 #[test]
+fn window_close_cleans_pty_persistence_when_disabled() {
+    let source = include_str!("app.rs");
+
+    assert!(source.contains("config::load_config()"));
+    assert!(source.contains("!config.general.persist_terminal_processes"));
+    assert!(source.contains("cleanup_pty_persistence_sessions(&state_for_close, false)"));
+}
+
+#[test]
 fn chrome_micro_polish_css_stays_gtk_414_compatible() {
     let source = include_str!("../style.css");
 
