@@ -451,3 +451,238 @@ fn context_snapshot_risk_flags_only_pending_approvals() {
     });
     assert!(flags.contains(&"pending_approval"));
 }
+
+#[tokio::test]
+async fn context_snapshot_includes_compact_team_summaries() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    let worker_surface = dispatch(
+        &state,
+        "surface.split",
+        json!({"surface_id": surface_id, "axis": "vertical"}),
+    )
+    .await
+    .unwrap();
+    let worker_surface_id = worker_surface["id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "leader_surface_id": surface_id,
+            "goal": "review state"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "claude",
+            "surface_id": worker_surface_id,
+            "status": "running"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.task.upsert",
+        json!({
+            "team_id": "team-1",
+            "task_id": "task-1",
+            "title": "Review"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.message.send",
+        json!({
+            "team_id": "team-1",
+            "message_id": "msg-1",
+            "from": "leader",
+            "to_worker_id": "worker-1",
+            "body": "status?"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let snapshot = dispatch(
+        &state,
+        "context.snapshot",
+        json!({"workspace_id": workspace_id, "tail_lines": 0}),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(snapshot["team_summaries"][0]["team_id"], "team-1");
+    assert_eq!(snapshot["team_summaries"][0]["workers_total"], 1);
+    assert_eq!(snapshot["team_summaries"][0]["workers_active"], 1);
+    assert_eq!(snapshot["team_summaries"][0]["tasks_open"], 1);
+    assert_eq!(snapshot["team_summaries"][0]["messages_pending"], 1);
+}
+
+#[tokio::test]
+async fn context_snapshot_omits_team_details_by_default() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "leader_surface_id": surface_id,
+            "goal": "review state"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "claude",
+            "surface_id": surface_id,
+            "status": "running"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.message.send",
+        json!({
+            "team_id": "team-1",
+            "message_id": "msg-1",
+            "from": "leader",
+            "to_worker_id": "worker-1",
+            "body": "large worker prompt that should not ride along by default"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let compact = dispatch(
+        &state,
+        "context.snapshot",
+        json!({"workspace_id": workspace_id, "tail_lines": 0}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(compact["teams"].as_array().unwrap().len(), 0);
+    assert_eq!(compact["team_summaries"][0]["team_id"], "team-1");
+
+    let detailed = dispatch(
+        &state,
+        "context.snapshot",
+        json!({
+            "workspace_id": workspace_id,
+            "tail_lines": 0,
+            "include_team_details": true
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        detailed["teams"][0]["messages"][0]["body"],
+        "large worker prompt that should not ride along by default"
+    );
+}
+
+#[tokio::test]
+async fn context_snapshot_team_summaries_report_done_inconsistencies() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "leader_surface_id": surface_id,
+            "status": "done"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "claude",
+            "surface_id": surface_id,
+            "status": "running"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.task.upsert",
+        json!({
+            "team_id": "team-1",
+            "task_id": "task-1",
+            "title": "Review"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.message.send",
+        json!({
+            "team_id": "team-1",
+            "message_id": "msg-1",
+            "from": "leader",
+            "to_worker_id": "worker-1",
+            "body": "status?"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let snapshot = dispatch(
+        &state,
+        "context.snapshot",
+        json!({"workspace_id": workspace_id, "tail_lines": 0}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(snapshot["team_summaries"][0]["status"], "done");
+    assert_eq!(
+        snapshot["team_summaries"][0]["consistency_warnings"],
+        json!([
+            "done_with_active_workers",
+            "done_with_open_tasks",
+            "done_with_pending_messages"
+        ])
+    );
+    assert!(snapshot["risk_flags"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("team_consistency_warning")));
+}
