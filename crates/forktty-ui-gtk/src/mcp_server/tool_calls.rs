@@ -2,8 +2,8 @@
 
 use super::tool_params::{
     insert_optional_bool_param, insert_optional_non_blank_param, insert_optional_string_param,
-    insert_optional_u64_param, map_from_pairs, optional_enum, optional_non_blank, optional_string,
-    optional_string_array, optional_u64, reject_unexpected, required_non_blank,
+    insert_optional_u64_param, map_from_pairs, optional_bool, optional_enum, optional_non_blank,
+    optional_string, optional_string_array, optional_u64, reject_unexpected, required_non_blank,
     required_non_empty_string, ToolCallError,
 };
 use super::ProtocolError;
@@ -118,6 +118,115 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             insert_optional_bool_param(args, &mut params, "include_feed_trace")?;
             SocketCall {
                 method: "context.snapshot",
+                params,
+            }
+        }
+        "task_strategy_plan" => {
+            reject_unexpected(
+                args,
+                &[
+                    "goal",
+                    "strategy",
+                    "router_profile",
+                    "last_known_good",
+                    "harness_signals",
+                    "repo_dirty",
+                    "workspace_id",
+                    "workspace_name",
+                    "worktree_name",
+                    "surface_id",
+                    "parallel",
+                    "review",
+                    "user_visible",
+                ],
+                name,
+            )?;
+            let mut params = workspace_target_params(args, true)?;
+            params.insert(
+                "goal".to_string(),
+                Value::String(required_non_empty_string(args, "goal")?),
+            );
+            insert_optional_non_blank_param(args, &mut params, "strategy")?;
+            insert_optional_non_blank_param(args, &mut params, "router_profile")?;
+            insert_optional_object_param(args, &mut params, "last_known_good")?;
+            insert_optional_object_param(args, &mut params, "harness_signals")?;
+            insert_optional_non_blank_param(args, &mut params, "surface_id")?;
+            insert_optional_bool_param(args, &mut params, "repo_dirty")?;
+            insert_optional_renamed_bool_param(
+                args,
+                &mut params,
+                "parallel",
+                "user_requested_parallelism",
+            )?;
+            insert_optional_renamed_bool_param(
+                args,
+                &mut params,
+                "review",
+                "user_requested_review",
+            )?;
+            insert_optional_renamed_bool_param(
+                args,
+                &mut params,
+                "user_visible",
+                "likely_user_visible_change",
+            )?;
+            SocketCall {
+                method: "task.strategy.plan",
+                params,
+            }
+        }
+        "task_strategy_apply" => {
+            reject_unexpected(
+                args,
+                &[
+                    "run_id",
+                    "goal",
+                    "plan",
+                    "approved",
+                    "approval_id",
+                    "request_approval",
+                    "workspace_id",
+                    "workspace_name",
+                    "worktree_name",
+                    "leader_surface_id",
+                    "surface_id",
+                    "workflow_id",
+                    "team_id",
+                    "submit",
+                ],
+                name,
+            )?;
+            let mut params = workspace_target_params(args, false)?;
+            params.insert(
+                "run_id".to_string(),
+                Value::String(required_non_blank(args, "run_id")?),
+            );
+            params.insert(
+                "goal".to_string(),
+                Value::String(required_non_empty_string(args, "goal")?),
+            );
+            let Some(plan) = args.get("plan") else {
+                return Err(ToolCallError::validation("plan is required"));
+            };
+            if !plan.is_object() {
+                return Err(ToolCallError::validation("plan must be an object"));
+            }
+            params.insert("plan".to_string(), plan.clone());
+            if let Some(approved) = optional_string_array(args, "approved")? {
+                params.insert(
+                    "approved".to_string(),
+                    Value::Array(approved.into_iter().map(Value::String).collect()),
+                );
+            }
+            insert_optional_non_blank_param(args, &mut params, "approval_id")?;
+            insert_optional_bool_param(args, &mut params, "request_approval")?;
+            insert_optional_non_blank_param(args, &mut params, "leader_surface_id")?;
+            insert_optional_non_blank_param(args, &mut params, "surface_id")?;
+            insert_optional_non_blank_param(args, &mut params, "workflow_id")?;
+            insert_optional_non_blank_param(args, &mut params, "team_id")?;
+            insert_optional_bool_param(args, &mut params, "submit")?;
+            SocketCall {
+                method: "task.strategy.apply",
                 params,
             }
         }
@@ -1064,6 +1173,35 @@ fn worktree_named_call(
     })
 }
 
+fn insert_optional_renamed_bool_param(
+    args: &Map<String, Value>,
+    params: &mut Map<String, Value>,
+    source: &'static str,
+    target: &'static str,
+) -> Result<(), ToolCallError> {
+    if let Some(value) = optional_bool(args, source)? {
+        params.insert(target.to_string(), Value::Bool(value));
+    }
+    Ok(())
+}
+
+fn insert_optional_object_param(
+    args: &Map<String, Value>,
+    params: &mut Map<String, Value>,
+    key: &'static str,
+) -> Result<(), ToolCallError> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(()),
+        Some(Value::Object(value)) => {
+            params.insert(key.to_string(), Value::Object(value.clone()));
+            Ok(())
+        }
+        Some(_) => Err(ToolCallError::validation(format!(
+            "{key} must be an object"
+        ))),
+    }
+}
+
 fn workspace_target_params(
     args: &Map<String, Value>,
     default_workspace: bool,
@@ -1136,6 +1274,8 @@ fn success_text(name: &str, result: &Value) -> String {
         "workspace_list" => "Listed ForkTTY workspaces.".to_string(),
         "surface_list" => "Listed ForkTTY surfaces.".to_string(),
         "context_snapshot" => "Built ForkTTY context snapshot.".to_string(),
+        "task_strategy_plan" => "Planned ForkTTY task strategy.".to_string(),
+        "task_strategy_apply" => "Applied ForkTTY task strategy staging.".to_string(),
         "identify" => "Identified current ForkTTY workspace and surface context.".to_string(),
         "topology_tree" => "Built ForkTTY topology tree.".to_string(),
         "remote_list" => "Listed ForkTTY SSH remotes.".to_string(),

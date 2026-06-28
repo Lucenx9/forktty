@@ -36,6 +36,8 @@ mod store_access;
 mod surface_lifecycle;
 mod surface_runtime;
 mod system_runtime;
+mod task_strategy_params;
+mod task_strategy_runtime;
 mod team_dispatch;
 mod team_params;
 mod team_provider;
@@ -491,6 +493,7 @@ mod tests {
     mod spawn_request;
     mod surface_pane;
     mod system;
+    mod task_strategy;
     mod team_health_finish;
     mod team_message_dispatch;
     mod team_provider;

@@ -1,0 +1,61 @@
+use crate::DispatchError;
+use crate::{optional_bool_param, optional_non_blank_string_param, required_trimmed_string};
+use serde_json::Value;
+
+pub(crate) struct TaskStrategyPlanParams {
+    pub(crate) goal: String,
+    pub(crate) explicit_strategy: Option<String>,
+    pub(crate) router_profile: Option<String>,
+    pub(crate) last_known_good: Option<Value>,
+    pub(crate) harness_signals: Option<Value>,
+    pub(crate) repo_dirty: Option<bool>,
+    pub(crate) user_requested_parallelism: bool,
+    pub(crate) user_requested_review: bool,
+    pub(crate) likely_user_visible_change: Option<bool>,
+}
+
+pub(crate) fn task_strategy_plan_params(
+    params: &Value,
+) -> Result<TaskStrategyPlanParams, DispatchError> {
+    let goal = required_trimmed_string(params, "goal")?.to_string();
+    let explicit_strategy =
+        optional_non_blank_string_param(params, "strategy")?.map(str::to_string);
+    let router_profile =
+        optional_non_blank_string_param(params, "router_profile")?.map(str::to_string);
+    let last_known_good = match params.get("last_known_good") {
+        None | Some(Value::Null) => None,
+        Some(value @ Value::Object(_)) => Some(value.clone()),
+        Some(_) => {
+            return Err(DispatchError::InvalidParam(
+                "last_known_good must be an object".to_string(),
+            ));
+        }
+    };
+    let harness_signals = match params.get("harness_signals") {
+        None | Some(Value::Null) => None,
+        Some(value @ Value::Object(_)) => Some(value.clone()),
+        Some(_) => {
+            return Err(DispatchError::InvalidParam(
+                "harness_signals must be an object".to_string(),
+            ));
+        }
+    };
+    let repo_dirty = optional_bool_param(params, "repo_dirty")?;
+    let user_requested_parallelism =
+        optional_bool_param(params, "user_requested_parallelism")?.unwrap_or(false);
+    let user_requested_review =
+        optional_bool_param(params, "user_requested_review")?.unwrap_or(false);
+    let likely_user_visible_change = optional_bool_param(params, "likely_user_visible_change")?;
+
+    Ok(TaskStrategyPlanParams {
+        goal,
+        explicit_strategy,
+        router_profile,
+        last_known_good,
+        harness_signals,
+        repo_dirty,
+        user_requested_parallelism,
+        user_requested_review,
+        likely_user_visible_change,
+    })
+}

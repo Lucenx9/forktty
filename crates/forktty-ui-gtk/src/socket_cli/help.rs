@@ -67,6 +67,10 @@ Usage:
   forktty status explain [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>|--surface-id <id>]
   forktty status watch [--count <n>] [--interval-ms <ms>] [workspace selectors]
   forktty context-snapshot [workspace selectors] [--surface-id <id>] [--tail-lines <n>] [--include-team-details] [--include-workflow-details] [--include-feed-trace]
+  forktty task-plan <goal> [workspace selectors] [--surface-id <id>] [--strategy <strategy>] [--profile balanced|fast|conservative|parallel|review_heavy] [--last-known-good-json <json>] [--harness-signals-json <json>] [--repo-dirty] [--parallel] [--review] [--user-visible] [--json]
+      Ask ForkTTY to choose a read-only strategy for a task before selecting team, loop, worktree, or harnesses. If --profile is omitted, ForkTTY infers a router profile when the goal clearly asks for speed, caution, parallel work, or review. ForkTTY can infer last-known-good stickiness from completed task-strategy workflows; --last-known-good-json may override or enrich it. --harness-signals-json may pass per-harness cooldown/lockout signals for scripts. If --repo-dirty or --user-visible is omitted, ForkTTY infers dirty state from the selected surface/workspace cwd and edit intent from the goal when possible.
+  forktty task-apply --run-id <id> --plan-json <json> [--approved <ids>|--request-approval|--approval-id <id>] [--worktree-name <name>] [--submit] <goal> [--json]
+      Apply an approved strategy. Defaults to staged workflow/team state; --request-approval creates a Feed approval without starting, --approval-id consumes an approved request, and --submit launches visible workers for supported team plans. Worktree-layer submit requires an already-open worktree workspace.
   forktty feed [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--limit <n>] [--json]
   forktty feed respond <approval-id> --decision approve|deny [--json]
   forktty workflows [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--surface-id <id>] [--session-id <id>] [--query <text>] [--limit <n>] [--json]
@@ -189,6 +193,13 @@ ForkTTY examples
   forktty identify --json
   forktty wait agent-status --status needs_input --timeout-ms 30000
   forktty context-snapshot --workspace-name main --tail-lines 0 --json
+  forktty task-plan \"fix the failing test\" --json
+  forktty task-apply --run-id task-router-1 --plan-json '<plan-json>' --request-approval \"fix the failing test\"
+  forktty feed respond '<approval-id-from-request>' --decision approve
+  forktty task-apply --run-id task-router-1 --plan-json '<plan-json>' --approval-id '<approval-id-from-request>' \"fix the failing test\"
+  forktty task-apply --run-id task-router-1 --plan-json '<plan-json>' --approved start_run \"fix the failing test\"
+  forktty task-apply --run-id task-router-1 --plan-json '<team-plan-json>' --approved start_run,launch_parallel_workers --submit \"review the implementation\"
+  forktty task-apply --run-id task-router-2 --plan-json '<worktree-team-plan-json>' --approved start_run,create_worktree,launch_parallel_workers --worktree-name feature-x --submit \"implement in feature-x\"
   forktty team ask review-team review-worker --task-id review-head --prompt \"Review HEAD read-only\" --submit
   forktty team review review-team review-worker --task-id review-head --commit HEAD --submit
   forktty team watch review-team --stale-after-ms 120000 --limit 10
@@ -217,6 +228,8 @@ pub(super) const COMPLETION_COMMANDS: &[&str] = &[
     "identify",
     "wait",
     "feed",
+    "task-plan",
+    "task-apply",
     "workflows",
     "workflow-get",
     "workflow-upsert",

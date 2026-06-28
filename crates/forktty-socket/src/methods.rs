@@ -98,6 +98,8 @@ const CORE_METHOD_SPECS: &[MethodSpec] = &[
     MethodSpec::public("system.identify"),
     MethodSpec::public("system.ping"),
     MethodSpec::public("system.top"),
+    MethodSpec::public("task.strategy.apply"),
+    MethodSpec::public("task.strategy.plan"),
     MethodSpec::public("team.events"),
     MethodSpec::public("team.finish"),
     MethodSpec::public("team.get"),

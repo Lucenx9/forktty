@@ -87,6 +87,65 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             ),
         },
         ToolSpec {
+            name: "task_strategy_plan",
+            annotations: read_only_annotations(),
+            description: "Ask ForkTTY to choose a read-only task strategy before selecting team, workflow, loop, worktree, hooks, MCP, or harnesses. The planner returns the selected router profile, ranked candidate strategy scores plus role-specific harness assignment scores with factor breakdowns, uses ForkTTY capabilities, configured team provider order as the harness tie-break, selected workspace/surface cwd to infer simple repo context such as dirty state when repo_dirty is omitted, goal wording to infer likely user-visible edit intent and profile when omitted, and completed task-strategy workflow history for advisory last-known-good stickiness when explicit evidence is omitted. It includes explicit reviewer roles when a review strategy is selected. Use this for non-trivial tasks instead of guessing a mode.",
+            input_schema: object_schema(
+                &["goal"],
+                json!({
+                    "goal": string_prop("User task or desired outcome."),
+                    "strategy": string_prop("Optional explicit strategy override: solo, solo_tracked, solo_with_verify_loop, implementer_plus_reviewer, parallel_research, parallel_experiment, team_pipeline, review_only."),
+                    "router_profile": string_prop("Optional router profile: balanced, fast, conservative, parallel, review_heavy. When omitted, ForkTTY infers a profile from clear goal wording and request hints."),
+                    "last_known_good": {
+                        "type": "object",
+                        "description": "Optional advisory last-known-good routing evidence. May include strategy, harness_id, and reason. When omitted, ForkTTY can infer evidence from completed task-strategy workflows in the selected workspace. Explicit evidence wins over inferred history. It adds a small explainable score bias and never overrides readiness, cooldown, lockout, approvals, or task fit.",
+                        "additionalProperties": true
+                    },
+                    "harness_signals": {
+                        "type": "object",
+                        "description": "Optional per-harness routing signals keyed by harness id. Each value may include cooldown, cooldown_reason, locked_out, and lockout_reason. Cooldown is a soft penalty; locked_out excludes that harness from assignments.",
+                        "additionalProperties": true
+                    },
+                    "workspace_id": string_prop("Workspace id whose focused surface/project cwd should inform planning. Defaults from the ForkTTY caller context when available."),
+                    "workspace_name": string_prop("Workspace name whose focused surface/project cwd should inform planning."),
+                    "worktree_name": string_prop("Worktree workspace name whose focused surface/project cwd should inform planning."),
+                    "surface_id": string_prop("Surface id whose effective project cwd should inform planning."),
+                    "repo_dirty": boolean_prop("Whether the repository has uncommitted changes and editing should prefer worktree isolation. When omitted, ForkTTY tries to infer this from the selected surface/workspace cwd."),
+                    "parallel": boolean_prop("True when the user explicitly requested parallelism, comparison, or independent approaches."),
+                    "review": boolean_prop("True when the user requested or the task requires a separate reviewer role."),
+                    "user_visible": boolean_prop("Optional override for whether the task is likely to change user-visible behavior, docs, CLI output, UI, packaging, or public docs. When omitted, ForkTTY infers this from the goal text."),
+                }),
+            ),
+        },
+        ToolSpec {
+            name: "task_strategy_apply",
+            annotations: mutating_annotations_with_open_world(true, false, true),
+            description: "Apply a previously planned ForkTTY task strategy as visible workflow/team/task/message state. With submit omitted or false, this stages coordination state only. ForkTTY recomputes worktree approvals and multi-worker submit approvals from the requested operation and plan shape. If required approvals are missing, request_approval can publish a pending Feed approval without starting work; a later call may pass the approved request-bound approval_id returned by that request. With submit true and a supported team plan, ForkTTY launches visible worker panes and dispatches prompts through the team mailbox; worktree-layer plans require worktree_name for an already-open ForkTTY worktree workspace. This requires explicit approvals and never launches hidden background work.",
+            input_schema: object_schema(
+                &["run_id", "goal", "plan"],
+                json!({
+                    "run_id": string_prop("Stable run id used to derive deterministic workflow, team, task, and message ids."),
+                    "goal": string_prop("User task or desired outcome."),
+                    "plan": {
+                        "type": "object",
+                        "description": "The task.strategy.plan result object to apply.",
+                        "additionalProperties": true
+                    },
+                    "approved": string_array_prop("Explicit approval ids granted for this apply call, for example start_run. Omit when using request_approval or an approved approval_id."),
+                    "approval_id": string_prop("Deterministic request-bound task strategy Feed approval id that has already been approved."),
+                    "request_approval": boolean_prop("When true and approvals are missing, publish a pending Feed approval instead of mutating workflow/team state."),
+                    "workspace_id": string_prop("Workspace id for the staged workflow/team state."),
+                    "workspace_name": string_prop("Workspace name for the staged workflow/team state."),
+                    "worktree_name": string_prop("Already-open worktree workspace name for staged state or submit=true worktree-layer team runs."),
+                    "leader_surface_id": string_prop("Visible leader surface id to bind the staged team."),
+                    "surface_id": string_prop("Visible leader surface id; accepted as an alias for leader_surface_id."),
+                    "workflow_id": string_prop("Optional explicit workflow id; defaults to run_id."),
+                    "team_id": string_prop("Optional explicit team id; defaults to run_id."),
+                    "submit": boolean_prop("When true, launch visible team workers and dispatch prompts for supported team plans. Worktree-layer plans require worktree_name naming an already-open ForkTTY worktree workspace. Defaults to false staging."),
+                }),
+            ),
+        },
+        ToolSpec {
             name: "identify",
             annotations: read_only_annotations(),
             description: "Return the canonical ForkTTY workspace/surface context for the caller or selected target, including effective_project_cwd, caller id validation, and current agent binding when present.",

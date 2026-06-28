@@ -16,6 +16,7 @@ pub mod protocol;
 pub mod protocol_limits;
 pub mod pty_persistence;
 pub mod session;
+pub mod task_strategy;
 pub mod team;
 pub mod update;
 pub mod workflow;
@@ -54,6 +55,13 @@ pub use project_actions::{
     ProjectActionError,
 };
 pub use protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
+pub use task_strategy::{
+    phase_one_classifier_reachable_classes, plan_task_strategy, HarnessAssignment,
+    HarnessCapability, HarnessHealth, HarnessRegistry, HarnessRole, HarnessRoutingSignals,
+    TaskClass, TaskRouterProfile, TaskStrategy, TaskStrategyApproval, TaskStrategyCandidateScore,
+    TaskStrategyInput, TaskStrategyLastKnownGood, TaskStrategyLayers, TaskStrategyPlan,
+    TaskStrategyScoreFactor,
+};
 pub use team::{
     load_teams, load_teams_from_path, now_ms as team_now_ms, save_teams_to_path, team_store_path,
     update_teams, update_teams_at_path, TeamError, TeamEvent, TeamEventQuery, TeamHeartbeat,
