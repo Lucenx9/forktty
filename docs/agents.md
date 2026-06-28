@@ -19,6 +19,27 @@ the owning Rust modules and agent-facing setup docs:
   `crates/forktty-ui-gtk/src/socket_cli/hooks/event.rs`.
 - MCP setup and MCP tool exposure: `crates/forktty-ui-gtk/src/mcp_server.rs`
   plus the socket methods in `crates/forktty-socket/src/`.
+- Task strategy routing: `crates/forktty-core/src/task_strategy.rs`,
+  `crates/forktty-socket/src/task_strategy_runtime.rs`, and MCP/CLI wrappers.
+  `task.strategy.plan` infers dirty git state from the selected surface or
+  workspace cwd when `repo_dirty` is omitted, and infers likely user-visible
+  edit intent plus clear fast/conservative/parallel/review-heavy router
+  profiles from the goal when those hints are omitted. It also returns the
+  selected router profile, ranked candidate strategy scores, and role-specific
+  harness assignment scores with factor breakdowns, and accepts optional
+  last-known-good plus per-harness cooldown/lockout signals so agents can
+  inspect the router decision before applying it. When callers omit
+  last-known-good, the planner can infer it from completed task-strategy
+  workflows in the selected workspace. Last-known-good is a small advisory
+  stickiness factor; cooldown is a soft assignment penalty; lockout is
+  a hard task/mode exclusion. `task.strategy.apply` stages visible
+  workflow/team/task/message state by default; with
+  `submit=true`, supported team plans launch visible worker panes and dispatch
+  prompts through the team mailbox; missing approvals can be
+  published as Feed approvals before any workflow/team mutation; worktree-layer
+  plans require `worktree_name` for an already-open ForkTTY worktree workspace.
+  Worktree creation, push, merge, and destructive work remain separate explicit
+  approvals.
 - Managed agent skill content: `.agents/skills/forktty-agent-orchestration/`,
   embedded by `crates/forktty-ui-gtk/src/socket_cli/skills.rs`.
 - User-facing hook/MCP/skill setup guidance: `hooks/README.md`, `README.md`,
@@ -86,6 +107,36 @@ taxonomy and the agent-facing docs aligned in the same change.
 - `system.capabilities` exposes a `provider_capabilities` matrix for supported
   launch/resume providers so socket and MCP clients can read provider support
   directly instead of probing failed operations.
+- `task.strategy.plan`, CLI `forktty task-plan`, and MCP
+  `task_strategy_plan` provide a read-only routing recommendation before an
+  agent chooses solo work, workflow loops, reviewers, teams, worktrees, MCP,
+  hooks, or harness roles. The planner uses the selected surface/workspace cwd
+  to infer simple git dirty state when no explicit dirty hint is supplied,
+  returns or infers a router profile (`balanced`, `fast`, `conservative`,
+  `parallel`, or `review_heavy`), and scores harness assignments per role while
+  using configured provider order as the tie-break. Callers with concrete
+  runtime evidence can pass explicit last-known-good strategy/harness evidence
+  plus per-harness cooldown/lockout signals; when they omit LKGP, ForkTTY can
+  infer it from completed task-strategy workflow history. LKGP adds a small
+  explainable score bias, cooldown lowers assignment score, and lockout excludes
+  a harness from assignment. It does not launch workers or mutate orchestration
+  state.
+- `task.strategy.apply`, CLI `forktty task-apply`, and MCP
+  `task_strategy_apply` apply an approved returned plan as visible
+  workflow/team/task/message state with deterministic ids. The default path is
+  staged and local. If approvals are missing, `request_approval` publishes a
+  Feed approval and returns blocked without workflow/team mutation; an approved
+  returned `approval_id` can later satisfy that same request-bound start-run
+  approval. Apply recomputes dirty-repo edit isolation, worktree approvals, and
+  multi-worker submit approvals from the selected target, requested operation,
+  and effective plan shape before trusting the plan's approval list. `approved`
+  is a caller attestation; use Feed `request_approval` when a separate human
+  decision is required. With
+  `submit=true`,
+  supported team plans launch worker panes and dispatch role prompts;
+  worktree-layer plans require `worktree_name` for an already-open ForkTTY
+  worktree workspace and are rejected before mutation if that workspace is
+  missing.
 - `forktty hooks doctor <agent>` reports hook config path state, launcher
   freshness, supported events, Claude profile, and Codex trust-record state.
 - Status normalization is centralized in `forktty-core` for reuse by UI/socket/script layers.

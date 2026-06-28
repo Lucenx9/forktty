@@ -35,6 +35,7 @@ mod skills;
 mod status;
 mod surface;
 mod system;
+mod task;
 mod team;
 mod transport;
 mod workflow;
@@ -128,6 +129,11 @@ use system::{
 use system::{
     handle_capabilities, handle_completions, handle_events, handle_examples, handle_help,
     handle_identify, handle_notify, handle_wait,
+};
+#[cfg(test)]
+use task::{
+    format_task_strategy_apply_line, format_task_strategy_plan_line, handle_task_apply,
+    handle_task_plan,
 };
 #[cfg(test)]
 use team::{

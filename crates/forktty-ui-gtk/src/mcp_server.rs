@@ -590,6 +590,200 @@ mod tests {
     }
 
     #[test]
+    fn task_strategy_plan_tool_is_read_only() {
+        let names = tool_specs()
+            .iter()
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"task_strategy_plan"));
+        assert_eq!(annotation("task_strategy_plan")["readOnlyHint"], true);
+        assert_eq!(annotation("task_strategy_plan")["openWorldHint"], false);
+    }
+
+    #[test]
+    fn task_strategy_plan_tool_maps_to_socket_method() {
+        let (method, params) = build_socket_call_for_test(
+            "task_strategy_plan",
+            json!({
+                "goal": "Fix the bug and verify tests",
+                "surface_id": "surface-1",
+                "router_profile": "fast",
+                "last_known_good": {
+                    "strategy": "solo_with_verify_loop",
+                    "harness_id": "claude",
+                    "reason": "last successful run"
+                },
+                "harness_signals": {
+                    "codex": {
+                        "cooldown": true,
+                        "cooldown_reason": "recent quota error"
+                    }
+                },
+                "repo_dirty": true,
+                "user_visible": true
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(method, "task.strategy.plan");
+        assert_eq!(params["goal"], "Fix the bug and verify tests");
+        assert_eq!(params["surface_id"], "surface-1");
+        assert_eq!(params["router_profile"], "fast");
+        assert_eq!(
+            params["last_known_good"]["strategy"],
+            "solo_with_verify_loop"
+        );
+        assert_eq!(params["last_known_good"]["harness_id"], "claude");
+        assert_eq!(params["last_known_good"]["reason"], "last successful run");
+        assert_eq!(params["harness_signals"]["codex"]["cooldown"], true);
+        assert_eq!(
+            params["harness_signals"]["codex"]["cooldown_reason"],
+            "recent quota error"
+        );
+        assert_eq!(params["repo_dirty"], true);
+        assert_eq!(params["likely_user_visible_change"], true);
+    }
+
+    #[test]
+    fn task_strategy_plan_surface_arg_overrides_env_workspace_target() {
+        let (method, params) = with_env(
+            &[
+                ("FORKTTY_WORKSPACE_ID", Some("workspace-env")),
+                ("FORKTTY_SURFACE_ID", Some("surface-env")),
+            ],
+            || {
+                build_socket_call_for_test(
+                    "task_strategy_plan",
+                    json!({
+                        "goal": "Inspect repo",
+                        "surface_id": "surface-explicit"
+                    }),
+                )
+                .unwrap()
+            },
+        );
+
+        assert_eq!(method, "task.strategy.plan");
+        assert_eq!(params["surface_id"], "surface-explicit");
+        assert!(params.get("workspace_id").is_none());
+    }
+
+    #[test]
+    fn task_strategy_tools_reject_blank_goal_at_mcp_boundary() {
+        assert!(build_socket_call_for_test("task_strategy_plan", json!({"goal": "  "})).is_err());
+        assert!(build_socket_call_for_test(
+            "task_strategy_apply",
+            json!({
+                "run_id": "router-run-1",
+                "goal": "  ",
+                "plan": {}
+            }),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn task_strategy_apply_tool_is_mutating() {
+        let names = tool_specs()
+            .iter()
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"task_strategy_apply"));
+        assert_eq!(annotation("task_strategy_apply")["readOnlyHint"], false);
+        assert_eq!(annotation("task_strategy_apply")["destructiveHint"], true);
+        assert_eq!(annotation("task_strategy_apply")["idempotentHint"], false);
+        assert_eq!(annotation("task_strategy_apply")["openWorldHint"], true);
+    }
+
+    #[test]
+    fn task_strategy_apply_tool_maps_to_socket_method() {
+        let plan = json!({
+            "task_class": "feature_implementation",
+            "strategy": "implementer_plus_reviewer",
+            "layers": {
+                "workflow": true,
+                "team": true,
+                "loop_metadata": true,
+                "worktree": false,
+                "feed": true,
+                "mcp": true,
+                "hooks": true
+            },
+            "assignments": [
+                {"role": "implementer", "harness_id": "codex", "reason": "ready"}
+            ],
+            "approvals": ["start_run"],
+            "reasons": ["classified task as FeatureImplementation"],
+            "safety_notes": ["visible setup only"]
+        });
+        let (method, params) = build_socket_call_for_test(
+            "task_strategy_apply",
+            json!({
+                "run_id": "router-run-1",
+                "workspace_id": "w1",
+                "leader_surface_id": "s1",
+                "goal": "Implement the router",
+                "plan": plan,
+                "approved": ["start_run"],
+                "approval_id": "task-strategy:abcdef0123456789:approvals:start_run",
+                "request_approval": false
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(method, "task.strategy.apply");
+        assert_eq!(params["run_id"], "router-run-1");
+        assert_eq!(params["workspace_id"], "w1");
+        assert_eq!(params["leader_surface_id"], "s1");
+        assert_eq!(params["approved"], json!(["start_run"]));
+        assert_eq!(
+            params["approval_id"],
+            "task-strategy:abcdef0123456789:approvals:start_run"
+        );
+        assert_eq!(params["request_approval"], false);
+        assert_eq!(params["plan"], plan);
+    }
+
+    #[test]
+    fn task_strategy_apply_tool_can_request_approval_without_approved_ids() {
+        let plan = json!({
+            "task_class": "feature_implementation",
+            "strategy": "implementer_plus_reviewer",
+            "layers": {
+                "workflow": true,
+                "team": true,
+                "loop_metadata": true,
+                "worktree": false,
+                "feed": true,
+                "mcp": true,
+                "hooks": true
+            },
+            "assignments": [
+                {"role": "implementer", "harness_id": "codex", "reason": "ready"}
+            ],
+            "approvals": ["start_run"],
+            "reasons": ["classified task as FeatureImplementation"],
+            "safety_notes": ["visible setup only"]
+        });
+        let (method, params) = build_socket_call_for_test(
+            "task_strategy_apply",
+            json!({
+                "run_id": "router-run-1",
+                "goal": "Implement the router",
+                "plan": plan,
+                "request_approval": true
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(method, "task.strategy.apply");
+        assert_eq!(params["request_approval"], true);
+        assert!(params.get("approved").is_none());
+    }
+
+    #[test]
     fn agent_list_tool_maps_to_socket_agent_list() {
         let (method, params) =
             build_socket_call_for_test("agent_list", json!({"workspace_name": "main"})).unwrap();
@@ -1198,5 +1392,13 @@ mod tests {
             .prefix("forktty-mcp-")
             .tempdir_in(base)
             .unwrap()
+    }
+
+    fn annotation(name: &str) -> Value {
+        tool_specs()
+            .into_iter()
+            .find(|tool| tool.name == name)
+            .map(|tool| tool.annotations)
+            .unwrap_or_else(|| panic!("missing MCP tool {name}"))
     }
 }

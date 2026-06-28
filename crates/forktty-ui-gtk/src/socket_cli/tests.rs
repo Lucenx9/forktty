@@ -12,6 +12,7 @@ mod provider_integrations;
 mod status_workflow;
 mod surface_workspace;
 mod system_agent;
+mod task_strategy;
 mod team;
 
 #[test]

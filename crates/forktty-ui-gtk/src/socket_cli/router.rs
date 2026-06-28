@@ -25,6 +25,7 @@ use super::system::{
     handle_capabilities, handle_completions, handle_events, handle_examples, handle_help,
     handle_identify, handle_notify, handle_ping, handle_socket_doctor, handle_wait,
 };
+use super::task::{handle_task_apply, handle_task_plan};
 use super::team::{
     handle_team, handle_team_events, handle_team_get, handle_team_inbox, handle_team_list,
     handle_team_message_ack, handle_team_message_dispatch, handle_team_message_send,
@@ -156,6 +157,8 @@ pub(super) fn dispatch_command(
             handle_context_snapshot(context, args)
         }
         "feed" | "feed-list" | "feed:list" => handle_feed(context, args),
+        "task-plan" | "task:plan" | "task.strategy.plan" => handle_task_plan(context, args),
+        "task-apply" | "task:apply" | "task.strategy.apply" => handle_task_apply(context, args),
         "workflows" | "workflow-list" | "workflow:list" | "workflow.list" => {
             handle_workflows(context, args)
         }
