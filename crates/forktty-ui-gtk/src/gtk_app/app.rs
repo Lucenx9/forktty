@@ -809,15 +809,6 @@ fn build_app_menu_popover(parent: &adw::ApplicationWindow) -> gtk::Popover {
     add_context_menu_item(
         &menu,
         &popover,
-        "forktty-heart-symbolic",
-        "Support me",
-        false,
-        open_support_uri,
-    );
-    add_context_menu_separator(&menu);
-    add_context_menu_item(
-        &menu,
-        &popover,
         "forktty-terminal-symbolic",
         "Agents",
         false,
@@ -828,6 +819,15 @@ fn build_app_menu_popover(parent: &adw::ApplicationWindow) -> gtk::Popover {
             }
         },
     );
+    add_context_menu_item(
+        &menu,
+        &popover,
+        "forktty-heart-symbolic",
+        "Support me",
+        false,
+        open_support_uri,
+    );
+    add_context_menu_separator(&menu);
     add_context_menu_item_with_shortcut(
         &menu,
         &popover,

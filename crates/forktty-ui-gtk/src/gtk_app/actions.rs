@@ -27,6 +27,30 @@ pub(super) fn install_actions(
         let state = state.clone();
         move || open_workspace_dialog(&window, &state)
     });
+    add_action(app, "move-workspace-up", {
+        let state = state.clone();
+        let controller = controller.clone();
+        move || {
+            let message = if move_active_workspace_relative(&state, -1) {
+                "Workspace moved up"
+            } else {
+                "Already first workspace"
+            };
+            controller.borrow().show_toast(message);
+        }
+    });
+    add_action(app, "move-workspace-down", {
+        let state = state.clone();
+        let controller = controller.clone();
+        move || {
+            let message = if move_active_workspace_relative(&state, 1) {
+                "Workspace moved down"
+            } else {
+                "Already last workspace"
+            };
+            controller.borrow().show_toast(message);
+        }
+    });
     add_action(app, "split-horizontal", {
         let state = state.clone();
         move || split_active_surface(&state, SplitAxis::Horizontal)
@@ -185,9 +209,15 @@ pub(super) fn install_actions(
     });
     add_action(app, "toggle-sidebar", {
         let sidebar_shell = sidebar_shell.clone();
+        let controller = controller.clone();
         move || {
             let visible = !sidebar_shell.is_visible();
             sidebar_shell.set_visible(visible);
+            controller.borrow().show_toast(if visible {
+                "Sidebar shown"
+            } else {
+                "Sidebar hidden"
+            });
             // Read-modify-write of the config file off the main thread; the
             // toggle itself must not wait on disk.
             std::thread::spawn(move || {

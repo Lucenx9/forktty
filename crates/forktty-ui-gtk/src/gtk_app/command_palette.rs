@@ -68,6 +68,8 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
         &[
             ("New Workspace", "Ctrl+Shift+N"),
             ("Open Workspace", "Ctrl+Shift+O"),
+            ("Move Workspace Up", "Command Palette"),
+            ("Move Workspace Down", "Command Palette"),
         ],
     );
     append_shortcut_group(
@@ -340,19 +342,19 @@ pub(super) fn show_command_palette_with_query(
         }
     });
     command!("Move Workspace Up", None, {
-        let state = state.clone();
+        let parent = parent.clone();
         let dialog = dialog.clone();
         move || {
-            move_active_workspace_relative(&state, -1);
             dialog.close();
+            activate_app_action(&parent, "move-workspace-up");
         }
     });
     command!("Move Workspace Down", None, {
-        let state = state.clone();
+        let parent = parent.clone();
         let dialog = dialog.clone();
         move || {
-            move_active_workspace_relative(&state, 1);
             dialog.close();
+            activate_app_action(&parent, "move-workspace-down");
         }
     });
     command!("Rename Workspace...", None, {

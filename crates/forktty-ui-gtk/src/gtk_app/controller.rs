@@ -102,6 +102,12 @@ impl TerminalController {
         self.toast_handle = Some(toast_handle);
     }
 
+    pub(super) fn show_toast(&self, message: &str) {
+        if let Some(toast_handle) = &self.toast_handle {
+            toast_handle.show(message);
+        }
+    }
+
     pub(super) fn handle(&mut self, command: GtkTerminalCommand) {
         match command {
             GtkTerminalCommand::Spawn(request) => self.spawn(request),

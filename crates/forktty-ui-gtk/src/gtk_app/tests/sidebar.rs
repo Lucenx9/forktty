@@ -2,6 +2,52 @@
 
 use super::*;
 
+struct IsolatedSidebarUserDirs {
+    state_home: PathBuf,
+}
+
+impl IsolatedSidebarUserDirs {
+    fn session_path(&self) -> PathBuf {
+        self.state_home.join("forktty").join("session-v2.json")
+    }
+}
+
+fn with_isolated_sidebar_user_dirs<T>(f: impl FnOnce(&IsolatedSidebarUserDirs) -> T) -> T {
+    let home_dir = tempfile::tempdir().unwrap();
+    let home_path = home_dir.path().to_path_buf();
+    let state_home = home_path.join("state");
+    let data_home = home_path.join("data");
+    let config_home = home_path.join("config");
+    let cache_home = home_path.join("cache");
+    let dirs = IsolatedSidebarUserDirs {
+        state_home: state_home.clone(),
+    };
+    let home = home_path.to_string_lossy().into_owned();
+    let state = state_home.to_string_lossy().into_owned();
+    let data = data_home.to_string_lossy().into_owned();
+    let config = config_home.to_string_lossy().into_owned();
+    let cache = cache_home.to_string_lossy().into_owned();
+
+    crate::test_env::with_env(
+        &[
+            ("HOME", Some(home.as_str())),
+            ("XDG_STATE_HOME", Some(state.as_str())),
+            ("XDG_DATA_HOME", Some(data.as_str())),
+            ("XDG_CONFIG_HOME", Some(config.as_str())),
+            ("XDG_CACHE_HOME", Some(cache.as_str())),
+        ],
+        || f(&dirs),
+    )
+}
+
+fn sidebar_workspace_order(model: &WorkspaceModel) -> Vec<String> {
+    model
+        .list_workspaces()
+        .into_iter()
+        .map(|workspace| workspace.id)
+        .collect()
+}
+
 #[test]
 fn builds_surface_metadata_keys() {
     assert_eq!(surface_status_key("surface-1"), "surface:surface-1:status");
@@ -254,6 +300,92 @@ fn stale_surface_notification_does_not_target_workspace() {
         &notification,
         &workspace_id
     ));
+}
+
+#[test]
+fn move_active_workspace_relative_reorders_active_workspace() {
+    with_isolated_sidebar_user_dirs(|dirs| {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let (first_id, second_id, third_id) = {
+            let mut model = model.lock().unwrap();
+            let first_id = model.create_workspace("first", "/tmp/first").id;
+            let second_id = model.create_workspace("second", "/tmp/second").id;
+            let third_id = model.create_workspace("third", "/tmp/third").id;
+            model.select_workspace(WorkspaceSelector::Id(&second_id));
+            (first_id, second_id, third_id)
+        };
+
+        assert!(move_active_workspace_relative(&state, -1));
+        {
+            let model = model.lock().unwrap();
+            assert_eq!(
+                sidebar_workspace_order(&model),
+                vec![second_id.clone(), first_id.clone(), third_id.clone()]
+            );
+            assert_eq!(
+                model.active_workspace_id().as_deref(),
+                Some(second_id.as_str())
+            );
+        }
+        assert!(dirs.session_path().exists());
+
+        assert!(move_active_workspace_relative(&state, 1));
+        let model = model.lock().unwrap();
+        assert_eq!(
+            sidebar_workspace_order(&model),
+            vec![first_id, second_id.clone(), third_id]
+        );
+        assert_eq!(
+            model.active_workspace_id().as_deref(),
+            Some(second_id.as_str())
+        );
+    });
+}
+
+#[test]
+fn move_active_workspace_relative_noops_at_edges() {
+    with_isolated_sidebar_user_dirs(|_| {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let (first_id, second_id) = {
+            let mut model = model.lock().unwrap();
+            let first_id = model.create_workspace("first", "/tmp/first").id;
+            let second_id = model.create_workspace("second", "/tmp/second").id;
+            (first_id, second_id)
+        };
+
+        assert!(!move_active_workspace_relative(&state, 1));
+        {
+            let model = model.lock().unwrap();
+            assert_eq!(
+                sidebar_workspace_order(&model),
+                vec![first_id.clone(), second_id.clone()]
+            );
+        }
+
+        {
+            let mut model = model.lock().unwrap();
+            model.select_workspace(WorkspaceSelector::Id(&first_id));
+        }
+        assert!(!move_active_workspace_relative(&state, -1));
+        let model = model.lock().unwrap();
+        assert_eq!(sidebar_workspace_order(&model), vec![first_id, second_id]);
+    });
 }
 
 // Regression: a workspace running Claude in bypassPermissions stayed badged

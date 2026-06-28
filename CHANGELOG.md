@@ -4,6 +4,15 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Added
+- Added app actions exposed in the Command Palette for moving the active
+  workspace up or down, with toast feedback when the workspace moves or is
+  already at an edge.
+
+### Changed
+- Reordered the main menu so the standard app items stay grouped, and the
+  sidebar toggle now reports its shown/hidden state with a toast.
+
 ## [0.2.0-alpha.16] - 2026-06-27
 
 ### Fixed
