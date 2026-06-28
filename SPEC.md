@@ -300,6 +300,7 @@ Implemented categories:
 | -------- | ------- |
 | System | `system.ping`, `system.capabilities`, `system.identify`, `system.top` |
 | Context | `context.snapshot` |
+| Task | `task.strategy.plan`, `task.strategy.apply` |
 | Agent | `agent.list`, `agent.health`, `agent.reclaim.plan`, `agent.hibernate`, `agent.reclaim`, `agent.resume` |
 | Workspace | `workspace.list`, `workspace.create`, `workspace.create_ssh`, `workspace.select`, `workspace.close` |
 | Surface | `surface.list`, `surface.read_text`, `surface.capture_tail`, `surface.split`, `surface.send_text`, `surface.focus`, `surface.close` |
@@ -320,6 +321,287 @@ Implemented categories:
 `workspace.create` and `workspace.create_ssh` default omitted names to the
 allocated `workspace-N` id name, keeping the visible workspace label aligned
 with the real workspace id.
+
+`task.strategy.plan` is a read-only task strategy planner. It accepts a user
+`goal`, optional workspace/surface target selectors (`workspace_id`,
+`workspace_name`, `worktree_name`, `surface_id`), and optional hints
+(`strategy`, `router_profile`, `repo_dirty`, `user_requested_parallelism`,
+`user_requested_review`, `likely_user_visible_change`, `last_known_good`, and
+`harness_signals`).
+It returns
+ForkTTY's selected router profile, recommended task class, strategy, layers,
+harness-role assignments with role-specific score/factor breakdowns, required
+approvals, ranked candidate strategy scores with factor breakdowns, reasons,
+and safety notes before an agent chooses team, workflow loop,
+worktree, MCP, hooks, or a provider harness. The planner grounds
+harness scoring in `system.capabilities.provider_capabilities` and uses the
+configured `team_provider_policy.provider_order` as a tie-break. When
+`repo_dirty` is omitted,
+it infers simple git dirty/conflict state from the selected surface or
+workspace effective project cwd; an explicit `repo_dirty` value overrides that
+inference. When `likely_user_visible_change` is omitted, it infers likely
+editing/user-visible intent from the goal text; an explicit false value
+overrides that inference. When `router_profile` is omitted, it uses `balanced`
+unless the goal or request hints clearly imply `fast`, `conservative`,
+`parallel`, or `review_heavy`; an explicit profile reweights the same
+explainable scorer without changing approval or visibility rules. It never launches processes, mutates
+workflow/team/feed state, creates worktrees, sends terminal input, or schedules
+background work.
+Optional `harness_signals` is an object keyed by harness id. Each value can set
+`cooldown`, `cooldown_reason`, `locked_out`, and `lockout_reason`. Cooldown is
+a soft assignment penalty and can still be selected when no better ready
+harness exists. Lockout is a hard task/mode exclusion for assignment. These
+signals are separate from provider capability health/readiness and should only
+be supplied by callers that have concrete runtime evidence.
+Optional `last_known_good` is advisory evidence from a previous successful run.
+It can include `strategy`, `harness_id`, and `reason`; matching candidates get
+a small explainable score factor named `last_known_good_strategy` or
+`last_known_good_harness`. This is stickiness, not a hard override: readiness,
+cooldown, lockout, task fit, approvals, and visibility rules still win.
+When `last_known_good` is omitted, the planner best-effort reads completed
+`task_strategy` workflows for the selected workspace and infers the most recent
+usable strategy/harness evidence recorded by `task.strategy.apply`. Explicit
+`last_known_good` input wins over inferred workflow history. This history read
+does not mutate workflow/team state and planning remains read-only.
+Strategies that name a reviewer role include an explicit reviewer assignment,
+using a separate ready harness when available and a separate role on the
+primary harness otherwise. Applying a returned strategy is a separate visible
+coordination step and risky actions still require later approval.
+
+Example request:
+
+```json
+{
+  "goal": "Fix the failing workflow loop test and verify it",
+  "surface_id": "surface-1",
+  "router_profile": "balanced",
+  "user_requested_parallelism": false,
+  "user_requested_review": false,
+  "likely_user_visible_change": true,
+  "last_known_good": {
+    "strategy": "solo_with_verify_loop",
+    "harness_id": "codex",
+    "reason": "last successful bugfix run in this repo"
+  },
+  "harness_signals": {
+    "claude": {
+      "cooldown": true,
+      "cooldown_reason": "recent quota error"
+    }
+  }
+}
+```
+
+Example response:
+
+```json
+{
+  "task_class": "focused_bugfix",
+  "strategy": "solo_with_verify_loop",
+  "router_profile": "balanced",
+  "layers": {
+    "workflow": true,
+    "team": false,
+    "loop_metadata": true,
+    "worktree": false,
+    "feed": true,
+    "mcp": true,
+    "hooks": true
+  },
+  "assignments": [
+    {
+      "role": "implementer",
+      "harness_id": "codex",
+      "reason": "highest-scored ready harness for implementer",
+      "score": 77,
+      "factors": [
+        {
+          "name": "harness_readiness",
+          "points": 50,
+          "reason": "harness is installed, authenticated, ready, and supports prompt launch"
+        },
+        {
+          "name": "task_mode_lockout",
+          "points": 0,
+          "reason": "no active task/mode lockout"
+        },
+        {
+          "name": "session_cooldown",
+          "points": 0,
+          "reason": "no active session cooldown"
+        },
+        {
+          "name": "last_known_good_harness",
+          "points": 12,
+          "reason": "last successful bugfix run in this repo"
+        },
+        {
+          "name": "role_capability_fit",
+          "points": 0,
+          "reason": "role has no specialized harness capability preference yet"
+        },
+        {
+          "name": "mcp_support",
+          "points": 5,
+          "reason": "MCP support improves controlled task routing and inspection"
+        },
+        {
+          "name": "hook_support",
+          "points": 5,
+          "reason": "hook support improves visible lifecycle/status evidence"
+        },
+        {
+          "name": "resume_support",
+          "points": 5,
+          "reason": "resume support improves recoverability after interruption"
+        }
+      ]
+    }
+  ],
+  "approvals": ["start_run"],
+  "candidate_scores": [
+    {
+      "strategy": "solo_with_verify_loop",
+      "score": 120,
+      "factors": [
+        {
+          "name": "task_class_fit",
+          "points": 90,
+          "reason": "SoloWithVerifyLoop fit for FocusedBugfix"
+        },
+        {
+          "name": "router_profile_fit",
+          "points": 0,
+          "reason": "SoloWithVerifyLoop fit for router profile Balanced"
+        },
+        {
+          "name": "verification_loop_fit",
+          "points": 10,
+          "reason": "editing and bugfix tasks benefit from a bounded verify loop"
+        },
+        {
+          "name": "harness_readiness",
+          "points": 20,
+          "reason": "1 visible harness role(s) can be assigned"
+        }
+      ]
+    }
+  ],
+  "reasons": [
+    "classified task as FocusedBugfix",
+    "selected top-scored strategy SoloWithVerifyLoop"
+  ],
+  "safety_notes": [
+    "planning is read-only",
+    "applying this strategy must keep all agent work visible in ForkTTY panes",
+    "push, merge, destructive commands, and out-of-scope edits require a later approval"
+  ]
+}
+```
+
+`task.strategy.apply` is the visible mutation phase for a previously returned
+task strategy plan. It accepts required `run_id`, `goal`, and `plan` fields
+plus optional `approved`, `approval_id`, `request_approval`, `workflow_id`,
+`team_id`, `workspace_id` or other workspace selector including
+`worktree_name`, `leader_surface_id`/`surface_id`, and `submit`.
+Before any workflow/team/worker mutation it recomputes required approvals from
+the requested operation and plan shape (`start_run` always, `create_worktree`
+when `layers.worktree` is true, and `launch_parallel_workers` when
+`submit: true` would launch more than one assignment worker) plus applicable
+approvals listed by the plan, then verifies they are present in `approved` or
+satisfied by a matching approved task-strategy Feed approval passed as
+`approval_id`; otherwise missing approval returns `precondition_failed` and
+leaves workflow/team stores unchanged. A `launch_parallel_workers` entry in the
+plan is treated as a future submit approval and is not required for staged-only
+apply calls. Apply validates
+local preconditions such as required team assignments, `worktree_name`, and
+already-open worktree workspaces before creating approval requests. A plan with
+`layers.team: true` must include at least one assignment even when staging, so
+apply cannot create an empty team run. With `request_approval: true`, missing approvals
+create or reuse a pending Feed approval with a deterministic request-bound id shaped like
+`task-strategy:<fingerprint>:approvals:start_run`, return `status: "blocked"`,
+and still do not mutate workflow/team state. The fingerprint binds the approval
+to the run id, goal, plan, submit mode, and target scope, so an approved Feed
+entry cannot be reused for a different apply request with the same `run_id`.
+Agents or users can approve/deny that entry through `feed.approval.respond`,
+then retry apply with the returned `approval_id`.
+With `submit` omitted or `false`, apply performs staged setup only: it can
+upsert a workflow, write workflow plan steps, set loop metadata, upsert a team,
+create team tasks, and queue team-wide messages. With `submit: true`, a
+supported team plan becomes an active visible run: ForkTTY upserts the workflow
+as `running`, upserts the team as `active`, creates each task before launch,
+launches one visible worker pane per assignment through `team.worker.launch`,
+assigns the task to the launched worker, queues a deterministic role prompt,
+and dispatches it through `team.message.dispatch` with provider-aware submit
+semantics. `submit: true` is rejected for plans without `layers.team: true`,
+because ForkTTY would otherwise mark a run active without opening visible worker
+panes. Plans whose `layers.worktree` is true require `worktree_name` to name an
+already-open ForkTTY worktree workspace; missing `worktree_name` returns
+`invalid_param`, and an unopened worktree returns
+`precondition_failed`, both before mutation. Apply still does not create
+worktrees, push, merge, run arbitrary commands, or schedule hidden background
+work. Repeating the same request with the same `run_id` reuses deterministic
+workflow/team/task/message ids, does not duplicate staged messages, and skips
+dispatch for messages already recorded as delivered.
+
+Example request:
+
+```json
+{
+  "run_id": "router-run-1",
+  "goal": "Implement the router",
+  "approved": ["start_run"],
+  "plan": {
+    "task_class": "feature_implementation",
+    "strategy": "implementer_plus_reviewer",
+    "layers": {
+      "workflow": true,
+      "team": true,
+      "loop_metadata": true,
+      "worktree": false,
+      "feed": true,
+      "mcp": true,
+      "hooks": true
+    },
+    "assignments": [
+      {
+        "role": "implementer",
+        "harness_id": "codex",
+        "reason": "first ready harness with prompt launch support"
+      },
+      {
+        "role": "reviewer",
+        "harness_id": "claude",
+        "reason": "separate ready harness for review isolation"
+      }
+    ],
+    "approvals": ["start_run", "launch_parallel_workers"],
+    "reasons": ["classified task as FeatureImplementation"],
+    "safety_notes": ["visible setup only"]
+  }
+}
+```
+
+Example response:
+
+```json
+{
+  "run_id": "router-run-1",
+  "status": "staged",
+  "workflow_id": "router-run-1",
+  "team_id": "router-run-1",
+  "actions": [
+    {"method": "workflow.upsert", "status": "applied"},
+    {"method": "team.task.upsert", "status": "applied"},
+    {"method": "team.message.send", "status": "applied"}
+  ],
+  "blocked_approvals": [],
+  "monitoring": {
+    "workflow": "workflow.get",
+    "team": "team.summary"
+  }
+}
+```
 
 `team.finish` verifies and finalizes one team record. It accepts required
 `team_id` plus optional `dry_run`, `close_workers`, and `force`; dry-run returns

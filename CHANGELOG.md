@@ -8,6 +8,45 @@ All notable changes to ForkTTY are documented here.
 - Added app actions exposed in the Command Palette for moving the active
   workspace up or down, with toast feedback when the workspace moves or is
   already at an edge.
+- Added a read-only task strategy planner for agents and CLI users so ForkTTY
+  can recommend when to use solo work, workflow loops, reviewers, teams,
+  worktrees, MCP, and hooks before launching visible agent work.
+- Added staged task strategy apply over socket, CLI, and MCP so an approved
+  plan can create visible workflow/team/task/message coordination state without
+  launching hidden workers or sending terminal input.
+- Added approved `task.strategy.apply` submit support for supported team plans
+  so ForkTTY can launch visible worker panes and dispatch role prompts through
+  the team mailbox, including worktree-layer plans when `worktree_name` names an
+  already-open ForkTTY worktree workspace.
+- Added Feed-backed task strategy approval requests so `task.strategy.apply`
+  can publish a pending start-run approval, stay blocked without workflow/team
+  mutation, and later consume the approved request-bound `approval_id`.
+- Added task strategy safeguards so provider selection respects configured
+  team provider order, reviewer strategies always include a reviewer role, and
+  apply recomputes structural worktree and multi-worker submit approvals instead
+  of trusting a client-provided plan approval list.
+- Added task strategy context inference so `task.strategy.plan` can derive
+  dirty git state from the selected surface/workspace cwd when callers omit an
+  explicit `repo_dirty` hint, and can infer likely user-visible edit intent
+  from goal wording when callers omit an explicit user-visible hint.
+- Added ranked candidate strategy scores to `task.strategy.plan` responses so
+  agents can see why ForkTTY selected a mode and which alternatives were
+  considered before applying a plan.
+- Added role-aware harness assignment scores to `task.strategy.plan` responses
+  so ForkTTY can prefer plan-mode reviewers and worktree-cwd-capable
+  implementers while keeping configured provider order as a tie-break.
+- Added task router profiles (`balanced`, `fast`, `conservative`, `parallel`,
+  and `review_heavy`) so `task.strategy.plan`, MCP `task_strategy_plan`, and
+  `forktty task-plan --profile` can reweight the same explainable scorer
+  without making users manually choose team, loop, worktree, or harness modes.
+- Added per-harness task routing signals so scripts and MCP agents can pass
+  observed cooldowns as soft assignment penalties while hard task/mode lockouts
+  exclude a harness from the selected plan.
+- Added advisory last-known-good task routing so `task.strategy.plan`, MCP,
+  and `forktty task-plan` can infer prior successful strategy/harness evidence
+  from completed task-strategy workflows or accept explicit caller evidence,
+  then apply only a small explainable score bias without overriding readiness,
+  cooldown, lockout, task fit, or approval rules.
 
 ### Changed
 - Reordered the main menu so the standard app items stay grouped, and the

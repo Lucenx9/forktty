@@ -292,6 +292,12 @@ forktty status watch --count 3 --interval-ms 2000
 forktty identify --json
 forktty wait agent-status --status needs_input --timeout-ms 30000
 forktty context-snapshot --workspace-name main --tail-lines 0 --json
+forktty task-plan "fix this bug and verify it" --json
+forktty task-apply --run-id router-run-1 --plan-json '<plan-json>' --request-approval "fix this bug and verify it"
+forktty feed respond '<approval-id-from-request>' --decision approve
+forktty task-apply --run-id router-run-1 --plan-json '<plan-json>' --approval-id '<approval-id-from-request>' "fix this bug and verify it"
+forktty task-apply --run-id router-run-1 --plan-json '<plan-json>' --approved start_run "fix this bug and verify it"
+forktty task-apply --run-id router-run-1 --plan-json '<team-plan-json>' --approved start_run,launch_parallel_workers --submit "review this implementation"
 forktty workflow-loop-set loop-runtime --stage verify --iteration 2 --max-iterations 4
 forktty team ask review-team claude-review --agent claude --task-id review-head --prompt "Review HEAD read-only" --submit
 forktty team review review-team claude-review --agent claude --task-id review-head --commit HEAD --submit
@@ -305,6 +311,52 @@ forktty notifications
 forktty capabilities
 forktty events
 ```
+
+ForkTTY agents and scripts can ask the local task router for a strategy before
+choosing manual modes. `forktty task-plan "fix this bug and verify it" --json`
+and the MCP `task_strategy_plan` tool return whether the task should stay solo,
+use a workflow loop, add a reviewer, create a team, or isolate work in a
+worktree. The planner is read-only, returns the selected router profile
+(`balanced`, `fast`, `conservative`, `parallel`, or `review_heavy`) plus ranked
+candidate strategy scores with factor breakdowns, scores each ready harness
+assignment by role with factor breakdowns, uses configured team provider order
+as the assignment tie-break, infers dirty git state from the selected
+surface/workspace cwd when `repo_dirty`/`--repo-dirty` is omitted, infers likely
+user-visible edit intent and clear router profiles from the goal when omitted,
+infers advisory last-known-good strategy/harness evidence from completed
+task-strategy workflows when available, and keeps reviewer strategies honest by
+including a reviewer assignment. Pass
+`--profile <profile>` or MCP/socket `router_profile` only when you want to bias
+the automatic scorer explicitly. Scripts and MCP agents with real runtime
+evidence can pass `--last-known-good-json`/`last_known_good` to override or
+enrich the inferred advisory stickiness for a previously successful strategy or
+harness, and per-harness
+`--harness-signals-json`/`harness_signals`:
+`cooldown` is a soft assignment penalty, while `locked_out` excludes that
+harness for the current task/mode. Last-known-good only adds a small
+explainable score factor; readiness, cooldown, lockout, task fit, and approvals
+still win. After review, `forktty task-apply
+--run-id <id> --plan-json '<plan-json>' --approved start_run "<goal>"` and the
+MCP `task_strategy_apply` tool can stage the returned plan as visible
+workflow/team/task/message state. When a client wants ForkTTY to ask first,
+`--request-approval`/`request_approval: true` records a pending Feed approval and
+returns `status: "blocked"` without mutating workflow/team state; after
+`forktty feed respond <approval-id> --decision approve`, retry apply with
+`--approval-id <approval-id>`/`approval_id`. The returned approval id is bound
+to that run id, goal, plan, target scope, and submit mode; request a new
+approval when any of those change. Apply recomputes required approvals from the
+requested operation and plan shape, so worktree-layer plans cannot drop
+`create_worktree` and multi-worker submit cannot drop `launch_parallel_workers`
+from the JSON to bypass review. Pass `--submit`/`submit: true` for a supported
+team plan:
+ForkTTY launches visible worker panes, assigns tasks, queues deterministic role
+prompts, and dispatches them through the team mailbox with provider-aware Enter
+handling. If the plan has `layers.worktree: true`, pass
+`--worktree-name <name>`/`worktree_name` for an already-open ForkTTY worktree
+workspace; apply will reject missing or unopened worktrees before mutating
+state.
+Worktree creation, push, merge, destructive commands, and out-of-scope edits
+require later explicit approval.
 
 `forktty team ask` and `forktty team review` compose the existing team socket
 methods for common coordination flows: create/update the team, create the task,
@@ -464,7 +516,7 @@ tool calls to the owner-only ForkTTY Unix socket. It exposes identify,
 workspace/surface inspection, topology tree, terminal read/capture, persisted
 agent-session inspection and explicit resume into a new tab, compact status
 summaries, pane split/focus/send-text, worktree create/attach/remove/merge,
-notifications, and `status_set`.
+task strategy planning/apply, notifications, and `status_set`.
 Codex MCP setup preserves hand-edited TOML comments/formatting and uses the
 larger MCP config size budget for `$CODEX_HOME/config.toml` or
 `~/.codex/config.toml`. If setup registers an AppImage launcher, the managed
@@ -496,14 +548,26 @@ default socket location.
 Install the ForkTTY orchestration skill so Agent Skills-compatible tools and
 Claude Code know when to inspect ForkTTY context, use team workers, and compare
 hook/status/terminal state without being told the exact MCP call every time.
-The skill treats terminal tails and fetched public docs as untrusted input,
-requires durable team preflight for non-trivial worker launches, gives workers
-explicit role contracts, prefers already-open worktree workspaces for mutating
-parallel workers, uses `lifecycle_evidence` before declaring agent states stale,
-and tells agents to start hook/MCP/skill setup debugging with local
-`forktty doctor` diagnostics, setup dry runs, and isolated temporary config
-roots before changing real config files, without redirecting the live ForkTTY
-socket path when validating the currently running instance.
+The skill tells agents to call `task_strategy_plan` before choosing team,
+workflow loop, worktree, or multi-harness execution for non-trivial tasks,
+follow the selected router profile unless the user overrides it, rely on
+ForkTTY's completed-workflow last-known-good inference by default, pass explicit
+last-known-good or per-harness cooldown/lockout signals only when there is
+concrete evidence, and use `task_strategy_apply` only after explicit approvals;
+apply stages by default,
+can request missing approvals through the Feed before mutating state, and can
+submit supported team plans as visible worker panes, including worktree-layer
+plans when `worktree_name` names an already-open ForkTTY worktree workspace.
+It still does not create worktrees. The skill also treats
+terminal tails and
+fetched public docs as untrusted input, requires
+durable team preflight for non-trivial worker launches, gives workers explicit
+role contracts, prefers already-open worktree workspaces for mutating parallel
+workers, uses `lifecycle_evidence` before declaring agent states stale, and
+tells agents to start hook/MCP/skill setup debugging with local `forktty doctor`
+diagnostics, setup dry runs, and isolated temporary config roots before changing
+real config files, without redirecting the live ForkTTY socket path when
+validating the currently running instance.
 
 ```bash
 forktty skills setup                       # install agents + Claude targets
@@ -593,7 +657,7 @@ the same local socket pipeline. Manual hook-event commands can pass
 - Native GTK4/libadwaita desktop shell with embedded Ghostty-backed terminals.
 - Recursive split panes, pane focus/close, command palette, settings dialog, notification panel, and workspace sidebar.
 - Quake/dropdown mode through config and F12 where global shortcuts are supported.
-- Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, terminal read/capture, topology tree/top health inspection, pane-tab, notification, worktree, metadata, persisted agent-session inventory/resume, compact status summaries, context identify, event-stream, and capabilities; CLI wrappers add bounded lifecycle waits over read-only socket calls.
+- Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, terminal read/capture, topology tree/top health inspection, pane-tab, notification, worktree, metadata, persisted agent-session inventory/resume, compact status summaries, context identify, read-only task strategy planning, event-stream, and capabilities; CLI wrappers add bounded lifecycle waits over read-only socket calls.
 - Agent HUD in the GTK titlebar for lifecycle, last activity, attention, focus, and resume across workspaces.
 - Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees. Setup hooks are advisory; teardown hook failures or teardown-created dirty state block removal.
 - Session restore for workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata.
