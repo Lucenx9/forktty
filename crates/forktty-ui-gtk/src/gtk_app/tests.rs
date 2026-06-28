@@ -2609,6 +2609,22 @@ fn pane_status_uses_readable_muted_contrast() {
 }
 
 #[test]
+fn command_palette_microtext_uses_readable_muted_contrast() {
+    let source = include_str!("../style.css");
+    let block = |selector: &str| {
+        source
+            .split(selector)
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .unwrap_or_else(|| panic!("missing CSS block {selector}"))
+    };
+
+    assert!(block(".ft-menu-shortcut {").contains("color: #8a8a8a;"));
+    assert!(block(".command-item .keycap {").contains("color: #8a8a8a;"));
+    assert!(block(".command-list row:disabled .command-item .keycap {").contains("color: #626262;"));
+}
+
+#[test]
 fn maximized_layout_signature_tracks_focused_pane() {
     // In maximize mode only the focused pane is rendered, so a focus-only
     // change must produce a different signature and trigger a rebuild.
@@ -2728,6 +2744,9 @@ fn command_palette_source_uses_polished_labels_and_accessibility() {
     assert!(source.contains("\"Search commands or shortcuts\""));
     assert!(source.contains("command!(\"Keyboard Shortcuts\", Some(\"Ctrl+? / F1\")"));
     assert!(source.contains("command!(\"Close Workspace...\""));
+    assert!(source.contains("command_enabled!(\n        \"Move Workspace Up\""));
+    assert!(source.contains("active_workspace_can_move_relative(state, -1)"));
+    assert!(source.contains("active_workspace_can_move_relative(state, 1)"));
 }
 
 #[test]

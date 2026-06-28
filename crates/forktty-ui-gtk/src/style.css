@@ -327,7 +327,7 @@ popover.ft-context-menu contents {
 }
 
 .ft-menu-shortcut {
-  color: #626262;
+  color: #8a8a8a;
   font-size: 0.78em;
   margin-left: 14px;
 }
@@ -2417,11 +2417,26 @@ entry.search.command-search:focus-within,
 
 .command-item .keycap {
   padding: 1px 5px;
-  color: #626262;
+  color: #8a8a8a;
   background: #1b1b1b;
   border-color: #292929;
   font-size: 0.70em;
   font-weight: 600;
+}
+
+.command-list row:disabled,
+.command-list row:disabled:hover {
+  background: transparent;
+}
+
+.command-list row:disabled .command-item-label {
+  color: #626262;
+}
+
+.command-list row:disabled .command-item .keycap {
+  color: #626262;
+  background: #181818;
+  border-color: #242424;
 }
 
 .command-list row:selected .command-item-label {

@@ -12,6 +12,9 @@ All notable changes to ForkTTY are documented here.
 ### Changed
 - Reordered the main menu so the standard app items stay grouped, and the
   sidebar toggle now reports its shown/hidden state with a toast.
+- Improved dark UI shortcut contrast in custom menus and the Command Palette,
+  and disabled workspace move commands when the active workspace is already at
+  an edge.
 
 ## [0.2.0-alpha.16] - 2026-06-27
 

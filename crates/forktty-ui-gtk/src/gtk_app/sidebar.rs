@@ -808,20 +808,10 @@ pub(super) fn move_active_workspace_relative(state: &SocketAppState, delta: isiz
             Ok(model) => model,
             Err(_) => return false,
         };
-        let workspaces = model.list_workspaces();
-        let Some(current) = workspaces.iter().position(|workspace| workspace.active) else {
+        let Some((source_id, target_id, position)) =
+            active_workspace_relative_target(&model, delta)
+        else {
             return false;
-        };
-        let target = current as isize + delta;
-        if target < 0 || target >= workspaces.len() as isize {
-            return false;
-        }
-        let source_id = workspaces[current].id.clone();
-        let target_id = workspaces[target as usize].id.clone();
-        let position = if delta < 0 {
-            forktty_core::MovePosition::Before
-        } else {
-            forktty_core::MovePosition::After
         };
         model.move_workspace(&source_id, &target_id, position)
     };
@@ -829,6 +819,36 @@ pub(super) fn move_active_workspace_relative(state: &SocketAppState, delta: isiz
         save_session_from_state(state);
     }
     moved
+}
+
+pub(super) fn active_workspace_can_move_relative(state: &SocketAppState, delta: isize) -> bool {
+    let model = match state.model.lock() {
+        Ok(model) => model,
+        Err(_) => return false,
+    };
+    active_workspace_relative_target(&model, delta).is_some()
+}
+
+fn active_workspace_relative_target(
+    model: &WorkspaceModel,
+    delta: isize,
+) -> Option<(String, String, forktty_core::MovePosition)> {
+    let workspaces = model.list_workspaces();
+    let current = workspaces.iter().position(|workspace| workspace.active)?;
+    let target = current as isize + delta;
+    if target < 0 || target >= workspaces.len() as isize {
+        return None;
+    }
+    let position = if delta < 0 {
+        forktty_core::MovePosition::Before
+    } else {
+        forktty_core::MovePosition::After
+    };
+    Some((
+        workspaces[current].id.clone(),
+        workspaces[target as usize].id.clone(),
+        position,
+    ))
 }
 
 pub(super) fn notification_targets_workspace(

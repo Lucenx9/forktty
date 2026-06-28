@@ -388,6 +388,48 @@ fn move_active_workspace_relative_noops_at_edges() {
     });
 }
 
+#[test]
+fn active_workspace_can_move_relative_tracks_edges() {
+    with_isolated_sidebar_user_dirs(|_| {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let (first_id, second_id) = {
+            let mut model = model.lock().unwrap();
+            let first_id = model.create_workspace("first", "/tmp/first").id;
+            let second_id = model.create_workspace("second", "/tmp/second").id;
+            model.select_workspace(WorkspaceSelector::Id(&second_id));
+            (first_id, second_id)
+        };
+
+        assert!(active_workspace_can_move_relative(&state, -1));
+        assert!(!active_workspace_can_move_relative(&state, 1));
+
+        {
+            let mut model = model.lock().unwrap();
+            model.select_workspace(WorkspaceSelector::Id(&first_id));
+        }
+        assert!(!active_workspace_can_move_relative(&state, -1));
+        assert!(active_workspace_can_move_relative(&state, 1));
+
+        {
+            let mut model = model.lock().unwrap();
+            model.select_workspace(WorkspaceSelector::Id(&second_id));
+            assert!(model
+                .close_workspace(WorkspaceSelector::Id(&first_id))
+                .is_some());
+        }
+        assert!(!active_workspace_can_move_relative(&state, -1));
+        assert!(!active_workspace_can_move_relative(&state, 1));
+    });
+}
+
 // Regression: a workspace running Claude in bypassPermissions stayed badged
 // "ERROR" forever -- the red permission-mode pill (deliberate, it flags the
 // risky mode) was read by the badge heuristics as a workspace failure. Mode

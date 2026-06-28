@@ -219,11 +219,17 @@ pub(super) fn show_command_palette_with_query(
     list.update_property(&[gtk::accessible::Property::Label("Command results")]);
 
     let mut command_rows = Vec::new();
+    macro_rules! command_enabled {
+        ($label:expr, $shortcut:expr, $enabled:expr, $action:expr) => {{
+            let shortcut = $shortcut;
+            let enabled = $enabled;
+            let (row, button) = append_command_row(&list, $label, shortcut, enabled, $action);
+            command_rows.push((command_search_text($label, shortcut), row, button, enabled));
+        }};
+    }
     macro_rules! command {
         ($label:expr, $shortcut:expr, $action:expr) => {{
-            let shortcut = $shortcut;
-            let (row, button) = append_command_row(&list, $label, shortcut, $action);
-            command_rows.push((command_search_text($label, shortcut), row, button));
+            command_enabled!($label, $shortcut, true, $action);
         }};
     }
 
@@ -341,22 +347,32 @@ pub(super) fn show_command_palette_with_query(
             dialog.close();
         }
     });
-    command!("Move Workspace Up", None, {
-        let parent = parent.clone();
-        let dialog = dialog.clone();
-        move || {
-            dialog.close();
-            activate_app_action(&parent, "move-workspace-up");
+    command_enabled!(
+        "Move Workspace Up",
+        None,
+        active_workspace_can_move_relative(state, -1),
+        {
+            let parent = parent.clone();
+            let dialog = dialog.clone();
+            move || {
+                dialog.close();
+                activate_app_action(&parent, "move-workspace-up");
+            }
         }
-    });
-    command!("Move Workspace Down", None, {
-        let parent = parent.clone();
-        let dialog = dialog.clone();
-        move || {
-            dialog.close();
-            activate_app_action(&parent, "move-workspace-down");
+    );
+    command_enabled!(
+        "Move Workspace Down",
+        None,
+        active_workspace_can_move_relative(state, 1),
+        {
+            let parent = parent.clone();
+            let dialog = dialog.clone();
+            move || {
+                dialog.close();
+                activate_app_action(&parent, "move-workspace-down");
+            }
         }
-    });
+    );
     command!("Rename Workspace...", None, {
         let state = state.clone();
         let parent = parent.clone();
@@ -642,9 +658,9 @@ pub(super) fn show_command_palette_with_query(
     {
         let rows_for_row_activation = command_rows.clone();
         list.connect_row_activated(move |_, selected| {
-            if let Some((_, _, button)) = rows_for_row_activation
+            if let Some((_, _, button, _)) = rows_for_row_activation
                 .iter()
-                .find(|(_, row, _)| row == selected && row.is_visible())
+                .find(|(_, row, _, enabled)| *enabled && row == selected && row.is_visible())
             {
                 button.emit_clicked();
             }
@@ -656,16 +672,24 @@ pub(super) fn show_command_palette_with_query(
     let empty_for_search = empty.clone();
     search.connect_search_changed(move |entry| {
         let query = entry.text().trim().to_ascii_lowercase();
-        let mut first_visible = None;
-        for (label, row, _) in rows_for_search.iter() {
+        let mut any_visible = false;
+        let mut first_enabled = None;
+        for (label, row, _, enabled) in rows_for_search.iter() {
             let visible = command_matches(label, &query);
             row.set_visible(visible);
-            if visible && first_visible.is_none() {
-                first_visible = Some(row.clone());
+            if visible {
+                any_visible = true;
+            }
+            if visible && *enabled && first_enabled.is_none() {
+                first_enabled = Some(row.clone());
             }
         }
-        if let Some(row) = first_visible {
-            list_for_search.select_row(Some(&row));
+        if any_visible {
+            if let Some(row) = first_enabled {
+                list_for_search.select_row(Some(&row));
+            } else {
+                list_for_search.unselect_all();
+            }
             scroll_for_search.set_visible(true);
             empty_for_search.set_visible(false);
         } else {
@@ -686,8 +710,8 @@ pub(super) fn show_command_palette_with_query(
         };
         let visible_rows = rows_for_nav
             .iter()
-            .filter(|(_, row, _)| row.is_visible())
-            .map(|(_, row, _)| row.clone())
+            .filter(|(_, row, _, enabled)| *enabled && row.is_visible())
+            .map(|(_, row, _, _)| row.clone())
             .collect::<Vec<_>>();
         if visible_rows.is_empty() {
             return glib::Propagation::Stop;
@@ -713,15 +737,15 @@ pub(super) fn show_command_palette_with_query(
         let selected = list_for_activate.selected_row().or_else(|| {
             rows_for_activate
                 .iter()
-                .find(|(_, row, _)| row.is_visible())
-                .map(|(_, row, _)| row.clone())
+                .find(|(_, row, _, enabled)| *enabled && row.is_visible())
+                .map(|(_, row, _, _)| row.clone())
         });
         let Some(selected) = selected else {
             return;
         };
-        if let Some((_, _, button)) = rows_for_activate
+        if let Some((_, _, button, _)) = rows_for_activate
             .iter()
-            .find(|(_, row, _)| row == &selected && row.is_visible())
+            .find(|(_, row, _, enabled)| *enabled && row == &selected && row.is_visible())
         {
             button.emit_clicked();
         }
@@ -734,8 +758,11 @@ pub(super) fn show_command_palette_with_query(
     dialog.present();
     if !initial_query.is_empty() {
         search.set_text(initial_query);
-    } else if let Some(first) = list.row_at_index(0) {
-        list.select_row(Some(&first));
+    } else if let Some((_, first, _, _)) = command_rows
+        .iter()
+        .find(|(_, row, _, enabled)| *enabled && row.is_visible())
+    {
+        list.select_row(Some(first));
     }
     search.grab_focus();
 }
@@ -845,14 +872,16 @@ pub(super) fn append_command_row<F>(
     list: &gtk::ListBox,
     label: &str,
     shortcut: Option<&str>,
+    enabled: bool,
     action: F,
 ) -> (gtk::ListBoxRow, gtk::Button)
 where
     F: Fn() + 'static,
 {
     let row = gtk::ListBoxRow::new();
-    row.set_selectable(true);
-    row.set_activatable(true);
+    row.set_selectable(enabled);
+    row.set_activatable(enabled);
+    row.set_sensitive(enabled);
     if let Some(shortcut) = shortcut {
         let shortcut = accessible_shortcut_text(shortcut);
         row.update_property(&[
@@ -885,6 +914,7 @@ where
     button.set_has_frame(false);
     button.set_halign(gtk::Align::Fill);
     button.set_focusable(false);
+    button.set_sensitive(enabled);
     button.set_tooltip_text(Some(label));
     set_accessible_button_text(&button, label, shortcut);
     button.connect_clicked(move |_| action());
