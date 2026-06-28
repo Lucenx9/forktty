@@ -63,7 +63,14 @@ All notable changes to ForkTTY are documented here.
 ### Fixed
 - Fixed task strategy apply so a pending Feed approval request is dismissed
   when the same run is later applied with equivalent explicit `approved`
-  attestations, avoiding stale `pending_approval` risk flags.
+  attestations, including retries that also pass the superseded `approval_id`,
+  avoiding stale `pending_approval` risk flags.
+- Fixed task strategy routing from real provider capabilities so one launchable
+  provider can still satisfy implementer-plus-reviewer plans by reusing the
+  same visible harness for both roles.
+- Fixed staged worktree-layer task strategy apply so it requires `worktree_name`
+  for an already-open ForkTTY worktree workspace before mutating workflow/team
+  state, matching submit-mode enforcement.
 
 ## [0.2.0-alpha.16] - 2026-06-27
 

@@ -134,7 +134,7 @@ taxonomy and the agent-facing docs aligned in the same change.
   decision is required. With
   `submit=true`,
   supported team plans launch worker panes and dispatch role prompts;
-  worktree-layer plans require `worktree_name` for an already-open ForkTTY
+  worktree-layer apply requires `worktree_name` for an already-open ForkTTY
   worktree workspace and are rejected before mutation if that workspace is
   missing.
 - `forktty hooks doctor <agent>` reports hook config path state, launcher

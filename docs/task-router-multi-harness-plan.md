@@ -70,7 +70,7 @@ multi-worker submit cannot omit `launch_parallel_workers` from
 `plan.approvals` to bypass review. The `approved` array is a programmatic
 caller attestation; Feed `request_approval`/`approval_id` is the human-decision
 path. Locally invalid requests, such as team-layer plans without assignments,
-non-team submit, or worktree-layer submit without `worktree_name`, are rejected
+non-team submit, or worktree-layer apply without `worktree_name`, are rejected
 before creating Feed approvals.
 Worktree creation, push, merge, destructive commands, and hidden background
 scheduling remain intentionally unsupported in the router.
@@ -1755,7 +1755,7 @@ If `/home/simone/forktty-site` was updated, commit or report that checkout separ
 **Files:**
 - Modify: `docs/task-router-multi-harness-plan.md`
 - The first `task.strategy.apply` implementation now supports staged apply,
-  approved visible submit for team plans, and worktree-layer submit only when
+  approved visible submit for team plans, and worktree-layer apply only when
   `worktree_name` points at an already-open ForkTTY worktree workspace. It also
   supports request-bound Feed-backed start-run approval requests via
   `request_approval` and the returned approved `approval_id`. Do not add
@@ -1774,7 +1774,7 @@ Keep this design in this tracked handoff file with this contract:
 and applies only visible setup. With `submit` omitted or false, it stages
 coordination state. With `submit=true`, it can start supported team plans by
 launching visible workers and dispatching role prompts. Worktree-layer plans may
-only submit when `worktree_name` names an already-open ForkTTY worktree
+only apply when `worktree_name` names an already-open ForkTTY worktree
 workspace. Team-layer plans require at least one assignment before any staged or
 submitted mutation. When approvals are missing, `request_approval` records a
 deterministic request-bound Feed approval and returns blocked without mutating
@@ -1950,7 +1950,7 @@ method requires explicit approvals, creates deterministic workflow/team/task/
 message state, recomputes worktree and multi-worker submit approvals before
 mutation, rejects team-layer plans with no assignments, launches visible
 workers and dispatches prompts when `submit=true` is used on a supported team
-plan, and allows worktree-layer submit only when `worktree_name` names an
+plan, and allows worktree-layer apply only when `worktree_name` names an
 already-open ForkTTY worktree workspace.
 Missing start-run approvals can be requested through the Feed and consumed
 later with the returned approved `approval_id` only for the same request.

@@ -56,7 +56,7 @@ For normal local code changes, read and edit the repo directly.
    work, then retry the same request with the approved returned `approval_id`;
    if you instead retry with explicit `approved` attestations, ForkTTY dismisses
    the superseded pending approval request.
-   Worktree-layer submit requires `worktree_name` for an already-open ForkTTY
+   Worktree-layer apply requires `worktree_name` for an already-open ForkTTY
    worktree workspace. It does not create worktrees, push, merge, run
    arbitrary commands, or schedule hidden work.
 3. Use `identify` first when you only need the canonical current

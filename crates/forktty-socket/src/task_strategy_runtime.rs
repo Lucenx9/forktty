@@ -15,6 +15,8 @@ use forktty_core::{
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
+const DEFAULT_PROVIDER_MAX_PARALLEL_SESSIONS: u32 = 4;
+
 pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let plan_params = task_strategy_plan_params(params)?;
     let capabilities = system_runtime::capabilities();
@@ -619,19 +621,21 @@ fn harness_capability_from_provider(id: &str, provider: &Value) -> HarnessCapabi
     let configured_command = !provider["configured_command"].is_null();
     let installed = available_on_path || executable_present || configured_command;
 
+    let supports_team_launch =
+        launchable && provider["team_worker_launch"].as_bool().unwrap_or(false);
+
     HarnessCapability {
         id: id.to_string(),
         installed,
         authenticated: launchable,
-        supports_prompt_launch: launchable
-            && provider["team_worker_launch"].as_bool().unwrap_or(false),
+        supports_prompt_launch: supports_team_launch,
         supports_resume: provider["safe_resume"].as_bool().unwrap_or(false),
         supports_hooks: true,
         supports_mcp: true,
         supports_plan_mode: false,
-        supports_worktree_cwd: launchable
-            && provider["team_worker_launch"].as_bool().unwrap_or(false),
-        max_parallel_sessions: None,
+        supports_worktree_cwd: supports_team_launch,
+        max_parallel_sessions: supports_team_launch
+            .then_some(DEFAULT_PROVIDER_MAX_PARALLEL_SESSIONS),
         health: if disabled {
             HarnessHealth::Disabled
         } else if launchable {
@@ -1020,7 +1024,8 @@ impl TaskStrategyApplyRequest {
         required_approvals: &[String],
         actions: &mut Vec<Value>,
     ) -> Result<(), DispatchError> {
-        if self.approval_id.is_some() || required_approvals.is_empty() {
+        if required_approvals.is_empty() || (self.approval_id.is_some() && self.approved.is_empty())
+        {
             return Ok(());
         }
         let approval_ids = self.approval_request_ids_for_subsets(required_approvals);
@@ -1098,13 +1103,13 @@ impl TaskStrategyApplyRequest {
                 "task.strategy.apply team layer requires at least one team assignment".to_string(),
             ));
         }
-        if self.submit && self.plan.layers.worktree && self.worktree_name.is_none() {
+        if self.plan.layers.worktree && self.worktree_name.is_none() {
             return Err(DispatchError::InvalidParam(
-                "task.strategy.apply submit=true with worktree layer requires worktree_name for an already-open ForkTTY worktree workspace"
+                "task.strategy.apply with worktree layer requires worktree_name for an already-open ForkTTY worktree workspace"
                     .to_string(),
             ));
         }
-        if self.submit {
+        if self.plan.layers.worktree {
             if let Some(worktree_name) = self.worktree_name.as_deref() {
                 let model = state
                     .model
@@ -1115,7 +1120,7 @@ impl TaskStrategyApplyRequest {
                     .is_none()
                 {
                     return Err(DispatchError::PreconditionFailed(format!(
-                        "task.strategy.apply submit=true requires an open ForkTTY worktree workspace named {worktree_name}"
+                        "task.strategy.apply with worktree layer requires an open ForkTTY worktree workspace named {worktree_name}"
                     )));
                 }
             }
