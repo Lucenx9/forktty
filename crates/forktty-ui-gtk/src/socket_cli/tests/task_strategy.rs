@@ -325,6 +325,76 @@ fn task_apply_requests_task_strategy_apply() {
 }
 
 #[test]
+fn task_apply_env_surface_overrides_implicit_workspace_env_target() {
+    let plan = json!({
+        "task_class": "feature_implementation",
+        "strategy": "solo_with_verify_loop",
+        "layers": {
+            "workflow": true,
+            "team": false,
+            "loop_metadata": true,
+            "worktree": false,
+            "feed": true,
+            "mcp": true,
+            "hooks": true
+        },
+        "assignments": [
+            {"role": "implementer", "harness_id": "self", "reason": "current orchestrator"}
+        ],
+        "approvals": ["start_run"],
+        "reasons": ["classified task as FeatureImplementation"],
+        "safety_notes": ["visible setup only"]
+    });
+    let plan_json = plan.to_string();
+    let request = with_env(
+        &[
+            ("FORKTTY_WORKSPACE_ID", Some("workspace-env")),
+            ("FORKTTY_SURFACE_ID", Some("surface-env")),
+        ],
+        || {
+            with_socket_response(
+                |req| {
+                    json!({
+                        "id": req["id"],
+                        "ok": true,
+                        "result": {
+                            "run_id": "router-run-1",
+                            "status": "staged",
+                            "workflow_id": "router-run-1",
+                            "team_id": null,
+                            "actions": [],
+                            "blocked_approvals": [],
+                            "monitoring": {"workflow": "workflow.get", "team": null}
+                        }
+                    })
+                    .to_string()
+                },
+                |socket_path| {
+                    handle_task_apply(
+                        &ctx_for(socket_path),
+                        vec![
+                            "--run-id".to_string(),
+                            "router-run-1".to_string(),
+                            "--plan-json".to_string(),
+                            plan_json,
+                            "--approved".to_string(),
+                            "start_run".to_string(),
+                            "Implement".to_string(),
+                            "router".to_string(),
+                        ],
+                    )
+                    .unwrap();
+                },
+            )
+        },
+    );
+
+    assert_eq!(request["method"], "task.strategy.apply");
+    assert_eq!(request["params"]["leader_surface_id"], "surface-env");
+    assert!(request["params"]["workspace_id"].is_null());
+}
+
+#[test]
 fn task_plan_rejects_blank_goal_before_socket() {
     let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
 

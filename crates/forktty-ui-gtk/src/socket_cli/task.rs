@@ -161,6 +161,9 @@ pub(super) fn handle_task_apply(context: &CliContext, args: Vec<String>) -> CliR
         return Err(CliError::new("--plan-json must be a JSON object"));
     }
 
+    let has_explicit_workspace_selector = parsed.options.contains_key("workspace-id")
+        || parsed.options.contains_key("workspace-name")
+        || parsed.options.contains_key("worktree-name");
     let mut params = build_target_params(&parsed.options, "task-apply")?;
     params.insert(
         "run_id".to_string(),
@@ -170,13 +173,27 @@ pub(super) fn handle_task_apply(context: &CliContext, args: Vec<String>) -> CliR
     params.insert("plan".to_string(), plan);
     if let Some(value) =
         non_blank_string_option(&parsed.options, "leader-surface-id", "--leader-surface-id")?
+            .map(str::to_string)
+            .or_else(|| {
+                if parsed.options.contains_key("surface-id") || has_explicit_workspace_selector {
+                    None
+                } else {
+                    trimmed_env("FORKTTY_SURFACE_ID")
+                }
+            })
     {
+        if !has_explicit_workspace_selector {
+            params.remove("workspace_id");
+        }
         params.insert(
             "leader_surface_id".to_string(),
             Value::String(value.trim().to_string()),
         );
     }
     if let Some(value) = non_blank_string_option(&parsed.options, "surface-id", "--surface-id")? {
+        if !has_explicit_workspace_selector {
+            params.remove("workspace_id");
+        }
         params.insert(
             "surface_id".to_string(),
             Value::String(value.trim().to_string()),

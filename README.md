@@ -344,10 +344,13 @@ returns `status: "blocked"` without mutating workflow/team state; after
 `forktty feed respond <approval-id> --decision approve`, retry apply with
 `--approval-id <approval-id>`/`approval_id`. The returned approval id is bound
 to that run id, goal, plan, target scope, and submit mode; request a new
-approval when any of those change. Apply recomputes required approvals from the
-requested operation and plan shape, so worktree-layer plans cannot drop
+approval when any of those change. Apply recomputes dirty-repo edit isolation
+from the selected surface/workspace and required approvals from the requested
+operation and effective plan shape, so dirty editing tasks cannot drop
 `create_worktree` and multi-worker submit cannot drop `launch_parallel_workers`
-from the JSON to bypass review. Pass `--submit`/`submit: true` for a supported
+from the JSON to bypass review. `--approved`/`approved` is a programmatic caller
+attestation; use `--request-approval` and retry with `--approval-id` when a
+Feed-backed human approval is required. Pass `--submit`/`submit: true` for a supported
 team plan:
 ForkTTY launches visible worker panes, assigns tasks, queues deterministic role
 prompts, and dispatches them through the team mailbox with provider-aware Enter

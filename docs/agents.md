@@ -127,9 +127,11 @@ taxonomy and the agent-facing docs aligned in the same change.
   staged and local. If approvals are missing, `request_approval` publishes a
   Feed approval and returns blocked without workflow/team mutation; an approved
   returned `approval_id` can later satisfy that same request-bound start-run
-  approval. Apply recomputes worktree approvals and multi-worker submit
-  approvals from the requested operation and plan shape before trusting the
-  plan's approval list. With
+  approval. Apply recomputes dirty-repo edit isolation, worktree approvals, and
+  multi-worker submit approvals from the selected target, requested operation,
+  and effective plan shape before trusting the plan's approval list. `approved`
+  is a caller attestation; use Feed `request_approval` when a separate human
+  decision is required. With
   `submit=true`,
   supported team plans launch worker panes and dispatch role prompts;
   worktree-layer plans require `worktree_name` for an already-open ForkTTY

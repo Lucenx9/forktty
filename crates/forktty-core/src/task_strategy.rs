@@ -594,23 +594,25 @@ fn strategy_order(strategy: &TaskStrategy) -> u8 {
 fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
     let lower = goal.to_lowercase();
     if input.user_requested_parallelism
-        || lower.contains("compare")
-        || lower.contains("alternative")
-        || lower.contains("approaches")
+        || contains_token(&lower, &["compare", "alternatives", "approaches"])
+        || contains_token_prefix(&lower, &["alternative"])
     {
         return TaskClass::ParallelResearch;
     }
-    if lower.contains("review") || lower.contains("read-only") {
+    if contains_token(&lower, &["review", "reviews"])
+        || lower.contains("read-only")
+        || (contains_token(&lower, &["read"]) && contains_token(&lower, &["only"]))
+    {
         return TaskClass::ReviewOnly;
     }
-    if lower.contains("test")
-        || lower.contains("verify")
-        || lower.contains("fix")
-        || lower.contains("bug")
+    if contains_token(
+        &lower,
+        &["test", "tests", "testing", "verify", "verifies", "verified"],
+    ) || contains_token_prefix(&lower, &["fix", "bug"])
     {
         return TaskClass::FocusedBugfix;
     }
-    if lower.contains("implement") || lower.contains("add ") || lower.contains("build") {
+    if contains_token_prefix(&lower, &["implement", "add", "build"]) {
         return TaskClass::FeatureImplementation;
     }
     TaskClass::RepoInspection
@@ -661,6 +663,12 @@ fn contains_token_prefix(value: &str, prefixes: &[&str]) -> bool {
     value
         .split(|ch: char| !ch.is_ascii_alphanumeric())
         .any(|token| prefixes.iter().any(|prefix| token.starts_with(prefix)))
+}
+
+fn contains_token(value: &str, tokens: &[&str]) -> bool {
+    value
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| tokens.contains(&token))
 }
 
 pub fn phase_one_classifier_reachable_classes() -> &'static [TaskClass] {
@@ -762,6 +770,9 @@ fn assignments_for_strategy(
         .enumerate()
         .filter(|harness| harness_available_for_routing(harness.1))
         .collect::<Vec<_>>();
+    if ready.is_empty() {
+        return self_assignments_for_strategy(strategy);
+    }
     let primary_role = match strategy {
         TaskStrategy::ReviewOnly => HarnessRole::Reviewer,
         TaskStrategy::ParallelResearch | TaskStrategy::ParallelExperiment => {
@@ -794,6 +805,15 @@ fn assignments_for_strategy(
         });
         if let Some(mut reviewer) = reviewer {
             if reviewer.harness_id == primary.harness_id {
+                let same_harness_parallel_ok = ready
+                    .iter()
+                    .find(|(_, harness)| harness.id == primary.harness_id)
+                    .and_then(|(_, harness)| harness.max_parallel_sessions)
+                    .unwrap_or(1)
+                    > 1;
+                if !same_harness_parallel_ok {
+                    return Vec::new();
+                }
                 reviewer.reason =
                     "highest-scored ready harness for reviewer; same harness reused because no separate ready harness was available".to_string();
             }
@@ -834,6 +854,33 @@ fn assignments_for_strategy(
     }
 
     assignments
+}
+
+fn self_assignments_for_strategy(strategy: &TaskStrategy) -> Vec<HarnessAssignment> {
+    let role = match strategy {
+        TaskStrategy::Solo | TaskStrategy::SoloTracked | TaskStrategy::SoloWithVerifyLoop => {
+            HarnessRole::Implementer
+        }
+        TaskStrategy::ReviewOnly => HarnessRole::Reviewer,
+        TaskStrategy::ImplementerPlusReviewer
+        | TaskStrategy::ParallelResearch
+        | TaskStrategy::ParallelExperiment
+        | TaskStrategy::TeamPipeline => return Vec::new(),
+    };
+    vec![HarnessAssignment {
+        role,
+        harness_id: "self".to_string(),
+        reason:
+            "no ready external harness was available; route stays with the current orchestrator"
+                .to_string(),
+        score: 1,
+        factors: vec![TaskStrategyScoreFactor {
+            name: "self_fallback".to_string(),
+            points: 1,
+            reason: "solo/read-only strategy can be handled by the current orchestrator"
+                .to_string(),
+        }],
+    }]
 }
 
 fn select_harness_assignment(
@@ -1360,6 +1407,113 @@ mod tests {
         assert!(plan
             .approvals
             .contains(&TaskStrategyApproval::LaunchParallelWorkers));
+    }
+
+    #[test]
+    fn reviewer_fallback_respects_single_session_capacity() {
+        let plan = plan_task_strategy(TaskStrategyInput {
+            goal: "Implement the task router".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: false,
+            user_requested_review: true,
+            likely_user_visible_change: true,
+            harness_registry: HarnessRegistry {
+                harnesses: vec![HarnessCapability {
+                    max_parallel_sessions: Some(1),
+                    ..harness("codex", false, true)
+                }],
+            },
+        })
+        .unwrap();
+
+        assert_ne!(plan.strategy, TaskStrategy::ImplementerPlusReviewer);
+        assert_eq!(plan.assignments.len(), 1);
+        assert_eq!(plan.assignments[0].harness_id, "codex");
+    }
+
+    #[test]
+    fn solo_strategy_falls_back_to_current_orchestrator_without_ready_harnesses() {
+        let plan = plan_task_strategy(TaskStrategyInput {
+            goal: "Inspect the task router state".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: false,
+            user_requested_review: false,
+            likely_user_visible_change: false,
+            harness_registry: HarnessRegistry::default(),
+        })
+        .unwrap();
+
+        assert_eq!(plan.strategy, TaskStrategy::SoloTracked);
+        assert_eq!(plan.assignments[0].harness_id, "self");
+        assert!(plan.assignments[0]
+            .factors
+            .iter()
+            .any(|factor| factor.name == "self_fallback"));
+    }
+
+    #[test]
+    fn classifier_uses_tokens_not_substrings() {
+        let latest = plan_task_strategy(TaskStrategyInput {
+            goal: "Implement the latest feature".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: false,
+            user_requested_review: false,
+            likely_user_visible_change: true,
+            harness_registry: caps(),
+        })
+        .unwrap();
+        assert_eq!(latest.task_class, TaskClass::FeatureImplementation);
+
+        let comparison_bug = plan_task_strategy(TaskStrategyInput {
+            goal: "Fix the comparison logic bug".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: false,
+            user_requested_review: false,
+            likely_user_visible_change: true,
+            harness_registry: caps(),
+        })
+        .unwrap();
+        assert_eq!(comparison_bug.task_class, TaskClass::FocusedBugfix);
+
+        let preview = plan_task_strategy(TaskStrategyInput {
+            goal: "Inspect preview rendering state".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: false,
+            user_requested_review: false,
+            likely_user_visible_change: false,
+            harness_registry: caps(),
+        })
+        .unwrap();
+        assert_eq!(preview.task_class, TaskClass::RepoInspection);
+
+        let read_only = plan_task_strategy(TaskStrategyInput {
+            goal: "Read only review of the router state".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: false,
+            user_requested_review: false,
+            likely_user_visible_change: false,
+            harness_registry: caps(),
+        })
+        .unwrap();
+        assert_eq!(read_only.task_class, TaskClass::ReviewOnly);
     }
 
     #[test]

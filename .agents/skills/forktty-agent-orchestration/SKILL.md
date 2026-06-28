@@ -47,9 +47,11 @@ For normal local code changes, read and edit the repo directly.
    `task_strategy_apply` only after explicit approvals; apply stages visible
    workflow/team/task/message state by default, and with `submit=true` may
    launch visible workers plus dispatch prompts for supported team plans.
-   Apply recomputes worktree approvals and multi-worker submit approvals from
-   the requested operation and plan shape before trusting the plan's approval
-   list. If approvals are
+   Apply recomputes dirty-repo edit isolation, worktree approvals, and
+   multi-worker submit approvals from the selected target, requested operation,
+   and effective plan shape before trusting the plan's approval list.
+   `approved` is a caller attestation; use Feed `request_approval` when a
+   separate human decision is required. If approvals are
    missing, use `request_approval` to publish a Feed approval without starting
    work, then retry the same request with the approved returned `approval_id`.
    Worktree-layer submit requires `worktree_name` for an already-open ForkTTY

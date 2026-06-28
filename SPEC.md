@@ -504,16 +504,20 @@ task strategy plan. It accepts required `run_id`, `goal`, and `plan` fields
 plus optional `approved`, `approval_id`, `request_approval`, `workflow_id`,
 `team_id`, `workspace_id` or other workspace selector including
 `worktree_name`, `leader_surface_id`/`surface_id`, and `submit`.
-Before any workflow/team/worker mutation it recomputes required approvals from
-the requested operation and plan shape (`start_run` always, `create_worktree`
-when `layers.worktree` is true, and `launch_parallel_workers` when
-`submit: true` would launch more than one assignment worker) plus applicable
-approvals listed by the plan, then verifies they are present in `approved` or
-satisfied by a matching approved task-strategy Feed approval passed as
-`approval_id`; otherwise missing approval returns `precondition_failed` and
-leaves workflow/team stores unchanged. A `launch_parallel_workers` entry in the
-plan is treated as a future submit approval and is not required for staged-only
-apply calls. Apply validates
+Before any workflow/team/worker mutation it recomputes server-side dirty
+repo/edit-intent worktree isolation from the selected surface/workspace cwd,
+then recomputes required approvals from the requested operation and effective
+plan shape (`start_run` always, `create_worktree` when the effective layers
+require worktree isolation, and `launch_parallel_workers` when `submit: true`
+would launch more than one assignment worker) plus applicable approvals listed
+by the plan. It then verifies they are present in `approved` or satisfied by a
+matching approved task-strategy Feed approval passed as `approval_id`;
+otherwise missing approval returns `precondition_failed` and leaves
+workflow/team stores unchanged. The `approved` array is a programmatic caller
+attestation, not proof of a separate human decision; use
+`request_approval`/`approval_id` when a Feed-backed human approval is required.
+A `launch_parallel_workers` entry in the plan is treated as a future submit
+approval and is not required for staged-only apply calls. Apply validates
 local preconditions such as required team assignments, `worktree_name`, and
 already-open worktree workspaces before creating approval requests. A plan with
 `layers.team: true` must include at least one assignment even when staging, so

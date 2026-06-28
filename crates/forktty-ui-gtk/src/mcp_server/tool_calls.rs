@@ -144,13 +144,18 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             let mut params = workspace_target_params(args, true)?;
             params.insert(
                 "goal".to_string(),
-                Value::String(required_non_empty_string(args, "goal")?),
+                Value::String(required_non_blank(args, "goal")?),
             );
             insert_optional_non_blank_param(args, &mut params, "strategy")?;
             insert_optional_non_blank_param(args, &mut params, "router_profile")?;
             insert_optional_object_param(args, &mut params, "last_known_good")?;
             insert_optional_object_param(args, &mut params, "harness_signals")?;
-            insert_optional_non_blank_param(args, &mut params, "surface_id")?;
+            if let Some(surface_id) = optional_non_blank(args, "surface_id")? {
+                if !has_workspace_selector_arg(args) {
+                    params.remove("workspace_id");
+                }
+                params.insert("surface_id".to_string(), Value::String(surface_id));
+            }
             insert_optional_bool_param(args, &mut params, "repo_dirty")?;
             insert_optional_renamed_bool_param(
                 args,
@@ -203,7 +208,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             );
             params.insert(
                 "goal".to_string(),
-                Value::String(required_non_empty_string(args, "goal")?),
+                Value::String(required_non_blank(args, "goal")?),
             );
             let Some(plan) = args.get("plan") else {
                 return Err(ToolCallError::validation("plan is required"));
@@ -1233,6 +1238,12 @@ fn workspace_target_params(
     Ok(params)
 }
 
+fn has_workspace_selector_arg(args: &Map<String, Value>) -> bool {
+    ["workspace_id", "workspace_name", "worktree_name"]
+        .into_iter()
+        .any(|key| args.contains_key(key))
+}
+
 fn workspace_and_surface_target_params(
     args: &Map<String, Value>,
 ) -> Result<Map<String, Value>, ToolCallError> {
@@ -1275,7 +1286,7 @@ fn success_text(name: &str, result: &Value) -> String {
         "surface_list" => "Listed ForkTTY surfaces.".to_string(),
         "context_snapshot" => "Built ForkTTY context snapshot.".to_string(),
         "task_strategy_plan" => "Planned ForkTTY task strategy.".to_string(),
-        "task_strategy_apply" => "Applied ForkTTY task strategy staging.".to_string(),
+        "task_strategy_apply" => "Processed ForkTTY task strategy request.".to_string(),
         "identify" => "Identified current ForkTTY workspace and surface context.".to_string(),
         "topology_tree" => "Built ForkTTY topology tree.".to_string(),
         "remote_list" => "Listed ForkTTY SSH remotes.".to_string(),

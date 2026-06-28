@@ -646,6 +646,44 @@ mod tests {
     }
 
     #[test]
+    fn task_strategy_plan_surface_arg_overrides_env_workspace_target() {
+        let (method, params) = with_env(
+            &[
+                ("FORKTTY_WORKSPACE_ID", Some("workspace-env")),
+                ("FORKTTY_SURFACE_ID", Some("surface-env")),
+            ],
+            || {
+                build_socket_call_for_test(
+                    "task_strategy_plan",
+                    json!({
+                        "goal": "Inspect repo",
+                        "surface_id": "surface-explicit"
+                    }),
+                )
+                .unwrap()
+            },
+        );
+
+        assert_eq!(method, "task.strategy.plan");
+        assert_eq!(params["surface_id"], "surface-explicit");
+        assert!(params.get("workspace_id").is_none());
+    }
+
+    #[test]
+    fn task_strategy_tools_reject_blank_goal_at_mcp_boundary() {
+        assert!(build_socket_call_for_test("task_strategy_plan", json!({"goal": "  "})).is_err());
+        assert!(build_socket_call_for_test(
+            "task_strategy_apply",
+            json!({
+                "run_id": "router-run-1",
+                "goal": "  ",
+                "plan": {}
+            }),
+        )
+        .is_err());
+    }
+
+    #[test]
     fn task_strategy_apply_tool_is_mutating() {
         let names = tool_specs()
             .iter()

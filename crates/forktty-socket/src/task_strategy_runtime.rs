@@ -145,7 +145,12 @@ fn task_strategy_target_context(
     state: &SocketAppState,
     params: &Value,
 ) -> Result<TaskStrategyTargetContext, DispatchError> {
-    let requested_surface_id = optional_surface_id_param(params)?.map(str::to_string);
+    let requested_surface_id = optional_surface_id_param(params)?
+        .or(optional_non_blank_string_param(
+            params,
+            "leader_surface_id",
+        )?)
+        .map(str::to_string);
     let workspace_selector = match workspace_selector_from_params(params) {
         Ok(selector) => Some(selector),
         Err(DispatchError::MissingParam(_)) => None,
@@ -287,7 +292,9 @@ fn harness_id_from_workflow_plan(workflow: &WorkflowState) -> Option<String> {
 }
 
 pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
-    let request = TaskStrategyApplyRequest::decode(params)?;
+    let mut request = TaskStrategyApplyRequest::decode(params)?;
+    request.resolve_apply_target(state)?;
+    request.enforce_server_detected_worktree_isolation(state, params)?;
     request.validate_before_mutation(state)?;
     let missing_approvals = request.missing_approvals();
     if !missing_approvals.is_empty() {
@@ -584,7 +591,8 @@ fn harness_capability_from_provider(id: &str, provider: &Value) -> HarnessCapabi
         supports_hooks: true,
         supports_mcp: true,
         supports_plan_mode: false,
-        supports_worktree_cwd: provider["cwd_resume_flag"].as_bool().unwrap_or(false),
+        supports_worktree_cwd: launchable
+            && provider["team_worker_launch"].as_bool().unwrap_or(false),
         max_parallel_sessions: None,
         health: if disabled {
             HarnessHealth::Disabled
@@ -674,6 +682,7 @@ struct TaskStrategyApplyRequest {
     workflow_id: String,
     team_id: String,
     workspace_id: Option<String>,
+    workspace_name: Option<String>,
     worktree_name: Option<String>,
     leader_surface_id: Option<String>,
     goal: String,
@@ -714,17 +723,31 @@ impl TaskStrategyApplyRequest {
         let leader_surface_id = optional_non_blank_string_param(params, "leader_surface_id")?
             .or(optional_non_blank_string_param(params, "surface_id")?)
             .map(str::to_string);
+        let workspace_id =
+            optional_non_blank_string_param(params, "workspace_id")?.map(str::to_string);
+        let workspace_name =
+            optional_non_blank_string_param(params, "workspace_name")?.map(str::to_string);
+        let worktree_name = optional_non_blank_string_param(params, "worktree_name")?
+            .map(validate_worktree_name)
+            .transpose()
+            .map_err(DispatchError::from)?
+            .map(str::to_string);
+        let selector_count = [&workspace_id, &workspace_name, &worktree_name]
+            .into_iter()
+            .filter(|value| value.is_some())
+            .count();
+        if selector_count > 1 {
+            return Err(DispatchError::InvalidParam(
+                "cannot combine workspace_id, workspace_name, and worktree_name".to_string(),
+            ));
+        }
         Ok(Self {
             run_id,
             workflow_id,
             team_id,
-            workspace_id: optional_non_blank_string_param(params, "workspace_id")?
-                .map(str::to_string),
-            worktree_name: optional_non_blank_string_param(params, "worktree_name")?
-                .map(validate_worktree_name)
-                .transpose()
-                .map_err(DispatchError::from)?
-                .map(str::to_string),
+            workspace_id,
+            workspace_name,
+            worktree_name,
             leader_surface_id,
             goal,
             plan,
@@ -756,6 +779,57 @@ impl TaskStrategyApplyRequest {
             .filter(|approval| !self.approved.iter().any(|value| value == approval))
             .map(str::to_string)
             .collect()
+    }
+
+    fn resolve_apply_target(&mut self, state: &SocketAppState) -> Result<(), DispatchError> {
+        let Some(workspace_name) = self.workspace_name.take() else {
+            return Ok(());
+        };
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| DispatchError::Other("Lock poisoned".to_string()))?;
+        let workspace_id = model
+            .workspace_id_for(WorkspaceSelector::Name(&workspace_name))
+            .ok_or_else(|| DispatchError::NotFound("workspace".to_string()))?;
+        self.workspace_id = Some(workspace_id);
+        Ok(())
+    }
+
+    fn enforce_server_detected_worktree_isolation(
+        &mut self,
+        state: &SocketAppState,
+        params: &Value,
+    ) -> Result<(), DispatchError> {
+        let target = match task_strategy_target_context(state, params) {
+            Ok(target) => target,
+            Err(err) if self.worktree_name.is_some() && err.code() == "not_found" => {
+                return Ok(());
+            }
+            Err(err) => return Err(err),
+        };
+        if infer_repo_dirty(target.cwd.as_deref()) && infer_likely_user_visible_change(&self.goal) {
+            if !self.plan.layers.worktree {
+                self.plan.layers.worktree = true;
+                self.plan.reasons.push(
+                    "server detected dirty repo plus editing task and forced worktree isolation"
+                        .to_string(),
+                );
+            }
+            if !self
+                .plan
+                .approvals
+                .contains(&TaskStrategyApproval::CreateWorktree)
+            {
+                self.plan
+                    .approvals
+                    .push(TaskStrategyApproval::CreateWorktree);
+                self.plan
+                    .approvals
+                    .sort_by_key(task_strategy_approval_order);
+            }
+        }
+        Ok(())
     }
 
     fn approval_request_id(&self, missing_approvals: &[String]) -> String {
@@ -969,14 +1043,17 @@ impl TaskStrategyApplyRequest {
             "status": status,
             "goal": self.goal,
             "memory": format!(
-                "Task strategy: {:?}. Run id: {}.",
-                self.plan.strategy, self.run_id
+                "Task strategy: {}. Run id: {}.",
+                task_strategy_wire_value(&self.plan.strategy),
+                self.run_id
             ),
         });
         if let Some(worktree_name) = self.worktree_name.as_deref() {
             params["worktree_name"] = json!(worktree_name);
         } else if let Some(workspace_id) = self.workspace_id.as_deref() {
             params["workspace_id"] = json!(workspace_id);
+        } else if let Some(workspace_name) = self.workspace_name.as_deref() {
+            params["workspace_name"] = json!(workspace_name);
         }
         if self.worktree_name.is_none() {
             if let Some(surface_id) = self.leader_surface_id.as_deref() {
@@ -991,6 +1068,8 @@ impl TaskStrategyApplyRequest {
             params["worktree_name"] = json!(worktree_name);
         } else if let Some(workspace_id) = self.workspace_id.as_deref() {
             params["workspace_id"] = json!(workspace_id);
+        } else if let Some(workspace_name) = self.workspace_name.as_deref() {
+            params["workspace_name"] = json!(workspace_name);
         }
     }
 
@@ -1235,6 +1314,28 @@ fn approval_id(approval: &TaskStrategyApproval) -> &'static str {
         TaskStrategyApproval::CreateWorktree => "create_worktree",
         TaskStrategyApproval::LaunchParallelWorkers => "launch_parallel_workers",
         TaskStrategyApproval::IncreaseRisk => "increase_risk",
+    }
+}
+
+fn task_strategy_wire_value(strategy: &TaskStrategy) -> &'static str {
+    match strategy {
+        TaskStrategy::Solo => "solo",
+        TaskStrategy::SoloTracked => "solo_tracked",
+        TaskStrategy::SoloWithVerifyLoop => "solo_with_verify_loop",
+        TaskStrategy::ImplementerPlusReviewer => "implementer_plus_reviewer",
+        TaskStrategy::ParallelResearch => "parallel_research",
+        TaskStrategy::ParallelExperiment => "parallel_experiment",
+        TaskStrategy::TeamPipeline => "team_pipeline",
+        TaskStrategy::ReviewOnly => "review_only",
+    }
+}
+
+fn task_strategy_approval_order(approval: &TaskStrategyApproval) -> u8 {
+    match approval {
+        TaskStrategyApproval::StartRun => 0,
+        TaskStrategyApproval::CreateWorktree => 1,
+        TaskStrategyApproval::LaunchParallelWorkers => 2,
+        TaskStrategyApproval::IncreaseRisk => 3,
     }
 }
 

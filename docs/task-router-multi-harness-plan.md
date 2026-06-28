@@ -62,13 +62,16 @@ and are rejected before mutation if it is missing.
 Missing start-run approvals can be published as deterministic, request-bound
 Feed approvals with `request_approval` and later consumed with the returned
 approved `approval_id` only for the same run id, goal, plan, target scope, and
-submit mode. Apply also recomputes required approvals from the requested
-operation and plan shape, so worktree-layer plans cannot omit
-`create_worktree` and multi-worker submit cannot omit
-`launch_parallel_workers` from `plan.approvals` to bypass review. Locally
-invalid requests, such as team-layer plans without assignments, non-team
-submit, or worktree-layer submit without `worktree_name`, are rejected before
-creating Feed approvals.
+submit mode. Apply also recomputes dirty-repo edit isolation and required
+approvals from the selected target, requested operation, and effective plan
+shape, so dirty editing tasks cannot bypass worktree isolation by submitting a
+weaker plan, worktree-layer plans cannot omit `create_worktree`, and
+multi-worker submit cannot omit `launch_parallel_workers` from
+`plan.approvals` to bypass review. The `approved` array is a programmatic
+caller attestation; Feed `request_approval`/`approval_id` is the human-decision
+path. Locally invalid requests, such as team-layer plans without assignments,
+non-team submit, or worktree-layer submit without `worktree_name`, are rejected
+before creating Feed approvals.
 Worktree creation, push, merge, destructive commands, and hidden background
 scheduling remain intentionally unsupported in the router.
 
@@ -166,14 +169,14 @@ submit slice:
 - `target/debug/forktty skills setup agents --dry-run --json` and
   `target/debug/forktty skills setup claude --dry-run --json` after rebuilding
   the embedded skill source; current source checksum:
-  `fnv1a64:ff7da82d98169d36`
+  `fnv1a64:c8efb243753bdafc`
 - `cargo fmt --all --check`
 - `git diff --check`
 - `FORKTTY_SKIP_GTK_WIDGET_TESTS=1 cargo test --workspace --all-targets --no-default-features --features gtk-ghostty`
-  passed with 870 tests passed, 1 ignored, 0 failed.
+  passed with 873 tests passed, 1 ignored, 0 failed.
 - `cargo clippy --workspace --all-targets --no-default-features --features gtk-ghostty -- -D warnings`
 - `cargo test -p forktty-ui-gtk --all-targets --no-default-features --features browser -- --test-threads=1`
-  passed with 891 tests passed, 2 ignored, 0 failed.
+  passed with 894 tests passed, 2 ignored, 0 failed.
 - `cargo clippy -p forktty-ui-gtk --all-targets --no-default-features --features browser -- -D warnings`
 - `cargo build -p forktty-ui-gtk --no-default-features --features browser`
 

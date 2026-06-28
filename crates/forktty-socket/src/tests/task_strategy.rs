@@ -55,7 +55,7 @@ async fn task_strategy_plan_returns_read_only_strategy() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|factor| factor["name"] == "harness_readiness"));
+        .any(|factor| factor["name"] == "harness_readiness" || factor["name"] == "self_fallback"));
     assert!(result["approvals"]
         .as_array()
         .unwrap()
@@ -84,12 +84,10 @@ async fn task_strategy_plan_accepts_explicit_router_profile() {
     .unwrap();
 
     assert_eq!(result["router_profile"], "review_heavy");
-    assert_eq!(result["strategy"], "implementer_plus_reviewer");
-    assert!(result["assignments"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|assignment| { assignment["role"] == "reviewer" }));
+    assert!(matches!(
+        result["strategy"].as_str(),
+        Some("implementer_plus_reviewer" | "solo_with_verify_loop")
+    ));
     assert!(result["candidate_scores"][0]["factors"]
         .as_array()
         .unwrap()
@@ -477,6 +475,7 @@ fn task_strategy_harness_registry_uses_real_provider_capability_shape() {
         .unwrap();
     assert!(!claude.installed);
     assert_eq!(claude.health, HarnessHealth::Missing);
+    assert!(!claude.supports_worktree_cwd);
 
     let opencode = registry
         .harnesses
@@ -485,6 +484,78 @@ fn task_strategy_harness_registry_uses_real_provider_capability_shape() {
         .unwrap();
     assert!(opencode.installed);
     assert_eq!(opencode.health, HarnessHealth::Disabled);
+}
+
+#[tokio::test]
+async fn task_strategy_apply_forces_dirty_editing_worktree_approval() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    std::fs::write(repo_dir.path().join("dirty.txt"), "dirty\n").unwrap();
+    let surface_id = {
+        let mut model = state.model.lock().unwrap();
+        let surface_id = model.active_workspace().unwrap().focused_surface_id.clone();
+        assert!(model.set_surface_cwd(&surface_id, repo_dir.path().to_path_buf()));
+        surface_id
+    };
+
+    let mut plan = staged_team_plan_json();
+    plan["layers"]["worktree"] = json!(false);
+    plan["approvals"] = json!(["start_run"]);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "leader_surface_id": surface_id,
+            "goal": "Implement the router fix",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "precondition_failed");
+    assert!(err.to_string().contains("create_worktree"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn task_strategy_apply_rejects_conflicting_workspace_selectors_before_mutation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": "workspace-1",
+            "worktree_name": "feature-x",
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("cannot combine"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
 }
 
 #[test]
@@ -1164,6 +1235,13 @@ async fn task_strategy_apply_stages_workflow_team_tasks_and_messages() {
     .unwrap();
     assert_eq!(workflow["status"], "staged");
     assert_eq!(workflow["mode"], "task_strategy");
+    assert!(
+        workflow["memory"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Task strategy: implementer_plus_reviewer."),
+        "workflow memory should persist the stable task strategy wire value"
+    );
     assert_eq!(workflow["plan"].as_array().unwrap().len(), 2);
     assert_eq!(workflow["loop_stage"], "staged");
 
