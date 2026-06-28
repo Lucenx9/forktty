@@ -89,7 +89,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "task_strategy_plan",
             annotations: read_only_annotations(),
-            description: "Ask ForkTTY to choose a read-only task strategy before selecting team, workflow, loop, worktree, hooks, MCP, or harnesses. The planner returns the selected router profile, ranked candidate strategy scores plus role-specific harness assignment scores with factor breakdowns, uses ForkTTY capabilities, configured team provider order as the harness tie-break, selected workspace/surface cwd to infer simple repo context such as dirty state when repo_dirty is omitted, goal wording to infer likely user-visible edit intent and profile when omitted, and completed task-strategy workflow history for advisory last-known-good stickiness when explicit evidence is omitted. It includes explicit reviewer roles when a review strategy is selected. Use this for non-trivial tasks instead of guessing a mode.",
+            description: "Ask ForkTTY to choose a read-only task strategy before selecting team, workflow, loop, worktree, hooks, MCP, or harnesses. The planner returns the selected router profile, ranked candidate strategy scores plus role-specific harness assignment scores with factor breakdowns, uses ForkTTY capabilities, configured team provider order as the harness tie-break, an explicit cwd or selected workspace/surface cwd to infer simple repo context such as dirty state when repo_dirty is omitted, goal wording to infer likely user-visible edit intent and profile when omitted, and completed task-strategy workflow history for advisory last-known-good stickiness when explicit evidence is omitted. It includes explicit reviewer roles when a review strategy is selected. Use this for non-trivial tasks instead of guessing a mode.",
             input_schema: object_schema(
                 &["goal"],
                 json!({
@@ -110,7 +110,8 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
                     "workspace_name": string_prop("Workspace name whose focused surface/project cwd should inform planning."),
                     "worktree_name": string_prop("Worktree workspace name whose focused surface/project cwd should inform planning."),
                     "surface_id": string_prop("Surface id whose effective project cwd should inform planning."),
-                    "repo_dirty": boolean_prop("Whether the repository has uncommitted changes and editing should prefer worktree isolation. When omitted, ForkTTY tries to infer this from the selected surface/workspace cwd."),
+                    "cwd": string_prop("Absolute repo path to use for read-only planning context when the caller's actual working directory differs from the selected ForkTTY pane."),
+                    "repo_dirty": boolean_prop("Whether the repository has uncommitted changes and editing should prefer worktree isolation. When omitted, ForkTTY tries to infer this from cwd or the selected surface/workspace cwd."),
                     "parallel": boolean_prop("True when the user explicitly requested parallelism, comparison, or independent approaches."),
                     "review": boolean_prop("True when the user requested or the task requires a separate reviewer role."),
                     "user_visible": boolean_prop("Optional override for whether the task is likely to change user-visible behavior, docs, CLI output, UI, packaging, or public docs. When omitted, ForkTTY infers this from the goal text."),

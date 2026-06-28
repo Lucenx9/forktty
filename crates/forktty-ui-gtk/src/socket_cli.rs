@@ -224,7 +224,11 @@ pub fn run(args: Vec<OsString>) -> i32 {
     match run_inner(args) {
         Ok(()) => 0,
         Err(err) => {
-            eprintln!("{}", sanitize_for_terminal(&err.message));
+            if err.exit == 0 {
+                eprintln!("{}", err.message);
+            } else {
+                eprintln!("{}", sanitize_for_terminal(&err.message));
+            }
             err.exit
         }
     }

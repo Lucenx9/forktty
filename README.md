@@ -292,7 +292,7 @@ forktty status watch --count 3 --interval-ms 2000
 forktty identify --json
 forktty wait agent-status --status needs_input --timeout-ms 30000
 forktty context-snapshot --workspace-name main --tail-lines 0 --json
-forktty task-plan "fix this bug and verify it" --json
+forktty task-plan "fix this bug and verify it" --cwd "$PWD" --json
 forktty task-apply --run-id router-run-1 --plan-json '<plan-json>' --request-approval "fix this bug and verify it"
 forktty feed respond '<approval-id-from-request>' --decision approve
 forktty task-apply --run-id router-run-1 --plan-json '<plan-json>' --approval-id '<approval-id-from-request>' "fix this bug and verify it"
@@ -321,8 +321,10 @@ worktree. The planner is read-only, returns the selected router profile
 candidate strategy scores with factor breakdowns, scores each ready harness
 assignment by role with factor breakdowns, uses configured team provider order
 as the assignment tie-break, infers dirty git state from the selected
-surface/workspace cwd when `repo_dirty`/`--repo-dirty` is omitted, infers likely
-user-visible edit intent and clear router profiles from the goal when omitted,
+surface/workspace cwd when `repo_dirty`/`--repo-dirty` is omitted, or from an
+explicit absolute `--cwd` / MCP `cwd` when the caller's actual repository
+differs from the selected ForkTTY pane. It also infers likely user-visible edit
+intent and clear router profiles from the goal when omitted,
 infers advisory last-known-good strategy/harness evidence from completed
 task-strategy workflows when available, and keeps reviewer strategies honest by
 including a reviewer assignment. Pass
@@ -344,7 +346,10 @@ returns `status: "blocked"` without mutating workflow/team state; after
 `forktty feed respond <approval-id> --decision approve`, retry apply with
 `--approval-id <approval-id>`/`approval_id`. The returned approval id is bound
 to that run id, goal, plan, target scope, and submit mode; request a new
-approval when any of those change. Apply recomputes dirty-repo edit isolation
+approval when any of those change. If a caller instead retries with an
+equivalent explicit `--approved` / `approved` attestation, ForkTTY dismisses the
+now-superseded pending Feed approval so it no longer raises a `pending_approval`
+risk flag. Apply recomputes dirty-repo edit isolation
 from the selected surface/workspace and required approvals from the requested
 operation and effective plan shape, so dirty editing tasks cannot drop
 `create_worktree` and multi-worker submit cannot drop `launch_parallel_workers`

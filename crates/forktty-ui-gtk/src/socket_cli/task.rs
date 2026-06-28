@@ -8,8 +8,21 @@ use super::{
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
+const TASK_PLAN_HELP: &str = "\
+usage: forktty task-plan <goal> [options] [--json]
+options: --workspace-id <id>, --workspace-name <name>, --worktree-name <name>, --surface-id <id>, --cwd <repo>, --strategy <strategy>, --profile balanced|fast|conservative|parallel|review_heavy, --last-known-good-json <json>, --harness-signals-json <json>, --repo-dirty[=true|false], --parallel[=true|false], --review[=true|false], --user-visible[=true|false]
+";
+
+const TASK_APPLY_HELP: &str = "\
+usage: forktty task-apply --run-id <id> --plan-json <json> [options] <goal> [--json]
+options: --workspace-id <id>, --workspace-name <name>, --worktree-name <name>, --leader-surface-id <id>, --surface-id <id>, --workflow-id <id>, --team-id <id>, --approved <ids>, --approval-id <id>, --request-approval[=true|false], --submit[=true|false]
+";
+
 pub(super) fn handle_task_plan(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &["repo-dirty", "parallel", "review", "user-visible"]);
+    if parsed.options.contains_key("help") {
+        return Err(help_error(TASK_PLAN_HELP));
+    }
     reject_unknown_options(
         &parsed.options,
         &[
@@ -17,6 +30,7 @@ pub(super) fn handle_task_plan(context: &CliContext, args: Vec<String>) -> CliRe
             "workspace-name",
             "worktree-name",
             "surface-id",
+            "cwd",
             "strategy",
             "profile",
             "last-known-good-json",
@@ -47,6 +61,9 @@ pub(super) fn handle_task_plan(context: &CliContext, args: Vec<String>) -> CliRe
             params.remove("workspace_id");
         }
         params.insert("surface_id".to_string(), Value::String(surface_id));
+    }
+    if let Some(cwd) = non_blank_string_option(&parsed.options, "cwd", "--cwd")? {
+        params.insert("cwd".to_string(), Value::String(cwd.trim().to_string()));
     }
     params.insert("goal".to_string(), Value::String(goal));
     insert_optional_bool_param(&parsed.options, &mut params, "repo-dirty", "repo_dirty")?;
@@ -127,6 +144,9 @@ fn insert_optional_json_object_param(
 
 pub(super) fn handle_task_apply(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &["submit", "request-approval"]);
+    if parsed.options.contains_key("help") {
+        return Err(help_error(TASK_APPLY_HELP));
+    }
     reject_unknown_options(
         &parsed.options,
         &[
@@ -240,6 +260,14 @@ pub(super) fn handle_task_apply(context: &CliContext, args: Vec<String>) -> CliR
         print_json(&result)
     } else {
         write_stdout_line(&format_task_strategy_apply_line(&result))
+    }
+}
+
+fn help_error(message: &'static str) -> CliError {
+    CliError {
+        message: message.to_string(),
+        code: None,
+        exit: 0,
     }
 }
 

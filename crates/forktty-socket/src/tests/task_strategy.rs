@@ -354,6 +354,62 @@ async fn task_strategy_plan_infers_dirty_repo_from_active_surface_cwd() {
 }
 
 #[tokio::test]
+async fn task_strategy_plan_uses_explicit_cwd_for_repo_context() {
+    let (state, _backend) = test_state();
+    let active_dir = tempfile::tempdir().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        let surface_id = model.active_workspace().unwrap().focused_surface_id.clone();
+        assert!(model.set_surface_cwd(&surface_id, active_dir.path().to_path_buf()));
+    }
+    let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    std::fs::write(repo_dir.path().join("dirty.txt"), "dirty\n").unwrap();
+
+    let result = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "goal": "Implement the router fix",
+            "cwd": repo_dir.path().to_string_lossy(),
+            "likely_user_visible_change": true
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["layers"]["worktree"], true);
+    assert!(result["approvals"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("create_worktree")));
+    assert!(result["reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|reason| { reason.as_str().unwrap_or_default().contains("explicit cwd") }));
+}
+
+#[tokio::test]
+async fn task_strategy_plan_rejects_relative_explicit_cwd() {
+    let (state, _backend) = test_state();
+
+    let err = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "goal": "Inspect router",
+            "cwd": "relative/path"
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("cwd"));
+}
+
+#[tokio::test]
 async fn task_strategy_plan_infers_user_visible_change_from_editing_goal() {
     let (state, _backend) = test_state();
     let repo_dir = tempfile::tempdir().unwrap();
@@ -526,6 +582,46 @@ async fn task_strategy_apply_forces_dirty_editing_worktree_approval() {
     let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
     assert!(workflows.as_array().unwrap().is_empty());
     assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn task_strategy_apply_ignores_explicit_cwd_for_dirty_isolation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let dirty_repo = tempfile::tempdir().unwrap();
+    git2::Repository::init(dirty_repo.path()).unwrap();
+    std::fs::write(dirty_repo.path().join("dirty.txt"), "dirty\n").unwrap();
+    let clean_dir = tempfile::tempdir().unwrap();
+    let surface_id = {
+        let mut model = state.model.lock().unwrap();
+        let surface_id = model.active_workspace().unwrap().focused_surface_id.clone();
+        assert!(model.set_surface_cwd(&surface_id, dirty_repo.path().to_path_buf()));
+        surface_id
+    };
+
+    let mut plan = staged_team_plan_json();
+    plan["layers"]["worktree"] = json!(false);
+    plan["approvals"] = json!(["start_run"]);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "leader_surface_id": surface_id,
+            "cwd": clean_dir.path().to_string_lossy(),
+            "goal": "Implement the router fix",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "precondition_failed");
+    assert!(err.to_string().contains("create_worktree"));
 }
 
 #[tokio::test]
@@ -899,6 +995,55 @@ async fn task_strategy_apply_approval_request_is_idempotent() {
         .await
         .unwrap();
     assert_eq!(feed.as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn task_strategy_apply_dismisses_superseded_pending_approval_request() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let state = state
+        .with_feed_store_path(dir.path().join("feed.json"))
+        .unwrap();
+
+    let approval = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement the router",
+            "approved": [],
+            "request_approval": true,
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+    let approval_id = approval["approval_request"]["id"].as_str().unwrap();
+
+    let result = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["status"], "staged");
+    assert!(result["actions"].as_array().unwrap().iter().any(|action| {
+        action["method"] == "feed.approval.dismiss" && action["approval_id"] == approval_id
+    }));
+    let feed = dispatch(&state, "feed.list", json!({"limit": 10}))
+        .await
+        .unwrap();
+    assert_eq!(feed[0]["id"], approval_id);
+    assert_eq!(feed[0]["approval_state"], "dismissed");
 }
 
 #[tokio::test]

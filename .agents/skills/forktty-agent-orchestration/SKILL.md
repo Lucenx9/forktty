@@ -26,9 +26,9 @@ For normal local code changes, read and edit the repo directly.
 2. Before choosing team, workflow loop, worktree, or multi-harness execution
    for a non-trivial user task, call `task_strategy_plan` with the user's goal
    and current risk signals. It uses ForkTTY capabilities, configured team
-   provider policy, and the selected surface/workspace cwd for simple git dirty
-   inference, and infers likely user-visible edit intent from the goal when the
-   caller omits that hint. It also selects a router profile (`balanced`,
+   provider policy, and an explicit `cwd` or the selected surface/workspace cwd
+   for simple git dirty inference, and infers likely user-visible edit intent
+   from the goal when the caller omits that hint. It also selects a router profile (`balanced`,
    `fast`, `conservative`, `parallel`, or `review_heavy`), inferring one from
    clear goal wording or using an explicit `router_profile` only when the user
    or leader wants to bias the same scorer. It also returns ranked candidate
@@ -53,7 +53,9 @@ For normal local code changes, read and edit the repo directly.
    `approved` is a caller attestation; use Feed `request_approval` when a
    separate human decision is required. If approvals are
    missing, use `request_approval` to publish a Feed approval without starting
-   work, then retry the same request with the approved returned `approval_id`.
+   work, then retry the same request with the approved returned `approval_id`;
+   if you instead retry with explicit `approved` attestations, ForkTTY dismisses
+   the superseded pending approval request.
    Worktree-layer submit requires `worktree_name` for an already-open ForkTTY
    worktree workspace. It does not create worktrees, push, merge, run
    arbitrary commands, or schedule hidden work.

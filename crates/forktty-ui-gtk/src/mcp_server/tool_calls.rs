@@ -135,6 +135,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                     "workspace_name",
                     "worktree_name",
                     "surface_id",
+                    "cwd",
                     "parallel",
                     "review",
                     "user_visible",
@@ -156,6 +157,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 }
                 params.insert("surface_id".to_string(), Value::String(surface_id));
             }
+            insert_optional_non_blank_param(args, &mut params, "cwd")?;
             insert_optional_bool_param(args, &mut params, "repo_dirty")?;
             insert_optional_renamed_bool_param(
                 args,

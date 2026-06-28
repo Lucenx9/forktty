@@ -29,6 +29,8 @@ All notable changes to ForkTTY are documented here.
   dirty git state from the selected surface/workspace cwd when callers omit an
   explicit `repo_dirty` hint, and can infer likely user-visible edit intent
   from goal wording when callers omit an explicit user-visible hint.
+- Added an explicit task strategy planning `cwd` override for socket, CLI, and
+  MCP callers whose real repository cwd differs from the selected ForkTTY pane.
 - Added ranked candidate strategy scores to `task.strategy.plan` responses so
   agents can see why ForkTTY selected a mode and which alternatives were
   considered before applying a plan.
@@ -54,6 +56,14 @@ All notable changes to ForkTTY are documented here.
 - Improved dark UI shortcut contrast in custom menus and the Command Palette,
   and disabled workspace move commands when the active workspace is already at
   an edge.
+- Improved `forktty task-plan --help`, `forktty task-apply --help`, and
+  `forktty feed respond --help` so task-router approval flows document their
+  positional goals, plan JSON, `cwd`, and approval decisions directly.
+
+### Fixed
+- Fixed task strategy apply so a pending Feed approval request is dismissed
+  when the same run is later applied with equivalent explicit `approved`
+  attestations, avoiding stale `pending_approval` risk flags.
 
 ## [0.2.0-alpha.16] - 2026-06-27
 

@@ -711,3 +711,14 @@ fn feed_respond_rejects_invalid_decision_before_socket() {
         "approve or deny",
     );
 }
+
+#[test]
+fn feed_respond_help_names_approval_id_and_decisions() {
+    let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+    let err = handle_feed(&ctx, strings(&["respond", "--help"])).unwrap_err();
+
+    assert_eq!(err.exit, 0);
+    assert!(err.message.contains("forktty feed respond <approval-id>"));
+    assert!(err.message.contains("--decision approve|deny"));
+    assert!(err.message.contains("--json"));
+}

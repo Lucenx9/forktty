@@ -37,7 +37,7 @@ pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value
         .as_ref()
         .map(last_known_good_from_value)
         .transpose()?;
-    let target = task_strategy_target_context(state, params)?;
+    let target = task_strategy_target_context(state, params, true)?;
     let (last_known_good, inferred_last_known_good_reason) =
         if let Some(last_known_good) = explicit_last_known_good {
             (Some(last_known_good), None)
@@ -71,6 +71,10 @@ pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value
     if inferred_user_visible_change {
         plan.reasons
             .push("inferred likely user-visible change from task wording".to_string());
+    }
+    if target.explicit_cwd {
+        plan.reasons
+            .push("used explicit cwd for repo context inference".to_string());
     }
     if let Some(reason) = inferred_last_known_good_reason {
         plan.reasons.push(format!(
@@ -139,12 +143,20 @@ fn infer_repo_dirty(cwd: Option<&Path>) -> bool {
 struct TaskStrategyTargetContext {
     cwd: Option<PathBuf>,
     workspace_id: Option<String>,
+    explicit_cwd: bool,
 }
 
 fn task_strategy_target_context(
     state: &SocketAppState,
     params: &Value,
+    allow_explicit_cwd: bool,
 ) -> Result<TaskStrategyTargetContext, DispatchError> {
+    let explicit_cwd = if allow_explicit_cwd {
+        explicit_task_strategy_cwd(params)?
+    } else {
+        None
+    };
+    let has_explicit_cwd = explicit_cwd.is_some();
     let requested_surface_id = optional_surface_id_param(params)?
         .or(optional_non_blank_string_param(
             params,
@@ -174,8 +186,9 @@ fn task_strategy_target_context(
             }
         }
         return Ok(TaskStrategyTargetContext {
-            cwd: Some(surface_effective_project_cwd(surface)),
+            cwd: Some(explicit_cwd.unwrap_or_else(|| surface_effective_project_cwd(surface))),
             workspace_id: Some(surface.workspace_id.clone()),
+            explicit_cwd: has_explicit_cwd,
         });
     }
 
@@ -190,8 +203,9 @@ fn task_strategy_target_context(
     };
     let Some(workspace_id) = workspace_id else {
         return Ok(TaskStrategyTargetContext {
-            cwd: None,
+            cwd: explicit_cwd,
             workspace_id: None,
+            explicit_cwd: has_explicit_cwd,
         });
     };
     let Some(workspace) = model
@@ -200,15 +214,37 @@ fn task_strategy_target_context(
         .find(|workspace| workspace.id == workspace_id)
     else {
         return Ok(TaskStrategyTargetContext {
-            cwd: None,
+            cwd: explicit_cwd,
             workspace_id: Some(workspace_id),
+            explicit_cwd: has_explicit_cwd,
         });
     };
     let surfaces = model.list_surfaces(Some(&workspace_id));
     Ok(TaskStrategyTargetContext {
-        cwd: Some(workspace_effective_project_cwd(&workspace, &surfaces)),
+        cwd: Some(
+            explicit_cwd.unwrap_or_else(|| workspace_effective_project_cwd(&workspace, &surfaces)),
+        ),
         workspace_id: Some(workspace_id),
+        explicit_cwd: has_explicit_cwd,
     })
+}
+
+fn explicit_task_strategy_cwd(params: &Value) -> Result<Option<PathBuf>, DispatchError> {
+    let Some(cwd) = optional_non_blank_string_param(params, "cwd")? else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(cwd);
+    if !path.is_absolute() {
+        return Err(DispatchError::InvalidParam(
+            "Invalid parameter cwd: expected an absolute path".to_string(),
+        ));
+    }
+    if !path.is_dir() {
+        return Err(DispatchError::InvalidParam(
+            "Invalid parameter cwd: expected an existing directory".to_string(),
+        ));
+    }
+    Ok(Some(path))
 }
 
 async fn infer_last_known_good_from_workflows(
@@ -296,7 +332,8 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
     request.resolve_apply_target(state)?;
     request.enforce_server_detected_worktree_isolation(state, params)?;
     request.validate_before_mutation(state)?;
-    let missing_approvals = request.missing_approvals();
+    let required_approvals = request.required_approvals();
+    let missing_approvals = request.missing_approvals_from(&required_approvals);
     if !missing_approvals.is_empty() {
         if request.feed_approval_satisfies(state, &missing_approvals)? {
         } else if request.request_approval {
@@ -312,6 +349,7 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
     let run_status = if request.submit { "running" } else { "staged" };
     let team_status = if request.submit { "active" } else { "staged" };
     let mut actions = Vec::new();
+    request.dismiss_superseded_approval_requests(state, &required_approvals, &mut actions)?;
     if request.plan.layers.workflow {
         let workflow = workflow_runtime::upsert(
             state,
@@ -758,7 +796,7 @@ impl TaskStrategyApplyRequest {
         })
     }
 
-    fn missing_approvals(&self) -> Vec<String> {
+    fn required_approvals(&self) -> Vec<String> {
         let mut required = vec!["start_run"];
         if self.plan.layers.worktree {
             required.push("create_worktree");
@@ -774,10 +812,14 @@ impl TaskStrategyApplyRequest {
                 required.push(approval);
             }
         }
+        required.into_iter().map(str::to_string).collect()
+    }
+
+    fn missing_approvals_from(&self, required: &[String]) -> Vec<String> {
         required
-            .into_iter()
-            .filter(|approval| !self.approved.iter().any(|value| value == approval))
-            .map(str::to_string)
+            .iter()
+            .filter(|approval| !self.approved.iter().any(|value| value == *approval))
+            .cloned()
             .collect()
     }
 
@@ -801,7 +843,7 @@ impl TaskStrategyApplyRequest {
         state: &SocketAppState,
         params: &Value,
     ) -> Result<(), DispatchError> {
-        let target = match task_strategy_target_context(state, params) {
+        let target = match task_strategy_target_context(state, params, false) {
             Ok(target) => target,
             Err(err) if self.worktree_name.is_some() && err.code() == "not_found" => {
                 return Ok(());
@@ -970,6 +1012,51 @@ impl TaskStrategyApplyRequest {
             .append(entry.clone())
             .map_err(|err| DispatchError::Other(err.to_string()))?;
         Ok(self.blocked_for_approval_result(missing_approvals, json!(entry), "applied"))
+    }
+
+    fn dismiss_superseded_approval_requests(
+        &self,
+        state: &SocketAppState,
+        required_approvals: &[String],
+        actions: &mut Vec<Value>,
+    ) -> Result<(), DispatchError> {
+        if self.approval_id.is_some() || required_approvals.is_empty() {
+            return Ok(());
+        }
+        let approval_ids = self.approval_request_ids_for_subsets(required_approvals);
+        let mut store = state
+            .feed_store
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        let Some(store) = store.as_mut() else {
+            return Ok(());
+        };
+        let dismissed = store
+            .mark_approvals(approval_ids, FeedApprovalState::Dismissed)
+            .map_err(|err| DispatchError::Other(err.to_string()))?;
+        for entry in dismissed {
+            actions.push(json!({
+                "method": "feed.approval.dismiss",
+                "status": "applied",
+                "approval_id": entry.id,
+            }));
+        }
+        Ok(())
+    }
+
+    fn approval_request_ids_for_subsets(&self, approvals: &[String]) -> Vec<String> {
+        let mut ids = Vec::new();
+        let subset_count = 1usize << approvals.len();
+        for mask in 1..subset_count {
+            let subset = approvals
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| (mask & (1usize << index)) != 0)
+                .map(|(_, approval)| approval.clone())
+                .collect::<Vec<_>>();
+            ids.push(self.approval_request_id(&subset));
+        }
+        ids
     }
 
     fn blocked_for_approval_result(

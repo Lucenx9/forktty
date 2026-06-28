@@ -608,6 +608,7 @@ mod tests {
             json!({
                 "goal": "Fix the bug and verify tests",
                 "surface_id": "surface-1",
+                "cwd": "/repo/forktty",
                 "router_profile": "fast",
                 "last_known_good": {
                     "strategy": "solo_with_verify_loop",
@@ -629,6 +630,7 @@ mod tests {
         assert_eq!(method, "task.strategy.plan");
         assert_eq!(params["goal"], "Fix the bug and verify tests");
         assert_eq!(params["surface_id"], "surface-1");
+        assert_eq!(params["cwd"], "/repo/forktty");
         assert_eq!(params["router_profile"], "fast");
         assert_eq!(
             params["last_known_good"]["strategy"],

@@ -324,7 +324,8 @@ with the real workspace id.
 
 `task.strategy.plan` is a read-only task strategy planner. It accepts a user
 `goal`, optional workspace/surface target selectors (`workspace_id`,
-`workspace_name`, `worktree_name`, `surface_id`), and optional hints
+`workspace_name`, `worktree_name`, `surface_id`), an optional absolute `cwd`
+override for read-only repository context inference, and optional hints
 (`strategy`, `router_profile`, `repo_dirty`, `user_requested_parallelism`,
 `user_requested_review`, `likely_user_visible_change`, `last_known_good`, and
 `harness_signals`).
@@ -338,8 +339,11 @@ harness scoring in `system.capabilities.provider_capabilities` and uses the
 configured `team_provider_policy.provider_order` as a tie-break. When
 `repo_dirty` is omitted,
 it infers simple git dirty/conflict state from the selected surface or
-workspace effective project cwd; an explicit `repo_dirty` value overrides that
-inference. When `likely_user_visible_change` is omitted, it infers likely
+workspace effective project cwd, or from `cwd` when the caller passes one
+because its real repo differs from the selected ForkTTY pane. `cwd` must be an
+absolute existing directory and is used only for planning context; an explicit
+`repo_dirty` value overrides that inference. When `likely_user_visible_change`
+is omitted, it infers likely
 editing/user-visible intent from the goal text; an explicit false value
 overrides that inference. When `router_profile` is omitted, it uses `balanced`
 unless the goal or request hints clearly imply `fast`, `conservative`,
@@ -528,7 +532,11 @@ and still do not mutate workflow/team state. The fingerprint binds the approval
 to the run id, goal, plan, submit mode, and target scope, so an approved Feed
 entry cannot be reused for a different apply request with the same `run_id`.
 Agents or users can approve/deny that entry through `feed.approval.respond`,
-then retry apply with the returned `approval_id`.
+then retry apply with the returned `approval_id`. If the caller instead retries
+with equivalent explicit `approved` attestations, apply marks any matching
+pending task-strategy Feed approval request as `dismissed` before staging the
+visible workflow/team state, so a superseded prompt does not continue raising
+the `pending_approval` risk flag.
 With `submit` omitted or `false`, apply performs staged setup only: it can
 upsert a workflow, write workflow plan steps, set loop metadata, upsert a team,
 create team tasks, and queue team-wide messages. With `submit: true`, a

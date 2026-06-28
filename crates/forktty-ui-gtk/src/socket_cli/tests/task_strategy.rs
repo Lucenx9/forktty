@@ -101,6 +101,8 @@ fn task_plan_requests_task_strategy_plan() {
                 strings(&[
                     "--workspace-id",
                     "w1",
+                    "--cwd",
+                    "/repo/forktty",
                     "--strategy",
                     "parallel_research",
                     "--profile",
@@ -124,6 +126,7 @@ fn task_plan_requests_task_strategy_plan() {
 
     assert_eq!(request["method"], "task.strategy.plan");
     assert_eq!(request["params"]["workspace_id"], "w1");
+    assert_eq!(request["params"]["cwd"], "/repo/forktty");
     assert_eq!(request["params"]["goal"], "Compare router options");
     assert_eq!(request["params"]["strategy"], "parallel_research");
     assert_eq!(request["params"]["router_profile"], "parallel");
@@ -402,4 +405,26 @@ fn task_plan_rejects_blank_goal_before_socket() {
         handle_task_plan(&ctx, strings(&["--strategy", "solo", "  "])),
         "task-plan requires a goal",
     );
+}
+
+#[test]
+fn task_plan_help_names_goal_cwd_and_json() {
+    let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+    let err = handle_task_plan(&ctx, strings(&["--help"])).unwrap_err();
+
+    assert_eq!(err.exit, 0);
+    assert!(err.message.contains("forktty task-plan <goal>"));
+    assert!(err.message.contains("--cwd <repo>"));
+    assert!(err.message.contains("--json"));
+}
+
+#[test]
+fn task_apply_help_names_plan_json_and_goal() {
+    let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+    let err = handle_task_apply(&ctx, strings(&["--help"])).unwrap_err();
+
+    assert_eq!(err.exit, 0);
+    assert!(err.message.contains("forktty task-apply --run-id <id>"));
+    assert!(err.message.contains("--plan-json <json>"));
+    assert!(err.message.contains("<goal>"));
 }

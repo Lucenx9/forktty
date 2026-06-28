@@ -7,6 +7,10 @@ use super::{
 };
 use serde_json::{json, Value};
 
+const FEED_RESPOND_HELP: &str = "\
+usage: forktty feed respond <approval-id> --decision approve|deny [--json]
+";
+
 pub(super) fn handle_feed(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     let parsed = parse_flags(args, &[]);
     if parsed
@@ -43,6 +47,13 @@ pub(super) fn handle_feed(context: &CliContext, args: Vec<String>) -> CliResult<
 }
 
 fn handle_feed_respond(context: &CliContext, parsed: ParsedFlags) -> CliResult<()> {
+    if parsed.options.contains_key("help") {
+        return Err(CliError {
+            message: FEED_RESPOND_HELP.to_string(),
+            code: None,
+            exit: 0,
+        });
+    }
     if parsed.positionals.len() != 2 {
         return Err(CliError::new(
             "feed respond: expected feed respond <approval-id> --decision approve|deny",
