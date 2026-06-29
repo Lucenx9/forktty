@@ -33,7 +33,9 @@ why the chosen strategy won and which alternatives were considered. Harness
 assignments now include role-specific score/factor breakdowns, so reviewer
 roles can prefer plan-mode-capable harnesses and worktree-isolated implementer
 roles can prefer cwd/worktree-capable harnesses while still using configured
-provider order as the tie-break.
+provider order as the tie-break. Multi-role planner assignments now also
+respect `max_parallel_sessions`, so parallel research/experiment plans are not
+selected when only a single-session harness can run the roles.
 Planner responses now also include a selected `router_profile`, and callers can
 optionally pass `router_profile`/CLI `--profile` for `balanced`, `fast`,
 `conservative`, `parallel`, or `review_heavy`. When omitted, ForkTTY keeps the
@@ -62,16 +64,21 @@ and are rejected before mutation if it is missing.
 Missing start-run approvals can be published as deterministic, request-bound
 Feed approvals with `request_approval` and later consumed with the returned
 approved `approval_id` only for the same run id, goal, plan, target scope, and
-submit mode. Apply also recomputes dirty-repo edit isolation and required
-approvals from the selected target, requested operation, and effective plan
-shape, so dirty editing tasks cannot bypass worktree isolation by submitting a
+submit mode; if explicit attestations cover part of that same approved request,
+the returned `approval_id` can still satisfy the remaining covered approvals.
+Apply also recomputes dirty-repo edit isolation from the selected
+surface/workspace plus any explicit `cwd`, then recomputes required approvals
+from the requested operation and effective plan shape, so dirty editing tasks
+cannot bypass worktree isolation by submitting a
 weaker plan, worktree-layer plans cannot omit `create_worktree`, and
 multi-worker submit cannot omit `launch_parallel_workers` from
 `plan.approvals` to bypass review. The `approved` array is a programmatic
 caller attestation; Feed `request_approval`/`approval_id` is the human-decision
 path. Locally invalid requests, such as team-layer plans without assignments,
 non-team submit, or worktree-layer apply without `worktree_name`, are rejected
-before creating Feed approvals.
+before creating Feed approvals. Submit retries now refuse to reuse a live
+deterministic worker whose harness, role, task, cwd/worktree target, or status
+does not match the current assignment.
 Worktree creation, push, merge, destructive commands, and hidden background
 scheduling remain intentionally unsupported in the router.
 

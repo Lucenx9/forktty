@@ -89,7 +89,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "task_strategy_plan",
             annotations: read_only_annotations(),
-            description: "Ask ForkTTY to choose a read-only task strategy before selecting team, workflow, loop, worktree, hooks, MCP, or harnesses. The planner returns the selected router profile, ranked candidate strategy scores plus role-specific harness assignment scores with factor breakdowns, uses ForkTTY capabilities, configured team provider order as the harness tie-break, an explicit cwd or selected workspace/surface cwd to infer simple repo context such as dirty state when repo_dirty is omitted, goal wording to infer likely user-visible edit intent and profile when omitted, and completed task-strategy workflow history for advisory last-known-good stickiness when explicit evidence is omitted. It includes explicit reviewer roles when a review strategy is selected. Use this for non-trivial tasks instead of guessing a mode.",
+            description: "Ask ForkTTY to choose a read-only task strategy before selecting team, workflow, loop, worktree, hooks, MCP, or harnesses. The planner returns the selected router profile, ranked candidate strategy scores plus role-specific harness assignment scores with factor breakdowns, uses ForkTTY capabilities, configured team provider order as the harness tie-break, respects harness parallel-session capacity for multi-role plans, uses an explicit cwd or selected workspace/surface cwd to infer simple repo context such as dirty state when repo_dirty is omitted, goal wording to infer likely user-visible edit intent and profile when omitted, and completed task-strategy workflow history for advisory last-known-good stickiness when explicit evidence is omitted. It includes explicit reviewer roles when a review strategy is selected. Use this for non-trivial tasks instead of guessing a mode.",
             input_schema: object_schema(
                 &["goal"],
                 json!({
@@ -121,7 +121,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "task_strategy_apply",
             annotations: mutating_annotations_with_open_world(true, false, true),
-            description: "Apply a previously planned ForkTTY task strategy as visible workflow/team/task/message state. With submit omitted or false, this stages coordination state only. ForkTTY recomputes worktree approvals and multi-worker submit approvals from the requested operation and plan shape. If required approvals are missing, request_approval can publish a pending Feed approval without starting work; a later call may pass the approved request-bound approval_id returned by that request. With submit true and a supported team plan, ForkTTY launches visible worker panes and dispatches prompts through the team mailbox; worktree-layer plans require worktree_name for an already-open ForkTTY worktree workspace. This requires explicit approvals and never launches hidden background work.",
+            description: "Apply a previously planned ForkTTY task strategy as visible workflow/team/task/message state. With submit omitted or false, this stages coordination state only. ForkTTY recomputes dirty-repo edit isolation from the selected surface/workspace plus any explicit cwd, then recomputes worktree approvals and multi-worker submit approvals from the requested operation and plan shape. If required approvals are missing, request_approval can publish a pending Feed approval without starting work; a later call may pass the approved request-bound approval_id returned by that request, including remaining approvals that the same request covered when explicit attestations cover another part. With submit true and a supported team plan, ForkTTY launches visible worker panes and dispatches prompts through the team mailbox, but refuses to reuse a live deterministic worker whose assignment no longer matches; worktree-layer plans require worktree_name for an already-open ForkTTY worktree workspace. This requires explicit approvals and never launches hidden background work.",
             input_schema: object_schema(
                 &["run_id", "goal", "plan"],
                 json!({
@@ -133,11 +133,12 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
                         "additionalProperties": true
                     },
                     "approved": string_array_prop("Explicit approval ids granted for this apply call, for example start_run. Omit when using request_approval or an approved approval_id."),
-                    "approval_id": string_prop("Deterministic request-bound task strategy Feed approval id that has already been approved."),
+                    "approval_id": string_prop("Deterministic request-bound task strategy Feed approval id that has already been approved. It can satisfy remaining approvals covered by the same approved request when explicit attestations cover another part."),
                     "request_approval": boolean_prop("When true and approvals are missing, publish a pending Feed approval instead of mutating workflow/team state."),
                     "workspace_id": string_prop("Workspace id for the staged workflow/team state."),
                     "workspace_name": string_prop("Workspace name for the staged workflow/team state."),
                     "worktree_name": string_prop("Already-open worktree workspace name for staged state or submit=true worktree-layer team runs."),
+                    "cwd": string_prop("Absolute repo cwd to use for visible worker launches and role prompts when no worktree_name is used."),
                     "leader_surface_id": string_prop("Visible leader surface id to bind the staged team."),
                     "surface_id": string_prop("Visible leader surface id; accepted as an alias for leader_surface_id."),
                     "workflow_id": string_prop("Optional explicit workflow id; defaults to run_id."),
@@ -384,6 +385,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
                     "role": string_prop("Worker role."),
                     "assigned_task_id": string_prop("Task id currently assigned to this worker."),
                     "worktree_name": string_prop("Worktree name assigned to this worker."),
+                    "cwd": string_prop("Absolute cwd for the launched worker pane when no worktree_name is used."),
                     "args": string_array_prop("Extra argv entries appended after the provider executable."),
                 }),
             ),

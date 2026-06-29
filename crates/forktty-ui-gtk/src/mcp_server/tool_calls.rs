@@ -195,6 +195,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                     "workspace_id",
                     "workspace_name",
                     "worktree_name",
+                    "cwd",
                     "leader_surface_id",
                     "surface_id",
                     "workflow_id",
@@ -227,6 +228,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             }
             insert_optional_non_blank_param(args, &mut params, "approval_id")?;
             insert_optional_bool_param(args, &mut params, "request_approval")?;
+            insert_optional_non_blank_param(args, &mut params, "cwd")?;
             insert_optional_non_blank_param(args, &mut params, "leader_surface_id")?;
             insert_optional_non_blank_param(args, &mut params, "surface_id")?;
             insert_optional_non_blank_param(args, &mut params, "workflow_id")?;
@@ -547,6 +549,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                     "role",
                     "assigned_task_id",
                     "worktree_name",
+                    "cwd",
                     "args",
                 ],
                 name,
@@ -559,6 +562,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             insert_optional_non_blank_param(args, &mut params, "role")?;
             insert_optional_non_blank_param(args, &mut params, "assigned_task_id")?;
             insert_optional_non_blank_param(args, &mut params, "worktree_name")?;
+            insert_optional_non_blank_param(args, &mut params, "cwd")?;
             if let Some(extra_args) = optional_string_array(args, "args")? {
                 params.insert(
                     "args".to_string(),

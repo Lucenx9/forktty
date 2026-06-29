@@ -336,7 +336,10 @@ approvals, ranked candidate strategy scores with factor breakdowns, reasons,
 and safety notes before an agent chooses team, workflow loop,
 worktree, MCP, hooks, or a provider harness. The planner grounds
 harness scoring in `system.capabilities.provider_capabilities` and uses the
-configured `team_provider_policy.provider_order` as a tie-break. When
+configured `team_provider_policy.provider_order` as a tie-break. When assigning
+more than one role, it also respects each harness's `max_parallel_sessions`
+capacity; parallel research/experiment strategies are not selected unless at
+least two visible assignment roles fit the available harness capacity. When
 `repo_dirty` is omitted,
 it infers simple git dirty/conflict state from the selected surface or
 workspace effective project cwd, or from `cwd` when the caller passes one
@@ -507,19 +510,24 @@ Example response:
 task strategy plan. It accepts required `run_id`, `goal`, and `plan` fields
 plus optional `approved`, `approval_id`, `request_approval`, `workflow_id`,
 `team_id`, `workspace_id` or other workspace selector including
-`worktree_name`, `leader_surface_id`/`surface_id`, and `submit`.
+`worktree_name`, `cwd`, `leader_surface_id`/`surface_id`, and `submit`.
 Before any workflow/team/worker mutation it recomputes server-side dirty
-repo/edit-intent worktree isolation from the selected surface/workspace cwd,
-then recomputes required approvals from the requested operation and effective
-plan shape (`start_run` always, `create_worktree` when the effective layers
-require worktree isolation, and `launch_parallel_workers` when `submit: true`
-would launch more than one assignment worker) plus applicable approvals listed
-by the plan. It then verifies they are present in `approved` or satisfied by a
+repo/edit-intent worktree isolation from the selected surface/workspace cwd and
+any explicit `cwd`, then recomputes required approvals from the requested
+operation and effective plan shape (`start_run` always, `create_worktree` when
+the effective layers require worktree isolation, and `launch_parallel_workers`
+when `submit: true` would launch more than one assignment worker) plus
+applicable approvals listed by the plan. It then verifies they are present in
+`approved` or satisfied by a
 matching approved task-strategy Feed approval passed as `approval_id`;
 otherwise missing approval returns `precondition_failed` and leaves
 workflow/team stores unchanged. The `approved` array is a programmatic caller
 attestation, not proof of a separate human decision; use
 `request_approval`/`approval_id` when a Feed-backed human approval is required.
+A Feed approval requested for a superset of the currently missing approvals can
+satisfy the remaining approvals when the caller also supplies explicit
+attestations for part of the same request; it cannot satisfy approvals outside
+the original request-bound set.
 A `launch_parallel_workers` entry in the plan is treated as a future submit
 approval and is not required for staged-only apply calls. Apply validates
 local preconditions such as required team assignments, `worktree_name`, and
@@ -539,6 +547,12 @@ instead retries with equivalent explicit `approved` attestations, apply marks
 any matching pending task-strategy Feed approval request as `dismissed` before
 staging the visible workflow/team state, so a superseded prompt does not
 continue raising the `pending_approval` risk flag.
+Optional `cwd` must be an absolute existing directory and cannot be combined
+with `worktree_name`. It is used for visible worker launch cwd and included in
+role task/prompt text when no `worktree_name` is used, so a caller whose actual
+repository differs from the selected ForkTTY pane does not launch provider trust
+prompts or work in the broader pane cwd. It does not create a workspace or
+worktree and does not override worktree-layer dirty-isolation enforcement.
 With `submit` omitted or `false`, apply performs staged setup only: it can
 upsert a workflow, write workflow plan steps, set loop metadata, upsert a team,
 create team tasks, and queue team-wide messages. With `submit: true`, a
@@ -557,6 +571,11 @@ worktrees, push, merge, run arbitrary commands, or schedule hidden background
 work. Repeating the same request with the same `run_id` reuses deterministic
 workflow/team/task/message ids, does not duplicate staged messages, and skips
 dispatch for messages already recorded as delivered.
+When retrying `submit: true`, an existing live deterministic worker is reused
+only if its harness, role, assigned task, worktree or explicit cwd target, and
+status match the current plan assignment. If the worker id points at a different live
+assignment, apply returns `conflict` before dispatching a role prompt to the
+wrong pane.
 
 Example request:
 
@@ -564,6 +583,7 @@ Example request:
 {
   "run_id": "router-run-1",
   "goal": "Implement the router",
+  "cwd": "/home/user/project",
   "approved": ["start_run"],
   "plan": {
     "task_class": "feature_implementation",
@@ -653,7 +673,7 @@ Agent rows from `agent.list`, `agent.health`, `status.summary`, and `context.sna
 
 Claude Code `team.worker.launch` calls add documented permission-mode defaults unless the caller already supplied Claude permission args: review roles start with `--permission-mode dontAsk` plus pre-approved built-in read tools (`Read`, `Grep`, and `Glob`), while other Claude workers start with `--permission-mode auto`.
 
-When `team.worker.launch` receives an explicit `worktree_name`, the worker tab is created in the matching already-open worktree workspace and inherits that workspace directory; without `worktree_name`, launch falls back to the team leader, team workspace focus, or active workspace and inherits the selected surface's recorded terminal cwd. Hook-reported agent `resume_cwd` metadata is not copied into the worker surface cwd. Provider launch argv validation treats BusyBox shell applets such as `busybox sh -c ...` as shell trampolines, matching direct shell and `env` wrappers.
+When `team.worker.launch` receives an explicit `worktree_name`, the worker tab is created in the matching already-open worktree workspace and inherits that workspace directory. Without `worktree_name`, an optional absolute existing `cwd` can set the worker tab cwd before launch; otherwise launch falls back to the team leader, team workspace focus, or active workspace and inherits the selected surface's recorded terminal cwd. Hook-reported agent `resume_cwd` metadata is not copied into the worker surface cwd. Provider launch argv validation treats BusyBox shell applets such as `busybox sh -c ...` as shell trampolines, matching direct shell and `env` wrappers.
 
 Provider-scoped status and progress keys are automatically cleared when the last same-provider session in a workspace ends, is suspended/hibernated, is forgotten, or its surface is closed; per-surface status/progress keys are cleared when their surface is closed.
 

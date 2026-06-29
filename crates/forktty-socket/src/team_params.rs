@@ -4,6 +4,7 @@ use forktty_core::{
     WorkspaceSelector,
 };
 use serde_json::Value;
+use std::path::PathBuf;
 
 use crate::{
     format_param_names, optional_bool_param, optional_limit_param, optional_non_blank_string_param,
@@ -136,6 +137,27 @@ fn validate_optional_worktree_name(params: &Value) -> Result<(), DispatchError> 
         validate_worktree_name(worktree_name)?;
     }
     Ok(())
+}
+
+fn optional_existing_absolute_cwd(
+    params: &Value,
+    param: &'static str,
+) -> Result<Option<PathBuf>, DispatchError> {
+    let Some(cwd) = optional_non_blank_string_param(params, param)? else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(cwd);
+    if !path.is_absolute() {
+        return Err(DispatchError::InvalidParam(format!(
+            "Invalid parameter {param}: expected an absolute path"
+        )));
+    }
+    if !path.is_dir() {
+        return Err(DispatchError::InvalidParam(format!(
+            "Invalid parameter {param}: expected an existing directory"
+        )));
+    }
+    Ok(Some(path))
 }
 
 fn team_worker_action_text(
@@ -277,12 +299,21 @@ pub(crate) struct TeamWorkerLaunchRequest {
     pub(crate) role: Option<String>,
     pub(crate) assigned_task_id: Option<String>,
     pub(crate) worktree_name: Option<String>,
+    pub(crate) cwd: Option<PathBuf>,
     pub(crate) extra_args: Vec<String>,
 }
 
 impl TeamWorkerLaunchRequest {
     pub(crate) fn decode(params: &Value) -> Result<Self, DispatchError> {
         validate_optional_worktree_name(params)?;
+        let worktree_name =
+            optional_non_blank_string_param(params, "worktree_name")?.map(str::to_string);
+        let cwd = optional_existing_absolute_cwd(params, "cwd")?;
+        if worktree_name.is_some() && cwd.is_some() {
+            return Err(DispatchError::InvalidParam(
+                "cannot combine worktree_name and cwd".to_string(),
+            ));
+        }
         Ok(Self {
             team_id: required_trimmed_string(params, "team_id")?.to_string(),
             worker_id: required_trimmed_string(params, "worker_id")?.to_string(),
@@ -290,8 +321,8 @@ impl TeamWorkerLaunchRequest {
             role: optional_non_blank_string_param(params, "role")?.map(str::to_string),
             assigned_task_id: optional_non_blank_string_param(params, "assigned_task_id")?
                 .map(str::to_string),
-            worktree_name: optional_non_blank_string_param(params, "worktree_name")?
-                .map(str::to_string),
+            worktree_name,
+            cwd,
             extra_args: optional_string_array_param(params, "args")?.unwrap_or_default(),
         })
     }

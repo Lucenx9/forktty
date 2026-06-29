@@ -296,6 +296,8 @@ fn task_apply_requests_task_strategy_apply() {
                     "w1".to_string(),
                     "--leader-surface-id".to_string(),
                     "s1".to_string(),
+                    "--cwd".to_string(),
+                    "/repo/forktty".to_string(),
                     "--run-id".to_string(),
                     "router-run-1".to_string(),
                     "--plan-json".to_string(),
@@ -316,6 +318,7 @@ fn task_apply_requests_task_strategy_apply() {
     assert_eq!(request["method"], "task.strategy.apply");
     assert_eq!(request["params"]["workspace_id"], "w1");
     assert_eq!(request["params"]["leader_surface_id"], "s1");
+    assert_eq!(request["params"]["cwd"], "/repo/forktty");
     assert_eq!(request["params"]["run_id"], "router-run-1");
     assert_eq!(request["params"]["goal"], "Implement router");
     assert_eq!(request["params"]["approved"], json!(["start_run"]));

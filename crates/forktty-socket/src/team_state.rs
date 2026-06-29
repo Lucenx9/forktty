@@ -5,12 +5,14 @@ use crate::{
 use forktty_core::{Surface, TeamState, TeamWorker};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 pub(crate) async fn create_team_worker_surface(
     state: &SocketAppState,
     team_id: &str,
     worker_id: &str,
     worktree_name: Option<&str>,
+    cwd: Option<&Path>,
 ) -> Result<Surface, DispatchError> {
     let store = store_access::team_store_access(state)?
         .load()
@@ -63,6 +65,9 @@ pub(crate) async fn create_team_worker_surface(
     let surface = model
         .add_tab(&near_surface_id)
         .ok_or(DispatchError::NotFound("surface".to_string()))?;
+    if let Some(cwd) = cwd {
+        let _ = model.set_surface_cwd(&surface.id, cwd.to_path_buf());
+    }
     let _ = model.set_surface_title(&surface.id, format!("worker:{worker_id}"));
     Ok(model.surface(&surface.id).cloned().unwrap_or(surface))
 }

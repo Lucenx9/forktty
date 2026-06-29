@@ -726,6 +726,7 @@ mod tests {
                 "run_id": "router-run-1",
                 "workspace_id": "w1",
                 "leader_surface_id": "s1",
+                "cwd": "/repo/forktty",
                 "goal": "Implement the router",
                 "plan": plan,
                 "approved": ["start_run"],
@@ -739,6 +740,7 @@ mod tests {
         assert_eq!(params["run_id"], "router-run-1");
         assert_eq!(params["workspace_id"], "w1");
         assert_eq!(params["leader_surface_id"], "s1");
+        assert_eq!(params["cwd"], "/repo/forktty");
         assert_eq!(params["approved"], json!(["start_run"]));
         assert_eq!(
             params["approval_id"],
@@ -922,12 +924,14 @@ mod tests {
                 "team_id": "team-1",
                 "worker_id": "worker-2",
                 "agent": "codex",
+                "cwd": "/repo/forktty",
                 "args": ["--model", "test"]
             }),
         )
         .unwrap();
         assert_eq!(method, "team.worker.launch");
         assert_eq!(params["agent"], "codex");
+        assert_eq!(params["cwd"], "/repo/forktty");
         assert_eq!(params["args"], json!(["--model", "test"]));
 
         let (method, params) = build_socket_call_for_test(

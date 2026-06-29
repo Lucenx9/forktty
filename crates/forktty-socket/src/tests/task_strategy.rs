@@ -628,7 +628,7 @@ async fn task_strategy_apply_forces_dirty_editing_worktree_approval() {
 }
 
 #[tokio::test]
-async fn task_strategy_apply_ignores_explicit_cwd_for_dirty_isolation() {
+async fn task_strategy_apply_uses_worktree_cwd_for_dirty_isolation() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();
     state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
@@ -636,7 +636,6 @@ async fn task_strategy_apply_ignores_explicit_cwd_for_dirty_isolation() {
     let dirty_repo = tempfile::tempdir().unwrap();
     git2::Repository::init(dirty_repo.path()).unwrap();
     std::fs::write(dirty_repo.path().join("dirty.txt"), "dirty\n").unwrap();
-    let clean_dir = tempfile::tempdir().unwrap();
     {
         let mut model = state.model.lock().unwrap();
         model.create_worktree_workspace("feature", dirty_repo.path(), "feature", "feature-x");
@@ -652,7 +651,6 @@ async fn task_strategy_apply_ignores_explicit_cwd_for_dirty_isolation() {
         json!({
             "run_id": "router-run-1",
             "worktree_name": "feature-x",
-            "cwd": clean_dir.path().to_string_lossy(),
             "goal": "Implement the router fix",
             "approved": ["start_run"],
             "plan": plan
@@ -663,6 +661,52 @@ async fn task_strategy_apply_ignores_explicit_cwd_for_dirty_isolation() {
 
     assert_eq!(err.code(), "precondition_failed");
     assert!(err.to_string().contains("create_worktree"));
+}
+
+#[tokio::test]
+async fn task_strategy_apply_uses_explicit_cwd_for_dirty_isolation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let leader_dir = tempfile::tempdir().unwrap();
+    let dirty_repo = tempfile::tempdir().unwrap();
+    git2::Repository::init(dirty_repo.path()).unwrap();
+    std::fs::write(dirty_repo.path().join("dirty.txt"), "dirty\n").unwrap();
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.set_surface_cwd(surface_id, leader_dir.path().to_path_buf()));
+    }
+
+    let mut plan = staged_team_plan_json();
+    plan["layers"]["worktree"] = json!(false);
+    plan["approvals"] = json!(["start_run"]);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": surface_id,
+            "cwd": dirty_repo.path(),
+            "goal": "Implement the router fix",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("worktree_name"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -1256,6 +1300,76 @@ async fn task_strategy_apply_uses_approved_feed_request_as_start_approval() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
+async fn task_strategy_apply_approved_superset_feed_request_satisfies_remaining_approvals() {
+    let (mut state, _backend) = test_state();
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let state = state
+        .with_feed_store_path(dir.path().join("feed.json"))
+        .unwrap();
+    let plan = parallel_research_plan_json();
+
+    let approval = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Compare router approaches",
+            "approved": [],
+            "request_approval": true,
+            "submit": true,
+            "plan": plan.clone()
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        approval["blocked_approvals"],
+        json!(["start_run", "launch_parallel_workers"])
+    );
+    let approval_id = approval["approval_request"]["id"].as_str().unwrap();
+    dispatch(
+        &state,
+        "feed.approval.respond",
+        json!({"id": approval_id, "decision": "approve"}),
+    )
+    .await
+    .unwrap();
+
+    let result = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Compare router approaches",
+            "approved": ["start_run"],
+            "approval_id": approval_id,
+            "submit": true,
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["status"], "running");
+    assert_eq!(result["blocked_approvals"], json!([]));
+    let team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
+        .await
+        .unwrap();
+    assert_eq!(team["workers"].as_array().unwrap().len(), 2);
+    assert!(team["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|message| message["delivered"] == true));
+}
+
+#[tokio::test]
 async fn task_strategy_apply_rejects_approval_id_for_different_goal_without_mutation() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();
@@ -1729,6 +1843,72 @@ async fn task_strategy_apply_submit_launches_visible_workers_and_dispatches_prom
 
 #[tokio::test]
 #[serial_test::serial]
+async fn task_strategy_apply_submit_uses_explicit_cwd_for_worker_launches_and_prompts() {
+    let (mut state, backend) = test_state();
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _claude = write_fake_program(bin_dir.path(), "claude");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let leader_dir = tempfile::tempdir().unwrap();
+    let repo_dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.set_surface_cwd(surface_id, leader_dir.path().to_path_buf()));
+    }
+
+    let result = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": surface_id,
+            "cwd": repo_dir.path(),
+            "goal": "Implement the router",
+            "approved": ["start_run", "launch_parallel_workers"],
+            "submit": true,
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["status"], "running");
+    let team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
+        .await
+        .unwrap();
+    for worker in team["workers"].as_array().unwrap() {
+        let surface_id = worker["surface_id"].as_str().unwrap();
+        let surface = backend
+            .surfaces()
+            .unwrap()
+            .into_iter()
+            .find(|surface| surface.surface_id == surface_id)
+            .unwrap();
+        assert_eq!(surface.cwd, repo_dir.path());
+    }
+    assert!(team["tasks"].as_array().unwrap().iter().all(|task| {
+        task["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(repo_dir.path().to_str().unwrap())
+    }));
+    assert!(team["messages"].as_array().unwrap().iter().all(|message| {
+        message["body"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(repo_dir.path().to_str().unwrap())
+    }));
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn task_strategy_apply_submit_relaunches_worker_when_record_surface_runtime_is_missing() {
     let (mut state, backend) = test_state();
     let bin_dir = tempfile::tempdir().unwrap();
@@ -1822,6 +2002,150 @@ async fn task_strategy_apply_submit_relaunches_worker_when_record_surface_runtim
 }
 
 #[tokio::test]
+#[serial_test::serial]
+async fn task_strategy_apply_submit_rejects_live_worker_cwd_mismatch_before_dispatch() {
+    let (mut state, _backend) = test_state();
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _claude = write_fake_program(bin_dir.path(), "claude");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let leader_dir = tempfile::tempdir().unwrap();
+    let repo_dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.set_surface_cwd(surface_id, leader_dir.path().to_path_buf()));
+    }
+
+    dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": surface_id,
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "router-run-1",
+            "worker_id": "router-run-1-implementer-1-worker",
+            "agent": "codex",
+            "role": "implementer",
+            "assigned_task_id": "router-run-1-implementer-1"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": surface_id,
+            "cwd": repo_dir.path(),
+            "goal": "Implement the router",
+            "approved": ["start_run", "launch_parallel_workers"],
+            "submit": true,
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "conflict");
+    assert!(err.to_string().contains("cwd expected"));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn task_strategy_apply_submit_rejects_live_worker_harness_mismatch_before_dispatch() {
+    let (mut state, backend) = test_state();
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _claude = write_fake_program(bin_dir.path(), "claude");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "router-run-1",
+            "name": "Task strategy router-run-1",
+            "goal": "Implement the router"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.task.upsert",
+        json!({
+            "team_id": "router-run-1",
+            "task_id": "router-run-1-implementer-1",
+            "title": "Implement via codex",
+            "status": "open"
+        }),
+    )
+    .await
+    .unwrap();
+    let existing = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "router-run-1",
+            "worker_id": "router-run-1-implementer-1-worker",
+            "agent": "codex",
+            "role": "implementer",
+            "assigned_task_id": "router-run-1-implementer-1"
+        }),
+    )
+    .await
+    .unwrap();
+    let existing_surface_id = existing["surface"]["id"].as_str().unwrap().to_string();
+
+    let mut plan = staged_team_plan_json();
+    plan["assignments"][0]["harness_id"] = json!("claude");
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement the router",
+            "approved": ["start_run", "launch_parallel_workers"],
+            "submit": true,
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "conflict");
+    assert!(err
+        .to_string()
+        .contains("router-run-1-implementer-1-worker"));
+    assert!(err.to_string().contains("different assignment"));
+    assert!(backend.sent_text(&existing_surface_id).unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_apply_submit_requires_worktree_name_before_mutation() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();
@@ -1872,6 +2196,39 @@ async fn task_strategy_apply_staged_worktree_requires_worktree_name_before_mutat
 
     assert_eq!(err.code(), "invalid_param");
     assert!(err.to_string().contains("worktree_name"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn task_strategy_apply_rejects_combined_worktree_name_and_cwd_before_mutation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "worktree_name": "feature-x",
+            "cwd": repo_dir.path(),
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err
+        .to_string()
+        .contains("cannot combine worktree_name and cwd"));
     let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
     let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
     assert!(workflows.as_array().unwrap().is_empty());

@@ -387,6 +387,7 @@ pub(crate) async fn worker_launch(
         &request.team_id,
         &request.worker_id,
         request.worktree_name.as_deref(),
+        request.cwd.as_deref(),
     )
     .await?;
     let spawn_request =

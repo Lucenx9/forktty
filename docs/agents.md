@@ -119,24 +119,32 @@ taxonomy and the agent-facing docs aligned in the same change.
   plus per-harness cooldown/lockout signals; when they omit LKGP, ForkTTY can
   infer it from completed task-strategy workflow history. LKGP adds a small
   explainable score bias, cooldown lowers assignment score, and lockout excludes
-  a harness from assignment. It does not launch workers or mutate orchestration
-  state.
+  a harness from assignment. Multi-role parallel plans also respect each
+  harness's declared parallel session capacity. It does not launch workers or
+  mutate orchestration state.
 - `task.strategy.apply`, CLI `forktty task-apply`, and MCP
   `task_strategy_apply` apply an approved returned plan as visible
   workflow/team/task/message state with deterministic ids. The default path is
   staged and local. If approvals are missing, `request_approval` publishes a
   Feed approval and returns blocked without workflow/team mutation; an approved
   returned `approval_id` can later satisfy that same request-bound start-run
-  approval. Apply recomputes dirty-repo edit isolation, worktree approvals, and
-  multi-worker submit approvals from the selected target, requested operation,
-  and effective plan shape before trusting the plan's approval list. `approved`
+  approval, including remaining approvals from the same request when explicit
+  attestations cover another part of the approved set. An explicit `cwd`
+  launches submit-mode workers in that repo and adds the cwd to role prompts
+  when no `worktree_name` is used. Apply recomputes dirty-repo edit isolation
+  from the selected surface/workspace plus any explicit `cwd`, then recomputes
+  worktree approvals and multi-worker submit approvals from the requested
+  operation and effective plan shape before trusting the plan's approval list.
+  `approved`
   is a caller attestation; use Feed `request_approval` when a separate human
   decision is required. With
   `submit=true`,
   supported team plans launch worker panes and dispatch role prompts;
   worktree-layer apply requires `worktree_name` for an already-open ForkTTY
   worktree workspace and are rejected before mutation if that workspace is
-  missing.
+  missing. Submit retries refuse to reuse a live deterministic worker when its
+  harness, role, task, worktree or explicit cwd target, or status no longer
+  matches the current assignment.
 - `forktty hooks doctor <agent>` reports hook config path state, launcher
   freshness, supported events, Claude profile, and Codex trust-record state.
 - Status normalization is centralized in `forktty-core` for reuse by UI/socket/script layers.

@@ -39,26 +39,35 @@ For normal local code changes, read and edit the repo directly.
    small strategy/harness stickiness score; it is not an override. If you have
    concrete runtime evidence for a harness, pass
    `harness_signals`: `cooldown` is a soft penalty, while `locked_out`
-   excludes that harness for the current task/mode. Do not invent signals from
-   preference alone; treat the
+   excludes that harness for the current task/mode. Multi-role parallel plans
+   also respect the harness parallel-session capacity reported by ForkTTY. Do
+   not invent signals from preference alone; treat the
    returned strategy and harness assignments as the default operating plan
    unless the user explicitly overrides them. Do not launch team workers or create
    worktrees merely because those tools exist. Use
    `task_strategy_apply` only after explicit approvals; apply stages visible
    workflow/team/task/message state by default, and with `submit=true` may
    launch visible workers plus dispatch prompts for supported team plans.
-   Apply recomputes dirty-repo edit isolation, worktree approvals, and
-   multi-worker submit approvals from the selected target, requested operation,
-   and effective plan shape before trusting the plan's approval list.
+   Pass `cwd` to apply when the actual repo target differs from the selected
+   ForkTTY pane; worker panes launch there and role prompts name that cwd when
+   no `worktree_name` is used.
+   Apply recomputes dirty-repo edit isolation from the selected
+   surface/workspace plus any explicit `cwd`, then recomputes worktree approvals
+   and multi-worker submit approvals from the requested operation and effective
+   plan shape before trusting the plan's approval list.
    `approved` is a caller attestation; use Feed `request_approval` when a
    separate human decision is required. If approvals are
    missing, use `request_approval` to publish a Feed approval without starting
    work, then retry the same request with the approved returned `approval_id`;
-   if you instead retry with explicit `approved` attestations, ForkTTY dismisses
+   when explicit attestations cover part of that same approval request, the
+   returned `approval_id` can still satisfy the remaining approvals it covered.
+   If you instead retry with explicit `approved` attestations, ForkTTY dismisses
    the superseded pending approval request.
    Worktree-layer apply requires `worktree_name` for an already-open ForkTTY
-   worktree workspace. It does not create worktrees, push, merge, run
-   arbitrary commands, or schedule hidden work.
+   worktree workspace. Submit retries refuse to reuse live workers whose
+   harness, role, task, worktree or explicit cwd target, or status no longer
+   matches the current assignment. It does not create worktrees, push, merge,
+   run arbitrary commands, or schedule hidden work.
 3. Use `identify` first when you only need the canonical current
    workspace/surface, caller validation, and `effective_project_cwd`. It is the
    smallest read for answering "where am I in ForkTTY?" before targeting a
@@ -203,7 +212,10 @@ or parallel workers:
    repo/path, permissions, no-subdelegation rule, required files or questions,
    verification expectations, and final report format.
 4. Message workers through the team mailbox. Dispatch only after the worker pane
-   is ready.
+   is ready. On task-strategy submit retries, ForkTTY refuses to reuse a live
+   deterministic worker whose harness, role, task, worktree or explicit cwd
+   target, or status no longer matches the current assignment; use a new run id
+   or finish the old worker instead of dispatching to the wrong pane.
 5. Monitor with `team_worker_health`, `team_events`, and bounded terminal tail
    reads. Use each worker's derived `final_state` (`shutdown_requested`,
    `closed`, `starting`, `surface_missing`, `stale`, `idle`, `running`, or

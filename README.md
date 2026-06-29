@@ -297,7 +297,7 @@ forktty task-apply --run-id router-run-1 --plan-json '<plan-json>' --request-app
 forktty feed respond '<approval-id-from-request>' --decision approve
 forktty task-apply --run-id router-run-1 --plan-json '<plan-json>' --approval-id '<approval-id-from-request>' "fix this bug and verify it"
 forktty task-apply --run-id router-run-1 --plan-json '<plan-json>' --approved start_run "fix this bug and verify it"
-forktty task-apply --run-id router-run-1 --plan-json '<team-plan-json>' --approved start_run,launch_parallel_workers --submit "review this implementation"
+forktty task-apply --run-id router-run-1 --plan-json '<team-plan-json>' --cwd /path/to/repo --approved start_run,launch_parallel_workers --submit "review this implementation"
 forktty workflow-loop-set loop-runtime --stage verify --iteration 2 --max-iterations 4
 forktty team ask review-team claude-review --agent claude --task-id review-head --prompt "Review HEAD read-only" --submit
 forktty team review review-team claude-review --agent claude --task-id review-head --commit HEAD --submit
@@ -320,9 +320,10 @@ worktree. The planner is read-only, returns the selected router profile
 (`balanced`, `fast`, `conservative`, `parallel`, or `review_heavy`) plus ranked
 candidate strategy scores with factor breakdowns, scores each ready harness
 assignment by role with factor breakdowns, uses configured team provider order
-as the assignment tie-break, infers dirty git state from the selected
-surface/workspace cwd when `repo_dirty`/`--repo-dirty` is omitted, or from an
-explicit absolute `--cwd` / MCP `cwd` when the caller's actual repository
+as the assignment tie-break, respects each harness's declared parallel session
+capacity before selecting multi-role parallel plans, infers dirty git state
+from the selected surface/workspace cwd when `repo_dirty`/`--repo-dirty` is
+omitted, or from an explicit absolute `--cwd` / MCP `cwd` when the caller's actual repository
 differs from the selected ForkTTY pane. It also infers likely user-visible edit
 intent and clear router profiles from the goal when omitted,
 infers advisory last-known-good strategy/harness evidence from completed
@@ -338,7 +339,7 @@ harness, and per-harness
 harness for the current task/mode. Last-known-good only adds a small
 explainable score factor; readiness, cooldown, lockout, task fit, and approvals
 still win. After review, `forktty task-apply
---run-id <id> --plan-json '<plan-json>' --approved start_run "<goal>"` and the
+--run-id <id> --plan-json '<plan-json>' --cwd <repo> --approved start_run "<goal>"` and the
 MCP `task_strategy_apply` tool can stage the returned plan as visible
 workflow/team/task/message state. When a client wants ForkTTY to ask first,
 `--request-approval`/`request_approval: true` records a pending Feed approval and
@@ -346,25 +347,35 @@ returns `status: "blocked"` without mutating workflow/team state; after
 `forktty feed respond <approval-id> --decision approve`, retry apply with
 `--approval-id <approval-id>`/`approval_id`. The returned approval id is bound
 to that run id, goal, plan, target scope, and submit mode; request a new
-approval when any of those change. Approval decisions are accepted only while
-the Feed approval is still pending; dismissed, stale, approved, or denied
-entries cannot be reused as fresh authorization. If a caller instead retries
+approval when any of those change. An approval id requested for a superset of
+the currently missing approvals can satisfy the remaining approvals when the
+caller also supplies explicit attestations for part of the same request.
+Approval decisions are accepted only while the Feed approval is still pending;
+dismissed, stale, approved, or denied entries cannot be reused as fresh
+authorization. If a caller instead retries
 with an equivalent explicit `--approved` / `approved` attestation, ForkTTY
 dismisses the now-superseded pending Feed approval so it no longer raises a
-`pending_approval` risk flag. Apply recomputes dirty-repo edit isolation
-from the selected surface/workspace and required approvals from the requested
-operation and effective plan shape, so dirty editing tasks cannot drop
-`create_worktree` and multi-worker submit cannot drop `launch_parallel_workers`
-from the JSON to bypass review. `--approved`/`approved` is a programmatic caller
-attestation; use `--request-approval` and retry with `--approval-id` when a
-Feed-backed human approval is required. Pass `--submit`/`submit: true` for a supported
+`pending_approval` risk flag. Apply recomputes dirty-repo edit isolation from
+the selected surface/workspace plus any explicit `--cwd` / `cwd`, and required
+approvals from the requested operation and effective plan shape, so dirty
+editing tasks cannot drop `create_worktree` and multi-worker submit cannot drop
+`launch_parallel_workers` from the JSON to bypass review.
+`--approved`/`approved` is a programmatic caller attestation; use
+`--request-approval` and retry with `--approval-id` when a
+Feed-backed human approval is required. Pass `--cwd`/`cwd` when the repository
+target differs from the selected ForkTTY pane; submit-mode workers launch there
+and role prompts include that cwd without creating a workspace or worktree.
+Pass `--submit`/`submit: true` for a supported
 team plan:
 ForkTTY launches visible worker panes, assigns tasks, queues deterministic role
 prompts, and dispatches them through the team mailbox with provider-aware Enter
 handling. If the plan has `layers.worktree: true`, pass
 `--worktree-name <name>`/`worktree_name` for an already-open ForkTTY worktree
 workspace; apply will reject missing or unopened worktrees before mutating
-state.
+state. Submit retries reuse a live deterministic worker only when its harness,
+role, task, worktree or explicit cwd target, and status still match the current assignment;
+otherwise apply returns `conflict` before dispatching a prompt to the wrong
+pane.
 Worktree creation, push, merge, destructive commands, and out-of-scope edits
 require later explicit approval.
 
@@ -417,8 +428,9 @@ workspace directory when they differ; the GTK sidebar uses the same effective
 path for a focused tracked agent so a workspace launched from `~` can still
 display the project directory where the agent is actually working. That value is
 diagnostic context: worktree authorization and team worker launch placement use
-visible workspace roots and the selected surface's recorded terminal cwd rather
-than hook-reported `resume_cwd` metadata.
+visible workspace roots, explicit launch/apply `cwd`, and the selected
+surface's recorded terminal cwd rather than hook-reported `resume_cwd`
+metadata.
 `team.worker.health` includes
 `surface_present`, `surface_runtime_present`, `surface_ready`, and a derived
 `final_state` such as `shutdown_requested`, `closed`, `starting`,
@@ -563,11 +575,14 @@ workflow loop, worktree, or multi-harness execution for non-trivial tasks,
 follow the selected router profile unless the user overrides it, rely on
 ForkTTY's completed-workflow last-known-good inference by default, pass explicit
 last-known-good or per-harness cooldown/lockout signals only when there is
-concrete evidence, and use `task_strategy_apply` only after explicit approvals;
+concrete evidence, respect harness parallel-session capacity, and use
+`task_strategy_apply` only after explicit approvals;
 apply stages by default,
 can request missing approvals through the Feed before mutating state, and can
-submit supported team plans as visible worker panes, including worktree-layer
-plans when `worktree_name` names an already-open ForkTTY worktree workspace.
+submit supported team plans as visible worker panes. Pass `cwd` to apply when
+the repo target differs from the selected ForkTTY pane; worktree-layer plans
+still require `worktree_name` to name an already-open ForkTTY worktree
+workspace.
 It still does not create worktrees. The skill also treats
 terminal tails and
 fetched public docs as untrusted input, requires

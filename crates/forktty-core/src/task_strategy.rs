@@ -798,31 +798,32 @@ fn assignments_for_strategy(
         TaskStrategy::ImplementerPlusReviewer | TaskStrategy::TeamPipeline
     ) {
         let excluded = [primary.harness_id.clone()];
-        let reviewer = select_harness_assignment(
+        let reviewer = select_harness_assignment_with_capacity(
             HarnessRole::Reviewer,
             &ready,
             layers,
             last_known_good,
             &excluded,
+            &assignments,
         )
         .or_else(|| {
-            select_harness_assignment(HarnessRole::Reviewer, &ready, layers, last_known_good, &[])
+            select_harness_assignment_with_capacity(
+                HarnessRole::Reviewer,
+                &ready,
+                layers,
+                last_known_good,
+                &[],
+                &assignments,
+            )
         });
         if let Some(mut reviewer) = reviewer {
             if reviewer.harness_id == primary.harness_id {
-                let same_harness_parallel_ok = ready
-                    .iter()
-                    .find(|(_, harness)| harness.id == primary.harness_id)
-                    .and_then(|(_, harness)| harness.max_parallel_sessions)
-                    .unwrap_or(1)
-                    > 1;
-                if !same_harness_parallel_ok {
-                    return Vec::new();
-                }
                 reviewer.reason =
                     "highest-scored ready harness for reviewer; same harness reused because no separate ready harness was available".to_string();
             }
             assignments.push(reviewer);
+        } else {
+            return Vec::new();
         }
     }
 
@@ -838,6 +839,13 @@ fn assignments_for_strategy(
             scored_harness_assignments(HarnessRole::Researcher, &ready, layers, last_known_good)
                 .into_iter()
                 .filter(|assignment| !used.contains(&assignment.harness_id))
+                .filter(|assignment| {
+                    harness_has_remaining_assignment_capacity(
+                        &ready,
+                        &assignment.harness_id,
+                        &assignments,
+                    )
+                })
                 .take(2)
                 .collect::<Vec<_>>();
         for assignment in &mut additional_researchers {
@@ -845,16 +853,20 @@ fn assignments_for_strategy(
                 "next highest-scored ready harness for parallel context isolation".to_string();
         }
         assignments.extend(additional_researchers);
-        if let Some(mut synthesizer) = select_harness_assignment(
+        if let Some(mut synthesizer) = select_harness_assignment_with_capacity(
             HarnessRole::Synthesizer,
             &ready,
             layers,
             last_known_good,
             &[],
+            &assignments,
         ) {
             synthesizer.reason =
                 "highest-scored ready harness for synthesizing worker results".to_string();
             assignments.push(synthesizer);
+        }
+        if assignments.len() < 2 {
+            return Vec::new();
         }
     }
 
@@ -898,6 +910,43 @@ fn select_harness_assignment(
     scored_harness_assignments(role, ready, layers, last_known_good)
         .into_iter()
         .find(|assignment| !excluded_harness_ids.contains(&assignment.harness_id))
+}
+
+fn select_harness_assignment_with_capacity(
+    role: HarnessRole,
+    ready: &[(usize, &HarnessCapability)],
+    layers: &TaskStrategyLayers,
+    last_known_good: Option<&TaskStrategyLastKnownGood>,
+    excluded_harness_ids: &[String],
+    existing_assignments: &[HarnessAssignment],
+) -> Option<HarnessAssignment> {
+    scored_harness_assignments(role, ready, layers, last_known_good)
+        .into_iter()
+        .find(|assignment| {
+            !excluded_harness_ids.contains(&assignment.harness_id)
+                && harness_has_remaining_assignment_capacity(
+                    ready,
+                    &assignment.harness_id,
+                    existing_assignments,
+                )
+        })
+}
+
+fn harness_has_remaining_assignment_capacity(
+    ready: &[(usize, &HarnessCapability)],
+    harness_id: &str,
+    existing_assignments: &[HarnessAssignment],
+) -> bool {
+    let capacity = ready
+        .iter()
+        .find(|(_, harness)| harness.id == harness_id)
+        .and_then(|(_, harness)| harness.max_parallel_sessions)
+        .unwrap_or(1);
+    let used = existing_assignments
+        .iter()
+        .filter(|assignment| assignment.harness_id == harness_id)
+        .count() as u32;
+    used < capacity
 }
 
 fn harness_available_for_routing(harness: &HarnessCapability) -> bool {
@@ -1476,6 +1525,33 @@ mod tests {
         assert_ne!(plan.strategy, TaskStrategy::ImplementerPlusReviewer);
         assert_eq!(plan.assignments.len(), 1);
         assert_eq!(plan.assignments[0].harness_id, "codex");
+    }
+
+    #[test]
+    fn parallel_research_respects_single_session_capacity() {
+        let plan = plan_task_strategy(TaskStrategyInput {
+            goal: "Compare three approaches for a multi-harness router".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: true,
+            user_requested_review: false,
+            likely_user_visible_change: false,
+            harness_registry: HarnessRegistry {
+                harnesses: vec![HarnessCapability {
+                    max_parallel_sessions: Some(1),
+                    ..harness("codex", false, true)
+                }],
+            },
+        })
+        .unwrap();
+
+        assert_ne!(plan.strategy, TaskStrategy::ParallelResearch);
+        assert_eq!(plan.assignments.len(), 1);
+        assert!(!plan
+            .approvals
+            .contains(&TaskStrategyApproval::LaunchParallelWorkers));
     }
 
     #[test]

@@ -61,6 +61,16 @@ All notable changes to ForkTTY are documented here.
   positional goals, plan JSON, `cwd`, and approval decisions directly.
 
 ### Fixed
+- Fixed task strategy routing so parallel research/experiment plans respect
+  each harness's declared parallel session capacity instead of assigning
+  multiple concurrent roles to a single-session harness.
+- Fixed task strategy approval retries so an approved Feed request covering a
+  superset of required approvals can still satisfy the remaining approvals when
+  the caller also supplies explicit attestations for part of the same request.
+- Fixed task strategy submit retries so an existing live worker is reused only
+  when its harness, role, task, worktree, and reusable status match the current
+  deterministic assignment; incompatible live workers now return `conflict`
+  before any prompt dispatch.
 - Fixed task strategy submit retries so a persisted worker record with a closed
   or missing surface is relaunched before dispatching its still-pending role
   prompt.
@@ -80,6 +90,11 @@ All notable changes to ForkTTY are documented here.
 - Fixed staged worktree-layer task strategy apply so it requires `worktree_name`
   for an already-open ForkTTY worktree workspace before mutating workflow/team
   state, matching submit-mode enforcement.
+- Fixed task strategy submit runs with an explicit `cwd` so worker panes launch
+  in that repository, role prompts name it, and submit retries reject live
+  deterministic workers whose cwd no longer matches the assignment; dirty
+  editing apply checks also treat that explicit cwd as a worktree-isolation
+  target.
 
 ## [0.2.0-alpha.16] - 2026-06-27
 

@@ -15,7 +15,7 @@ options: --workspace-id <id>, --workspace-name <name>, --worktree-name <name>, -
 
 const TASK_APPLY_HELP: &str = "\
 usage: forktty task-apply --run-id <id> --plan-json <json> [options] <goal> [--json]
-options: --workspace-id <id>, --workspace-name <name>, --worktree-name <name>, --leader-surface-id <id>, --surface-id <id>, --workflow-id <id>, --team-id <id>, --approved <ids>, --approval-id <id>, --request-approval[=true|false], --submit[=true|false]
+options: --workspace-id <id>, --workspace-name <name>, --worktree-name <name>, --cwd <repo>, --leader-surface-id <id>, --surface-id <id>, --workflow-id <id>, --team-id <id>, --approved <ids>, --approval-id <id>, --request-approval[=true|false], --submit[=true|false]
 ";
 
 pub(super) fn handle_task_plan(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -153,6 +153,7 @@ pub(super) fn handle_task_apply(context: &CliContext, args: Vec<String>) -> CliR
             "workspace-id",
             "workspace-name",
             "worktree-name",
+            "cwd",
             "leader-surface-id",
             "surface-id",
             "run-id",
@@ -185,6 +186,9 @@ pub(super) fn handle_task_apply(context: &CliContext, args: Vec<String>) -> CliR
         || parsed.options.contains_key("workspace-name")
         || parsed.options.contains_key("worktree-name");
     let mut params = build_target_params(&parsed.options, "task-apply")?;
+    if let Some(cwd) = non_blank_string_option(&parsed.options, "cwd", "--cwd")? {
+        params.insert("cwd".to_string(), Value::String(cwd.trim().to_string()));
+    }
     params.insert(
         "run_id".to_string(),
         Value::String(run_id.trim().to_string()),

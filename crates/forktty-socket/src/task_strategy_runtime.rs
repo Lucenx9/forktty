@@ -337,7 +337,7 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
     let required_approvals = request.required_approvals();
     let missing_approvals = request.missing_approvals_from(&required_approvals);
     if !missing_approvals.is_empty() {
-        if request.feed_approval_satisfies(state, &missing_approvals)? {
+        if request.feed_approval_satisfies(state, &required_approvals, &missing_approvals)? {
         } else if request.request_approval {
             return request.record_approval_request(state, &missing_approvals);
         } else {
@@ -410,7 +410,9 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
             let worker_id = request.assignment_worker_id(index, assignment);
             if request.submit {
                 if request
-                    .team_worker_has_live_surface(state, &worker_id)
+                    .team_worker_has_compatible_live_surface(
+                        state, assignment, &task_id, &worker_id,
+                    )
                     .await?
                 {
                     actions.push(json!({
@@ -729,6 +731,7 @@ struct TaskStrategyApplyRequest {
     workspace_id: Option<String>,
     workspace_name: Option<String>,
     worktree_name: Option<String>,
+    target_cwd: Option<PathBuf>,
     leader_surface_id: Option<String>,
     goal: String,
     plan: TaskStrategyPlan,
@@ -777,6 +780,17 @@ impl TaskStrategyApplyRequest {
             .transpose()
             .map_err(DispatchError::from)?
             .map(str::to_string);
+        let explicit_cwd = explicit_task_strategy_cwd(params)?;
+        if worktree_name.is_some() && explicit_cwd.is_some() {
+            return Err(DispatchError::InvalidParam(
+                "cannot combine worktree_name and cwd".to_string(),
+            ));
+        }
+        let target_cwd = if worktree_name.is_none() {
+            explicit_cwd
+        } else {
+            None
+        };
         let selector_count = [&workspace_id, &workspace_name, &worktree_name]
             .into_iter()
             .filter(|value| value.is_some())
@@ -793,6 +807,7 @@ impl TaskStrategyApplyRequest {
             workspace_id,
             workspace_name,
             worktree_name,
+            target_cwd,
             leader_surface_id,
             goal,
             plan,
@@ -850,14 +865,19 @@ impl TaskStrategyApplyRequest {
         state: &SocketAppState,
         params: &Value,
     ) -> Result<(), DispatchError> {
-        let target = match task_strategy_target_context(state, params, false) {
-            Ok(target) => target,
-            Err(err) if self.worktree_name.is_some() && err.code() == "not_found" => {
-                return Ok(());
-            }
+        let explicit_target_dirty = self
+            .target_cwd
+            .as_deref()
+            .map(|cwd| infer_repo_dirty(Some(cwd)))
+            .unwrap_or(false);
+        let selected_target_dirty = match task_strategy_target_context(state, params, false) {
+            Ok(target) => infer_repo_dirty(target.cwd.as_deref()),
+            Err(err) if self.worktree_name.is_some() && err.code() == "not_found" => false,
             Err(err) => return Err(err),
         };
-        if infer_repo_dirty(target.cwd.as_deref()) && infer_likely_user_visible_change(&self.goal) {
+        if (explicit_target_dirty || selected_target_dirty)
+            && infer_likely_user_visible_change(&self.goal)
+        {
             if !self.plan.layers.worktree {
                 self.plan.layers.worktree = true;
                 self.plan.reasons.push(
@@ -901,6 +921,15 @@ impl TaskStrategyApplyRequest {
         feed_hash(&mut hash, self.workspace_id.as_deref().unwrap_or(""));
         feed_hash(&mut hash, "worktree_name");
         feed_hash(&mut hash, self.worktree_name.as_deref().unwrap_or(""));
+        feed_hash(&mut hash, "cwd");
+        feed_hash(
+            &mut hash,
+            &self
+                .target_cwd
+                .as_deref()
+                .map(|cwd| cwd.to_string_lossy())
+                .unwrap_or_default(),
+        );
         feed_hash(&mut hash, "leader_surface_id");
         feed_hash(&mut hash, self.leader_surface_id.as_deref().unwrap_or(""));
         feed_hash(&mut hash, "goal");
@@ -922,15 +951,21 @@ impl TaskStrategyApplyRequest {
     fn feed_approval_satisfies(
         &self,
         state: &SocketAppState,
+        required_approvals: &[String],
         missing_approvals: &[String],
     ) -> Result<bool, DispatchError> {
         let Some(approval_id) = self.approval_id.as_deref() else {
             return Ok(false);
         };
-        let expected_id = self.approval_request_id(missing_approvals);
-        if approval_id != expected_id {
+        let accepted_ids =
+            self.approval_request_ids_covering_missing(required_approvals, missing_approvals);
+        if !accepted_ids.iter().any(|id| id == approval_id) {
+            let expected = accepted_ids
+                .first()
+                .cloned()
+                .unwrap_or_else(|| self.approval_request_id(missing_approvals));
             return Err(DispatchError::PreconditionFailed(format!(
-                "task.strategy.apply approval_id {approval_id} does not match required approval request {expected_id}"
+                "task.strategy.apply approval_id {approval_id} does not match required approval request {expected}"
             )));
         }
         let store = state
@@ -1067,6 +1102,30 @@ impl TaskStrategyApplyRequest {
         ids
     }
 
+    fn approval_request_ids_covering_missing(
+        &self,
+        required_approvals: &[String],
+        missing_approvals: &[String],
+    ) -> Vec<String> {
+        let mut ids = Vec::new();
+        let subset_count = 1usize << required_approvals.len();
+        for mask in 1..subset_count {
+            let subset = required_approvals
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| (mask & (1usize << index)) != 0)
+                .map(|(_, approval)| approval.clone())
+                .collect::<Vec<_>>();
+            if missing_approvals
+                .iter()
+                .all(|approval| subset.iter().any(|candidate| candidate == approval))
+            {
+                ids.push(self.approval_request_id(&subset));
+            }
+        }
+        ids
+    }
+
     fn blocked_for_approval_result(
         &self,
         missing_approvals: &[String],
@@ -1176,9 +1235,11 @@ impl TaskStrategyApplyRequest {
         }
     }
 
-    fn add_worktree_launch_param(&self, params: &mut Value) {
+    fn add_launch_target_param(&self, params: &mut Value) {
         if let Some(worktree_name) = self.worktree_name.as_deref() {
             params["worktree_name"] = json!(worktree_name);
+        } else if let Some(cwd) = self.target_cwd.as_deref() {
+            params["cwd"] = json!(cwd);
         }
     }
 
@@ -1194,7 +1255,7 @@ impl TaskStrategyApplyRequest {
                     "id": format!("{}-step-{role}-{}", self.run_id, index + 1),
                     "title": assignment_title(assignment),
                     "status": "pending",
-                    "detail": assignment_detail(&self.goal, assignment),
+                    "detail": assignment_detail(&self.goal, assignment, self.target_cwd.as_deref()),
                 })
             })
             .collect::<Vec<_>>();
@@ -1264,7 +1325,7 @@ impl TaskStrategyApplyRequest {
             "task_id": task_id,
             "title": assignment_title(assignment),
             "status": "open",
-            "detail": assignment_detail(&self.goal, assignment),
+            "detail": assignment_detail(&self.goal, assignment, self.target_cwd.as_deref()),
         })
     }
 
@@ -1290,7 +1351,7 @@ impl TaskStrategyApplyRequest {
             "role": role_id(&assignment.role),
             "assigned_task_id": task_id,
         });
-        self.add_worktree_launch_param(&mut params);
+        self.add_launch_target_param(&mut params);
         params
     }
 
@@ -1307,7 +1368,7 @@ impl TaskStrategyApplyRequest {
             "message_id": message_id,
             "from": "leader",
             "task_id": task_id,
-            "body": assignment_prompt(&self.goal, assignment),
+            "body": assignment_prompt(&self.goal, assignment, self.target_cwd.as_deref()),
         });
         if let Some(worker_id) = worker_id {
             params["to_worker_id"] = json!(worker_id);
@@ -1343,22 +1404,95 @@ impl TaskStrategyApplyRequest {
             .unwrap_or(false))
     }
 
-    async fn team_worker_has_live_surface(
+    async fn team_worker_has_compatible_live_surface(
         &self,
         state: &SocketAppState,
+        assignment: &HarnessAssignment,
+        task_id: &str,
         worker_id: &str,
     ) -> Result<bool, DispatchError> {
         let team = team_runtime::get(state, &json!({"team_id": self.team_id})).await?;
-        let Some(surface_id) = team["workers"]
+        let Some(worker) = team["workers"]
             .as_array()
             .into_iter()
             .flatten()
             .find(|worker| worker["id"].as_str() == Some(worker_id))
-            .and_then(|worker| worker["surface_id"].as_str())
         else {
             return Ok(false);
         };
-        worker_surface_is_live(state, surface_id)
+        let Some(surface_id) = worker["surface_id"].as_str() else {
+            return Ok(false);
+        };
+        if !worker_surface_is_live(state, surface_id)? {
+            return Ok(false);
+        }
+
+        let expected_role = role_id(&assignment.role);
+        let expected_worktree = self.worktree_name.as_deref();
+        let mut mismatches = Vec::new();
+        if worker["agent"].as_str() != Some(assignment.harness_id.as_str()) {
+            mismatches.push(format!(
+                "agent expected {} got {}",
+                assignment.harness_id,
+                worker["agent"].as_str().unwrap_or("<none>")
+            ));
+        }
+        if worker["role"].as_str() != Some(expected_role) {
+            mismatches.push(format!(
+                "role expected {expected_role} got {}",
+                worker["role"].as_str().unwrap_or("<none>")
+            ));
+        }
+        if worker["assigned_task_id"].as_str() != Some(task_id) {
+            mismatches.push(format!(
+                "assigned_task_id expected {task_id} got {}",
+                worker["assigned_task_id"].as_str().unwrap_or("<none>")
+            ));
+        }
+        if worker["worktree_name"].as_str() != expected_worktree {
+            mismatches.push(format!(
+                "worktree_name expected {} got {}",
+                expected_worktree.unwrap_or("<none>"),
+                worker["worktree_name"].as_str().unwrap_or("<none>")
+            ));
+        }
+        if let (Some(expected_cwd), Some(surface_id)) =
+            (self.target_cwd.as_deref(), worker["surface_id"].as_str())
+        {
+            let surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
+            match surfaces
+                .iter()
+                .find(|surface| surface.surface_id == surface_id)
+            {
+                Some(surface) if surface.cwd == expected_cwd => {}
+                Some(surface) => mismatches.push(format!(
+                    "cwd expected {} got {}",
+                    expected_cwd.display(),
+                    surface.cwd.display()
+                )),
+                None => mismatches.push(format!(
+                    "cwd expected {} got <unknown>",
+                    expected_cwd.display()
+                )),
+            }
+        }
+        if matches!(
+            worker["status"].as_str(),
+            Some("shutdown_requested" | "closed" | "done")
+        ) {
+            mismatches.push(format!(
+                "status {} is not reusable",
+                worker["status"].as_str().unwrap_or("<none>")
+            ));
+        }
+        if !mismatches.is_empty() {
+            return Err(DispatchError::Conflict(format!(
+                "task.strategy.apply cannot reuse live worker {worker_id} for a different assignment: {}",
+                mismatches.join("; ")
+            )));
+        }
+
+        Ok(true)
     }
 }
 
@@ -1370,22 +1504,38 @@ fn assignment_title(assignment: &HarnessAssignment) -> String {
     )
 }
 
-fn assignment_detail(goal: &str, assignment: &HarnessAssignment) -> String {
+fn assignment_detail(
+    goal: &str,
+    assignment: &HarnessAssignment,
+    target_cwd: Option<&Path>,
+) -> String {
+    let target = assignment_target_cwd_line(target_cwd);
     format!(
-        "Goal: {goal}\nRole: {}\nHarness: {}\nReason: {}\nScope: managed by task.strategy.apply; do not subdelegate.",
+        "Goal: {goal}\nRole: {}\nHarness: {}\nReason: {}{target}\nScope: managed by task.strategy.apply; do not subdelegate.",
         role_id(&assignment.role),
         assignment.harness_id,
         assignment.reason
     )
 }
 
-fn assignment_prompt(goal: &str, assignment: &HarnessAssignment) -> String {
+fn assignment_prompt(
+    goal: &str,
+    assignment: &HarnessAssignment,
+    target_cwd: Option<&Path>,
+) -> String {
+    let target = assignment_target_cwd_line(target_cwd);
     format!(
-        "ForkTTY task assignment.\nGoal: {goal}\nRole: {}\nHarness: {}\nReason: {}\nStay within this role, do not subdelegate, and report verification evidence before completion.",
+        "ForkTTY task assignment.\nGoal: {goal}\nRole: {}\nHarness: {}\nReason: {}{target}\nStay within this role, do not subdelegate, and report verification evidence before completion.",
         role_id(&assignment.role),
         assignment.harness_id,
         assignment.reason
     )
+}
+
+fn assignment_target_cwd_line(target_cwd: Option<&Path>) -> String {
+    target_cwd
+        .map(|cwd| format!("\nRepository cwd: {}", cwd.display()))
+        .unwrap_or_default()
 }
 
 fn role_label(role: &HarnessRole) -> &'static str {
