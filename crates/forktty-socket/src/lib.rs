@@ -476,7 +476,7 @@ mod tests {
     #[cfg(feature = "browser")]
     use std::sync::Barrier;
     use std::sync::{Arc, Mutex};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     mod agent_session;

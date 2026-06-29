@@ -697,6 +697,15 @@ async fn team_worker_launch_same_worker_rejects_duplicate_and_rolls_back_surface
 
 #[tokio::test]
 async fn team_worker_shutdown_submit_uses_separate_enter_for_claude() {
+    assert_worker_shutdown_uses_separate_enter("claude").await;
+}
+
+#[tokio::test]
+async fn team_worker_shutdown_submit_uses_separate_enter_for_pi() {
+    assert_worker_shutdown_uses_separate_enter("pi").await;
+}
+
+async fn assert_worker_shutdown_uses_separate_enter(agent: &str) {
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let backend = Arc::new(RecordingEnterBackend::default());
     let mut state = SocketAppState::new(
@@ -729,7 +738,7 @@ async fn team_worker_shutdown_submit_uses_separate_enter_for_claude() {
         json!({
             "team_id": "team-1",
             "worker_id": "worker-1",
-            "agent": "claude",
+            "agent": agent,
             "surface_id": surface_id
         }),
     )

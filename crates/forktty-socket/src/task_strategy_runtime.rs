@@ -408,6 +408,7 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
             }));
 
             let worker_id = request.assignment_worker_id(index, assignment);
+            let mut worker_launched_for_assignment = false;
             if request.submit {
                 if request
                     .team_worker_has_compatible_live_surface(
@@ -435,6 +436,7 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
                         "surface_id": launched["surface"]["id"],
                         "selected_agent": launched["selection"]["selected_agent"],
                     }));
+                    worker_launched_for_assignment = true;
                 }
 
                 let assigned = team_runtime::task_upsert(
@@ -451,7 +453,17 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
                 }));
             }
 
-            let message_id = format!("{task_id}-msg-1");
+            let base_message_id = format!("{task_id}-msg-1");
+            let message_id = request
+                .assignment_message_id(
+                    state,
+                    &task_id,
+                    &base_message_id,
+                    request.submit.then_some(worker_id.as_str()),
+                    &assignment_prompt(&request.goal, assignment, request.target_cwd.as_deref()),
+                    worker_launched_for_assignment,
+                )
+                .await?;
             if request.team_message_exists(state, &message_id).await? {
                 actions.push(json!({
                     "method": "team.message.send",
@@ -480,7 +492,9 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
             }
 
             if request.submit {
-                if request.team_message_delivered(state, &message_id).await? {
+                if !worker_launched_for_assignment
+                    && request.team_message_delivered(state, &message_id).await?
+                {
                     actions.push(json!({
                         "method": "team.message.dispatch",
                         "status": "already_dispatched",
@@ -1389,6 +1403,54 @@ impl TaskStrategyApplyRequest {
             .any(|message| message["id"].as_str() == Some(message_id)))
     }
 
+    async fn assignment_message_id(
+        &self,
+        state: &SocketAppState,
+        task_id: &str,
+        base_message_id: &str,
+        worker_id: Option<&str>,
+        expected_body: &str,
+        worker_launched_for_assignment: bool,
+    ) -> Result<String, DispatchError> {
+        let team = team_runtime::get(state, &json!({"team_id": self.team_id})).await?;
+        let Some(messages) = team["messages"].as_array() else {
+            return Ok(base_message_id.to_string());
+        };
+        let prefix = format!("{task_id}-msg-");
+        let mut max_suffix = 0u32;
+        let mut pending_id = None;
+        for message in messages {
+            let Some(id) = message["id"].as_str() else {
+                continue;
+            };
+            if let Some(suffix) = id
+                .strip_prefix(&prefix)
+                .and_then(|suffix| suffix.parse::<u32>().ok())
+            {
+                max_suffix = max_suffix.max(suffix);
+            }
+            if message["task_id"].as_str() != Some(task_id) {
+                continue;
+            }
+            if !message_target_matches_worker(message, worker_id) {
+                continue;
+            }
+            if message["body"].as_str() != Some(expected_body) {
+                continue;
+            }
+            if !message["delivered"].as_bool().unwrap_or(false) {
+                pending_id = Some(id.to_string());
+            }
+        }
+        if let Some(pending_id) = pending_id {
+            return Ok(pending_id);
+        }
+        if self.submit && worker_launched_for_assignment && max_suffix > 0 {
+            return Ok(format!("{prefix}{}", max_suffix + 1));
+        }
+        Ok(base_message_id.to_string())
+    }
+
     async fn team_message_delivered(
         &self,
         state: &SocketAppState,
@@ -1536,6 +1598,14 @@ fn assignment_target_cwd_line(target_cwd: Option<&Path>) -> String {
     target_cwd
         .map(|cwd| format!("\nRepository cwd: {}", cwd.display()))
         .unwrap_or_default()
+}
+
+fn message_target_matches_worker(message: &Value, worker_id: Option<&str>) -> bool {
+    match (message["to_worker_id"].as_str(), worker_id) {
+        (Some(target), Some(worker_id)) => target == worker_id,
+        (Some(_), None) => false,
+        (None, _) => true,
+    }
 }
 
 fn role_label(role: &HarnessRole) -> &'static str {

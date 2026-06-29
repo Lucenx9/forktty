@@ -382,10 +382,12 @@ require later explicit approval.
 `forktty team ask` and `forktty team review` compose the existing team socket
 methods for common coordination flows: create/update the team, create the task,
 launch a fresh worker surface, assign the task after launch, queue the prompt,
-and dispatch it. Submit mode uses provider-aware terminal input: most workers
-receive text plus carriage-return Enter in one write, while Claude receives
-the text, a short settle, and a separate Enter so its TUI starts the staged
-prompt reliably. Human CLI output names the worker, selected provider when
+and dispatch it. Submit mode uses provider-aware terminal input: providers that
+accept it reliably receive text plus carriage-return Enter in one write, while
+Claude and Pi receive the text, a short settle, and a separate Enter so their
+TUIs start the staged prompt reliably. Freshly launched Claude/Pi workers also
+get a brief initial prompt settle before the first dispatch. Human CLI output
+names the worker, selected provider when
 known, task, target surface, and whether the prompt was dispatched or submitted
 so a leader can tell which visible pane to monitor without opening JSON.
 Re-run them to launch a new worker;

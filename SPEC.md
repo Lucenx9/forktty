@@ -561,7 +561,9 @@ as `running`, upserts the team as `active`, creates each task before launch,
 launches one visible worker pane per assignment through `team.worker.launch`,
 assigns the task to the launched worker, queues a deterministic role prompt,
 and dispatches it through `team.message.dispatch` with provider-aware submit
-semantics. `submit: true` is rejected for plans without `layers.team: true`,
+semantics. Freshly launched Claude/Pi worker panes get a brief initial prompt
+settle before the first dispatch. `submit: true` is rejected for plans without
+`layers.team: true`,
 because ForkTTY would otherwise mark a run active without opening visible worker
 panes. Plans whose `layers.worktree` is true require `worktree_name` to name an
 already-open ForkTTY worktree workspace; missing `worktree_name` returns
@@ -569,8 +571,13 @@ already-open ForkTTY worktree workspace; missing `worktree_name` returns
 `precondition_failed`, both before mutation. Apply still does not create
 worktrees, push, merge, run arbitrary commands, or schedule hidden background
 work. Repeating the same request with the same `run_id` reuses deterministic
-workflow/team/task/message ids, does not duplicate staged messages, and skips
-dispatch for messages already recorded as delivered.
+workflow/team/task/message ids, does not duplicate matching staged messages,
+and skips dispatch for messages already recorded as delivered only when the
+same compatible live worker is reused. If a worker record must be relaunched,
+or if an existing staged role prompt no longer matches the current task,
+target worker, or cwd-derived prompt body, apply queues the next deterministic
+`<task-id>-msg-N` prompt and dispatches that fresh prompt instead of sending
+stale instructions to the new pane.
 When retrying `submit: true`, an existing live deterministic worker is reused
 only if its harness, role, assigned task, worktree or explicit cwd target, and
 status match the current plan assignment. If the worker id points at a different live
@@ -677,7 +684,15 @@ When `team.worker.launch` receives an explicit `worktree_name`, the worker tab i
 
 Provider-scoped status and progress keys are automatically cleared when the last same-provider session in a workspace ends, is suspended/hibernated, is forgotten, or its surface is closed; per-surface status/progress keys are cleared when their surface is closed.
 
-`team.message.dispatch` foregrounds the recipient worker surface by selecting its workspace and tab before writing. If the embedded terminal surface is not socket-ready yet, dispatch waits up to 10 seconds before returning `not_ready`.
+`team.message.dispatch` foregrounds the recipient worker surface by selecting
+its workspace and tab before writing. If the embedded terminal surface is not
+socket-ready yet, dispatch waits up to 10 seconds before returning `not_ready`.
+Submit mode uses provider-aware terminal input: Claude/Pi get staged text, a
+short settle, and a separate Enter, while line-oriented providers keep text plus
+carriage-return Enter in one write. When the target is a current-runtime
+launch-owned Claude/Pi worker surface that was just created by
+`team.worker.launch`, dispatch also waits briefly for the provider TUI to reach
+its initial prompt before sending the first queued message.
 
 Embedded Ghostty panes currently service visible and tail captures from Ghostty's visible-text ABI to avoid unbounded host allocations; explicit `surface.read_text` with `scope: "all"` remains the only full-scrollback read until a native bounded-tail embedding ABI exists.
 

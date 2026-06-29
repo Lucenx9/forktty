@@ -7,6 +7,15 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TeamMessageDispatchTarget {
+    pub(crate) surface_id: String,
+    pub(crate) worker_id: String,
+    pub(crate) body: String,
+    pub(crate) agent: Option<String>,
+    pub(crate) launched_at_ms: Option<u64>,
+}
+
 pub(crate) async fn create_team_worker_surface(
     state: &SocketAppState,
     team_id: &str,
@@ -275,7 +284,7 @@ pub(crate) async fn team_message_dispatch_target(
     team_id: &str,
     message_id: &str,
     worker_id: Option<&str>,
-) -> Result<(String, String, String, Option<String>), DispatchError> {
+) -> Result<TeamMessageDispatchTarget, DispatchError> {
     let store = store_access::team_store_access(state)?
         .load()
         .await
@@ -318,13 +327,19 @@ pub(crate) async fn team_message_dispatch_target(
         DispatchError::PreconditionFailed("team worker has no surface_id".to_string())
     })?;
     let agent = worker.agent.clone();
+    let launched_at_ms = worker
+        .launched_surface_id
+        .as_deref()
+        .filter(|launched_surface_id| *launched_surface_id == surface_id)
+        .and_then(|_| (worker.launched_at_ms > 0).then_some(worker.launched_at_ms));
     ensure_model_surface_exists(state, &surface_id)?;
-    Ok((
+    Ok(TeamMessageDispatchTarget {
         surface_id,
-        worker_id.to_string(),
-        message.body.clone(),
+        worker_id: worker_id.to_string(),
+        body: message.body.clone(),
         agent,
-    ))
+        launched_at_ms,
+    })
 }
 
 pub(crate) async fn team_worker_agent(

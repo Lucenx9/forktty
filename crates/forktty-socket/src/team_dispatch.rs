@@ -4,10 +4,13 @@ use std::time::{Duration, Instant};
 
 const TEAM_MESSAGE_SURFACE_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const TEAM_MESSAGE_SURFACE_READY_TIMEOUT: Duration = Duration::from_secs(10);
+/// Fresh provider TUIs can accept PTY bytes before their input prompt is ready.
+/// Keep the first visible team prompt from landing in startup output.
+const TEAM_PROVIDER_INITIAL_PROMPT_SETTLE: Duration = Duration::from_secs(1);
 /// When a provider needs Enter as a distinct submit action, avoid issuing it
 /// in the same scheduler turn as the prompt body so embedded PTYs are less
 /// likely to coalesce the writes into one paste-like input chunk.
-const TEAM_SEPARATE_SUBMIT_ENTER_SETTLE: Duration = Duration::from_millis(50);
+const TEAM_SEPARATE_SUBMIT_ENTER_SETTLE: Duration = Duration::from_millis(100);
 
 pub(crate) async fn dispatch_team_message_text(
     state: &SocketAppState,
@@ -15,8 +18,10 @@ pub(crate) async fn dispatch_team_message_text(
     body: &str,
     submit: bool,
     agent: Option<&str>,
+    launched_at_ms: Option<u64>,
 ) -> Result<(), DispatchError> {
     show_team_message_surface(state, surface_id)?;
+    wait_for_provider_initial_prompt_settle(agent, launched_at_ms).await;
     let (text, separate_enter) = terminal_text_and_separate_enter(body, submit, agent);
     send_team_message_body_when_ready(state, surface_id, &text).await?;
     if separate_enter {
@@ -61,13 +66,38 @@ pub(crate) fn terminal_text_and_separate_enter(
 
 fn agent_uses_separate_submit_enter(agent: Option<&str>) -> bool {
     matches!(
-        agent
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase()
-            .as_str(),
-        "claude" | "claude_code" | "claude-code"
+        normalized_agent(agent).as_str(),
+        "claude" | "claude_code" | "claude-code" | "pi"
     )
+}
+
+async fn wait_for_provider_initial_prompt_settle(agent: Option<&str>, launched_at_ms: Option<u64>) {
+    if !agent_needs_initial_prompt_settle(agent) {
+        return;
+    }
+    let Some(launched_at_ms) = launched_at_ms else {
+        return;
+    };
+    let elapsed_ms = forktty_core::team_now_ms().saturating_sub(launched_at_ms);
+    let settle_ms = TEAM_PROVIDER_INITIAL_PROMPT_SETTLE.as_millis() as u64;
+    if elapsed_ms < settle_ms {
+        tokio::time::sleep(Duration::from_millis(settle_ms - elapsed_ms)).await;
+    }
+}
+
+fn agent_needs_initial_prompt_settle(agent: Option<&str>) -> bool {
+    matches!(
+        normalized_agent(agent).as_str(),
+        "claude" | "claude_code" | "claude-code" | "pi"
+    )
+}
+
+fn normalized_agent(agent: Option<&str>) -> String {
+    agent
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .to_string()
 }
 
 fn show_team_message_surface(

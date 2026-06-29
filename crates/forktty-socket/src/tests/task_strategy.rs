@@ -1909,6 +1909,76 @@ async fn task_strategy_apply_submit_uses_explicit_cwd_for_worker_launches_and_pr
 
 #[tokio::test]
 #[serial_test::serial]
+async fn task_strategy_apply_submit_does_not_reuse_staged_prompt_with_stale_cwd() {
+    let (mut state, backend) = test_state();
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _claude = write_fake_program(bin_dir.path(), "claude");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let staged_dir = tempfile::tempdir().unwrap();
+    let submit_dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": surface_id,
+            "cwd": staged_dir.path(),
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+
+    let result = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": surface_id,
+            "cwd": submit_dir.path(),
+            "goal": "Implement the router",
+            "approved": ["start_run", "launch_parallel_workers"],
+            "submit": true,
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert!(result["actions"].as_array().unwrap().iter().any(|action| {
+        action["method"] == "team.message.send"
+            && action["message_id"] == "router-run-1-implementer-1-msg-2"
+            && action["status"] == "applied"
+    }));
+    let team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
+        .await
+        .unwrap();
+    let implementer = team["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|worker| worker["id"] == "router-run-1-implementer-1-worker")
+        .unwrap();
+    let implementer_surface_id = implementer["surface_id"].as_str().unwrap();
+    let sent = backend.sent_text(implementer_surface_id).unwrap().join("");
+    assert!(sent.contains(submit_dir.path().to_str().unwrap()));
+    assert!(!sent.contains(staged_dir.path().to_str().unwrap()));
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn task_strategy_apply_submit_relaunches_worker_when_record_surface_runtime_is_missing() {
     let (mut state, backend) = test_state();
     let bin_dir = tempfile::tempdir().unwrap();
@@ -1999,6 +2069,93 @@ async fn task_strategy_apply_submit_relaunches_worker_when_record_surface_runtim
         .all(|message| message["delivered"] == true));
     assert!(backend.sent_text(&stale_surface_id).is_err());
     assert_eq!(backend.spawn_shell(relaunched_surface_id).unwrap(), "codex");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn task_strategy_apply_submit_redispatches_prompt_after_worker_relaunch() {
+    let (mut state, backend) = test_state();
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _claude = write_fake_program(bin_dir.path(), "claude");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    let params = json!({
+        "run_id": "router-run-1",
+        "workspace_id": workspace_id,
+        "leader_surface_id": surface_id,
+        "cwd": repo_dir.path(),
+        "goal": "Implement the router",
+        "approved": ["start_run", "launch_parallel_workers"],
+        "submit": true,
+        "plan": staged_team_plan_json()
+    });
+
+    dispatch(&state, "task.strategy.apply", params.clone())
+        .await
+        .unwrap();
+    let first_team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
+        .await
+        .unwrap();
+    let first_implementer = first_team["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|worker| worker["id"] == "router-run-1-implementer-1-worker")
+        .unwrap();
+    let stale_surface_id = first_implementer["surface_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(!backend.sent_text(&stale_surface_id).unwrap().is_empty());
+    backend.close(&stale_surface_id).unwrap();
+
+    let result = dispatch(&state, "task.strategy.apply", params)
+        .await
+        .unwrap();
+
+    assert!(result["actions"].as_array().unwrap().iter().any(|action| {
+        action["method"] == "team.worker.launch"
+            && action["worker_id"] == "router-run-1-implementer-1-worker"
+            && action["status"] == "applied"
+    }));
+    assert!(result["actions"].as_array().unwrap().iter().any(|action| {
+        action["method"] == "team.message.dispatch"
+            && action["message_id"] == "router-run-1-implementer-1-msg-2"
+            && action["status"] == "applied"
+    }));
+    let second_team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
+        .await
+        .unwrap();
+    let relaunched_implementer = second_team["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|worker| worker["id"] == "router-run-1-implementer-1-worker")
+        .unwrap();
+    let relaunched_surface_id = relaunched_implementer["surface_id"].as_str().unwrap();
+    assert_ne!(relaunched_surface_id, stale_surface_id);
+    let relaunched_text = backend.sent_text(relaunched_surface_id).unwrap().join("");
+    assert!(relaunched_text.contains("ForkTTY task assignment."));
+    assert!(relaunched_text.contains(repo_dir.path().to_str().unwrap()));
+    assert!(second_team["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| {
+            message["id"] == "router-run-1-implementer-1-msg-2"
+                && message["delivered"] == true
+                && message["body"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains(repo_dir.path().to_str().unwrap())
+        }));
 }
 
 #[tokio::test]

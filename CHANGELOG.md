@@ -64,6 +64,9 @@ All notable changes to ForkTTY are documented here.
 - Fixed task strategy routing so parallel research/experiment plans respect
   each harness's declared parallel session capacity instead of assigning
   multiple concurrent roles to a single-session harness.
+- Fixed task strategy routing so parallel research/experiment plans do not
+  launch an eager synthesizer worker before researcher workers can produce
+  output.
 - Fixed task strategy approval retries so an approved Feed request covering a
   superset of required approvals can still satisfy the remaining approvals when
   the caller also supplies explicit attestations for part of the same request.
@@ -74,6 +77,13 @@ All notable changes to ForkTTY are documented here.
 - Fixed task strategy submit retries so a persisted worker record with a closed
   or missing surface is relaunched before dispatching its still-pending role
   prompt.
+- Fixed task strategy submit retries so a relaunched worker receives a fresh
+  role prompt when the previous prompt was already delivered to the old closed
+  surface.
+- Fixed task strategy submit so staged prompts with a stale cwd, body, or
+  worker target are not reused when launching workers for a later apply.
+- Fixed team message dispatch for freshly launched Claude/Pi workers so ForkTTY
+  waits briefly before the first prompt and uses a separate submit Enter for Pi.
 - Fixed Feed approval responses so dismissed, stale, approved, or denied
   approvals cannot be re-approved and reused after the pending request is no
   longer active.
@@ -260,9 +270,9 @@ All notable changes to ForkTTY are documented here.
   while terminal notification action buttons carry accessible labels and
   app-authored notification chips use the clearer `App` label.
 - Team message dispatch and worker shutdown submit mode now use
-  provider-aware input: Claude receives staged text, a short settle, and a
-  separate Enter, while other providers keep text plus carriage-return Enter in
-  one terminal input.
+  provider-aware input: Claude and Pi receive staged text, a short settle, and
+  a separate Enter, while other providers keep text plus carriage-return Enter
+  in one terminal input.
 - Context snapshots now include compact `loop_summaries` rows for workflow
   loops, including stale surface-binding detection and risk flags for failed
   gates, blocked/needs-human stages, exhausted loop budgets, and stale

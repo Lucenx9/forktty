@@ -552,7 +552,7 @@ pub(crate) async fn message_dispatch(
 ) -> Result<Value, DispatchError> {
     let request = TeamMessageDispatchRequest::decode(params)?;
     let _dispatch_guard = state.coordinator.team_message_dispatch.lock().await;
-    let (surface_id, resolved_worker_id, text, agent) = team_message_dispatch_target(
+    let target = team_message_dispatch_target(
         state,
         &request.team_id,
         &request.message_id,
@@ -562,9 +562,17 @@ pub(crate) async fn message_dispatch(
     let terminal_message =
         team_terminal_dispatched_message(state, &request.team_id, &request.message_id)?;
     ensure_team_message_not_terminal_dispatched(state, &terminal_message)?;
-    dispatch_team_message_text(state, &surface_id, &text, request.submit, agent.as_deref()).await?;
+    dispatch_team_message_text(
+        state,
+        &target.surface_id,
+        &target.body,
+        request.submit,
+        target.agent.as_deref(),
+        target.launched_at_ms,
+    )
+    .await?;
     remember_team_message_terminal_dispatched(state, terminal_message.clone())?;
-    let ack_worker_id = resolved_worker_id.clone();
+    let ack_worker_id = target.worker_id.clone();
     let message = store_access::team_store_access(state)?
         .update(move |store| {
             store.ack_message(
@@ -582,8 +590,8 @@ pub(crate) async fn message_dispatch(
     Ok(json!({
         "sent": true,
         "submitted": request.submit,
-        "surface_id": surface_id,
-        "worker_id": resolved_worker_id,
+        "surface_id": target.surface_id,
+        "worker_id": target.worker_id,
         "message": message
     }))
 }

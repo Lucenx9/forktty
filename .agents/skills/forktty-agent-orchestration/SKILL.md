@@ -183,7 +183,8 @@ namespace or prefix when a host UI requires fully qualified tool names.
 3. Prefer team mailbox flow for worker prompts: `team_message_send`, then
    `team_message_dispatch`. Use the dispatch `submit` option only when the
    prompt is ready to run; ForkTTY uses provider-aware terminal submit
-   behavior, including a short settle before the separate Enter for Claude TUIs
+   behavior, including a short settle before the separate Enter for Claude/Pi
+   TUIs, a brief initial prompt settle for freshly launched Claude/Pi workers,
    and one text+CR write for providers that accept it reliably. Do not rely on
    a trailing LF as equivalent to pressing Enter in full-screen agent TUIs.
 4. If delivery succeeds but the worker does not start, inspect the pane before

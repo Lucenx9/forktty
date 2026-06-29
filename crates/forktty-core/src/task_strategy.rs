@@ -853,18 +853,6 @@ fn assignments_for_strategy(
                 "next highest-scored ready harness for parallel context isolation".to_string();
         }
         assignments.extend(additional_researchers);
-        if let Some(mut synthesizer) = select_harness_assignment_with_capacity(
-            HarnessRole::Synthesizer,
-            &ready,
-            layers,
-            last_known_good,
-            &[],
-            &assignments,
-        ) {
-            synthesizer.reason =
-                "highest-scored ready harness for synthesizing worker results".to_string();
-            assignments.push(synthesizer);
-        }
         if assignments.len() < 2 {
             return Vec::new();
         }
@@ -1429,7 +1417,7 @@ mod tests {
     }
 
     #[test]
-    fn requested_parallel_research_uses_researchers_and_synthesizer() {
+    fn requested_parallel_research_uses_researchers_without_eager_synthesizer() {
         let plan = plan_task_strategy(TaskStrategyInput {
             goal: "Compare three approaches for a multi-harness router".to_string(),
             explicit_mode: None,
@@ -1448,11 +1436,13 @@ mod tests {
         assert!(plan.layers.workflow);
         assert!(plan.layers.team);
         assert!(!plan.layers.worktree);
-        assert!(plan
+        let researchers = plan
             .assignments
             .iter()
-            .any(|assignment| assignment.role == HarnessRole::Researcher));
-        assert!(plan
+            .filter(|assignment| assignment.role == HarnessRole::Researcher)
+            .count();
+        assert!(researchers >= 2);
+        assert!(!plan
             .assignments
             .iter()
             .any(|assignment| assignment.role == HarnessRole::Synthesizer));
