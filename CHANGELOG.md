@@ -85,12 +85,14 @@ All notable changes to ForkTTY are documented here.
 - Fixed staged task strategy apply retries so a changed cwd, body, or target
   queues the next deterministic role prompt instead of reusing a stale pending
   message.
-- Fixed team message dispatch for freshly launched Claude/Pi workers so ForkTTY
-  waits briefly before the first prompt and uses a separate submit Enter for Pi.
+- Fixed Codex team message submit so ForkTTY sends the task prompt and Enter as
+  separate terminal actions instead of leaving fresh Codex worker prompts staged.
+- Fixed team message dispatch for freshly launched Codex/Claude/Pi workers so
+  ForkTTY waits briefly before the first prompt and uses a separate submit Enter.
 - Fixed team message dispatch for freshly launched Codex, OpenCode, and
   Antigravity workers so ForkTTY waits briefly before sending the first task
   prompt.
-- Fixed Claude/Pi team message dispatch retries so a failed separate submit
+- Fixed Codex/Claude/Pi team message dispatch retries so a failed separate submit
   Enter does not resend and duplicate the already-written prompt body.
 - Fixed Feed approval responses so dismissed, stale, approved, or denied
   approvals cannot be re-approved and reused after the pending request is no
@@ -278,7 +280,7 @@ All notable changes to ForkTTY are documented here.
   while terminal notification action buttons carry accessible labels and
   app-authored notification chips use the clearer `App` label.
 - Team message dispatch and worker shutdown submit mode now use
-  provider-aware input: Claude and Pi receive staged text, a short settle, and
+  provider-aware input: Codex, Claude, and Pi receive staged text, a short settle, and
   a separate Enter, while other providers keep text plus carriage-return Enter
   in one terminal input.
 - Context snapshots now include compact `loop_summaries` rows for workflow

@@ -67,7 +67,7 @@ pub(crate) fn terminal_text_and_separate_enter(
 fn agent_uses_separate_submit_enter(agent: Option<&str>) -> bool {
     matches!(
         normalized_agent(agent).as_str(),
-        "claude" | "claude_code" | "claude-code" | "pi"
+        "claude" | "claude_code" | "claude-code" | "codex" | "pi"
     )
 }
 

@@ -687,7 +687,7 @@ Provider-scoped status and progress keys are automatically cleared when the last
 `team.message.dispatch` foregrounds the recipient worker surface by selecting
 its workspace and tab before writing. If the embedded terminal surface is not
 socket-ready yet, dispatch waits up to 10 seconds before returning `not_ready`.
-Submit mode uses provider-aware terminal input: Claude/Pi get staged text, a
+Submit mode uses provider-aware terminal input: Codex/Claude/Pi get staged text, a
 short settle, and a separate Enter, while line-oriented providers keep text plus
 carriage-return Enter in one write. When the target is a current-runtime
 launch-owned provider TUI worker surface that was just created by

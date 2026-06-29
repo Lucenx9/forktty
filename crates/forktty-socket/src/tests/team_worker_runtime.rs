@@ -201,7 +201,8 @@ async fn dispatches_team_orchestration_runtime_methods() {
         vec![
             "review this\r".to_string(),
             "ping\r".to_string(),
-            "stop\r".to_string()
+            "stop".to_string(),
+            "\r".to_string()
         ]
     );
 
@@ -693,6 +694,11 @@ async fn team_worker_launch_same_worker_rejects_duplicate_and_rolls_back_surface
         2,
         "duplicate launch surface must be rolled back"
     );
+}
+
+#[tokio::test]
+async fn team_worker_shutdown_submit_uses_separate_enter_for_codex() {
+    assert_worker_shutdown_uses_separate_enter("codex").await;
 }
 
 #[tokio::test]

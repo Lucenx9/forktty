@@ -1900,13 +1900,13 @@ async fn task_strategy_apply_submit_launches_visible_workers_and_dispatches_prom
     let reviewer_surface = reviewer["surface_id"].as_str().unwrap();
     assert_eq!(backend.spawn_shell(implementer_surface).unwrap(), "codex");
     assert_eq!(backend.spawn_shell(reviewer_surface).unwrap(), "claude");
-    assert_eq!(backend.sent_text(implementer_surface).unwrap().len(), 1);
+    assert_eq!(backend.sent_text(implementer_surface).unwrap().len(), 2);
     assert_eq!(backend.sent_text(reviewer_surface).unwrap().len(), 2);
 }
 
 #[tokio::test]
 #[serial_test::serial]
-async fn task_strategy_apply_submit_retry_after_claude_enter_failure_does_not_resend_prompt() {
+async fn task_strategy_apply_submit_retry_after_codex_enter_failure_does_not_resend_prompt() {
     let bin_dir = tempfile::tempdir().unwrap();
     let _codex = write_fake_program(bin_dir.path(), "codex");
     let _claude = write_fake_program(bin_dir.path(), "claude");
@@ -1944,20 +1944,20 @@ async fn task_strategy_apply_submit_retry_after_claude_enter_failure_does_not_re
     let team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
         .await
         .unwrap();
-    let reviewer = team["workers"]
+    let implementer = team["workers"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|worker| worker["id"] == "router-run-1-reviewer-2-worker")
+        .find(|worker| worker["id"] == "router-run-1-implementer-1-worker")
         .unwrap();
-    let reviewer_surface_id = reviewer["surface_id"].as_str().unwrap();
-    assert_eq!(backend.sent_text(reviewer_surface_id).unwrap().len(), 1);
+    let implementer_surface_id = implementer["surface_id"].as_str().unwrap();
+    assert_eq!(backend.sent_text(implementer_surface_id).unwrap().len(), 1);
 
     let retry = dispatch(&state, "task.strategy.apply", params)
         .await
         .unwrap_err();
     assert_eq!(retry.code(), "error");
-    assert_eq!(backend.sent_text(reviewer_surface_id).unwrap().len(), 1);
+    assert_eq!(backend.sent_text(implementer_surface_id).unwrap().len(), 1);
 }
 
 #[tokio::test]

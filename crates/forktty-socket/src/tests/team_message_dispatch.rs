@@ -26,7 +26,7 @@ async fn team_message_dispatch_submit_sends_enter_and_marks_team_wide_delivered(
         json!({
             "team_id": "team-1",
             "worker_id": "worker-1",
-            "agent": "codex",
+            "agent": "opencode",
             "surface_id": surface_id
         }),
     )
@@ -635,9 +635,84 @@ async fn team_message_dispatch_rejects_non_boolean_submit() {
 }
 
 #[tokio::test]
-async fn team_message_dispatch_submit_does_not_call_separate_enter() {
+async fn team_message_dispatch_submit_uses_single_write_for_opencode() {
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let backend = Arc::new(FailingEnterBackend::default());
+    let mut state = SocketAppState::new(
+        model,
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    state.workflow_store_path = None;
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "leader_surface_id": surface_id
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "opencode",
+            "surface_id": surface_id
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.message.send",
+        json!({
+            "team_id": "team-1",
+            "message_id": "msg-submit",
+            "from": "leader",
+            "to_worker_id": "worker-1",
+            "body": "run status"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let result = dispatch(
+        &state,
+        "team.message.dispatch",
+        json!({"team_id": "team-1", "message_id": "msg-submit", "submit": true}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result["submitted"], true);
+    assert_eq!(result["message"]["delivered"], true);
+    assert_eq!(
+        backend.sent_text(surface_id).unwrap(),
+        vec!["run status\r".to_string()]
+    );
+
+    let team = dispatch(&state, "team.get", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    assert_eq!(team["messages"][0]["delivered"], true);
+    assert!(team["messages"][0]["acknowledged_at_ms"].as_u64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn team_message_dispatch_submit_uses_separate_enter_for_codex() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(RecordingEnterBackend::default());
     let mut state = SocketAppState::new(
         model,
         backend.clone(),
@@ -695,18 +770,14 @@ async fn team_message_dispatch_submit_does_not_call_separate_enter() {
     )
     .await
     .unwrap();
+
     assert_eq!(result["submitted"], true);
     assert_eq!(result["message"]["delivered"], true);
     assert_eq!(
         backend.sent_text(surface_id).unwrap(),
-        vec!["run status\r".to_string()]
+        vec!["run status".to_string()]
     );
-
-    let team = dispatch(&state, "team.get", json!({"team_id": "team-1"}))
-        .await
-        .unwrap();
-    assert_eq!(team["messages"][0]["delivered"], true);
-    assert!(team["messages"][0]["acknowledged_at_ms"].as_u64().unwrap() > 0);
+    assert_eq!(backend.entered_surfaces(), vec![surface_id.to_string()]);
 }
 
 #[tokio::test]
@@ -1193,9 +1264,12 @@ async fn team_message_dispatch_waits_before_prompting_fresh_codex_worker() {
     assert_eq!(result["submitted"], true);
     assert_eq!(
         backend.sent_text(launched_surface_id).unwrap(),
-        vec!["run status\r".to_string()]
+        vec!["run status".to_string()]
     );
-    assert!(backend.entered_surfaces().is_empty());
+    assert_eq!(
+        backend.entered_surfaces(),
+        vec![launched_surface_id.to_string()]
+    );
 }
 
 #[tokio::test]
