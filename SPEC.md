@@ -325,7 +325,9 @@ with the real workspace id.
 `task.strategy.plan` is a read-only task strategy planner. It accepts a user
 `goal`, optional workspace/surface target selectors (`workspace_id`,
 `workspace_name`, `worktree_name`, `surface_id`), an optional absolute `cwd`
-override for read-only repository context inference, and optional hints
+override for read-only repository context inference inside a Git repository
+already represented by an open ForkTTY workspace, surface, or effective project
+cwd, and optional hints
 (`strategy`, `router_profile`, `repo_dirty`, `user_requested_parallelism`,
 `user_requested_review`, `likely_user_visible_change`, `last_known_good`, and
 `harness_signals`).
@@ -511,6 +513,8 @@ task strategy plan. It accepts required `run_id`, `goal`, and `plan` fields
 plus optional `approved`, `approval_id`, `request_approval`, `workflow_id`,
 `team_id`, `workspace_id` or other workspace selector including
 `worktree_name`, `cwd`, `leader_surface_id`/`surface_id`, and `submit`.
+When both surface aliases are provided, `leader_surface_id` and `surface_id`
+must refer to the same surface.
 Before any workflow/team/worker mutation it recomputes server-side dirty
 repo/edit-intent worktree isolation from the selected surface/workspace cwd and
 any explicit `cwd`, then recomputes required approvals from the requested
@@ -579,10 +583,10 @@ target worker, or cwd-derived prompt body, apply queues the next deterministic
 `<task-id>-msg-N` prompt and dispatches that fresh prompt instead of sending
 stale instructions to the new pane.
 When retrying `submit: true`, an existing live deterministic worker is reused
-only if its harness, role, assigned task, worktree or explicit cwd target, and
-status match the current plan assignment. If the worker id points at a different live
-assignment, apply returns `conflict` before dispatching a role prompt to the
-wrong pane.
+only if its harness, role, assigned task, worktree, launch cwd, effective
+surface/workspace cwd target, and status match the current plan assignment. If
+the worker id points at a different live assignment, apply returns `conflict`
+before dispatching a role prompt to the wrong pane.
 
 Example request:
 

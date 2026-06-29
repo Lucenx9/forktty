@@ -408,6 +408,7 @@ pub(crate) async fn worker_launch(
         agent: selection.selected_agent.clone(),
         surface_id: surface.id.clone(),
         worktree_name: request.worktree_name,
+        cwd: request.cwd,
         assigned_task_id: request.assigned_task_id,
     };
     let launch_team_id = launch.team_id.clone();

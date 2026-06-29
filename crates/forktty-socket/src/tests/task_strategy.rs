@@ -359,14 +359,18 @@ async fn task_strategy_plan_infers_dirty_repo_from_active_surface_cwd() {
 async fn task_strategy_plan_uses_explicit_cwd_for_repo_context() {
     let (state, _backend) = test_state();
     let active_dir = tempfile::tempdir().unwrap();
+    let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    std::fs::write(repo_dir.path().join("dirty.txt"), "dirty\n").unwrap();
     {
         let mut model = state.model.lock().unwrap();
         let surface_id = model.active_workspace().unwrap().focused_surface_id.clone();
         assert!(model.set_surface_cwd(&surface_id, active_dir.path().to_path_buf()));
+        assert!(model.set_surface_agent_session(&surface_id, AgentKind::Codex, "codex-session-1",));
+        assert!(
+            model.set_surface_agent_session_resume_cwd(&surface_id, repo_dir.path().to_path_buf())
+        );
     }
-    let repo_dir = tempfile::tempdir().unwrap();
-    git2::Repository::init(repo_dir.path()).unwrap();
-    std::fs::write(repo_dir.path().join("dirty.txt"), "dirty\n").unwrap();
 
     let result = dispatch(
         &state,
@@ -409,6 +413,35 @@ async fn task_strategy_plan_rejects_relative_explicit_cwd() {
 
     assert_eq!(err.code(), "invalid_param");
     assert!(err.to_string().contains("cwd"));
+}
+
+#[tokio::test]
+async fn task_strategy_plan_rejects_explicit_cwd_outside_open_workspace_repo() {
+    let (state, _backend) = test_state();
+    let active_dir = tempfile::tempdir().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        let surface_id = model.active_workspace().unwrap().focused_surface_id.clone();
+        assert!(model.set_surface_cwd(&surface_id, active_dir.path().to_path_buf()));
+    }
+    let hidden_repo = tempfile::tempdir().unwrap();
+    git2::Repository::init(hidden_repo.path()).unwrap();
+    std::fs::write(hidden_repo.path().join("dirty.txt"), "dirty\n").unwrap();
+
+    let err = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "goal": "Implement the router fix",
+            "cwd": hidden_repo.path().to_string_lossy(),
+            "likely_user_visible_change": true
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "precondition_failed");
+    assert!(err.to_string().contains("open ForkTTY workspace"));
 }
 
 #[tokio::test]
@@ -621,6 +654,61 @@ async fn task_strategy_apply_forces_dirty_editing_worktree_approval() {
 
     assert_eq!(err.code(), "precondition_failed");
     assert!(err.to_string().contains("create_worktree"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn task_strategy_apply_rejects_conflicting_surface_aliases_before_dirty_check() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let dirty_repo = tempfile::tempdir().unwrap();
+    git2::Repository::init(dirty_repo.path()).unwrap();
+    std::fs::write(dirty_repo.path().join("dirty.txt"), "dirty\n").unwrap();
+    let clean_dir = tempfile::tempdir().unwrap();
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let dirty_surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    let clean_surface = dispatch(
+        &state,
+        "pane.new_tab",
+        json!({"surface_id": dirty_surface_id}),
+    )
+    .await
+    .unwrap();
+    let clean_surface_id = clean_surface["id"].as_str().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.set_surface_cwd(dirty_surface_id, dirty_repo.path().to_path_buf()));
+        assert!(model.set_surface_cwd(clean_surface_id, clean_dir.path().to_path_buf()));
+    }
+
+    let mut plan = staged_team_plan_json();
+    plan["layers"]["worktree"] = json!(false);
+    plan["approvals"] = json!(["start_run"]);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": workspace_id,
+            "surface_id": clean_surface_id,
+            "leader_surface_id": dirty_surface_id,
+            "goal": "Implement the router fix",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("surface_id and leader_surface_id"));
     let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
     let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
     assert!(workflows.as_array().unwrap().is_empty());
@@ -2279,6 +2367,78 @@ async fn task_strategy_apply_submit_redispatches_prompt_after_worker_relaunch() 
 
 #[tokio::test]
 #[serial_test::serial]
+async fn task_strategy_apply_submit_rejects_stale_explicit_cwd_worker_when_retry_omits_cwd() {
+    let (mut state, backend) = test_state();
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _claude = write_fake_program(bin_dir.path(), "claude");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let leader_dir = tempfile::tempdir().unwrap();
+    let stale_dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.set_surface_cwd(surface_id, leader_dir.path().to_path_buf()));
+    }
+
+    dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": surface_id,
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+    let launched = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "router-run-1",
+            "worker_id": "router-run-1-implementer-1-worker",
+            "agent": "codex",
+            "role": "implementer",
+            "assigned_task_id": "router-run-1-implementer-1",
+            "cwd": stale_dir.path()
+        }),
+    )
+    .await
+    .unwrap();
+    let stale_surface_id = launched["surface"]["id"].as_str().unwrap();
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": surface_id,
+            "goal": "Implement the router",
+            "approved": ["start_run", "launch_parallel_workers"],
+            "submit": true,
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "conflict");
+    assert!(err.to_string().contains("cwd expected"));
+    assert!(backend.sent_text(stale_surface_id).unwrap().is_empty());
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn task_strategy_apply_submit_rejects_live_worker_cwd_mismatch_before_dispatch() {
     let (mut state, _backend) = test_state();
     let bin_dir = tempfile::tempdir().unwrap();
@@ -2418,6 +2578,88 @@ async fn task_strategy_apply_submit_rejects_live_worker_harness_mismatch_before_
         .to_string()
         .contains("router-run-1-implementer-1-worker"));
     assert!(err.to_string().contains("different assignment"));
+    assert!(backend.sent_text(&existing_surface_id).unwrap().is_empty());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn task_strategy_apply_submit_rejects_live_worker_blocked_status_before_dispatch() {
+    let (mut state, backend) = test_state();
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "router-run-1",
+            "name": "Task strategy router-run-1",
+            "goal": "Implement the router"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.task.upsert",
+        json!({
+            "team_id": "router-run-1",
+            "task_id": "router-run-1-implementer-1",
+            "title": "Implement via codex",
+            "status": "open"
+        }),
+    )
+    .await
+    .unwrap();
+    let existing = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "router-run-1",
+            "worker_id": "router-run-1-implementer-1-worker",
+            "agent": "codex",
+            "role": "implementer",
+            "assigned_task_id": "router-run-1-implementer-1"
+        }),
+    )
+    .await
+    .unwrap();
+    let existing_surface_id = existing["surface"]["id"].as_str().unwrap().to_string();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "router-run-1",
+            "worker_id": "router-run-1-implementer-1-worker",
+            "status": "blocked"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let mut plan = staged_team_plan_json();
+    plan["assignments"] = json!([plan["assignments"][0].clone()]);
+    plan["approvals"] = json!(["start_run"]);
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "submit": true,
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "conflict");
+    assert!(err.to_string().contains("status blocked is not reusable"));
     assert!(backend.sent_text(&existing_surface_id).unwrap().is_empty());
 }
 

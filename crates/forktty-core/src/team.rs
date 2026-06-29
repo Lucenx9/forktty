@@ -94,6 +94,8 @@ pub struct TeamWorker {
     pub launched_surface_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assigned_task_id: Option<String>,
@@ -185,6 +187,7 @@ pub struct TeamWorkerLaunch {
     pub agent: String,
     pub surface_id: String,
     pub worktree_name: Option<String>,
+    pub cwd: Option<PathBuf>,
     pub assigned_task_id: Option<String>,
 }
 
@@ -409,6 +412,7 @@ impl TeamStoreData {
                     surface_id: None,
                     launched_surface_id: None,
                     worktree_name: None,
+                    cwd: None,
                     status: "idle".to_string(),
                     assigned_task_id: None,
                     last_heartbeat_ms: 0,
@@ -429,6 +433,7 @@ impl TeamStoreData {
         if surface_id.is_some() {
             worker.surface_id = surface_id;
             worker.launched_surface_id = None;
+            worker.cwd = None;
         }
         if worktree_name.is_some() {
             worker.worktree_name = worktree_name;
@@ -461,6 +466,7 @@ impl TeamStoreData {
         let agent = clean_short("agent", &input.agent)?;
         let surface_id = clean_id("surface_id", &input.surface_id)?;
         let worktree_name = clean_optional_id("worktree_name", input.worktree_name.as_deref())?;
+        let cwd = clean_optional_absolute_cwd(input.cwd.as_deref())?;
         let assigned_task_id =
             clean_optional_id("assigned_task_id", input.assigned_task_id.as_deref())?;
         let team = self.team_mut(&team_id)?;
@@ -486,6 +492,7 @@ impl TeamStoreData {
                     surface_id: None,
                     launched_surface_id: None,
                     worktree_name: None,
+                    cwd: None,
                     status: "idle".to_string(),
                     assigned_task_id: None,
                     last_heartbeat_ms: 0,
@@ -506,6 +513,7 @@ impl TeamStoreData {
         if worktree_name.is_some() {
             worker.worktree_name = worktree_name;
         }
+        worker.cwd = cwd;
         if assigned_task_id.is_some() {
             worker.assigned_task_id = assigned_task_id;
         }
@@ -1251,6 +1259,16 @@ fn clean_id(field: &str, value: &str) -> Result<String, TeamError> {
         return Err(TeamError::Invalid(format!("invalid {field}")));
     }
     Ok(value.to_string())
+}
+
+fn clean_optional_absolute_cwd(value: Option<&Path>) -> Result<Option<PathBuf>, TeamError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if !value.is_absolute() {
+        return Err(TeamError::Invalid("invalid cwd".to_string()));
+    }
+    Ok(Some(value.to_path_buf()))
 }
 
 fn clean_optional_short(field: &str, value: Option<&str>) -> Result<Option<String>, TeamError> {

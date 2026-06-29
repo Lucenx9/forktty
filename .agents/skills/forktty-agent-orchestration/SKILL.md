@@ -26,8 +26,10 @@ For normal local code changes, read and edit the repo directly.
 2. Before choosing team, workflow loop, worktree, or multi-harness execution
    for a non-trivial user task, call `task_strategy_plan` with the user's goal
    and current risk signals. It uses ForkTTY capabilities, configured team
-   provider policy, and an explicit `cwd` or the selected surface/workspace cwd
-   for simple git dirty inference, and infers likely user-visible edit intent
+   provider policy, and an explicit `cwd` inside a Git repository already
+   represented by an open ForkTTY workspace, surface, or effective project cwd,
+   or the selected surface/workspace cwd for simple git dirty inference, and
+   infers likely user-visible edit intent
    from the goal when the caller omits that hint. It also selects a router profile (`balanced`,
    `fast`, `conservative`, `parallel`, or `review_heavy`), inferring one from
    clear goal wording or using an explicit `router_profile` only when the user
@@ -65,9 +67,9 @@ For normal local code changes, read and edit the repo directly.
    the superseded pending approval request.
    Worktree-layer apply requires `worktree_name` for an already-open ForkTTY
    worktree workspace. Submit retries refuse to reuse live workers whose
-   harness, role, task, worktree or explicit cwd target, or status no longer
-   matches the current assignment. It does not create worktrees, push, merge,
-   run arbitrary commands, or schedule hidden work.
+   harness, role, task, worktree, launch cwd, effective target cwd, or status no
+   longer matches the current assignment. It does not create worktrees, push,
+   merge, run arbitrary commands, or schedule hidden work.
 3. Use `identify` first when you only need the canonical current
    workspace/surface, caller validation, and `effective_project_cwd`. It is the
    smallest read for answering "where am I in ForkTTY?" before targeting a
@@ -215,9 +217,10 @@ or parallel workers:
    verification expectations, and final report format.
 4. Message workers through the team mailbox. Dispatch only after the worker pane
    is ready. On task-strategy submit retries, ForkTTY refuses to reuse a live
-   deterministic worker whose harness, role, task, worktree or explicit cwd
-   target, or status no longer matches the current assignment; use a new run id
-   or finish the old worker instead of dispatching to the wrong pane.
+   deterministic worker whose harness, role, task, worktree, launch cwd,
+   effective target cwd, or status no longer matches the current assignment; use
+   a new run id or finish the old worker instead of dispatching to the wrong
+   pane.
 5. Monitor with `team_worker_health`, `team_events`, and bounded terminal tail
    reads. Use each worker's derived `final_state` (`shutdown_requested`,
    `closed`, `starting`, `surface_missing`, `stale`, `idle`, `running`, or

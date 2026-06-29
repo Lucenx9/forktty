@@ -323,8 +323,9 @@ assignment by role with factor breakdowns, uses configured team provider order
 as the assignment tie-break, respects each harness's declared parallel session
 capacity before selecting multi-role parallel plans, infers dirty git state
 from the selected surface/workspace cwd when `repo_dirty`/`--repo-dirty` is
-omitted, or from an explicit absolute `--cwd` / MCP `cwd` when the caller's actual repository
-differs from the selected ForkTTY pane. It also infers likely user-visible edit
+omitted, or from an explicit absolute `--cwd` / MCP `cwd` inside a Git
+repository already represented by an open ForkTTY workspace, surface, or
+effective project cwd. It also infers likely user-visible edit
 intent and clear router profiles from the goal when omitted,
 infers advisory last-known-good strategy/harness evidence from completed
 task-strategy workflows when available, and keeps reviewer strategies honest by
@@ -373,7 +374,8 @@ handling. If the plan has `layers.worktree: true`, pass
 `--worktree-name <name>`/`worktree_name` for an already-open ForkTTY worktree
 workspace; apply will reject missing or unopened worktrees before mutating
 state. Submit retries reuse a live deterministic worker only when its harness,
-role, task, worktree or explicit cwd target, and status still match the current assignment;
+role, task, worktree, launch cwd, effective target cwd, and status still match
+the current assignment;
 otherwise apply returns `conflict` before dispatching a prompt to the wrong
 pane.
 Worktree creation, push, merge, destructive commands, and out-of-scope edits

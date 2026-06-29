@@ -1,9 +1,13 @@
 use crate::{
     current_unix_epoch_ms, optional_bool_param, optional_non_blank_string_param,
-    optional_string_array_param, optional_surface_id_param, required_trimmed_string, store_access,
-    surface_effective_project_cwd, system_runtime, task_strategy_params::task_strategy_plan_params,
-    team_runtime, team_state::worker_surface_is_live, workflow_runtime,
-    workspace_effective_project_cwd, workspace_selector_from_params, DispatchError, SocketAppState,
+    optional_string_array_param, optional_surface_id_param,
+    path_resolver::{canonical_existing_dir, canonical_repo_common_dir},
+    required_trimmed_string, store_access, surface_effective_project_cwd, system_runtime,
+    task_strategy_params::task_strategy_plan_params,
+    team_runtime,
+    team_state::worker_surface_is_live,
+    workflow_runtime, workspace_effective_project_cwd, workspace_selector_from_params,
+    DispatchError, SocketAppState,
 };
 use forktty_core::{
     plan_task_strategy, validate_worktree_name, worktree, FeedApprovalState, FeedEntry,
@@ -148,6 +152,23 @@ struct TaskStrategyTargetContext {
     explicit_cwd: bool,
 }
 
+fn optional_task_strategy_surface_alias_param(
+    params: &Value,
+) -> Result<Option<String>, DispatchError> {
+    let surface_id = optional_surface_id_param(params)?;
+    let leader_surface_id = optional_non_blank_string_param(params, "leader_surface_id")?;
+    match (surface_id, leader_surface_id) {
+        (Some(surface_id), Some(leader_surface_id)) if surface_id != leader_surface_id => {
+            Err(DispatchError::InvalidParam(
+                "surface_id and leader_surface_id must match when both are provided".to_string(),
+            ))
+        }
+        (Some(surface_id), _) => Ok(Some(surface_id.to_string())),
+        (_, Some(leader_surface_id)) => Ok(Some(leader_surface_id.to_string())),
+        (None, None) => Ok(None),
+    }
+}
+
 fn task_strategy_target_context(
     state: &SocketAppState,
     params: &Value,
@@ -158,13 +179,11 @@ fn task_strategy_target_context(
     } else {
         None
     };
+    if let Some(cwd) = explicit_cwd.as_deref() {
+        validate_explicit_task_strategy_plan_cwd(state, cwd)?;
+    }
     let has_explicit_cwd = explicit_cwd.is_some();
-    let requested_surface_id = optional_surface_id_param(params)?
-        .or(optional_non_blank_string_param(
-            params,
-            "leader_surface_id",
-        )?)
-        .map(str::to_string);
+    let requested_surface_id = optional_task_strategy_surface_alias_param(params)?;
     let workspace_selector = match workspace_selector_from_params(params) {
         Ok(selector) => Some(selector),
         Err(DispatchError::MissingParam(_)) => None,
@@ -247,6 +266,51 @@ fn explicit_task_strategy_cwd(params: &Value) -> Result<Option<PathBuf>, Dispatc
         ));
     }
     Ok(Some(path))
+}
+
+fn validate_explicit_task_strategy_plan_cwd(
+    state: &SocketAppState,
+    cwd: &Path,
+) -> Result<(), DispatchError> {
+    let canonical_cwd = canonical_existing_dir(cwd, "cwd").map_err(DispatchError::from)?;
+    let candidate_repo = canonical_repo_common_dir(&canonical_cwd).map_err(|err| {
+        DispatchError::PreconditionFailed(format!(
+            "cwd is not inside an open ForkTTY workspace git repository: {err}"
+        ))
+    })?;
+    let roots = open_task_strategy_repo_context_dirs(state)?;
+    let allowed = roots
+        .iter()
+        .filter_map(|root| canonical_repo_common_dir(root).ok())
+        .any(|open_repo| open_repo == candidate_repo);
+    if allowed {
+        Ok(())
+    } else {
+        Err(DispatchError::PreconditionFailed(
+            "cwd is not inside the git repository of any open ForkTTY workspace or surface"
+                .to_string(),
+        ))
+    }
+}
+
+fn open_task_strategy_repo_context_dirs(
+    state: &SocketAppState,
+) -> Result<Vec<PathBuf>, DispatchError> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| DispatchError::Other("Lock poisoned".to_string()))?;
+    let mut dirs = Vec::new();
+    for workspace in model.list_workspaces() {
+        dirs.push(workspace.working_dir.clone());
+        let surfaces = model.list_surfaces(Some(&workspace.id));
+        dirs.push(workspace_effective_project_cwd(&workspace, &surfaces));
+        for surface in surfaces {
+            dirs.push(surface.cwd.clone());
+            dirs.push(surface_effective_project_cwd(&surface));
+        }
+    }
+    Ok(dirs)
 }
 
 async fn infer_last_known_good_from_workflows(
@@ -746,6 +810,7 @@ struct TaskStrategyApplyRequest {
     workspace_name: Option<String>,
     worktree_name: Option<String>,
     target_cwd: Option<PathBuf>,
+    effective_target_cwd: Option<PathBuf>,
     leader_surface_id: Option<String>,
     goal: String,
     plan: TaskStrategyPlan,
@@ -782,9 +847,7 @@ impl TaskStrategyApplyRequest {
             validate_task_strategy_id("approval_id", approval_id)?;
         }
         let request_approval = optional_bool_param(params, "request_approval")?.unwrap_or(false);
-        let leader_surface_id = optional_non_blank_string_param(params, "leader_surface_id")?
-            .or(optional_non_blank_string_param(params, "surface_id")?)
-            .map(str::to_string);
+        let leader_surface_id = optional_task_strategy_surface_alias_param(params)?;
         let workspace_id =
             optional_non_blank_string_param(params, "workspace_id")?.map(str::to_string);
         let workspace_name =
@@ -822,6 +885,7 @@ impl TaskStrategyApplyRequest {
             workspace_name,
             worktree_name,
             target_cwd,
+            effective_target_cwd: None,
             leader_surface_id,
             goal,
             plan,
@@ -885,7 +949,12 @@ impl TaskStrategyApplyRequest {
             .map(|cwd| infer_repo_dirty(Some(cwd)))
             .unwrap_or(false);
         let selected_target_dirty = match task_strategy_target_context(state, params, false) {
-            Ok(target) => infer_repo_dirty(target.cwd.as_deref()),
+            Ok(target) => {
+                if self.worktree_name.is_none() && self.target_cwd.is_none() {
+                    self.effective_target_cwd = target.cwd.clone();
+                }
+                infer_repo_dirty(target.cwd.as_deref())
+            }
             Err(err) if self.worktree_name.is_some() && err.code() == "not_found" => false,
             Err(err) => return Err(err),
         };
@@ -1499,6 +1568,10 @@ impl TaskStrategyApplyRequest {
 
         let expected_role = role_id(&assignment.role);
         let expected_worktree = self.worktree_name.as_deref();
+        let expected_cwd = self
+            .target_cwd
+            .as_deref()
+            .or(self.effective_target_cwd.as_deref());
         let mut mismatches = Vec::new();
         if worker["agent"].as_str() != Some(assignment.harness_id.as_str()) {
             mismatches.push(format!(
@@ -1526,8 +1599,18 @@ impl TaskStrategyApplyRequest {
                 worker["worktree_name"].as_str().unwrap_or("<none>")
             ));
         }
+        if worker["cwd"].as_str().map(Path::new) != self.target_cwd.as_deref() {
+            mismatches.push(format!(
+                "launch cwd expected {} got {}",
+                self.target_cwd
+                    .as_deref()
+                    .map(|cwd| cwd.display().to_string())
+                    .unwrap_or_else(|| "<none>".to_string()),
+                worker["cwd"].as_str().unwrap_or("<none>")
+            ));
+        }
         if let (Some(expected_cwd), Some(surface_id)) =
-            (self.target_cwd.as_deref(), worker["surface_id"].as_str())
+            (expected_cwd, worker["surface_id"].as_str())
         {
             let surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
             match surfaces
@@ -1546,14 +1629,9 @@ impl TaskStrategyApplyRequest {
                 )),
             }
         }
-        if matches!(
-            worker["status"].as_str(),
-            Some("shutdown_requested" | "closed" | "done")
-        ) {
-            mismatches.push(format!(
-                "status {} is not reusable",
-                worker["status"].as_str().unwrap_or("<none>")
-            ));
+        let worker_status = worker["status"].as_str().unwrap_or("<none>");
+        if !matches!(worker_status, "running" | "busy" | "active" | "working") {
+            mismatches.push(format!("status {worker_status} is not reusable"));
         }
         if !mismatches.is_empty() {
             return Err(DispatchError::Conflict(format!(

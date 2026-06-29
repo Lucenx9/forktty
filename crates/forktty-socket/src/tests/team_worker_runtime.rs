@@ -608,6 +608,7 @@ async fn team_worker_shutdown_rejects_close_for_persisted_launch_without_runtime
                 agent: "codex".to_string(),
                 surface_id: surface_id.clone(),
                 worktree_name: None,
+                cwd: None,
                 assigned_task_id: None,
             },
             forktty_core::team_now_ms(),

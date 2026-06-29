@@ -71,9 +71,17 @@ All notable changes to ForkTTY are documented here.
   superset of required approvals can still satisfy the remaining approvals when
   the caller also supplies explicit attestations for part of the same request.
 - Fixed task strategy submit retries so an existing live worker is reused only
-  when its harness, role, task, worktree, and reusable status match the current
-  deterministic assignment; incompatible live workers now return `conflict`
-  before any prompt dispatch.
+  when its harness, role, task, worktree, and active worker status match the
+  current deterministic assignment; blocked, idle, or needs-input workers now
+  return `conflict` before any prompt dispatch.
+- Fixed task strategy apply so conflicting `surface_id` and `leader_surface_id`
+  aliases are rejected before dirty-repo checks or workflow/team mutation.
+- Fixed task strategy planning so explicit `cwd` context is limited to Git
+  repositories already represented by an open ForkTTY workspace, surface, or
+  effective project cwd.
+- Fixed task strategy submit retries so a live worker whose launch cwd or
+  surface cwd differs from the selected target cwd is rejected even when the
+  retry omits an explicit `cwd`.
 - Fixed task strategy submit retries so a persisted worker record with a closed
   or missing surface is relaunched before dispatching its still-pending role
   prompt.
