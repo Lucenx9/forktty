@@ -561,7 +561,7 @@ as `running`, upserts the team as `active`, creates each task before launch,
 launches one visible worker pane per assignment through `team.worker.launch`,
 assigns the task to the launched worker, queues a deterministic role prompt,
 and dispatches it through `team.message.dispatch` with provider-aware submit
-semantics. Freshly launched Claude/Pi worker panes get a brief initial prompt
+semantics. Freshly launched provider TUI worker panes get a brief initial prompt
 settle before the first dispatch. `submit: true` is rejected for plans without
 `layers.team: true`,
 because ForkTTY would otherwise mark a run active without opening visible worker
@@ -690,7 +690,7 @@ socket-ready yet, dispatch waits up to 10 seconds before returning `not_ready`.
 Submit mode uses provider-aware terminal input: Claude/Pi get staged text, a
 short settle, and a separate Enter, while line-oriented providers keep text plus
 carriage-return Enter in one write. When the target is a current-runtime
-launch-owned Claude/Pi worker surface that was just created by
+launch-owned provider TUI worker surface that was just created by
 `team.worker.launch`, dispatch also waits briefly for the provider TUI to reach
 its initial prompt before sending the first queued message.
 

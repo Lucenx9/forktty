@@ -184,9 +184,10 @@ namespace or prefix when a host UI requires fully qualified tool names.
    `team_message_dispatch`. Use the dispatch `submit` option only when the
    prompt is ready to run; ForkTTY uses provider-aware terminal submit
    behavior, including a short settle before the separate Enter for Claude/Pi
-   TUIs, a brief initial prompt settle for freshly launched Claude/Pi workers,
-   and one text+CR write for providers that accept it reliably. Do not rely on
-   a trailing LF as equivalent to pressing Enter in full-screen agent TUIs.
+   TUIs, a brief initial prompt settle for freshly launched provider TUI
+   workers, and one text+CR write for providers that accept it reliably. Do
+   not rely on a trailing LF as equivalent to pressing Enter in full-screen
+   agent TUIs.
 4. If delivery succeeds but the worker does not start, inspect the pane before
    retrying; the target TUI may still be staging input or waiting for a
    provider-specific confirmation.

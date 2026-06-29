@@ -473,7 +473,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
                     "team_id": string_prop("Team id."),
                     "message_id": string_prop("Message id."),
                     "worker_id": string_prop("Required when dispatching a team-wide message."),
-                    "submit": boolean_prop("Use provider-aware submit behavior for the dispatched terminal input, including a short settle before Claude/Pi Enter and a brief initial prompt settle for freshly launched Claude/Pi workers. Defaults to false."),
+                    "submit": boolean_prop("Use provider-aware submit behavior for the dispatched terminal input, including a short settle before Claude/Pi Enter and a brief initial prompt settle for freshly launched provider TUI workers. Defaults to false."),
                 }),
             ),
         },

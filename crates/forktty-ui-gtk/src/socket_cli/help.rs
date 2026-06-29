@@ -121,7 +121,7 @@ High-level wrappers:
       Create/update the team, create the task, launch a fresh worker surface, assign the task, queue the prompt, and dispatch it.
       Omit --agent, or pass --agent auto, to use Settings > Agents team provider selection.
       Submit uses provider-aware terminal input; Claude/Pi get text, a short settle, then Enter.
-      Freshly launched Claude/Pi workers wait briefly before the first prompt.
+      Freshly launched provider TUI workers wait briefly before the first prompt.
       Re-running ask/review launches another worker; use team-message-send + team-message-dispatch for follow-ups.
       Options: --agent <auto|codex|claude|pi|opencode|antigravity>, --role <role>, --title <title>, --goal <text>, --worktree-name <name>,
                --args <comma-list>, --submit[=true|false] (default: true; pass --submit=false to stage only).
@@ -144,7 +144,7 @@ Low-level aliases still exist:
   forktty team-worker-shutdown --close closes current-runtime launch-owned disposable worker panes
   forktty team-message-send | team.message.send
   forktty team-message-dispatch | team.message.dispatch
-      With --submit, uses provider-aware terminal input and fresh Claude/Pi worker settle.
+      With --submit, uses provider-aware terminal input and fresh provider TUI worker settle.
 ";
 
 pub(super) const STATUS_HELP_TEXT: &str = "\

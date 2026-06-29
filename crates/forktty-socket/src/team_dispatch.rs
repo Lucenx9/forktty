@@ -91,7 +91,7 @@ pub(crate) async fn wait_for_provider_initial_prompt_settle(
 fn agent_needs_initial_prompt_settle(agent: Option<&str>) -> bool {
     matches!(
         normalized_agent(agent).as_str(),
-        "claude" | "claude_code" | "claude-code" | "pi"
+        "claude" | "claude_code" | "claude-code" | "codex" | "opencode" | "pi" | "antigravity"
     )
 }
 

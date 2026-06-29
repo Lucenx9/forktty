@@ -84,6 +84,9 @@ All notable changes to ForkTTY are documented here.
   worker target are not reused when launching workers for a later apply.
 - Fixed team message dispatch for freshly launched Claude/Pi workers so ForkTTY
   waits briefly before the first prompt and uses a separate submit Enter for Pi.
+- Fixed team message dispatch for freshly launched Codex, OpenCode, and
+  Antigravity workers so ForkTTY waits briefly before sending the first task
+  prompt.
 - Fixed Claude/Pi team message dispatch retries so a failed separate submit
   Enter does not resend and duplicate the already-written prompt body.
 - Fixed Feed approval responses so dismissed, stale, approved, or denied

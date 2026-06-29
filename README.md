@@ -385,11 +385,11 @@ launch a fresh worker surface, assign the task after launch, queue the prompt,
 and dispatch it. Submit mode uses provider-aware terminal input: providers that
 accept it reliably receive text plus carriage-return Enter in one write, while
 Claude and Pi receive the text, a short settle, and a separate Enter so their
-TUIs start the staged prompt reliably. Freshly launched Claude/Pi workers also
-get a brief initial prompt settle before the first dispatch. Human CLI output
-names the worker, selected provider when
-known, task, target surface, and whether the prompt was dispatched or submitted
-so a leader can tell which visible pane to monitor without opening JSON.
+TUIs start the staged prompt reliably. Freshly launched provider TUI workers
+also get a brief initial prompt settle before the first dispatch. Human CLI
+output names the worker, selected provider when known, task, target surface,
+and whether the prompt was dispatched or submitted so a leader can tell which
+visible pane to monitor without opening JSON.
 Re-run them to launch a new worker;
 use `team-message-send` plus `team-message-dispatch` for follow-up prompts to
 an existing worker. Context snapshots include compact `team_summaries` rows so
