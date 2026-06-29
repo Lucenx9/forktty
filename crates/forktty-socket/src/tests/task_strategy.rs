@@ -1735,6 +1735,69 @@ async fn task_strategy_apply_is_idempotent_for_staged_messages() {
 }
 
 #[tokio::test]
+async fn task_strategy_apply_staged_prompt_with_changed_cwd_queues_new_message() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    let first_dir = tempfile::tempdir().unwrap();
+    let second_dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": surface_id,
+            "cwd": first_dir.path(),
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+
+    let result = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": surface_id,
+            "cwd": second_dir.path(),
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert!(result["actions"].as_array().unwrap().iter().any(|action| {
+        action["method"] == "team.message.send"
+            && action["message_id"] == "router-run-1-implementer-1-msg-2"
+            && action["status"] == "applied"
+    }));
+    let team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
+        .await
+        .unwrap();
+    assert_eq!(team["messages"].as_array().unwrap().len(), 4);
+    assert!(team["messages"].as_array().unwrap().iter().any(|message| {
+        message["id"] == "router-run-1-implementer-1-msg-2"
+            && message["delivered"] == false
+            && message["body"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(second_dir.path().to_str().unwrap())
+    }));
+}
+
+#[tokio::test]
 #[serial_test::serial]
 async fn task_strategy_apply_submit_launches_visible_workers_and_dispatches_prompts() {
     let (mut state, backend) = test_state();

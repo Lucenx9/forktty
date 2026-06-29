@@ -82,6 +82,9 @@ All notable changes to ForkTTY are documented here.
   surface.
 - Fixed task strategy submit so staged prompts with a stale cwd, body, or
   worker target are not reused when launching workers for a later apply.
+- Fixed staged task strategy apply retries so a changed cwd, body, or target
+  queues the next deterministic role prompt instead of reusing a stale pending
+  message.
 - Fixed team message dispatch for freshly launched Claude/Pi workers so ForkTTY
   waits briefly before the first prompt and uses a separate submit Enter for Pi.
 - Fixed team message dispatch for freshly launched Codex, OpenCode, and

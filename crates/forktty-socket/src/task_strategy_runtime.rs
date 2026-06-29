@@ -1419,6 +1419,7 @@ impl TaskStrategyApplyRequest {
         let prefix = format!("{task_id}-msg-");
         let mut max_suffix = 0u32;
         let mut pending_id = None;
+        let mut delivered_id = None;
         for message in messages {
             let Some(id) = message["id"].as_str() else {
                 continue;
@@ -1438,14 +1439,21 @@ impl TaskStrategyApplyRequest {
             if message["body"].as_str() != Some(expected_body) {
                 continue;
             }
-            if !message["delivered"].as_bool().unwrap_or(false) {
+            if message["delivered"].as_bool().unwrap_or(false) {
+                delivered_id = Some(id.to_string());
+            } else {
                 pending_id = Some(id.to_string());
             }
         }
         if let Some(pending_id) = pending_id {
             return Ok(pending_id);
         }
-        if self.submit && worker_launched_for_assignment && max_suffix > 0 {
+        if let Some(delivered_id) = delivered_id {
+            if !(self.submit && worker_launched_for_assignment) {
+                return Ok(delivered_id);
+            }
+        }
+        if max_suffix > 0 {
             return Ok(format!("{prefix}{}", max_suffix + 1));
         }
         Ok(base_message_id.to_string())
