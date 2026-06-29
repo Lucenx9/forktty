@@ -2,8 +2,8 @@ use crate::{
     current_unix_epoch_ms, optional_bool_param, optional_non_blank_string_param,
     optional_string_array_param, optional_surface_id_param, required_trimmed_string, store_access,
     surface_effective_project_cwd, system_runtime, task_strategy_params::task_strategy_plan_params,
-    team_runtime, workflow_runtime, workspace_effective_project_cwd,
-    workspace_selector_from_params, DispatchError, SocketAppState,
+    team_runtime, team_state::worker_surface_is_live, workflow_runtime,
+    workspace_effective_project_cwd, workspace_selector_from_params, DispatchError, SocketAppState,
 };
 use forktty_core::{
     plan_task_strategy, validate_worktree_name, worktree, FeedApprovalState, FeedEntry,
@@ -409,7 +409,10 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
 
             let worker_id = request.assignment_worker_id(index, assignment);
             if request.submit {
-                if request.team_worker_exists(state, &worker_id).await? {
+                if request
+                    .team_worker_has_live_surface(state, &worker_id)
+                    .await?
+                {
                     actions.push(json!({
                         "method": "team.worker.launch",
                         "status": "already_exists",
@@ -1340,17 +1343,22 @@ impl TaskStrategyApplyRequest {
             .unwrap_or(false))
     }
 
-    async fn team_worker_exists(
+    async fn team_worker_has_live_surface(
         &self,
         state: &SocketAppState,
         worker_id: &str,
     ) -> Result<bool, DispatchError> {
         let team = team_runtime::get(state, &json!({"team_id": self.team_id})).await?;
-        Ok(team["workers"]
+        let Some(surface_id) = team["workers"]
             .as_array()
             .into_iter()
             .flatten()
-            .any(|worker| worker["id"].as_str() == Some(worker_id)))
+            .find(|worker| worker["id"].as_str() == Some(worker_id))
+            .and_then(|worker| worker["surface_id"].as_str())
+        else {
+            return Ok(false);
+        };
+        worker_surface_is_live(state, surface_id)
     }
 }
 

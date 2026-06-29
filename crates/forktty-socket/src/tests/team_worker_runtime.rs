@@ -246,6 +246,68 @@ async fn dispatches_team_orchestration_runtime_methods() {
 
 #[tokio::test]
 #[serial_test::serial]
+async fn team_worker_launch_allows_relaunch_when_record_surface_runtime_is_missing() {
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_codex(bin_dir.path());
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let (mut state, backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "name": "Launch",
+            "goal": "relaunch stale runtime"
+        }),
+    )
+    .await
+    .unwrap();
+    let first = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex",
+            "role": "implementer"
+        }),
+    )
+    .await
+    .unwrap();
+    let first_surface_id = first["surface"]["id"].as_str().unwrap().to_string();
+    backend.close(&first_surface_id).unwrap();
+    assert!(state
+        .model
+        .lock()
+        .unwrap()
+        .surface(&first_surface_id)
+        .is_some());
+
+    let second = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex",
+            "role": "implementer"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let second_surface_id = second["surface"]["id"].as_str().unwrap();
+    assert_ne!(second_surface_id, first_surface_id);
+    assert_eq!(second["worker"]["surface_id"], second_surface_id);
+    assert_eq!(backend.spawn_shell(second_surface_id).unwrap(), "codex");
+    assert!(backend.sent_text(&first_surface_id).is_err());
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn team_worker_shutdown_can_close_launch_owned_worker_surface() {
     let bin_dir = tempfile::tempdir().unwrap();
     let _codex = write_fake_codex(bin_dir.path());

@@ -25,6 +25,9 @@ pub(crate) fn approval_respond(
             forktty_core::FeedError::NotFound(_) => {
                 DispatchError::NotFound("feed entry".to_string())
             }
+            forktty_core::FeedError::InvalidState(message) => {
+                DispatchError::PreconditionFailed(message)
+            }
             other => DispatchError::Other(other.to_string()),
         })
 }

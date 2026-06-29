@@ -531,12 +531,14 @@ create or reuse a pending Feed approval with a deterministic request-bound id sh
 and still do not mutate workflow/team state. The fingerprint binds the approval
 to the run id, goal, plan, submit mode, and target scope, so an approved Feed
 entry cannot be reused for a different apply request with the same `run_id`.
-Agents or users can approve/deny that entry through `feed.approval.respond`,
-then retry apply with the returned `approval_id`. If the caller instead retries
-with equivalent explicit `approved` attestations, apply marks any matching
-pending task-strategy Feed approval request as `dismissed` before staging the
-visible workflow/team state, so a superseded prompt does not continue raising
-the `pending_approval` risk flag.
+Agents or users can approve/deny that still-pending entry through
+`feed.approval.respond`, then retry apply with the returned `approval_id`.
+Already approved, denied, dismissed, or stale approval entries reject later
+approval decisions and cannot be reused as fresh authorization. If the caller
+instead retries with equivalent explicit `approved` attestations, apply marks
+any matching pending task-strategy Feed approval request as `dismissed` before
+staging the visible workflow/team state, so a superseded prompt does not
+continue raising the `pending_approval` risk flag.
 With `submit` omitted or `false`, apply performs staged setup only: it can
 upsert a workflow, write workflow plan steps, set loop metadata, upsert a team,
 create team tasks, and queue team-wide messages. With `submit: true`, a
@@ -851,7 +853,7 @@ Notification sources:
 
 Notifications update in-app unread state and may dispatch through `notify-rust` and `notification_command`. Workspace/surface-targeted desktop notifications register a best-effort default `Open` action, using the freedesktop `default` action key, that argv-executes the current ForkTTY binary to focus the target surface or workspace; global notifications remain passive. Custom commands are argv-executed, not `sh -c`; title/body are passed through environment variables, and terminal-originated OSC 99 `f`/`t` metadata is passed as `FORKTTY_NOTIFICATION_TERMINAL_APP` plus JSON array `FORKTTY_NOTIFICATION_TERMINAL_TYPES_JSON`. `blocked_terminal_apps` and `blocked_terminal_types` are exact string match filters for terminal-originated OSC 99 `f`/`t` metadata before the notification is stored or dispatched. OSC 99 notification identifiers are tracked and echoed only when they use the protocol identifier character set (`A-Z`, `a-z`, `0-9`, `_`, `-`, `+`, `.`); unsafe identifiers are treated as untracked notification payloads or ignored for reply-only actions. Unknown OSC 99 payload types are ignored so future protocol extensions do not surface as terminal status noise. OSC 99 binary icons are rendered in-app when GTK can decode them, after `n=` icon names and `f=` application-name icon fallback; desktop binary icons are materialized as bounded files under `$XDG_RUNTIME_DIR/forktty-notification-icons` and removed when the tracked desktop notification is replaced, closed, or evicted.
 
-Prompt notification feed rows expose `approval_state` as `pending`, `approved`, `denied`, `dismissed`, or `stale`. `notification.clear` and the GTK notification panel's dismiss/clear actions mark still-pending prompt approvals as `dismissed`, close any matching desktop notification, and send OSC 99 close reports when the originating terminal requested close reporting. `feed.list` and `context.snapshot` normalize still-pending approvals whose target workspace or surface no longer exists to `stale`; only `pending` approvals raise the snapshot `pending_approval` risk flag.
+Prompt notification feed rows expose `approval_state` as `pending`, `approved`, `denied`, `dismissed`, or `stale`. `feed.approval.respond` accepts approve/deny decisions only while an approval entry is still `pending`; entries already approved, denied, dismissed, or stale return `precondition_failed`. `notification.clear` and the GTK notification panel's dismiss/clear actions mark still-pending prompt approvals as `dismissed`, close any matching desktop notification, and send OSC 99 close reports when the originating terminal requested close reporting. `feed.list` and `context.snapshot` normalize still-pending approvals whose target workspace or surface no longer exists to `stale`; only `pending` approvals raise the snapshot `pending_approval` risk flag.
 
 ## Security Constraints
 

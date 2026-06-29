@@ -599,17 +599,22 @@ fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
     {
         return TaskClass::ParallelResearch;
     }
-    if contains_token(&lower, &["review", "reviews"])
-        || lower.contains("read-only")
+    if lower.contains("read-only")
+        || (contains_token(&lower, &["review", "reviews"]) && contains_token(&lower, &["only"]))
         || (contains_token(&lower, &["read"]) && contains_token(&lower, &["only"]))
     {
+        return TaskClass::ReviewOnly;
+    }
+    if contains_token_prefix(&lower, &["fix", "bug"]) {
+        return TaskClass::FocusedBugfix;
+    }
+    if contains_token(&lower, &["review", "reviews"]) {
         return TaskClass::ReviewOnly;
     }
     if contains_token(
         &lower,
         &["test", "tests", "testing", "verify", "verifies", "verified"],
-    ) || contains_token_prefix(&lower, &["fix", "bug"])
-    {
+    ) {
         return TaskClass::FocusedBugfix;
     }
     if contains_token_prefix(&lower, &["implement", "add", "build"]) {
@@ -1261,6 +1266,45 @@ mod tests {
             .factors
             .iter()
             .any(|factor| factor.name == "review_request" && factor.points > 0));
+    }
+
+    #[test]
+    fn fixing_review_feedback_routes_as_bugfix_not_review_only() {
+        let plan = plan_task_strategy(TaskStrategyInput {
+            goal: "Address review feedback by fixing task strategy apply bug and run tests"
+                .to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: false,
+            user_requested_review: false,
+            likely_user_visible_change: true,
+            harness_registry: caps(),
+        })
+        .unwrap();
+
+        assert_eq!(plan.task_class, TaskClass::FocusedBugfix);
+        assert_eq!(plan.strategy, TaskStrategy::SoloWithVerifyLoop);
+    }
+
+    #[test]
+    fn reviewing_test_coverage_stays_review_only() {
+        let plan = plan_task_strategy(TaskStrategyInput {
+            goal: "Review task strategy test coverage".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: false,
+            user_requested_review: false,
+            likely_user_visible_change: false,
+            harness_registry: caps(),
+        })
+        .unwrap();
+
+        assert_eq!(plan.task_class, TaskClass::ReviewOnly);
+        assert_eq!(plan.strategy, TaskStrategy::ReviewOnly);
     }
 
     #[test]

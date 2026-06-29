@@ -1094,6 +1094,60 @@ async fn task_strategy_apply_dismisses_superseded_pending_approval_request() {
 }
 
 #[tokio::test]
+async fn task_strategy_dismissed_approval_request_cannot_be_reapproved() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let state = state
+        .with_feed_store_path(dir.path().join("feed.json"))
+        .unwrap();
+
+    let approval = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement the router",
+            "approved": [],
+            "request_approval": true,
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+    let approval_id = approval["approval_request"]["id"].as_str().unwrap();
+    dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+
+    let err = dispatch(
+        &state,
+        "feed.approval.respond",
+        json!({"id": approval_id, "decision": "approve"}),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "precondition_failed");
+    assert!(err.to_string().contains("not pending"));
+    let feed = dispatch(&state, "feed.list", json!({"limit": 10}))
+        .await
+        .unwrap();
+    assert_eq!(feed[0]["id"], approval_id);
+    assert_eq!(feed[0]["approval_state"], "dismissed");
+}
+
+#[tokio::test]
 async fn task_strategy_apply_dismisses_superseded_pending_approval_when_approval_id_is_also_sent() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();
@@ -1671,6 +1725,100 @@ async fn task_strategy_apply_submit_launches_visible_workers_and_dispatches_prom
     assert_eq!(backend.spawn_shell(reviewer_surface).unwrap(), "claude");
     assert_eq!(backend.sent_text(implementer_surface).unwrap().len(), 1);
     assert_eq!(backend.sent_text(reviewer_surface).unwrap().len(), 2);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn task_strategy_apply_submit_relaunches_worker_when_record_surface_runtime_is_missing() {
+    let (mut state, backend) = test_state();
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _claude = write_fake_program(bin_dir.path(), "claude");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": surface_id,
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+    let stale_worker = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "router-run-1",
+            "worker_id": "router-run-1-implementer-1-worker",
+            "agent": "codex",
+            "role": "implementer",
+            "assigned_task_id": "router-run-1-implementer-1"
+        }),
+    )
+    .await
+    .unwrap();
+    let stale_surface_id = stale_worker["surface"]["id"].as_str().unwrap().to_string();
+    backend.close(&stale_surface_id).unwrap();
+    assert!(state
+        .model
+        .lock()
+        .unwrap()
+        .surface(&stale_surface_id)
+        .is_some());
+
+    let result = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": surface_id,
+            "goal": "Implement the router",
+            "approved": ["start_run", "launch_parallel_workers"],
+            "submit": true,
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["status"], "running");
+    assert!(result["actions"].as_array().unwrap().iter().any(|action| {
+        action["method"] == "team.worker.launch"
+            && action["worker_id"] == "router-run-1-implementer-1-worker"
+            && action["status"] == "applied"
+    }));
+
+    let team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
+        .await
+        .unwrap();
+    let implementer = team["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|worker| worker["id"] == "router-run-1-implementer-1-worker")
+        .unwrap();
+    let relaunched_surface_id = implementer["surface_id"].as_str().unwrap();
+    assert_ne!(relaunched_surface_id, stale_surface_id);
+    assert!(team["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|message| message["delivered"] == true));
+    assert!(backend.sent_text(&stale_surface_id).is_err());
+    assert_eq!(backend.spawn_shell(relaunched_surface_id).unwrap(), "codex");
 }
 
 #[tokio::test]

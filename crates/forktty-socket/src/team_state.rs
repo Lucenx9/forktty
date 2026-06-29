@@ -84,16 +84,34 @@ pub(crate) async fn ensure_team_worker_can_launch(
     }) else {
         return Ok(());
     };
-    let model = state
-        .model
-        .lock()
-        .map_err(|_| "Lock poisoned".to_string())?;
-    if model.surface(&surface_id).is_some() {
+    if worker_surface_is_live(state, &surface_id)? {
         return Err(DispatchError::Conflict(format!(
             "team worker {worker_id} is already launched on surface {surface_id}"
         )));
     }
     Ok(())
+}
+
+pub(crate) fn worker_surface_is_live(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> Result<bool, DispatchError> {
+    let model_surface_present = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        model.surface(surface_id).is_some()
+    };
+    if !model_surface_present {
+        return Ok(false);
+    }
+    Ok(state
+        .terminal
+        .surfaces()
+        .map_err(DispatchError::from)?
+        .iter()
+        .any(|surface| surface.surface_id == surface_id))
 }
 
 pub(crate) async fn team_worker_surface_id(

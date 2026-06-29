@@ -11,6 +11,7 @@ pub enum FeedError {
     Io(String),
     Json(String),
     NotFound(String),
+    InvalidState(String),
 }
 
 impl std::fmt::Display for FeedError {
@@ -19,6 +20,7 @@ impl std::fmt::Display for FeedError {
             FeedError::Io(err) => write!(f, "feed io error: {err}"),
             FeedError::Json(err) => write!(f, "feed json error: {err}"),
             FeedError::NotFound(id) => write!(f, "feed entry not found: {id}"),
+            FeedError::InvalidState(message) => write!(f, "{message}"),
         }
     }
 }
@@ -176,6 +178,11 @@ impl FeedStore {
         else {
             return Err(FeedError::NotFound(id.to_string()));
         };
+        if entry.approval_state != Some(FeedApprovalState::Pending) {
+            return Err(FeedError::InvalidState(format!(
+                "feed approval {id} is not pending"
+            )));
+        }
         let previous = entry.approval_state.clone();
         entry.approval_state = Some(state);
         let entry = entry.clone();

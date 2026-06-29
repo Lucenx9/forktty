@@ -61,6 +61,15 @@ All notable changes to ForkTTY are documented here.
   positional goals, plan JSON, `cwd`, and approval decisions directly.
 
 ### Fixed
+- Fixed task strategy submit retries so a persisted worker record with a closed
+  or missing surface is relaunched before dispatching its still-pending role
+  prompt.
+- Fixed Feed approval responses so dismissed, stale, approved, or denied
+  approvals cannot be re-approved and reused after the pending request is no
+  longer active.
+- Fixed task strategy classification so goals that mention review feedback but
+  explicitly ask to fix a bug still route through the bugfix verify-loop path
+  instead of being treated as read-only review work.
 - Fixed task strategy apply so a pending Feed approval request is dismissed
   when the same run is later applied with equivalent explicit `approved`
   attestations, including retries that also pass the superseded `approval_id`,

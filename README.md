@@ -346,10 +346,12 @@ returns `status: "blocked"` without mutating workflow/team state; after
 `forktty feed respond <approval-id> --decision approve`, retry apply with
 `--approval-id <approval-id>`/`approval_id`. The returned approval id is bound
 to that run id, goal, plan, target scope, and submit mode; request a new
-approval when any of those change. If a caller instead retries with an
-equivalent explicit `--approved` / `approved` attestation, ForkTTY dismisses the
-now-superseded pending Feed approval so it no longer raises a `pending_approval`
-risk flag. Apply recomputes dirty-repo edit isolation
+approval when any of those change. Approval decisions are accepted only while
+the Feed approval is still pending; dismissed, stale, approved, or denied
+entries cannot be reused as fresh authorization. If a caller instead retries
+with an equivalent explicit `--approved` / `approved` attestation, ForkTTY
+dismisses the now-superseded pending Feed approval so it no longer raises a
+`pending_approval` risk flag. Apply recomputes dirty-repo edit isolation
 from the selected surface/workspace and required approvals from the requested
 operation and effective plan shape, so dirty editing tasks cannot drop
 `create_worktree` and multi-worker submit cannot drop `launch_parallel_workers`
