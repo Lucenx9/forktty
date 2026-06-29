@@ -4,17 +4,21 @@ use crate::team_provider::{
 };
 use crate::team_state::{
     create_team_worker_surface, ensure_team_message_not_terminal_dispatched,
-    ensure_team_worker_can_launch, forget_team_message_terminal_dispatched,
-    remember_team_launch_owned_surface, remember_team_message_terminal_dispatched,
-    team_message_dispatch_target, team_terminal_dispatched_message, team_worker_agent,
-    team_worker_health_rows, team_worker_launch_owned_surface_id, team_worker_surface_id,
+    ensure_team_worker_can_launch, forget_team_message_terminal_body_sent,
+    forget_team_message_terminal_dispatched, remember_team_launch_owned_surface,
+    remember_team_message_terminal_body_sent, remember_team_message_terminal_dispatched,
+    team_message_dispatch_target, team_message_terminal_body_sent,
+    team_terminal_dispatched_message, team_worker_agent, team_worker_health_rows,
+    team_worker_launch_owned_surface_id, team_worker_surface_id,
 };
 use crate::{
     close_surface_request, close_terminal_surface_if_present, rollback_surface_creation,
     store_access,
     team_dispatch::{
-        dispatch_team_message_text, send_team_submit_enter_after_settle,
+        dispatch_team_message_text, send_team_message_body_when_ready,
+        send_team_submit_enter_after_settle, show_team_message_surface,
         terminal_text_and_separate_enter, terminal_text_with_submit_enter,
+        wait_for_provider_initial_prompt_settle,
     },
     team_params::{
         TeamEventsRequest, TeamFinishRequest, TeamGetRequest, TeamInboxRequest, TeamListRequest,
@@ -562,16 +566,30 @@ pub(crate) async fn message_dispatch(
     let terminal_message =
         team_terminal_dispatched_message(state, &request.team_id, &request.message_id)?;
     ensure_team_message_not_terminal_dispatched(state, &terminal_message)?;
-    dispatch_team_message_text(
-        state,
-        &target.surface_id,
-        &target.body,
-        request.submit,
-        target.agent.as_deref(),
-        target.launched_at_ms,
-    )
-    .await?;
+    let (text, separate_enter) =
+        terminal_text_and_separate_enter(&target.body, request.submit, target.agent.as_deref());
+    if separate_enter {
+        show_team_message_surface(state, &target.surface_id)?;
+        wait_for_provider_initial_prompt_settle(target.agent.as_deref(), target.launched_at_ms)
+            .await;
+        if !team_message_terminal_body_sent(state, &terminal_message, &target.surface_id)? {
+            send_team_message_body_when_ready(state, &target.surface_id, &text).await?;
+            remember_team_message_terminal_body_sent(state, &terminal_message, &target.surface_id)?;
+        }
+        send_team_submit_enter_after_settle(state, &target.surface_id).await?;
+    } else {
+        dispatch_team_message_text(
+            state,
+            &target.surface_id,
+            &target.body,
+            request.submit,
+            target.agent.as_deref(),
+            target.launched_at_ms,
+        )
+        .await?;
+    }
     remember_team_message_terminal_dispatched(state, terminal_message.clone())?;
+    forget_team_message_terminal_body_sent(state, &terminal_message)?;
     let ack_worker_id = target.worker_id.clone();
     let message = store_access::team_store_access(state)?
         .update(move |store| {

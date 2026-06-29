@@ -71,7 +71,10 @@ fn agent_uses_separate_submit_enter(agent: Option<&str>) -> bool {
     )
 }
 
-async fn wait_for_provider_initial_prompt_settle(agent: Option<&str>, launched_at_ms: Option<u64>) {
+pub(crate) async fn wait_for_provider_initial_prompt_settle(
+    agent: Option<&str>,
+    launched_at_ms: Option<u64>,
+) {
     if !agent_needs_initial_prompt_settle(agent) {
         return;
     }
@@ -100,7 +103,7 @@ fn normalized_agent(agent: Option<&str>) -> String {
         .to_string()
 }
 
-fn show_team_message_surface(
+pub(crate) fn show_team_message_surface(
     state: &SocketAppState,
     surface_id: &str,
 ) -> Result<(), DispatchError> {
@@ -119,7 +122,7 @@ fn show_team_message_surface(
         .map_err(DispatchError::from)
 }
 
-async fn send_team_message_body_when_ready(
+pub(crate) async fn send_team_message_body_when_ready(
     state: &SocketAppState,
     surface_id: &str,
     body: &str,

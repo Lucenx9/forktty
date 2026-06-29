@@ -1843,6 +1843,62 @@ async fn task_strategy_apply_submit_launches_visible_workers_and_dispatches_prom
 
 #[tokio::test]
 #[serial_test::serial]
+async fn task_strategy_apply_submit_retry_after_claude_enter_failure_does_not_resend_prompt() {
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _claude = write_fake_program(bin_dir.path(), "claude");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(FailingEnterBackend::default());
+    let mut state = SocketAppState::new(
+        model,
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    let params = json!({
+        "run_id": "router-run-1",
+        "workspace_id": workspace_id,
+        "leader_surface_id": surface_id,
+        "goal": "Implement the router",
+        "approved": ["start_run", "launch_parallel_workers"],
+        "submit": true,
+        "plan": staged_team_plan_json()
+    });
+
+    let first = dispatch(&state, "task.strategy.apply", params.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(first.code(), "error");
+    let team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
+        .await
+        .unwrap();
+    let reviewer = team["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|worker| worker["id"] == "router-run-1-reviewer-2-worker")
+        .unwrap();
+    let reviewer_surface_id = reviewer["surface_id"].as_str().unwrap();
+    assert_eq!(backend.sent_text(reviewer_surface_id).unwrap().len(), 1);
+
+    let retry = dispatch(&state, "task.strategy.apply", params)
+        .await
+        .unwrap_err();
+    assert_eq!(retry.code(), "error");
+    assert_eq!(backend.sent_text(reviewer_surface_id).unwrap().len(), 1);
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn task_strategy_apply_submit_uses_explicit_cwd_for_worker_launches_and_prompts() {
     let (mut state, backend) = test_state();
     let bin_dir = tempfile::tempdir().unwrap();

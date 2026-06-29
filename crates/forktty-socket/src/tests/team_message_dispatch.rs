@@ -852,6 +852,192 @@ async fn team_message_dispatch_submit_uses_separate_enter_for_pi() {
 }
 
 #[tokio::test]
+async fn team_message_dispatch_retry_after_separate_enter_failure_does_not_resend_body() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(FailingEnterBackend::default());
+    let mut state = SocketAppState::new(
+        model,
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    state.workflow_store_path = None;
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "leader_surface_id": surface_id
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "claude",
+            "surface_id": surface_id
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.message.send",
+        json!({
+            "team_id": "team-1",
+            "message_id": "msg-submit",
+            "from": "leader",
+            "to_worker_id": "worker-1",
+            "body": "run status"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let first = dispatch(
+        &state,
+        "team.message.dispatch",
+        json!({"team_id": "team-1", "message_id": "msg-submit", "submit": true}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(first.code(), "error");
+    assert_eq!(
+        backend.sent_text(surface_id).unwrap(),
+        vec!["run status".to_string()]
+    );
+
+    let retry = dispatch(
+        &state,
+        "team.message.dispatch",
+        json!({"team_id": "team-1", "message_id": "msg-submit", "submit": true}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(retry.code(), "error");
+    assert_eq!(
+        backend.sent_text(surface_id).unwrap(),
+        vec!["run status".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn team_message_dispatch_retry_after_enter_failure_resends_body_to_new_surface() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(FailingEnterBackend::default());
+    let mut state = SocketAppState::new(
+        model,
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    state.workflow_store_path = None;
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let first_surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    let second_workspace_dir = tempfile::tempdir().unwrap();
+    let second_workspace = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "retry-target", "workingDir": second_workspace_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let second_surface_id = second_workspace["focused_surface_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "leader_surface_id": first_surface_id
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "claude",
+            "surface_id": first_surface_id
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.message.send",
+        json!({
+            "team_id": "team-1",
+            "message_id": "msg-submit",
+            "from": "leader",
+            "to_worker_id": "worker-1",
+            "body": "run status"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let first = dispatch(
+        &state,
+        "team.message.dispatch",
+        json!({"team_id": "team-1", "message_id": "msg-submit", "submit": true}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(first.code(), "error");
+    assert_eq!(
+        backend.sent_text(first_surface_id).unwrap(),
+        vec!["run status".to_string()]
+    );
+
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "claude",
+            "surface_id": second_surface_id
+        }),
+    )
+    .await
+    .unwrap();
+    let retry = dispatch(
+        &state,
+        "team.message.dispatch",
+        json!({"team_id": "team-1", "message_id": "msg-submit", "submit": true}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(retry.code(), "error");
+    assert_eq!(
+        backend.sent_text(&second_surface_id).unwrap(),
+        vec!["run status".to_string()]
+    );
+}
+
+#[tokio::test]
 #[serial_test::serial]
 async fn team_message_dispatch_waits_before_prompting_fresh_pi_worker() {
     let bin_dir = tempfile::tempdir().unwrap();

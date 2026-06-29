@@ -279,6 +279,38 @@ pub(crate) fn forget_team_message_terminal_dispatched(
         .map_err(DispatchError::from)
 }
 
+pub(crate) fn remember_team_message_terminal_body_sent(
+    state: &SocketAppState,
+    message: &TeamTerminalDispatchedMessage,
+    surface_id: &str,
+) -> Result<(), DispatchError> {
+    state
+        .coordinator
+        .remember_team_message_terminal_body_sent(message, surface_id)
+        .map_err(DispatchError::from)
+}
+
+pub(crate) fn team_message_terminal_body_sent(
+    state: &SocketAppState,
+    message: &TeamTerminalDispatchedMessage,
+    surface_id: &str,
+) -> Result<bool, DispatchError> {
+    state
+        .coordinator
+        .team_message_terminal_body_sent(message, surface_id)
+        .map_err(DispatchError::from)
+}
+
+pub(crate) fn forget_team_message_terminal_body_sent(
+    state: &SocketAppState,
+    message: &TeamTerminalDispatchedMessage,
+) -> Result<(), DispatchError> {
+    state
+        .coordinator
+        .forget_team_message_terminal_body_sent(message)
+        .map_err(DispatchError::from)
+}
+
 pub(crate) async fn team_message_dispatch_target(
     state: &SocketAppState,
     team_id: &str,

@@ -9,6 +9,7 @@ pub(crate) struct SocketCoordinator {
     pub(crate) surface_set: tokio::sync::Mutex<()>,
     team_launch_owned_surfaces: Mutex<HashSet<TeamLaunchOwnedSurface>>,
     team_terminal_dispatched_messages: Mutex<HashSet<TeamTerminalDispatchedMessage>>,
+    team_terminal_body_sent_messages: Mutex<HashSet<TeamTerminalBodySentMessage>>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -32,6 +33,31 @@ impl TeamTerminalDispatchedMessage {
             team_id: team_id.to_string(),
             message_id: message_id.to_string(),
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct TeamTerminalBodySentMessage {
+    store_path: PathBuf,
+    team_id: String,
+    message_id: String,
+    surface_id: String,
+}
+
+impl TeamTerminalBodySentMessage {
+    fn new(message: &TeamTerminalDispatchedMessage, surface_id: &str) -> Self {
+        Self {
+            store_path: message.store_path.clone(),
+            team_id: message.team_id.clone(),
+            message_id: message.message_id.clone(),
+            surface_id: surface_id.to_string(),
+        }
+    }
+
+    fn matches_message(&self, message: &TeamTerminalDispatchedMessage) -> bool {
+        self.store_path == message.store_path
+            && self.team_id == message.team_id
+            && self.message_id == message.message_id
     }
 }
 
@@ -126,6 +152,41 @@ impl SocketCoordinator {
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?
             .remove(message);
+        Ok(())
+    }
+
+    pub(crate) fn remember_team_message_terminal_body_sent(
+        &self,
+        message: &TeamTerminalDispatchedMessage,
+        surface_id: &str,
+    ) -> Result<(), String> {
+        self.team_terminal_body_sent_messages
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?
+            .insert(TeamTerminalBodySentMessage::new(message, surface_id));
+        Ok(())
+    }
+
+    pub(crate) fn team_message_terminal_body_sent(
+        &self,
+        message: &TeamTerminalDispatchedMessage,
+        surface_id: &str,
+    ) -> Result<bool, String> {
+        Ok(self
+            .team_terminal_body_sent_messages
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?
+            .contains(&TeamTerminalBodySentMessage::new(message, surface_id)))
+    }
+
+    pub(crate) fn forget_team_message_terminal_body_sent(
+        &self,
+        message: &TeamTerminalDispatchedMessage,
+    ) -> Result<(), String> {
+        self.team_terminal_body_sent_messages
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?
+            .retain(|sent| !sent.matches_message(message));
         Ok(())
     }
 }
