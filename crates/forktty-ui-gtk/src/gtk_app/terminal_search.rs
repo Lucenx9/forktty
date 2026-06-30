@@ -74,12 +74,40 @@ fn for_each_char_match_start(
     if needle.is_empty() {
         return;
     }
+
     let mut index = 0;
+    let needle_first = needle[0];
+
+    // Fast path bounds for ASCII first char to inline the check in the hot loop
+    let is_first_ascii = needle_first.is_ascii();
+    let first_lower = if is_first_ascii {
+        needle_first.to_ascii_lowercase()
+    } else {
+        '\0'
+    };
+    let first_upper = if is_first_ascii {
+        needle_first.to_ascii_uppercase()
+    } else {
+        '\0'
+    };
+
     while index + needle.len() <= haystack.len() {
-        let matched = haystack[index..index + needle.len()]
-            .iter()
-            .zip(needle)
-            .all(|(a, b)| chars_eq_ignore_case(*a, *b));
+        let c = haystack[index];
+        // Inline the ASCII fast path for the first character, as this check runs
+        // millions of times and function call overhead dominates.
+        let mut matched = if is_first_ascii && c.is_ascii() {
+            c == first_lower || c == first_upper
+        } else {
+            chars_eq_ignore_case(c, needle_first)
+        };
+
+        if matched {
+            matched = haystack[index + 1..index + needle.len()]
+                .iter()
+                .zip(&needle[1..])
+                .all(|(a, b)| chars_eq_ignore_case(*a, *b));
+        }
+
         if matched {
             if !visit(index) {
                 return;
