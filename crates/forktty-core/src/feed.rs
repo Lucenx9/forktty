@@ -109,6 +109,7 @@ impl FeedStore {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(err) => return Err(FeedError::Io(err.to_string())),
         };
+        validate_feed_entries(&entries)?;
         let mut store = Self { path, entries };
         store.bound_entries();
         Ok(store)
@@ -118,7 +119,7 @@ impl FeedStore {
         let path = path.as_ref().to_path_buf();
         match Self::open_at(&path) {
             Ok(store) => Ok(store),
-            Err(FeedError::Json(_)) => {
+            Err(FeedError::Json(_) | FeedError::InvalidState(_)) => {
                 quarantine_corrupt_feed_file(&path)?;
                 Ok(Self {
                     path,
@@ -333,6 +334,42 @@ fn should_preserve_approval_decision(existing: &FeedEntry, entry: &FeedEntry) ->
         && existing.body == entry.body
         && existing.workspace_id == entry.workspace_id
         && existing.surface_id == entry.surface_id
+}
+
+fn validate_feed_entries(entries: &[FeedEntry]) -> Result<(), FeedError> {
+    let mut ids = BTreeSet::new();
+    for entry in entries {
+        if entry.id.trim().is_empty()
+            || entry.id.len() > 512
+            || entry.id.chars().any(char::is_control)
+        {
+            return Err(FeedError::InvalidState("invalid feed entry id".to_string()));
+        }
+        if !ids.insert(entry.id.as_str()) {
+            return Err(FeedError::InvalidState(format!(
+                "duplicate feed entry id: {}",
+                entry.id
+            )));
+        }
+        match entry.entry_type {
+            FeedEntryType::Approval if entry.approval_state.is_none() => {
+                return Err(FeedError::InvalidState(format!(
+                    "feed approval {} is missing approval_state",
+                    entry.id
+                )));
+            }
+            FeedEntryType::Notification | FeedEntryType::Status | FeedEntryType::Progress
+                if entry.approval_state.is_some() =>
+            {
+                return Err(FeedError::InvalidState(format!(
+                    "non-approval feed entry {} has approval_state",
+                    entry.id
+                )));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn quarantine_corrupt_feed_file(path: &Path) -> Result<(), FeedError> {
@@ -602,6 +639,88 @@ mod tests {
                 .iter()
                 .any(|name| name.starts_with("feed.json.bad-")),
             "expected corrupt feed quarantine sibling, got {quarantined:?}"
+        );
+    }
+
+    #[test]
+    fn feed_store_rejects_duplicate_loaded_entry_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feed.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "schema": 1,
+                "entries": [
+                    {
+                        "id": "feed-1",
+                        "type": "notification",
+                        "title": "First",
+                        "body": "body",
+                        "workspace_id": "w1",
+                        "surface_id": null,
+                        "created_at_ms": 1
+                    },
+                    {
+                        "id": "feed-1",
+                        "type": "notification",
+                        "title": "Second",
+                        "body": "body",
+                        "workspace_id": "w1",
+                        "surface_id": null,
+                        "created_at_ms": 2
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let err = FeedStore::open_at(&path).unwrap_err();
+
+        assert!(matches!(
+            err,
+            FeedError::InvalidState(message)
+                if message.contains("duplicate feed entry id")
+        ));
+    }
+
+    #[test]
+    fn recovering_open_quarantines_invalid_feed_entry_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feed.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "schema": 1,
+                "entries": [
+                    {
+                        "id": "feed-1",
+                        "type": "notification",
+                        "title": "Info",
+                        "body": "body",
+                        "workspace_id": "w1",
+                        "surface_id": null,
+                        "created_at_ms": 1,
+                        "approval_state": "approved"
+                    }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let store = FeedStore::open_recovering_at(&path).unwrap();
+
+        assert!(store.list(None, 10).is_empty());
+        assert!(!path.exists());
+        let quarantined = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(
+            quarantined
+                .iter()
+                .any(|name| name.starts_with("feed.json.bad-")),
+            "expected invalid feed quarantine sibling, got {quarantined:?}"
         );
     }
 

@@ -73,7 +73,9 @@ All notable changes to ForkTTY are documented here.
   churn so later `task.strategy.apply` retries can still consume them; prompt
   notification approval decisions are now preserved only for the same persisted
   prompt payload so a same-millisecond id collision after restart cannot inherit
-  an old decision.
+  an old decision. Feed recovery now also rejects and quarantines duplicate
+  entry ids or inconsistent approval state instead of loading ambiguous
+  approval rows.
 - Fixed team store validation/recovery and ack idempotency so legacy duplicate
   persisted message ids are repaired on load by retaining the first message
   while preserving delivered/superseded terminal state, strict saves reject
