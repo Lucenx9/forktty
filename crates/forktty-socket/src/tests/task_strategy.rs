@@ -445,6 +445,43 @@ async fn task_strategy_plan_rejects_explicit_cwd_outside_open_workspace_repo() {
 }
 
 #[tokio::test]
+async fn task_strategy_apply_rejects_explicit_cwd_outside_open_workspace_repo() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let active_dir = tempfile::tempdir().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        let surface_id = model.active_workspace().unwrap().focused_surface_id.clone();
+        assert!(model.set_surface_cwd(&surface_id, active_dir.path().to_path_buf()));
+    }
+    let hidden_repo = tempfile::tempdir().unwrap();
+    git2::Repository::init(hidden_repo.path()).unwrap();
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement the router fix",
+            "approved": ["start_run"],
+            "cwd": hidden_repo.path().to_string_lossy(),
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "precondition_failed");
+    assert!(err.to_string().contains("open ForkTTY workspace"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_plan_infers_user_visible_change_from_editing_goal() {
     let (state, _backend) = test_state();
     let repo_dir = tempfile::tempdir().unwrap();
@@ -757,7 +794,6 @@ async fn task_strategy_apply_uses_explicit_cwd_for_dirty_isolation() {
     let dir = tempfile::tempdir().unwrap();
     state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
     state.team_store_path = Some(dir.path().join("team-v1.json"));
-    let leader_dir = tempfile::tempdir().unwrap();
     let dirty_repo = tempfile::tempdir().unwrap();
     git2::Repository::init(dirty_repo.path()).unwrap();
     std::fs::write(dirty_repo.path().join("dirty.txt"), "dirty\n").unwrap();
@@ -766,7 +802,7 @@ async fn task_strategy_apply_uses_explicit_cwd_for_dirty_isolation() {
     let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
     {
         let mut model = state.model.lock().unwrap();
-        assert!(model.set_surface_cwd(surface_id, leader_dir.path().to_path_buf()));
+        assert!(model.set_surface_cwd(surface_id, dirty_repo.path().to_path_buf()));
     }
 
     let mut plan = staged_team_plan_json();
@@ -1826,13 +1862,21 @@ async fn task_strategy_apply_is_idempotent_for_staged_messages() {
 async fn task_strategy_apply_staged_prompt_with_changed_cwd_queues_new_message() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();
-    let first_dir = tempfile::tempdir().unwrap();
-    let second_dir = tempfile::tempdir().unwrap();
+    let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    let first_dir = repo_dir.path().join("first");
+    let second_dir = repo_dir.path().join("second");
+    std::fs::create_dir_all(&first_dir).unwrap();
+    std::fs::create_dir_all(&second_dir).unwrap();
     state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
     state.team_store_path = Some(dir.path().join("team-v1.json"));
     let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
     let workspace_id = workspace[0]["id"].as_str().unwrap();
     let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.set_surface_cwd(surface_id, repo_dir.path().to_path_buf()));
+    }
 
     dispatch(
         &state,
@@ -1841,7 +1885,7 @@ async fn task_strategy_apply_staged_prompt_with_changed_cwd_queues_new_message()
             "run_id": "router-run-1",
             "workspace_id": workspace_id,
             "leader_surface_id": surface_id,
-            "cwd": first_dir.path(),
+            "cwd": first_dir,
             "goal": "Implement the router",
             "approved": ["start_run"],
             "plan": staged_team_plan_json()
@@ -1857,7 +1901,7 @@ async fn task_strategy_apply_staged_prompt_with_changed_cwd_queues_new_message()
             "run_id": "router-run-1",
             "workspace_id": workspace_id,
             "leader_surface_id": surface_id,
-            "cwd": second_dir.path(),
+            "cwd": second_dir,
             "goal": "Implement the router",
             "approved": ["start_run"],
             "plan": staged_team_plan_json()
@@ -1881,7 +1925,7 @@ async fn task_strategy_apply_staged_prompt_with_changed_cwd_queues_new_message()
             && message["body"]
                 .as_str()
                 .unwrap_or_default()
-                .contains(second_dir.path().to_str().unwrap())
+                .contains(second_dir.to_str().unwrap())
     }));
 }
 
@@ -2057,8 +2101,10 @@ async fn task_strategy_apply_submit_uses_explicit_cwd_for_worker_launches_and_pr
     let _claude = write_fake_program(bin_dir.path(), "claude");
     let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
     let dir = tempfile::tempdir().unwrap();
-    let leader_dir = tempfile::tempdir().unwrap();
     let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    let leader_dir = repo_dir.path().join("leader");
+    std::fs::create_dir_all(&leader_dir).unwrap();
     state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
     state.team_store_path = Some(dir.path().join("team-v1.json"));
     let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
@@ -2066,7 +2112,7 @@ async fn task_strategy_apply_submit_uses_explicit_cwd_for_worker_launches_and_pr
     let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
     {
         let mut model = state.model.lock().unwrap();
-        assert!(model.set_surface_cwd(surface_id, leader_dir.path().to_path_buf()));
+        assert!(model.set_surface_cwd(surface_id, leader_dir.clone()));
     }
 
     let result = dispatch(
@@ -2123,13 +2169,21 @@ async fn task_strategy_apply_submit_does_not_reuse_staged_prompt_with_stale_cwd(
     let _claude = write_fake_program(bin_dir.path(), "claude");
     let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
     let dir = tempfile::tempdir().unwrap();
-    let staged_dir = tempfile::tempdir().unwrap();
-    let submit_dir = tempfile::tempdir().unwrap();
+    let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    let staged_dir = repo_dir.path().join("staged");
+    let submit_dir = repo_dir.path().join("submit");
+    std::fs::create_dir_all(&staged_dir).unwrap();
+    std::fs::create_dir_all(&submit_dir).unwrap();
     state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
     state.team_store_path = Some(dir.path().join("team-v1.json"));
     let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
     let workspace_id = workspace[0]["id"].as_str().unwrap();
     let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.set_surface_cwd(surface_id, repo_dir.path().to_path_buf()));
+    }
 
     dispatch(
         &state,
@@ -2138,7 +2192,7 @@ async fn task_strategy_apply_submit_does_not_reuse_staged_prompt_with_stale_cwd(
             "run_id": "router-run-1",
             "workspace_id": workspace_id,
             "leader_surface_id": surface_id,
-            "cwd": staged_dir.path(),
+            "cwd": staged_dir,
             "goal": "Implement the router",
             "approved": ["start_run"],
             "plan": staged_team_plan_json()
@@ -2154,7 +2208,7 @@ async fn task_strategy_apply_submit_does_not_reuse_staged_prompt_with_stale_cwd(
             "run_id": "router-run-1",
             "workspace_id": workspace_id,
             "leader_surface_id": surface_id,
-            "cwd": submit_dir.path(),
+            "cwd": submit_dir,
             "goal": "Implement the router",
             "approved": ["start_run", "launch_parallel_workers"],
             "submit": true,
@@ -2180,8 +2234,8 @@ async fn task_strategy_apply_submit_does_not_reuse_staged_prompt_with_stale_cwd(
         .unwrap();
     let implementer_surface_id = implementer["surface_id"].as_str().unwrap();
     let sent = backend.sent_text(implementer_surface_id).unwrap().join("");
-    assert!(sent.contains(submit_dir.path().to_str().unwrap()));
-    assert!(!sent.contains(staged_dir.path().to_str().unwrap()));
+    assert!(sent.contains(submit_dir.to_str().unwrap()));
+    assert!(!sent.contains(staged_dir.to_str().unwrap()));
 }
 
 #[tokio::test]
@@ -2288,11 +2342,16 @@ async fn task_strategy_apply_submit_redispatches_prompt_after_worker_relaunch() 
     let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
     let dir = tempfile::tempdir().unwrap();
     let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
     state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
     state.team_store_path = Some(dir.path().join("team-v1.json"));
     let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
     let workspace_id = workspace[0]["id"].as_str().unwrap();
     let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.set_surface_cwd(surface_id, repo_dir.path().to_path_buf()));
+    }
     let params = json!({
         "run_id": "router-run-1",
         "workspace_id": workspace_id,
@@ -2374,8 +2433,12 @@ async fn task_strategy_apply_submit_rejects_stale_explicit_cwd_worker_when_retry
     let _claude = write_fake_program(bin_dir.path(), "claude");
     let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
     let dir = tempfile::tempdir().unwrap();
-    let leader_dir = tempfile::tempdir().unwrap();
-    let stale_dir = tempfile::tempdir().unwrap();
+    let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    let leader_dir = repo_dir.path().join("leader");
+    let stale_dir = repo_dir.path().join("stale");
+    std::fs::create_dir_all(&leader_dir).unwrap();
+    std::fs::create_dir_all(&stale_dir).unwrap();
     state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
     state.team_store_path = Some(dir.path().join("team-v1.json"));
     let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
@@ -2383,7 +2446,7 @@ async fn task_strategy_apply_submit_rejects_stale_explicit_cwd_worker_when_retry
     let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
     {
         let mut model = state.model.lock().unwrap();
-        assert!(model.set_surface_cwd(surface_id, leader_dir.path().to_path_buf()));
+        assert!(model.set_surface_cwd(surface_id, leader_dir.clone()));
     }
 
     dispatch(
@@ -2409,7 +2472,7 @@ async fn task_strategy_apply_submit_rejects_stale_explicit_cwd_worker_when_retry
             "agent": "codex",
             "role": "implementer",
             "assigned_task_id": "router-run-1-implementer-1",
-            "cwd": stale_dir.path()
+            "cwd": stale_dir
         }),
     )
     .await
@@ -2446,8 +2509,10 @@ async fn task_strategy_apply_submit_rejects_live_worker_cwd_mismatch_before_disp
     let _claude = write_fake_program(bin_dir.path(), "claude");
     let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
     let dir = tempfile::tempdir().unwrap();
-    let leader_dir = tempfile::tempdir().unwrap();
     let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    let leader_dir = repo_dir.path().join("leader");
+    std::fs::create_dir_all(&leader_dir).unwrap();
     state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
     state.team_store_path = Some(dir.path().join("team-v1.json"));
     let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
@@ -2455,7 +2520,7 @@ async fn task_strategy_apply_submit_rejects_live_worker_cwd_mismatch_before_disp
     let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
     {
         let mut model = state.model.lock().unwrap();
-        assert!(model.set_surface_cwd(surface_id, leader_dir.path().to_path_buf()));
+        assert!(model.set_surface_cwd(surface_id, leader_dir.clone()));
     }
 
     dispatch(

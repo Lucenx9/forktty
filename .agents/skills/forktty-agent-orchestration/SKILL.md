@@ -51,8 +51,9 @@ For normal local code changes, read and edit the repo directly.
    workflow/team/task/message state by default, and with `submit=true` may
    launch visible workers plus dispatch prompts for supported team plans.
    Pass `cwd` to apply when the actual repo target differs from the selected
-   ForkTTY pane; worker panes launch there and role prompts name that cwd when
-   no `worktree_name` is used.
+   ForkTTY pane and is already represented by an open ForkTTY workspace,
+   surface, or effective project cwd; worker panes launch there and role
+   prompts name that cwd when no `worktree_name` is used.
    Apply recomputes dirty-repo edit isolation from the selected
    surface/workspace plus any explicit `cwd`, then recomputes worktree approvals
    and multi-worker submit approvals from the requested operation and effective

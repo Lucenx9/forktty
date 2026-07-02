@@ -180,7 +180,7 @@ fn task_strategy_target_context(
         None
     };
     if let Some(cwd) = explicit_cwd.as_deref() {
-        validate_explicit_task_strategy_plan_cwd(state, cwd)?;
+        validate_explicit_task_strategy_cwd(state, cwd)?;
     }
     let has_explicit_cwd = explicit_cwd.is_some();
     let requested_surface_id = optional_task_strategy_surface_alias_param(params)?;
@@ -268,7 +268,7 @@ fn explicit_task_strategy_cwd(params: &Value) -> Result<Option<PathBuf>, Dispatc
     Ok(Some(path))
 }
 
-fn validate_explicit_task_strategy_plan_cwd(
+fn validate_explicit_task_strategy_cwd(
     state: &SocketAppState,
     cwd: &Path,
 ) -> Result<(), DispatchError> {
@@ -1238,6 +1238,9 @@ impl TaskStrategyApplyRequest {
     }
 
     fn validate_before_mutation(&self, state: &SocketAppState) -> Result<(), DispatchError> {
+        if let Some(cwd) = self.target_cwd.as_deref() {
+            validate_explicit_task_strategy_cwd(state, cwd)?;
+        }
         if self.submit && !self.plan.layers.team {
             return Err(DispatchError::InvalidParam(
                 "task.strategy.apply submit=true requires a supported team layer".to_string(),

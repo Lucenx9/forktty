@@ -79,6 +79,9 @@ All notable changes to ForkTTY are documented here.
 - Fixed task strategy planning so explicit `cwd` context is limited to Git
   repositories already represented by an open ForkTTY workspace, surface, or
   effective project cwd.
+- Fixed task strategy apply so explicit `cwd` launch targets must also be
+  inside a Git repository already represented by an open ForkTTY workspace,
+  surface, or effective project cwd before any workflow/team mutation.
 - Fixed task strategy submit retries so a live worker whose launch cwd or
   surface cwd differs from the selected target cwd is rejected even when the
   retry omits an explicit `cwd`.

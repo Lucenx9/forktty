@@ -599,16 +599,13 @@ fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
     {
         return TaskClass::ParallelResearch;
     }
-    if lower.contains("read-only")
-        || (contains_token(&lower, &["review", "reviews"]) && contains_token(&lower, &["only"]))
-        || (contains_token(&lower, &["read"]) && contains_token(&lower, &["only"]))
-    {
-        return TaskClass::ReviewOnly;
-    }
     if contains_token_prefix(&lower, &["fix", "bug"]) {
         return TaskClass::FocusedBugfix;
     }
-    if contains_token(&lower, &["review", "reviews"]) {
+    if contains_implementation_intent(&lower) {
+        return TaskClass::FeatureImplementation;
+    }
+    if is_review_primary_goal(&lower) {
         return TaskClass::ReviewOnly;
     }
     if contains_token(
@@ -617,10 +614,56 @@ fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
     ) {
         return TaskClass::FocusedBugfix;
     }
-    if contains_token_prefix(&lower, &["implement", "add", "build"]) {
-        return TaskClass::FeatureImplementation;
+    if contains_token(&lower, &["review", "reviews"]) {
+        return TaskClass::ReviewOnly;
     }
     TaskClass::RepoInspection
+}
+
+fn contains_implementation_intent(lower: &str) -> bool {
+    contains_token(
+        lower,
+        &[
+            "implement",
+            "implements",
+            "implemented",
+            "implementing",
+            "add",
+            "adds",
+            "added",
+            "adding",
+            "build",
+            "builds",
+            "built",
+            "building",
+        ],
+    )
+}
+
+fn is_review_primary_goal(lower: &str) -> bool {
+    if lower.contains("read-only") {
+        return true;
+    }
+    if contains_token(lower, &["review", "reviews"]) && contains_token(lower, &["only"]) {
+        return true;
+    }
+    let skip = [
+        "the",
+        "a",
+        "an",
+        "please",
+        "quickly",
+        "carefully",
+        "thoroughly",
+    ];
+    let mut tokens = lower
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty() && !skip.contains(token));
+    let first = tokens.next();
+    if first == Some("read") && tokens.next() == Some("only") {
+        return true;
+    }
+    matches!(first, Some(token) if token == "review" || token == "reviews")
 }
 
 fn infer_router_profile(
@@ -1947,6 +1990,49 @@ mod tests {
             .reasons
             .iter()
             .any(|reason| reason.contains("dirty repo")));
+    }
+
+    #[test]
+    fn implement_goal_with_review_token_is_not_review_only() {
+        let plan = plan_task_strategy(TaskStrategyInput {
+            goal: "Implement the code review workflow".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: false,
+            user_requested_review: false,
+            likely_user_visible_change: true,
+            harness_registry: HarnessRegistry::default(),
+        })
+        .unwrap();
+
+        assert_eq!(plan.task_class, TaskClass::FeatureImplementation);
+    }
+
+    #[test]
+    fn implementation_variants_with_review_terms_are_not_review_only() {
+        for goal in [
+            "Implementing the code review workflow",
+            "Adding review workflow support",
+            "Building the review dashboard",
+            "Implement read-only mode for shared sessions",
+        ] {
+            let plan = plan_task_strategy(TaskStrategyInput {
+                goal: goal.to_string(),
+                explicit_mode: None,
+                router_profile: None,
+                last_known_good: None,
+                repo_dirty: false,
+                user_requested_parallelism: false,
+                user_requested_review: false,
+                likely_user_visible_change: true,
+                harness_registry: HarnessRegistry::default(),
+            })
+            .unwrap();
+
+            assert_eq!(plan.task_class, TaskClass::FeatureImplementation, "{goal}");
+        }
     }
 
     #[test]

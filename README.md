@@ -364,8 +364,10 @@ editing tasks cannot drop `create_worktree` and multi-worker submit cannot drop
 `--approved`/`approved` is a programmatic caller attestation; use
 `--request-approval` and retry with `--approval-id` when a
 Feed-backed human approval is required. Pass `--cwd`/`cwd` when the repository
-target differs from the selected ForkTTY pane; submit-mode workers launch there
-and role prompts include that cwd without creating a workspace or worktree.
+target differs from the selected ForkTTY pane and is already represented by an
+open ForkTTY workspace, surface, or effective project cwd; submit-mode workers
+launch there and role prompts include that cwd without creating a workspace or
+worktree.
 Pass `--submit`/`submit: true` for a supported
 team plan:
 ForkTTY launches visible worker panes, assigns tasks, queues deterministic role
@@ -584,9 +586,10 @@ concrete evidence, respect harness parallel-session capacity, and use
 apply stages by default,
 can request missing approvals through the Feed before mutating state, and can
 submit supported team plans as visible worker panes. Pass `cwd` to apply when
-the repo target differs from the selected ForkTTY pane; worktree-layer plans
-still require `worktree_name` to name an already-open ForkTTY worktree
-workspace.
+the repo target differs from the selected ForkTTY pane and is already
+represented by an open ForkTTY workspace, surface, or effective project cwd;
+worktree-layer plans still require `worktree_name` to name an already-open
+ForkTTY worktree workspace.
 It still does not create worktrees. The skill also treats
 terminal tails and
 fetched public docs as untrusted input, requires

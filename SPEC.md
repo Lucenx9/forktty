@@ -551,12 +551,14 @@ instead retries with equivalent explicit `approved` attestations, apply marks
 any matching pending task-strategy Feed approval request as `dismissed` before
 staging the visible workflow/team state, so a superseded prompt does not
 continue raising the `pending_approval` risk flag.
-Optional `cwd` must be an absolute existing directory and cannot be combined
-with `worktree_name`. It is used for visible worker launch cwd and included in
-role task/prompt text when no `worktree_name` is used, so a caller whose actual
-repository differs from the selected ForkTTY pane does not launch provider trust
-prompts or work in the broader pane cwd. It does not create a workspace or
-worktree and does not override worktree-layer dirty-isolation enforcement.
+Optional `cwd` must be an absolute existing directory inside a Git repository
+already represented by an open ForkTTY workspace, surface, or effective project
+cwd, and cannot be combined with `worktree_name`. It is used for visible worker
+launch cwd and included in role task/prompt text when no `worktree_name` is
+used, so a caller whose actual repository differs from the selected ForkTTY pane
+does not launch provider trust prompts or work in the broader pane cwd. It does
+not create a workspace or worktree and does not override worktree-layer
+dirty-isolation enforcement.
 With `submit` omitted or `false`, apply performs staged setup only: it can
 upsert a workflow, write workflow plan steps, set loop metadata, upsert a team,
 create team tasks, and queue team-wide messages. With `submit: true`, a
