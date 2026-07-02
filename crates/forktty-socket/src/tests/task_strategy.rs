@@ -2363,6 +2363,94 @@ async fn task_strategy_apply_submit_uses_explicit_cwd_for_worker_launches_and_pr
 
 #[tokio::test]
 #[serial_test::serial]
+async fn task_strategy_apply_submit_reuses_worker_when_explicit_cwd_spelling_changes() {
+    use std::os::unix::fs::symlink;
+
+    let (mut state, backend) = test_state();
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _claude = write_fake_program(bin_dir.path(), "claude");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    let symlink_dir = tempfile::tempdir().unwrap();
+    let repo_link = symlink_dir.path().join("repo-link");
+    symlink(repo_dir.path(), &repo_link).unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.set_surface_cwd(surface_id, repo_dir.path().to_path_buf()));
+    }
+    let first_params = json!({
+        "run_id": "router-run-1",
+        "workspace_id": workspace_id,
+        "leader_surface_id": surface_id,
+        "cwd": repo_link,
+        "goal": "Implement the router",
+        "approved": ["start_run", "launch_parallel_workers"],
+        "submit": true,
+        "plan": staged_team_plan_json()
+    });
+    let retry_params = json!({
+        "run_id": "router-run-1",
+        "workspace_id": workspace_id,
+        "leader_surface_id": surface_id,
+        "cwd": repo_dir.path(),
+        "goal": "Implement the router",
+        "approved": ["start_run", "launch_parallel_workers"],
+        "submit": true,
+        "plan": staged_team_plan_json()
+    });
+
+    dispatch(&state, "task.strategy.apply", first_params)
+        .await
+        .unwrap();
+    let first_team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
+        .await
+        .unwrap();
+    let first_implementer = first_team["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|worker| worker["id"] == "router-run-1-implementer-1-worker")
+        .unwrap();
+    let first_surface_id = first_implementer["surface_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let sent_before_retry = backend.sent_text(&first_surface_id).unwrap().len();
+
+    let retry = dispatch(&state, "task.strategy.apply", retry_params)
+        .await
+        .unwrap();
+
+    assert_eq!(retry["status"], "running");
+    let retry_team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
+        .await
+        .unwrap();
+    let retry_implementer = retry_team["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|worker| worker["id"] == "router-run-1-implementer-1-worker")
+        .unwrap();
+    assert_eq!(
+        retry_implementer["surface_id"].as_str().unwrap(),
+        first_surface_id
+    );
+    assert_eq!(
+        backend.sent_text(&first_surface_id).unwrap().len(),
+        sent_before_retry
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn task_strategy_apply_submit_does_not_reuse_staged_prompt_with_stale_cwd() {
     let (mut state, backend) = test_state();
     let bin_dir = tempfile::tempdir().unwrap();

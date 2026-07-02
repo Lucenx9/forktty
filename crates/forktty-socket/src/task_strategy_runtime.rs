@@ -337,12 +337,9 @@ fn explicit_task_strategy_cwd(params: &Value) -> Result<Option<PathBuf>, Dispatc
             "Invalid parameter cwd: expected an absolute path".to_string(),
         ));
     }
-    if !path.is_dir() {
-        return Err(DispatchError::InvalidParam(
-            "Invalid parameter cwd: expected an existing directory".to_string(),
-        ));
-    }
-    Ok(Some(path))
+    canonical_existing_dir(&path, "cwd")
+        .map(Some)
+        .map_err(DispatchError::from)
 }
 
 fn validate_explicit_task_strategy_cwd(

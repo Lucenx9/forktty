@@ -115,6 +115,10 @@ All notable changes to ForkTTY are documented here.
 - Fixed task strategy apply so explicit `cwd` launch targets must also be
   inside a Git repository already represented by an open ForkTTY workspace,
   surface, or effective project cwd before any workflow/team mutation.
+- Fixed task strategy apply so explicit `cwd` launch targets are canonicalized
+  before worker launch, prompt generation, and submit-retry compatibility
+  checks, keeping retries idempotent when callers switch between symlinked and
+  real paths for the same open repository.
 - Fixed task strategy apply so camelCase workspace selector aliases such as
   `workspaceId` and `worktreeName` target the same workspace for dirty-repo
   inference and workflow/team mutation instead of falling back to the active

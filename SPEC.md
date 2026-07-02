@@ -561,12 +561,14 @@ staging the visible workflow/team state, so a superseded prompt does not
 continue raising the `pending_approval` risk flag.
 Optional `cwd` must be an absolute existing directory inside a Git repository
 already represented by an open ForkTTY workspace, surface, or effective project
-cwd, and cannot be combined with `worktree_name`. It is used for visible worker
-launch cwd and included in role task/prompt text when no `worktree_name` is
-used, so a caller whose actual repository differs from the selected ForkTTY pane
-does not launch provider trust prompts or work in the broader pane cwd. It does
-not create a workspace or worktree and does not override worktree-layer
-dirty-isolation enforcement.
+cwd, and cannot be combined with `worktree_name`. ForkTTY canonicalizes it
+before launch, prompt generation, and submit-retry compatibility checks, then
+uses that canonical path as the visible worker launch cwd and includes it in
+role task/prompt text when no `worktree_name` is used. This lets a caller whose
+actual repository differs from the selected ForkTTY pane avoid launching
+provider trust prompts or work in the broader pane cwd without making retries
+sensitive to symlink or `..` path spelling. It does not create a workspace or
+worktree and does not override worktree-layer dirty-isolation enforcement.
 Review-primary goals with an effective `review_only` strategy remain read-only
 for apply-time dirty-repo isolation, but non-review editing goals still force
 worktree isolation even if a client submits a mismatched `review_only` plan.

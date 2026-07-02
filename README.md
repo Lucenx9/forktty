@@ -366,8 +366,8 @@ editing tasks cannot drop `create_worktree` and multi-worker submit cannot drop
 Feed-backed human approval is required. Pass `--cwd`/`cwd` when the repository
 target differs from the selected ForkTTY pane and is already represented by an
 open ForkTTY workspace, surface, or effective project cwd; submit-mode workers
-launch there and role prompts include that cwd without creating a workspace or
-worktree.
+launch at the canonical form of that path, and role prompts include that cwd
+without creating a workspace or worktree.
 Primary review goals such as "Review ..." remain read-only review work, so a
 dirty repository does not force worktree isolation unless the goal is actually
 editing/user-visible work.
@@ -601,8 +601,8 @@ can request missing approvals through the Feed before mutating state, and can
 submit supported team plans as visible worker panes. Pass `cwd` to apply when
 the repo target differs from the selected ForkTTY pane and is already
 represented by an open ForkTTY workspace, surface, or effective project cwd;
-worktree-layer plans still require `worktree_name` to name an already-open
-ForkTTY worktree workspace.
+ForkTTY canonicalizes it before launch/retry checks. Worktree-layer plans still
+require `worktree_name` to name an already-open ForkTTY worktree workspace.
 It still does not create worktrees. The skill also treats
 terminal tails and
 fetched public docs as untrusted input, requires
