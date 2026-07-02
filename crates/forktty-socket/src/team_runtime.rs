@@ -199,6 +199,7 @@ pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Val
             .terminal
             .send_text(&surface_id, &text)
             .map_err(DispatchError::from)?;
+        let closed_surface = close_surface_request(state, &surface_id).await?;
         let worker_id_for_store = worker_id.clone();
         let team_id_for_store = team_id.clone();
         let worker = store_access::team_store_access(state)?
@@ -213,7 +214,6 @@ pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Val
             })
             .await
             .map_err(DispatchError::from)?;
-        let closed_surface = close_surface_request(state, &surface_id).await?;
         closed.push(json!({
             "worker_id": worker_id,
             "surface_id": surface_id,
