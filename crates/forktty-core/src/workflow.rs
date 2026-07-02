@@ -276,60 +276,69 @@ impl WorkflowStoreData {
         let goal = clean_optional_long("goal", input.goal.as_deref())?;
         let memory = clean_optional_long("memory", input.memory.as_deref())?;
 
-        let mut created = false;
-        let index = match self.workflows.iter().position(|workflow| workflow.id == id) {
-            Some(index) => index,
+        let existing_index = self.workflows.iter().position(|workflow| workflow.id == id);
+        let (created, mut updated) = match existing_index {
+            Some(index) => (false, self.workflows[index].clone()),
             None => {
                 if self.workflows.len() >= MAX_WORKFLOWS {
                     return Err(WorkflowError::InvalidData(format!(
                         "workflow store is full (limit {MAX_WORKFLOWS})"
                     )));
                 }
-                created = true;
-                self.workflows.push(WorkflowState {
-                    id: id.clone(),
-                    workspace_id: None,
-                    surface_id: None,
-                    agent: None,
-                    session_id: None,
-                    mode: mode.clone().unwrap_or_else(|| "default".to_string()),
-                    status: status.clone().unwrap_or_else(|| "active".to_string()),
-                    goal: None,
-                    memory: None,
-                    loop_recipe: None,
-                    loop_stage: None,
-                    loop_iteration: None,
-                    loop_max_iterations: None,
-                    loop_stop_reason: None,
-                    loop_updated_at_ms: None,
-                    loop_gates: Vec::new(),
-                    created_at_ms: now_ms,
-                    updated_at_ms: now_ms,
-                    plan: Vec::new(),
-                    evidence: Vec::new(),
-                });
-                self.workflows.len() - 1
+                (
+                    true,
+                    WorkflowState {
+                        id: id.clone(),
+                        workspace_id: None,
+                        surface_id: None,
+                        agent: None,
+                        session_id: None,
+                        mode: mode.clone().unwrap_or_else(|| "default".to_string()),
+                        status: status.clone().unwrap_or_else(|| "active".to_string()),
+                        goal: None,
+                        memory: None,
+                        loop_recipe: None,
+                        loop_stage: None,
+                        loop_iteration: None,
+                        loop_max_iterations: None,
+                        loop_stop_reason: None,
+                        loop_updated_at_ms: None,
+                        loop_gates: Vec::new(),
+                        created_at_ms: now_ms,
+                        updated_at_ms: now_ms,
+                        plan: Vec::new(),
+                        evidence: Vec::new(),
+                    },
+                )
             }
         };
-        let workflow = &mut self.workflows[index];
-        workflow.workspace_id = workspace_id.or(workflow.workspace_id.take());
-        workflow.surface_id = surface_id.or(workflow.surface_id.take());
-        workflow.agent = agent.or(workflow.agent.take());
-        workflow.session_id = session_id.or(workflow.session_id.take());
+        if workspace_id.is_some() {
+            updated.workspace_id = workspace_id;
+        }
+        if surface_id.is_some() {
+            updated.surface_id = surface_id;
+        }
+        if agent.is_some() {
+            updated.agent = agent;
+        }
+        if session_id.is_some() {
+            updated.session_id = session_id;
+        }
         if let Some(mode) = mode {
-            workflow.mode = mode;
+            updated.mode = mode;
         }
         if let Some(status) = status {
-            workflow.status = status;
+            updated.status = status;
         }
         if goal.is_some() {
-            workflow.goal = goal;
+            updated.goal = goal;
         }
         if memory.is_some() {
-            workflow.memory = memory;
+            updated.memory = memory;
         }
-        workflow.updated_at_ms = now_ms;
-        let row = workflow.clone();
+        updated.updated_at_ms = now_ms;
+        let row = updated.clone();
+        validate_workflow(&row)?;
         self.push_event(
             &row.id,
             if created {
@@ -340,7 +349,10 @@ impl WorkflowStoreData {
             format!("{} {}", row.mode, row.status),
             now_ms,
         )?;
-        validate_workflow(&row)?;
+        match existing_index {
+            Some(index) => self.workflows[index] = updated,
+            None => self.workflows.push(updated),
+        }
         Ok(row)
     }
 
@@ -469,11 +481,12 @@ impl WorkflowStoreData {
         now_ms: u64,
     ) -> Result<WorkflowState, WorkflowError> {
         let id = clean_id("workflow_id", workflow_id)?;
-        let workflow = self
+        let index = self
             .workflows
-            .iter_mut()
-            .find(|workflow| workflow.id == id)
+            .iter()
+            .position(|workflow| workflow.id == id)
             .ok_or(WorkflowError::NotFound)?;
+        let workflow = &self.workflows[index];
         if workflow.evidence.len() >= MAX_EVIDENCE_ITEMS {
             return Err(WorkflowError::InvalidData(format!(
                 "workflow evidence is full (limit {MAX_EVIDENCE_ITEMS})"
@@ -501,15 +514,17 @@ impl WorkflowStoreData {
             created_at_ms: now_ms,
         };
         validate_evidence(&evidence)?;
-        workflow.evidence.push(evidence.clone());
-        workflow.updated_at_ms = now_ms;
-        let row = workflow.clone();
+        let mut updated = workflow.clone();
+        updated.evidence.push(evidence.clone());
+        updated.updated_at_ms = now_ms;
+        let row = updated.clone();
         self.push_event(
             &row.id,
             "workflow.evidence.added",
             format!("{} {}", evidence.kind, evidence.title),
             now_ms,
         )?;
+        self.workflows[index] = updated;
         Ok(row)
     }
 
@@ -1556,6 +1571,74 @@ mod tests {
         assert_eq!(workflow.loop_iteration, None);
         assert_eq!(workflow.loop_max_iterations, None);
         assert_eq!(workflow.loop_updated_at_ms, None);
+    }
+
+    #[test]
+    fn invalid_upsert_event_summary_does_not_mutate_workflow() {
+        let mut store = WorkflowStoreData::default();
+        let workflow = store
+            .upsert(
+                WorkflowUpsert {
+                    workflow_id: Some("workflow-1".to_string()),
+                    status: Some("running".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                1,
+            )
+            .unwrap();
+        let oversized_status = "x".repeat(MAX_SHORT_TEXT_BYTES);
+
+        let err = store
+            .upsert(
+                WorkflowUpsert {
+                    workflow_id: Some(workflow.id.clone()),
+                    status: Some(oversized_status),
+                    ..WorkflowUpsert::default()
+                },
+                2,
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().contains("event.summary"));
+        let workflow = store.get(&workflow.id).unwrap();
+        assert_eq!(workflow.status, "running");
+        assert_eq!(workflow.updated_at_ms, 1);
+        assert_eq!(store.events.len(), 1);
+    }
+
+    #[test]
+    fn invalid_evidence_event_summary_does_not_mutate_workflow() {
+        let mut store = WorkflowStoreData::default();
+        let workflow = store
+            .upsert(
+                WorkflowUpsert {
+                    workflow_id: Some("workflow-1".to_string()),
+                    status: Some("running".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                1,
+            )
+            .unwrap();
+
+        let err = store
+            .add_evidence(
+                &workflow.id,
+                WorkflowEvidenceInput {
+                    id: Some("evidence-1".to_string()),
+                    kind: "k".repeat(MAX_SHORT_TEXT_BYTES),
+                    title: "t".repeat(MAX_SHORT_TEXT_BYTES),
+                    text: Some("body".to_string()),
+                    path: None,
+                },
+                2,
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().contains("event.summary"));
+        let workflow = store.get(&workflow.id).unwrap();
+        assert!(workflow.evidence.is_empty());
+        assert_eq!(workflow.updated_at_ms, 1);
+        assert_eq!(store.events.len(), 1);
     }
 
     #[test]

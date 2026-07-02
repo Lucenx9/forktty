@@ -141,6 +141,8 @@ All notable changes to ForkTTY are documented here.
   existing explicit evidence ids instead of permanently colliding with them.
 - Fixed workflow loop-state updates so invalid iteration/max-iteration payloads
   are rejected without leaving mutated in-memory workflow state behind.
+- Fixed workflow upsert/evidence updates so failures while recording their
+  audit event summary do not leave partially mutated in-memory workflow state.
 - Fixed `forktty team-worker-launch` so the CLI exposes the documented `--cwd`
   worker launch target.
 - Fixed workflow list/replay queries so `limit: 0` returns zero rows, matching
