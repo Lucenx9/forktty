@@ -277,40 +277,44 @@ impl WorkflowStoreData {
         let memory = clean_optional_long("memory", input.memory.as_deref())?;
 
         let existing_index = self.workflows.iter().position(|workflow| workflow.id == id);
+        let evict_index = if existing_index.is_none() && self.workflows.len() >= MAX_WORKFLOWS {
+            Some(
+                oldest_terminal_workflow_index(&self.workflows).ok_or_else(|| {
+                    WorkflowError::InvalidData(format!(
+                        "workflow store is full (limit {MAX_WORKFLOWS})"
+                    ))
+                })?,
+            )
+        } else {
+            None
+        };
         let (created, mut updated) = match existing_index {
             Some(index) => (false, self.workflows[index].clone()),
-            None => {
-                if self.workflows.len() >= MAX_WORKFLOWS {
-                    return Err(WorkflowError::InvalidData(format!(
-                        "workflow store is full (limit {MAX_WORKFLOWS})"
-                    )));
-                }
-                (
-                    true,
-                    WorkflowState {
-                        id: id.clone(),
-                        workspace_id: None,
-                        surface_id: None,
-                        agent: None,
-                        session_id: None,
-                        mode: mode.clone().unwrap_or_else(|| "default".to_string()),
-                        status: status.clone().unwrap_or_else(|| "active".to_string()),
-                        goal: None,
-                        memory: None,
-                        loop_recipe: None,
-                        loop_stage: None,
-                        loop_iteration: None,
-                        loop_max_iterations: None,
-                        loop_stop_reason: None,
-                        loop_updated_at_ms: None,
-                        loop_gates: Vec::new(),
-                        created_at_ms: now_ms,
-                        updated_at_ms: now_ms,
-                        plan: Vec::new(),
-                        evidence: Vec::new(),
-                    },
-                )
-            }
+            None => (
+                true,
+                WorkflowState {
+                    id: id.clone(),
+                    workspace_id: None,
+                    surface_id: None,
+                    agent: None,
+                    session_id: None,
+                    mode: mode.clone().unwrap_or_else(|| "default".to_string()),
+                    status: status.clone().unwrap_or_else(|| "active".to_string()),
+                    goal: None,
+                    memory: None,
+                    loop_recipe: None,
+                    loop_stage: None,
+                    loop_iteration: None,
+                    loop_max_iterations: None,
+                    loop_stop_reason: None,
+                    loop_updated_at_ms: None,
+                    loop_gates: Vec::new(),
+                    created_at_ms: now_ms,
+                    updated_at_ms: now_ms,
+                    plan: Vec::new(),
+                    evidence: Vec::new(),
+                },
+            ),
         };
         if workspace_id.is_some() {
             updated.workspace_id = workspace_id;
@@ -351,7 +355,12 @@ impl WorkflowStoreData {
         )?;
         match existing_index {
             Some(index) => self.workflows[index] = updated,
-            None => self.workflows.push(updated),
+            None => {
+                if let Some(index) = evict_index {
+                    self.workflows.remove(index);
+                }
+                self.workflows.push(updated);
+            }
         }
         Ok(row)
     }
@@ -798,6 +807,24 @@ fn default_workflow_version() -> u32 {
 
 fn bounded_limit(limit: Option<usize>) -> usize {
     limit.unwrap_or(DEFAULT_QUERY_LIMIT).min(MAX_QUERY_LIMIT)
+}
+
+fn oldest_terminal_workflow_index(workflows: &[WorkflowState]) -> Option<usize> {
+    workflows
+        .iter()
+        .enumerate()
+        .filter(|(_, workflow)| is_terminal_workflow_status(&workflow.status))
+        .min_by(|(_, left), (_, right)| {
+            left.updated_at_ms
+                .cmp(&right.updated_at_ms)
+                .then(left.created_at_ms.cmp(&right.created_at_ms))
+                .then(left.id.cmp(&right.id))
+        })
+        .map(|(index, _)| index)
+}
+
+fn is_terminal_workflow_status(status: &str) -> bool {
+    matches!(status, "done" | "closed" | "cancelled" | "finished")
 }
 
 fn workflow_id_for(input: &WorkflowUpsert, mode: &str) -> Result<String, WorkflowError> {
@@ -1795,6 +1822,70 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("empty workflow id component"));
+    }
+
+    #[test]
+    fn workflow_upsert_evicts_oldest_terminal_workflow_at_cap() {
+        let mut store = WorkflowStoreData::default();
+        for index in 0..MAX_WORKFLOWS {
+            store
+                .upsert(
+                    WorkflowUpsert {
+                        workflow_id: Some(format!("workflow-{index}")),
+                        status: Some("done".to_string()),
+                        ..WorkflowUpsert::default()
+                    },
+                    index as u64 + 1,
+                )
+                .unwrap();
+        }
+
+        let added = store
+            .upsert(
+                WorkflowUpsert {
+                    workflow_id: Some("workflow-new".to_string()),
+                    status: Some("running".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                10_000,
+            )
+            .unwrap();
+
+        assert_eq!(added.id, "workflow-new");
+        assert_eq!(store.workflows.len(), MAX_WORKFLOWS);
+        assert!(store.get("workflow-0").is_none());
+        assert!(store.get("workflow-new").is_some());
+    }
+
+    #[test]
+    fn workflow_upsert_refuses_cap_when_no_terminal_workflow_can_be_evicted() {
+        let mut store = WorkflowStoreData::default();
+        for index in 0..MAX_WORKFLOWS {
+            store
+                .upsert(
+                    WorkflowUpsert {
+                        workflow_id: Some(format!("workflow-{index}")),
+                        status: Some("running".to_string()),
+                        ..WorkflowUpsert::default()
+                    },
+                    index as u64 + 1,
+                )
+                .unwrap();
+        }
+
+        let err = store
+            .upsert(
+                WorkflowUpsert {
+                    workflow_id: Some("workflow-new".to_string()),
+                    status: Some("running".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                10_000,
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().contains("workflow store is full"));
+        assert_eq!(store.workflows.len(), MAX_WORKFLOWS);
     }
 
     #[test]

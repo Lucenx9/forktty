@@ -80,6 +80,9 @@ All notable changes to ForkTTY are documented here.
 - Fixed team/workflow store mutation ordering so event sequence failures cannot
   leave in-memory plan, task, worker, or message updates partially applied
   before the store update is rejected.
+- Fixed team/workflow store caps so creating a new record can evict the oldest
+  terminal `done`/`closed`/`cancelled`/`finished` record instead of leaving the
+  store permanently full until manual JSON editing.
 - Fixed `team.finish --close-workers` so a worker surface close failure leaves
   team and worker store state unchanged instead of persisting partial shutdown
   requests or missing-surface worker cleanup before the error.

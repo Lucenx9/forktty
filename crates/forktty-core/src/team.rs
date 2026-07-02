@@ -344,28 +344,28 @@ impl TeamStoreData {
         let status = clean_optional_short("status", input.status.as_deref())?;
         let goal = clean_optional_long("goal", input.goal.as_deref())?;
         let existing_index = self.teams.iter().position(|team| team.id == team_id);
+        let evict_index = if existing_index.is_none() && self.teams.len() >= MAX_TEAMS {
+            Some(oldest_terminal_team_index(&self.teams).ok_or_else(|| {
+                TeamError::Invalid(format!("team store is full (limit {MAX_TEAMS})"))
+            })?)
+        } else {
+            None
+        };
         let mut updated = match existing_index {
             Some(index) => self.teams[index].clone(),
-            None => {
-                if self.teams.len() >= MAX_TEAMS {
-                    return Err(TeamError::Invalid(format!(
-                        "team store is full (limit {MAX_TEAMS})"
-                    )));
-                }
-                TeamState {
-                    id: team_id.clone(),
-                    workspace_id: workspace_id.clone(),
-                    leader_surface_id: leader_surface_id.clone(),
-                    name: name.clone().unwrap_or_else(|| team_id.clone()),
-                    status: status.clone().unwrap_or_else(|| "active".to_string()),
-                    goal: goal.clone(),
-                    created_at_ms: now_ms,
-                    updated_at_ms: now_ms,
-                    workers: Vec::new(),
-                    tasks: Vec::new(),
-                    messages: Vec::new(),
-                }
-            }
+            None => TeamState {
+                id: team_id.clone(),
+                workspace_id: workspace_id.clone(),
+                leader_surface_id: leader_surface_id.clone(),
+                name: name.clone().unwrap_or_else(|| team_id.clone()),
+                status: status.clone().unwrap_or_else(|| "active".to_string()),
+                goal: goal.clone(),
+                created_at_ms: now_ms,
+                updated_at_ms: now_ms,
+                workers: Vec::new(),
+                tasks: Vec::new(),
+                messages: Vec::new(),
+            },
         };
 
         if workspace_id.is_some() {
@@ -393,7 +393,12 @@ impl TeamStoreData {
         )?;
         match existing_index {
             Some(index) => self.teams[index] = updated,
-            None => self.teams.push(updated),
+            None => {
+                if let Some(index) = evict_index {
+                    self.teams.remove(index);
+                }
+                self.teams.push(updated);
+            }
         }
         Ok(team)
     }
@@ -1465,6 +1470,24 @@ fn ensure_task_exists(team: &TeamState, task_id: &str) -> Result<(), TeamError> 
     }
 }
 
+fn oldest_terminal_team_index(teams: &[TeamState]) -> Option<usize> {
+    teams
+        .iter()
+        .enumerate()
+        .filter(|(_, team)| is_terminal_team_status(&team.status))
+        .min_by(|(_, left), (_, right)| {
+            left.updated_at_ms
+                .cmp(&right.updated_at_ms)
+                .then(left.created_at_ms.cmp(&right.created_at_ms))
+                .then(left.id.cmp(&right.id))
+        })
+        .map(|(index, _)| index)
+}
+
+fn is_terminal_team_status(status: &str) -> bool {
+    matches!(status, "done" | "closed" | "cancelled" | "finished")
+}
+
 fn clean_optional_id(field: &str, value: Option<&str>) -> Result<Option<String>, TeamError> {
     value.map(|value| clean_id(field, value)).transpose()
 }
@@ -2385,6 +2408,82 @@ mod tests {
             summary.consistency_warnings,
             vec!["active_without_open_work".to_string()]
         );
+    }
+
+    #[test]
+    fn upsert_team_evicts_oldest_terminal_team_at_cap() {
+        let mut store = TeamStoreData::default();
+        for index in 0..MAX_TEAMS {
+            store
+                .upsert_team(
+                    TeamUpsert {
+                        team_id: format!("team-{index}"),
+                        workspace_id: None,
+                        leader_surface_id: None,
+                        name: None,
+                        status: Some("done".to_string()),
+                        goal: None,
+                    },
+                    index as u64 + 1,
+                )
+                .unwrap();
+        }
+
+        let added = store
+            .upsert_team(
+                TeamUpsert {
+                    team_id: "team-new".to_string(),
+                    workspace_id: None,
+                    leader_surface_id: None,
+                    name: None,
+                    status: Some("active".to_string()),
+                    goal: None,
+                },
+                10_000,
+            )
+            .unwrap();
+
+        assert_eq!(added.id, "team-new");
+        assert_eq!(store.teams.len(), MAX_TEAMS);
+        assert!(store.get("team-0").is_none());
+        assert!(store.get("team-new").is_some());
+    }
+
+    #[test]
+    fn upsert_team_refuses_cap_when_no_terminal_team_can_be_evicted() {
+        let mut store = TeamStoreData::default();
+        for index in 0..MAX_TEAMS {
+            store
+                .upsert_team(
+                    TeamUpsert {
+                        team_id: format!("team-{index}"),
+                        workspace_id: None,
+                        leader_surface_id: None,
+                        name: None,
+                        status: Some("active".to_string()),
+                        goal: None,
+                    },
+                    index as u64 + 1,
+                )
+                .unwrap();
+        }
+
+        let err = store
+            .upsert_team(
+                TeamUpsert {
+                    team_id: "team-new".to_string(),
+                    workspace_id: None,
+                    leader_surface_id: None,
+                    name: None,
+                    status: Some("active".to_string()),
+                    goal: None,
+                },
+                10_000,
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().contains("team store is full"));
+        assert_eq!(store.teams.len(), MAX_TEAMS);
     }
 
     #[test]
