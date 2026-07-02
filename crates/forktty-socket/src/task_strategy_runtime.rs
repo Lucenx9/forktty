@@ -106,6 +106,14 @@ fn infer_likely_user_visible_change(goal: &str) -> bool {
         "edit",
         "refactor",
         "remove",
+        "delet",
+        "replac",
+        "rewrit",
+        "migrat",
+        "drop",
+        "convert",
+        "port",
+        "patch",
         "renam",
         "writ",
         "creat",
@@ -1541,7 +1549,7 @@ impl TaskStrategyApplyRequest {
             return Ok(base_message_id.to_string());
         };
         let prefix = format!("{task_id}-msg-");
-        let mut max_suffix = 0u32;
+        let mut max_suffix = 0u64;
         let mut pending_id = None;
         let mut delivered_id = None;
         for message in messages {
@@ -1550,7 +1558,7 @@ impl TaskStrategyApplyRequest {
             };
             if let Some(suffix) = id
                 .strip_prefix(&prefix)
-                .and_then(|suffix| suffix.parse::<u32>().ok())
+                .and_then(|suffix| suffix.parse::<u64>().ok())
             {
                 max_suffix = max_suffix.max(suffix);
             }
@@ -1578,7 +1586,12 @@ impl TaskStrategyApplyRequest {
             }
         }
         if max_suffix > 0 {
-            return Ok(format!("{prefix}{}", max_suffix + 1));
+            let next_suffix = max_suffix.checked_add(1).ok_or_else(|| {
+                DispatchError::Conflict(format!(
+                    "task strategy message id suffix exhausted for task {task_id}"
+                ))
+            })?;
+            return Ok(format!("{prefix}{next_suffix}"));
         }
         Ok(base_message_id.to_string())
     }

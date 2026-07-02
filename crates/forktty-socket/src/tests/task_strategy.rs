@@ -698,6 +698,57 @@ async fn task_strategy_apply_forces_dirty_editing_worktree_approval() {
 }
 
 #[tokio::test]
+async fn task_strategy_apply_forces_dirty_isolation_for_common_editing_verbs() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    std::fs::write(repo_dir.path().join("dirty.txt"), "dirty\n").unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        model.create_worktree_workspace("feature", repo_dir.path(), "feature", "feature-x");
+    };
+    let goals = [
+        "Delete legacy flag from parser",
+        "Replace legacy flag in parser",
+        "Rewrite legacy flag parser",
+        "Migrate legacy flag parser",
+        "Drop legacy flag parser",
+        "Convert legacy flag parser",
+        "Port legacy flag parser",
+        "Patch legacy flag parser",
+    ];
+
+    for (index, goal) in goals.iter().enumerate() {
+        let mut plan = staged_team_plan_json();
+        plan["layers"]["worktree"] = json!(false);
+        plan["approvals"] = json!(["start_run"]);
+        let err = dispatch(
+            &state,
+            "task.strategy.apply",
+            json!({
+                "run_id": format!("router-run-{index}"),
+                "worktree_name": "feature-x",
+                "goal": goal,
+                "approved": ["start_run"],
+                "plan": plan
+            }),
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.code(), "precondition_failed", "{goal}");
+        assert!(err.to_string().contains("create_worktree"), "{goal}");
+    }
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_apply_rejects_conflicting_surface_aliases_before_dirty_check() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();
@@ -1900,6 +1951,58 @@ async fn task_strategy_apply_is_idempotent_for_staged_messages() {
         .await
         .unwrap();
     assert_eq!(team["messages"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn task_strategy_apply_staged_prompt_suffix_handles_u32_max_message_id() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.message.send",
+        json!({
+            "team_id": "router-run-1",
+            "message_id": "router-run-1-implementer-1-msg-4294967295",
+            "from": "leader",
+            "task_id": "router-run-1-implementer-1",
+            "body": "stale prompt"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let result = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement the router safely",
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert!(result["actions"].as_array().unwrap().iter().any(|action| {
+        action["method"] == "team.message.send"
+            && action["message_id"] == "router-run-1-implementer-1-msg-4294967296"
+            && action["status"] == "applied"
+    }));
 }
 
 #[tokio::test]

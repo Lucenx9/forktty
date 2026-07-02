@@ -593,20 +593,22 @@ fn strategy_order(strategy: &TaskStrategy) -> u8 {
 
 fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
     let lower = goal.to_lowercase();
-    if input.user_requested_parallelism
-        || contains_token(&lower, &["compare", "alternatives", "approaches"])
-        || contains_token_prefix(&lower, &["alternative"])
-    {
+    if input.user_requested_parallelism {
         return TaskClass::ParallelResearch;
-    }
-    if contains_token_prefix(&lower, &["fix", "bug"]) {
-        return TaskClass::FocusedBugfix;
     }
     if contains_implementation_intent(&lower) {
         return TaskClass::FeatureImplementation;
     }
     if is_review_primary_goal(&lower) {
         return TaskClass::ReviewOnly;
+    }
+    if contains_token_prefix(&lower, &["fix", "bug"]) {
+        return TaskClass::FocusedBugfix;
+    }
+    if contains_token(&lower, &["compare", "alternatives", "approaches"])
+        || contains_token_prefix(&lower, &["alternative"])
+    {
+        return TaskClass::ParallelResearch;
     }
     if contains_token(
         &lower,
@@ -1366,6 +1368,42 @@ mod tests {
 
         assert_eq!(plan.task_class, TaskClass::FocusedBugfix);
         assert_eq!(plan.strategy, TaskStrategy::SoloWithVerifyLoop);
+    }
+
+    #[test]
+    fn review_primary_goal_with_fix_terms_stays_review_only() {
+        let review_bug_fix = plan_task_strategy(TaskStrategyInput {
+            goal: "Review the bug fix in the task router".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: false,
+            user_requested_review: false,
+            likely_user_visible_change: false,
+            harness_registry: caps(),
+        })
+        .unwrap();
+        let fix_with_approaches = plan_task_strategy(TaskStrategyInput {
+            goal: "Fix the bug using one of the approaches discussed".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: false,
+            user_requested_review: false,
+            likely_user_visible_change: true,
+            harness_registry: caps(),
+        })
+        .unwrap();
+
+        assert_eq!(review_bug_fix.task_class, TaskClass::ReviewOnly);
+        assert_eq!(review_bug_fix.strategy, TaskStrategy::ReviewOnly);
+        assert_eq!(fix_with_approaches.task_class, TaskClass::FocusedBugfix);
+        assert_eq!(
+            fix_with_approaches.strategy,
+            TaskStrategy::SoloWithVerifyLoop
+        );
     }
 
     #[test]

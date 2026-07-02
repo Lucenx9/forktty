@@ -115,6 +115,9 @@ All notable changes to ForkTTY are documented here.
 - Fixed task strategy classification so goals that mention review feedback but
   explicitly ask to fix a bug still route through the bugfix verify-loop path
   instead of being treated as read-only review work.
+- Fixed task strategy routing and apply safety for review-first goals that
+  mention bug fixes, common editing verbs on dirty repositories, and
+  deterministic prompt ids with very large numeric suffixes.
 - Fixed task strategy apply so a pending Feed approval request is dismissed
   when the same run is later applied with equivalent explicit `approved`
   attestations, including retries that also pass the superseded `approval_id`,
