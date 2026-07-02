@@ -3135,6 +3135,16 @@ async fn task_strategy_apply_submit_launches_workers_in_open_worktree_workspace(
             .unwrap();
         assert_eq!(surface.cwd, worktree_dir.path());
     }
+    for message in team["messages"].as_array().unwrap() {
+        let body = message["body"].as_str().unwrap();
+        assert!(body.contains("Worktree: feature-x"));
+        assert!(body.contains(worktree_dir.path().to_str().unwrap()));
+    }
+    for task in team["tasks"].as_array().unwrap() {
+        let detail = task["detail"].as_str().unwrap();
+        assert!(detail.contains("Worktree: feature-x"));
+        assert!(detail.contains(worktree_dir.path().to_str().unwrap()));
+    }
 }
 
 #[tokio::test]

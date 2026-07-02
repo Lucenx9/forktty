@@ -350,12 +350,15 @@ absolute existing directory and is used only for planning context; an explicit
 `repo_dirty` value overrides that inference. When `likely_user_visible_change`
 is omitted, it infers likely
 editing/user-visible intent from the goal text; an explicit false value
-overrides that inference. When `router_profile` is omitted, it uses `balanced`
+overrides that inference. Primary review goals such as "Review ..." or
+"Read only ..." are treated as read-only review work, so dirty-repo state alone
+does not force worktree isolation for a `review_only` strategy. When
+`router_profile` is omitted, it uses `balanced`
 unless the goal or request hints clearly imply `fast`, `conservative`,
 `parallel`, or `review_heavy`; an explicit profile reweights the same
-explainable scorer without changing approval or visibility rules. It never launches processes, mutates
-workflow/team/feed state, creates worktrees, sends terminal input, or schedules
-background work.
+explainable scorer without changing approval or visibility rules. It never
+launches processes, mutates workflow/team/feed state, creates worktrees, sends
+terminal input, or schedules background work.
 Optional `harness_signals` is an object keyed by harness id. Each value can set
 `cooldown`, `cooldown_reason`, `locked_out`, and `lockout_reason`. Cooldown is
 a soft assignment penalty and can still be selected when no better ready
@@ -559,6 +562,9 @@ used, so a caller whose actual repository differs from the selected ForkTTY pane
 does not launch provider trust prompts or work in the broader pane cwd. It does
 not create a workspace or worktree and does not override worktree-layer
 dirty-isolation enforcement.
+Review-primary goals with an effective `review_only` strategy remain read-only
+for apply-time dirty-repo isolation, but non-review editing goals still force
+worktree isolation even if a client submits a mismatched `review_only` plan.
 With `submit` omitted or `false`, apply performs staged setup only: it can
 upsert a workflow, write workflow plan steps, set loop metadata, upsert a team,
 create team tasks, and queue team-wide messages. With `submit: true`, a
@@ -576,10 +582,13 @@ already-open ForkTTY worktree workspace; missing `worktree_name` returns
 `invalid_param`, and an unopened worktree returns
 `precondition_failed`, both before mutation. Apply still does not create
 worktrees, push, merge, run arbitrary commands, or schedule hidden background
-work. Repeating the same request with the same `run_id` reuses deterministic
-workflow/team/task/message ids, does not duplicate matching staged messages,
-and skips dispatch for messages already recorded as delivered only when the
-same compatible live worker is reused. If a worker record must be relaunched,
+work. Worktree-layer task details and worker prompts name both the selected
+worktree and its effective repository cwd, so a worker can verify the intended
+target before editing. Repeating the same request with the same `run_id` reuses
+deterministic workflow/team/task/message ids, does not duplicate matching
+staged messages, and skips dispatch for messages already recorded as delivered
+only when the same compatible live worker is reused. If a worker record must be
+relaunched,
 or if an existing staged role prompt no longer matches the current task,
 target worker, or cwd-derived prompt body, apply queues the next deterministic
 `<task-id>-msg-N` prompt and dispatches that fresh prompt instead of sending

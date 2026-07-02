@@ -1055,7 +1055,8 @@ pub fn load_teams_from_path(path: &Path) -> Result<TeamStoreData, TeamError> {
         )));
     }
     let bytes = fs::read(path)?;
-    let data: TeamStoreData = serde_json::from_slice(&bytes)?;
+    let mut data: TeamStoreData = serde_json::from_slice(&bytes)?;
+    repair_loaded_store(&mut data)?;
     validate_store(&data)?;
     Ok(data)
 }
@@ -1206,6 +1207,31 @@ fn validate_store(data: &TeamStoreData) -> Result<(), TeamError> {
         }
         last_seq = event.seq;
     }
+    Ok(())
+}
+
+fn repair_loaded_store(data: &mut TeamStoreData) -> Result<(), TeamError> {
+    for team in &mut data.teams {
+        let mut seen = BTreeSet::new();
+        team.messages
+            .retain(|message| seen.insert(message.id.clone()));
+    }
+
+    let mut last_seq = 0;
+    let needs_event_resequence = data.events.iter().any(|event| {
+        let non_increasing = event.seq <= last_seq;
+        last_seq = event.seq;
+        non_increasing
+    });
+    if needs_event_resequence {
+        for (index, event) in data.events.iter_mut().enumerate() {
+            event.seq = u64::try_from(index + 1)
+                .map_err(|_| TeamError::Invalid("team event sequence overflow".to_string()))?;
+        }
+        data.next_event_seq = u64::try_from(data.events.len() + 1)
+            .map_err(|_| TeamError::Invalid("team event sequence overflow".to_string()))?;
+    }
+
     Ok(())
 }
 
@@ -1872,14 +1898,25 @@ mod tests {
     }
 
     #[test]
-    fn load_rejects_non_increasing_event_sequences() {
+    fn load_repairs_legacy_non_increasing_event_sequences() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("team-v1.json");
         fs::write(
             &path,
             serde_json::to_vec_pretty(&serde_json::json!({
                 "version": TEAM_FORMAT_VERSION,
-                "teams": [],
+                "teams": [{
+                    "id": "team-1",
+                    "workspace_id": "workspace-1",
+                    "leader_surface_id": "surface-1",
+                    "name": "Launch",
+                    "status": "active",
+                    "created_at_ms": 1,
+                    "updated_at_ms": 1,
+                    "workers": [],
+                    "tasks": [],
+                    "messages": []
+                }],
                 "events": [
                     {
                         "seq": 5,
@@ -1889,7 +1926,7 @@ mod tests {
                         "created_at_ms": 1
                     },
                     {
-                        "seq": 5,
+                        "seq": 1,
                         "team_id": "team-1",
                         "kind": "team.updated",
                         "summary": "updated",
@@ -1901,15 +1938,41 @@ mod tests {
         )
         .unwrap();
 
-        let err = load_teams_from_path(&path).unwrap_err();
-        assert!(matches!(
-            err,
-            TeamError::Invalid(message) if message.contains("increasing seq")
-        ));
+        let mut store = load_teams_from_path(&path).unwrap();
+        assert_eq!(
+            store
+                .events
+                .iter()
+                .map(|event| event.seq)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        store
+            .upsert_team(
+                TeamUpsert {
+                    team_id: "team-1".to_string(),
+                    workspace_id: None,
+                    leader_surface_id: None,
+                    name: None,
+                    status: Some("done".to_string()),
+                    goal: None,
+                },
+                3,
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .events
+                .iter()
+                .map(|event| event.seq)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        save_teams_to_path(&path, &store).unwrap();
     }
 
     #[test]
-    fn load_rejects_duplicate_message_ids() {
+    fn load_repairs_legacy_duplicate_message_ids() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("team-v1.json");
         fs::write(
@@ -1945,11 +2008,11 @@ mod tests {
         )
         .unwrap();
 
-        let err = load_teams_from_path(&path).unwrap_err();
-        assert!(matches!(
-            err,
-            TeamError::Invalid(message) if message.contains("duplicate message id")
-        ));
+        let store = load_teams_from_path(&path).unwrap();
+        let team = store.get("team-1").unwrap();
+        assert_eq!(team.messages.len(), 1);
+        assert_eq!(team.messages[0].body, "first");
+        save_teams_to_path(&path, &store).unwrap();
     }
 
     #[test]

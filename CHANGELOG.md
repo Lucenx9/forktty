@@ -67,9 +67,10 @@ All notable changes to ForkTTY are documented here.
   of disabling the Feed on every launch, Feed saves are fsync-backed like the
   other stores, and approved approval rows are retained through notification
   churn so later `task.strategy.apply` retries can still consume them.
-- Fixed team store validation and ack idempotency so duplicate persisted
-  message ids are rejected on load and repeated message acknowledgements do not
-  emit duplicate `team.message.acked` events.
+- Fixed team store validation/recovery and ack idempotency so legacy duplicate
+  persisted message ids are repaired on load by retaining the first message,
+  strict saves reject invalid state, and repeated message acknowledgements do
+  not emit duplicate `team.message.acked` events.
 - Fixed small GTK polish issues: failed worktree merge/remove notifications now
   appear as errors, multi-tab close confirmations say tab instead of pane,
   sidebar pane counts ignore extra tabs, context menu shortcut/copy icon hints
@@ -106,6 +107,11 @@ All notable changes to ForkTTY are documented here.
 - Fixed worktree-layer task strategy submit retries so a live worker is reused
   only when its surface cwd still matches the currently selected worktree
   workspace target.
+- Fixed task strategy routing so review-primary goals that mention
+  implementation terms still stay read-only review work and no longer force
+  dirty-repo worktree isolation.
+- Fixed worktree-layer task strategy apply so staged task details and worker
+  prompts name the selected worktree and effective repository cwd.
 - Fixed task strategy submit retries so a persisted worker record with a closed
   or missing surface is relaunched before dispatching its still-pending role
   prompt.
@@ -135,7 +141,8 @@ All notable changes to ForkTTY are documented here.
   the other bounded list APIs.
 - Fixed team event persistence so stores with stale or missing
   `next_event_seq` mint new event sequence numbers after the highest persisted
-  event, and corrupted non-increasing event histories are rejected on load.
+  event, and legacy non-increasing event histories are repaired on load before
+  strict validation.
 - Fixed Codex team message submit so ForkTTY sends the task prompt and Enter as
   separate terminal actions instead of leaving fresh Codex worker prompts staged.
 - Fixed team message dispatch for freshly launched Codex/Claude/Pi workers so

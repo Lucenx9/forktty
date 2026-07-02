@@ -217,7 +217,7 @@ pub fn plan_task_strategy(input: TaskStrategyInput) -> Result<TaskStrategyPlan, 
     approvals.dedup();
 
     let mut reasons = vec![format!("classified task as {task_class:?}")];
-    if input.repo_dirty && input.likely_user_visible_change {
+    if layers.worktree && input.repo_dirty && input.likely_user_visible_change {
         reasons.push("dirty repo plus editing task requires worktree isolation".to_string());
     }
     if input.user_requested_parallelism {
@@ -596,11 +596,11 @@ fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
     if input.user_requested_parallelism {
         return TaskClass::ParallelResearch;
     }
-    if contains_implementation_intent(&lower) {
-        return TaskClass::FeatureImplementation;
-    }
     if is_review_primary_goal(&lower) {
         return TaskClass::ReviewOnly;
+    }
+    if contains_implementation_intent(&lower) {
+        return TaskClass::FeatureImplementation;
     }
     if contains_token_prefix(&lower, &["fix", "bug"]) {
         return TaskClass::FocusedBugfix;
@@ -643,12 +643,6 @@ fn contains_implementation_intent(lower: &str) -> bool {
 }
 
 fn is_review_primary_goal(lower: &str) -> bool {
-    if lower.contains("read-only") {
-        return true;
-    }
-    if contains_token(lower, &["review", "reviews"]) && contains_token(lower, &["only"]) {
-        return true;
-    }
     let skip = [
         "the",
         "a",
@@ -802,7 +796,10 @@ fn effective_layers_for_strategy(
     input: &TaskStrategyInput,
 ) -> TaskStrategyLayers {
     let mut layers = layers_for_strategy(strategy);
-    if input.repo_dirty && input.likely_user_visible_change {
+    if !matches!(strategy, TaskStrategy::ReviewOnly)
+        && input.repo_dirty
+        && input.likely_user_visible_change
+    {
         layers.worktree = true;
     }
     layers
@@ -1404,6 +1401,53 @@ mod tests {
             fix_with_approaches.strategy,
             TaskStrategy::SoloWithVerifyLoop
         );
+    }
+
+    #[test]
+    fn review_primary_goal_with_implementation_terms_stays_review_only() {
+        for goal in [
+            "Review the change that adds retry logic",
+            "Review the PR that implements the settings dialog",
+        ] {
+            let plan = plan_task_strategy(TaskStrategyInput {
+                goal: goal.to_string(),
+                explicit_mode: None,
+                router_profile: None,
+                last_known_good: None,
+                repo_dirty: false,
+                user_requested_parallelism: false,
+                user_requested_review: false,
+                likely_user_visible_change: false,
+                harness_registry: caps(),
+            })
+            .unwrap();
+
+            assert_eq!(plan.task_class, TaskClass::ReviewOnly, "{goal}");
+            assert_eq!(plan.strategy, TaskStrategy::ReviewOnly, "{goal}");
+        }
+    }
+
+    #[test]
+    fn review_only_does_not_force_dirty_repo_worktree_isolation() {
+        let plan = plan_task_strategy(TaskStrategyInput {
+            goal: "Review the bug fix in the task router".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            last_known_good: None,
+            repo_dirty: true,
+            user_requested_parallelism: false,
+            user_requested_review: false,
+            likely_user_visible_change: true,
+            harness_registry: caps(),
+        })
+        .unwrap();
+
+        assert_eq!(plan.task_class, TaskClass::ReviewOnly);
+        assert_eq!(plan.strategy, TaskStrategy::ReviewOnly);
+        assert!(!plan.layers.worktree);
+        assert!(!plan
+            .approvals
+            .contains(&TaskStrategyApproval::CreateWorktree));
     }
 
     #[test]

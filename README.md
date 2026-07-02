@@ -368,6 +368,9 @@ target differs from the selected ForkTTY pane and is already represented by an
 open ForkTTY workspace, surface, or effective project cwd; submit-mode workers
 launch there and role prompts include that cwd without creating a workspace or
 worktree.
+Primary review goals such as "Review ..." remain read-only review work, so a
+dirty repository does not force worktree isolation unless the goal is actually
+editing/user-visible work.
 Pass `--submit`/`submit: true` for a supported
 team plan:
 ForkTTY launches visible worker panes, assigns tasks, queues deterministic role
@@ -375,7 +378,8 @@ prompts, and dispatches them through the team mailbox with provider-aware Enter
 handling. If the plan has `layers.worktree: true`, pass
 `--worktree-name <name>`/`worktree_name` for an already-open ForkTTY worktree
 workspace; apply will reject missing or unopened worktrees before mutating
-state. Submit retries reuse a live deterministic worker only when its harness,
+state, and worker task text names both that worktree and its effective cwd.
+Submit retries reuse a live deterministic worker only when its harness,
 role, task, worktree, launch cwd, effective target cwd, and status still match
 the current assignment;
 otherwise apply returns `conflict` before dispatching a prompt to the wrong

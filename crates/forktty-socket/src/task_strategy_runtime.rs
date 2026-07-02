@@ -140,6 +140,27 @@ fn infer_likely_user_visible_change(goal: &str) -> bool {
     contains_token_prefix(&lower, &visible_surface_terms)
 }
 
+fn infer_review_primary_goal(goal: &str) -> bool {
+    let lower = goal.to_lowercase();
+    let skip = [
+        "the",
+        "a",
+        "an",
+        "please",
+        "quickly",
+        "carefully",
+        "thoroughly",
+    ];
+    let mut tokens = lower
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty() && !skip.contains(token));
+    let first = tokens.next();
+    if first == Some("read") && tokens.next() == Some("only") {
+        return true;
+    }
+    matches!(first, Some("review" | "reviews"))
+}
+
 fn contains_token_prefix(value: &str, prefixes: &[&str]) -> bool {
     value
         .split(|ch: char| !ch.is_ascii_alphanumeric())
@@ -574,8 +595,11 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
             }
 
             let base_message_id = format!("{task_id}-msg-1");
-            let expected_body =
-                assignment_prompt(&request.goal, assignment, request.target_cwd.as_deref());
+            let expected_body = assignment_prompt(
+                &request.goal,
+                assignment,
+                request.assignment_target_context(),
+            );
             let message_id = request
                 .assignment_message_id(
                     state,
@@ -1026,8 +1050,11 @@ impl TaskStrategyApplyRequest {
             Err(err) if self.worktree_name.is_some() && err.code() == "not_found" => false,
             Err(err) => return Err(err),
         };
+        let review_only_goal = matches!(self.plan.strategy, TaskStrategy::ReviewOnly)
+            && infer_review_primary_goal(&self.goal);
         if (explicit_target_dirty || selected_target_dirty)
             && infer_likely_user_visible_change(&self.goal)
+            && !review_only_goal
         {
             if !self.plan.layers.worktree {
                 self.plan.layers.worktree = true;
@@ -1409,7 +1436,7 @@ impl TaskStrategyApplyRequest {
                     "id": format!("{}-step-{role}-{}", self.run_id, index + 1),
                     "title": assignment_title(assignment),
                     "status": "pending",
-                    "detail": assignment_detail(&self.goal, assignment, self.target_cwd.as_deref()),
+                    "detail": assignment_detail(&self.goal, assignment, self.assignment_target_context()),
                 })
             })
             .collect::<Vec<_>>();
@@ -1479,7 +1506,7 @@ impl TaskStrategyApplyRequest {
             "task_id": task_id,
             "title": assignment_title(assignment),
             "status": "open",
-            "detail": assignment_detail(&self.goal, assignment, self.target_cwd.as_deref()),
+            "detail": assignment_detail(&self.goal, assignment, self.assignment_target_context()),
         })
     }
 
@@ -1522,12 +1549,23 @@ impl TaskStrategyApplyRequest {
             "message_id": message_id,
             "from": "leader",
             "task_id": task_id,
-            "body": assignment_prompt(&self.goal, assignment, self.target_cwd.as_deref()),
+            "body": assignment_prompt(&self.goal, assignment, self.assignment_target_context()),
         });
         if let Some(worker_id) = worker_id {
             params["to_worker_id"] = json!(worker_id);
         }
         params
+    }
+
+    fn assignment_target_context(&self) -> AssignmentTargetContext<'_> {
+        AssignmentTargetContext {
+            worktree_name: self.worktree_name.as_deref(),
+            cwd: self.target_cwd.as_deref().or_else(|| {
+                self.worktree_name
+                    .as_ref()
+                    .and(self.effective_target_cwd.as_deref())
+            }),
+        }
     }
 
     async fn team_message_exists(
@@ -1763,12 +1801,18 @@ fn assignment_title(assignment: &HarnessAssignment) -> String {
     )
 }
 
+#[derive(Clone, Copy)]
+struct AssignmentTargetContext<'a> {
+    worktree_name: Option<&'a str>,
+    cwd: Option<&'a Path>,
+}
+
 fn assignment_detail(
     goal: &str,
     assignment: &HarnessAssignment,
-    target_cwd: Option<&Path>,
+    target: AssignmentTargetContext<'_>,
 ) -> String {
-    let target = assignment_target_cwd_line(target_cwd);
+    let target = assignment_target_context_lines(target);
     format!(
         "Goal: {goal}\nRole: {}\nHarness: {}\nReason: {}{target}\nScope: managed by task.strategy.apply; do not subdelegate.",
         role_id(&assignment.role),
@@ -1780,9 +1824,9 @@ fn assignment_detail(
 fn assignment_prompt(
     goal: &str,
     assignment: &HarnessAssignment,
-    target_cwd: Option<&Path>,
+    target: AssignmentTargetContext<'_>,
 ) -> String {
-    let target = assignment_target_cwd_line(target_cwd);
+    let target = assignment_target_context_lines(target);
     format!(
         "ForkTTY task assignment.\nGoal: {goal}\nRole: {}\nHarness: {}\nReason: {}{target}\nStay within this role, do not subdelegate, and report verification evidence before completion.",
         role_id(&assignment.role),
@@ -1791,10 +1835,15 @@ fn assignment_prompt(
     )
 }
 
-fn assignment_target_cwd_line(target_cwd: Option<&Path>) -> String {
-    target_cwd
-        .map(|cwd| format!("\nRepository cwd: {}", cwd.display()))
-        .unwrap_or_default()
+fn assignment_target_context_lines(target: AssignmentTargetContext<'_>) -> String {
+    let mut lines = String::new();
+    if let Some(worktree_name) = target.worktree_name {
+        lines.push_str(&format!("\nWorktree: {worktree_name}"));
+    }
+    if let Some(cwd) = target.cwd {
+        lines.push_str(&format!("\nRepository cwd: {}", cwd.display()));
+    }
+    lines
 }
 
 fn message_target_matches_worker(message: &Value, worker_id: Option<&str>) -> bool {

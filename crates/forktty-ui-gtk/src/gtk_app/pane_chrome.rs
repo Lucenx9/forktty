@@ -502,7 +502,17 @@ pub(super) fn active_workspace_snapshot(state: &SocketAppState) -> Option<forktt
     model.active_workspace()
 }
 
-pub(super) fn close_pane_confirmation_body(state: &SocketAppState, surface_id: &str) -> String {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ClosePaneConfirmation {
+    pub(super) title: &'static str,
+    pub(super) body: String,
+    pub(super) confirm_label: &'static str,
+}
+
+pub(super) fn close_pane_confirmation(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> ClosePaneConfirmation {
     let target = state.model.lock().ok().and_then(|model| {
         let surface = model.surface(surface_id)?;
         let workspace = model
@@ -527,15 +537,23 @@ pub(super) fn close_pane_confirmation_body(state: &SocketAppState, surface_id: &
         ))
     });
     match target {
-        Some((target, true)) => format!(
-            "Close tab {target}. Only this tab will be closed. Any process running inside it will be terminated."
-        ),
-        Some((target, false)) => {
-            format!("Close pane {target}. Any process running inside it will be terminated.")
-        }
-        None => {
-            format!("Close pane {surface_id}. Any process running inside it will be terminated.")
-        }
+        Some((target, true)) => ClosePaneConfirmation {
+            title: "Close Tab?",
+            body: format!(
+                "Close tab {target}. Only this tab will be closed. Any process running inside it will be terminated."
+            ),
+            confirm_label: "Close Tab",
+        },
+        Some((target, false)) => ClosePaneConfirmation {
+            title: "Close Pane?",
+            body: format!("Close pane {target}. Any process running inside it will be terminated."),
+            confirm_label: "Close Pane",
+        },
+        None => ClosePaneConfirmation {
+            title: "Close Pane?",
+            body: format!("Close pane {surface_id}. Any process running inside it will be terminated."),
+            confirm_label: "Close Pane",
+        },
     }
 }
 
@@ -562,24 +580,30 @@ pub(super) fn show_close_pane_confirmation(
 ) {
     let state = state.clone();
     let surface_id = surface_id.to_string();
-    let body = close_pane_confirmation_body(&state, &surface_id);
-    show_destructive_confirmation(parent, "Close Pane?", &body, "Close Pane", move || {
-        // The pane may have been closed by other means (shortcut, socket
-        // client) while the dialog was open; skip the close entirely then.
-        let still_exists = state
-            .model
-            .lock()
-            .is_ok_and(|model| model.surface(&surface_id).is_some());
-        if still_exists {
-            // Close by explicit id: the active workspace may have changed
-            // (e.g. socket workspace.select) while the dialog was open, so
-            // closing the "active" surface could target the wrong pane.
-            // Focus first so the surviving neighbor inherits focus as before.
-            focus_surface_and(&state, &surface_id, |state| {
-                close_surface_by_id(state, &surface_id);
-            });
-        }
-    });
+    let confirmation = close_pane_confirmation(&state, &surface_id);
+    show_destructive_confirmation(
+        parent,
+        confirmation.title,
+        &confirmation.body,
+        confirmation.confirm_label,
+        move || {
+            // The pane may have been closed by other means (shortcut, socket
+            // client) while the dialog was open; skip the close entirely then.
+            let still_exists = state
+                .model
+                .lock()
+                .is_ok_and(|model| model.surface(&surface_id).is_some());
+            if still_exists {
+                // Close by explicit id: the active workspace may have changed
+                // (e.g. socket workspace.select) while the dialog was open, so
+                // closing the "active" surface could target the wrong pane.
+                // Focus first so the surviving neighbor inherits focus as before.
+                focus_surface_and(&state, &surface_id, |state| {
+                    close_surface_by_id(state, &surface_id);
+                });
+            }
+        },
+    );
 }
 
 pub(super) fn record_terminal_spawn_failure(

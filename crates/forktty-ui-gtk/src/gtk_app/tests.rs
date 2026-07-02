@@ -1142,10 +1142,35 @@ fn close_pane_confirmation_distinguishes_multi_tab_leaf() {
         model.add_tab(&first).unwrap().id
     };
 
-    let body = close_pane_confirmation_body(&state, &tab_id);
+    let body = close_pane_confirmation(&state, &tab_id).body;
 
     assert!(body.starts_with("Close tab "));
     assert!(body.contains("Only this tab will be closed."));
+}
+
+#[test]
+fn close_tab_confirmation_uses_tab_title_and_button_labels() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let tab_id = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first = workspace.focused_surface_id.clone();
+        model.add_tab(&first).unwrap().id
+    };
+
+    let confirmation = close_pane_confirmation(&state, &tab_id);
+
+    assert_eq!(confirmation.title, "Close Tab?");
+    assert_eq!(confirmation.confirm_label, "Close Tab");
+    assert!(confirmation.body.starts_with("Close tab "));
 }
 
 #[test]
