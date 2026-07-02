@@ -144,6 +144,7 @@ impl FeedStore {
     }
 
     pub fn append(&mut self, entry: FeedEntry) -> Result<(), FeedError> {
+        validate_feed_entry_shape(&entry)?;
         let previous = self.entries.clone();
         let entry = match self.entries.iter().find(|existing| existing.id == entry.id) {
             Some(existing) if should_preserve_approval_decision(existing, &entry) => {
@@ -339,35 +340,38 @@ fn should_preserve_approval_decision(existing: &FeedEntry, entry: &FeedEntry) ->
 fn validate_feed_entries(entries: &[FeedEntry]) -> Result<(), FeedError> {
     let mut ids = BTreeSet::new();
     for entry in entries {
-        if entry.id.trim().is_empty()
-            || entry.id.len() > 512
-            || entry.id.chars().any(char::is_control)
-        {
-            return Err(FeedError::InvalidState("invalid feed entry id".to_string()));
-        }
+        validate_feed_entry_shape(entry)?;
         if !ids.insert(entry.id.as_str()) {
             return Err(FeedError::InvalidState(format!(
                 "duplicate feed entry id: {}",
                 entry.id
             )));
         }
-        match entry.entry_type {
-            FeedEntryType::Approval if entry.approval_state.is_none() => {
-                return Err(FeedError::InvalidState(format!(
-                    "feed approval {} is missing approval_state",
-                    entry.id
-                )));
-            }
-            FeedEntryType::Notification | FeedEntryType::Status | FeedEntryType::Progress
-                if entry.approval_state.is_some() =>
-            {
-                return Err(FeedError::InvalidState(format!(
-                    "non-approval feed entry {} has approval_state",
-                    entry.id
-                )));
-            }
-            _ => {}
+    }
+    Ok(())
+}
+
+fn validate_feed_entry_shape(entry: &FeedEntry) -> Result<(), FeedError> {
+    if entry.id.trim().is_empty() || entry.id.len() > 512 || entry.id.chars().any(char::is_control)
+    {
+        return Err(FeedError::InvalidState("invalid feed entry id".to_string()));
+    }
+    match entry.entry_type {
+        FeedEntryType::Approval if entry.approval_state.is_none() => {
+            return Err(FeedError::InvalidState(format!(
+                "feed approval {} is missing approval_state",
+                entry.id
+            )));
         }
+        FeedEntryType::Notification | FeedEntryType::Status | FeedEntryType::Progress
+            if entry.approval_state.is_some() =>
+        {
+            return Err(FeedError::InvalidState(format!(
+                "non-approval feed entry {} has approval_state",
+                entry.id
+            )));
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -722,6 +726,24 @@ mod tests {
                 .any(|name| name.starts_with("feed.json.bad-")),
             "expected invalid feed quarantine sibling, got {quarantined:?}"
         );
+    }
+
+    #[test]
+    fn append_rejects_invalid_feed_entry_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feed.json");
+        let mut store = FeedStore::open_at(&path).unwrap();
+        let mut invalid = entry("feed-1", "w1");
+        invalid.approval_state = Some(FeedApprovalState::Approved);
+
+        let err = store.append(invalid).unwrap_err();
+
+        assert!(matches!(
+            err,
+            FeedError::InvalidState(message)
+                if message.contains("non-approval feed entry feed-1 has approval_state")
+        ));
+        assert!(FeedStore::open_at(&path).unwrap().list(None, 10).is_empty());
     }
 
     #[test]
