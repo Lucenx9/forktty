@@ -73,6 +73,9 @@ All notable changes to ForkTTY are documented here.
   persisted message ids are repaired on load by retaining the first message,
   strict saves reject invalid state, and repeated message acknowledgements do
   not emit duplicate `team.message.acked` events.
+- Fixed team/workflow store mutation ordering so event sequence failures cannot
+  leave in-memory plan, task, worker, or message updates partially applied
+  before the store update is rejected.
 - Fixed small GTK polish issues: failed worktree merge/remove notifications now
   appear as errors, multi-tab close confirmations say tab instead of pane,
   sidebar pane counts ignore extra tabs, context menu shortcut/copy icon hints

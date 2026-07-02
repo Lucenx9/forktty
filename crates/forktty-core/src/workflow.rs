@@ -457,20 +457,22 @@ impl WorkflowStoreData {
                 })
             })
             .collect::<Result<Vec<_>, WorkflowError>>()?;
-        let workflow = self
+        let index = self
             .workflows
-            .iter_mut()
-            .find(|workflow| workflow.id == id)
+            .iter()
+            .position(|workflow| workflow.id == id)
             .ok_or(WorkflowError::NotFound)?;
-        workflow.plan = plan;
-        workflow.updated_at_ms = now_ms;
-        let row = workflow.clone();
+        let mut updated = self.workflows[index].clone();
+        updated.plan = plan;
+        updated.updated_at_ms = now_ms;
+        let row = updated.clone();
         self.push_event(
             &row.id,
             "workflow.plan.set",
             format!("{} plan step(s)", row.plan.len()),
             now_ms,
         )?;
+        self.workflows[index] = updated;
         Ok(row)
     }
 
@@ -1711,6 +1713,47 @@ mod tests {
             )
             .unwrap_err();
         assert!(matches!(err, WorkflowError::InvalidData(_)));
+    }
+
+    #[test]
+    fn set_plan_sequence_overflow_does_not_mutate_workflow() {
+        let mut store = WorkflowStoreData::default();
+        let workflow = store
+            .upsert(
+                WorkflowUpsert {
+                    workflow_id: Some("workflow-1".to_string()),
+                    status: Some("running".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                1,
+            )
+            .unwrap();
+        store.events.push(WorkflowEvent {
+            seq: u64::MAX,
+            workflow_id: workflow.id.clone(),
+            kind: "workflow.plan.set".to_string(),
+            at_ms: 2,
+            summary: "previous".to_string(),
+        });
+        store.next_event_seq = u64::MAX;
+
+        let err = store
+            .set_plan(
+                &workflow.id,
+                vec![WorkflowPlanStepInput {
+                    id: "step-1".to_string(),
+                    title: "Inspect".to_string(),
+                    status: "done".to_string(),
+                    detail: None,
+                }],
+                3,
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().contains("sequence overflow"));
+        let workflow = store.get(&workflow.id).unwrap();
+        assert!(workflow.plan.is_empty());
+        assert_eq!(workflow.updated_at_ms, 1);
     }
 
     #[test]

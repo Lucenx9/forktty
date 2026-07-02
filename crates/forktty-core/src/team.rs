@@ -343,15 +343,16 @@ impl TeamStoreData {
         let name = clean_optional_short("name", input.name.as_deref())?;
         let status = clean_optional_short("status", input.status.as_deref())?;
         let goal = clean_optional_long("goal", input.goal.as_deref())?;
-        let index = match self.teams.iter().position(|team| team.id == team_id) {
-            Some(index) => index,
+        let existing_index = self.teams.iter().position(|team| team.id == team_id);
+        let mut updated = match existing_index {
+            Some(index) => self.teams[index].clone(),
             None => {
                 if self.teams.len() >= MAX_TEAMS {
                     return Err(TeamError::Invalid(format!(
                         "team store is full (limit {MAX_TEAMS})"
                     )));
                 }
-                self.teams.push(TeamState {
+                TeamState {
                     id: team_id.clone(),
                     workspace_id: workspace_id.clone(),
                     leader_surface_id: leader_surface_id.clone(),
@@ -363,31 +364,37 @@ impl TeamStoreData {
                     workers: Vec::new(),
                     tasks: Vec::new(),
                     messages: Vec::new(),
-                });
-                self.teams.len() - 1
+                }
             }
         };
 
-        let team = &mut self.teams[index];
-        team.workspace_id = workspace_id.or(team.workspace_id.take());
-        team.leader_surface_id = leader_surface_id.or(team.leader_surface_id.take());
+        if workspace_id.is_some() {
+            updated.workspace_id = workspace_id;
+        }
+        if leader_surface_id.is_some() {
+            updated.leader_surface_id = leader_surface_id;
+        }
         if let Some(name) = name {
-            team.name = name;
+            updated.name = name;
         }
         if let Some(status) = status {
-            team.status = status;
+            updated.status = status;
         }
         if goal.is_some() {
-            team.goal = goal;
+            updated.goal = goal;
         }
-        team.updated_at_ms = now_ms;
-        let team = team.clone();
+        updated.updated_at_ms = now_ms;
+        let team = updated.clone();
         self.push_event(
             &team_id,
             "team.upserted",
             format!("team {}", team.id),
             now_ms,
         )?;
+        match existing_index {
+            Some(index) => self.teams[index] = updated,
+            None => self.teams.push(updated),
+        }
         Ok(team)
     }
 
@@ -405,23 +412,28 @@ impl TeamStoreData {
         let status = clean_optional_short("status", input.status.as_deref())?;
         let assigned_task_id =
             clean_optional_id("assigned_task_id", input.assigned_task_id.as_deref())?;
-        let team = self.team_mut(&team_id)?;
+        let index = self
+            .teams
+            .iter()
+            .position(|team| team.id == team_id)
+            .ok_or_else(|| TeamError::TeamNotFound(team_id.clone()))?;
+        let mut updated = self.teams[index].clone();
         if let Some(task_id) = assigned_task_id.as_deref() {
-            ensure_task_exists(team, task_id)?;
+            ensure_task_exists(&updated, task_id)?;
         }
-        let index = match team
+        let worker_index = match updated
             .workers
             .iter()
             .position(|worker| worker.id == worker_id)
         {
             Some(index) => index,
             None => {
-                if team.workers.len() >= MAX_WORKERS_PER_TEAM {
+                if updated.workers.len() >= MAX_WORKERS_PER_TEAM {
                     return Err(TeamError::Invalid(format!(
                         "team worker list is full (limit {MAX_WORKERS_PER_TEAM})"
                     )));
                 }
-                team.workers.push(TeamWorker {
+                updated.workers.push(TeamWorker {
                     id: worker_id.clone(),
                     role: None,
                     agent: None,
@@ -436,10 +448,10 @@ impl TeamStoreData {
                     last_nudge_ms: 0,
                     shutdown_requested_at_ms: 0,
                 });
-                team.workers.len() - 1
+                updated.workers.len() - 1
             }
         };
-        let worker = &mut team.workers[index];
+        let worker = &mut updated.workers[worker_index];
         if role.is_some() {
             worker.role = role;
         }
@@ -460,7 +472,7 @@ impl TeamStoreData {
         if assigned_task_id.is_some() {
             worker.assigned_task_id = assigned_task_id;
         }
-        team.updated_at_ms = now_ms;
+        updated.updated_at_ms = now_ms;
         let worker = worker.clone();
         self.push_event(
             &team_id,
@@ -468,6 +480,7 @@ impl TeamStoreData {
             format!("worker {}", worker.id),
             now_ms,
         )?;
+        self.teams[index] = updated;
         Ok(worker)
     }
 
@@ -485,23 +498,28 @@ impl TeamStoreData {
         let cwd = clean_optional_absolute_cwd(input.cwd.as_deref())?;
         let assigned_task_id =
             clean_optional_id("assigned_task_id", input.assigned_task_id.as_deref())?;
-        let team = self.team_mut(&team_id)?;
+        let index = self
+            .teams
+            .iter()
+            .position(|team| team.id == team_id)
+            .ok_or_else(|| TeamError::TeamNotFound(team_id.clone()))?;
+        let mut updated = self.teams[index].clone();
         if let Some(task_id) = assigned_task_id.as_deref() {
-            ensure_task_exists(team, task_id)?;
+            ensure_task_exists(&updated, task_id)?;
         }
-        let index = match team
+        let worker_index = match updated
             .workers
             .iter()
             .position(|worker| worker.id == worker_id)
         {
             Some(index) => index,
             None => {
-                if team.workers.len() >= MAX_WORKERS_PER_TEAM {
+                if updated.workers.len() >= MAX_WORKERS_PER_TEAM {
                     return Err(TeamError::Invalid(format!(
                         "team worker list is full (limit {MAX_WORKERS_PER_TEAM})"
                     )));
                 }
-                team.workers.push(TeamWorker {
+                updated.workers.push(TeamWorker {
                     id: worker_id.clone(),
                     role: None,
                     agent: None,
@@ -516,10 +534,10 @@ impl TeamStoreData {
                     last_nudge_ms: 0,
                     shutdown_requested_at_ms: 0,
                 });
-                team.workers.len() - 1
+                updated.workers.len() - 1
             }
         };
-        let worker = &mut team.workers[index];
+        let worker = &mut updated.workers[worker_index];
         if role.is_some() {
             worker.role = role;
         }
@@ -537,7 +555,7 @@ impl TeamStoreData {
         worker.launched_at_ms = now_ms;
         worker.last_heartbeat_ms = now_ms;
         worker.shutdown_requested_at_ms = 0;
-        team.updated_at_ms = now_ms;
+        updated.updated_at_ms = now_ms;
         let worker = worker.clone();
         self.push_event(
             &team_id,
@@ -545,6 +563,7 @@ impl TeamStoreData {
             format!("worker {}", worker.id),
             now_ms,
         )?;
+        self.teams[index] = updated;
         Ok(worker)
     }
 
@@ -558,11 +577,16 @@ impl TeamStoreData {
         let status = clean_optional_short("status", input.status.as_deref())?;
         let assigned_task_id =
             clean_optional_id("assigned_task_id", input.assigned_task_id.as_deref())?;
-        let team = self.team_mut(&team_id)?;
+        let index = self
+            .teams
+            .iter()
+            .position(|team| team.id == team_id)
+            .ok_or_else(|| TeamError::TeamNotFound(team_id.clone()))?;
+        let mut updated = self.teams[index].clone();
         if let Some(task_id) = assigned_task_id.as_deref() {
-            ensure_task_exists(team, task_id)?;
+            ensure_task_exists(&updated, task_id)?;
         }
-        let worker = team
+        let worker = updated
             .workers
             .iter_mut()
             .find(|worker| worker.id == worker_id)
@@ -574,7 +598,7 @@ impl TeamStoreData {
             worker.assigned_task_id = assigned_task_id;
         }
         worker.last_heartbeat_ms = now_ms;
-        team.updated_at_ms = now_ms;
+        updated.updated_at_ms = now_ms;
         let worker = worker.clone();
         self.push_event(
             &team_id,
@@ -582,6 +606,7 @@ impl TeamStoreData {
             format!("worker {}", worker.id),
             now_ms,
         )?;
+        self.teams[index] = updated;
         Ok(worker)
     }
 
@@ -592,14 +617,19 @@ impl TeamStoreData {
     ) -> Result<TeamWorker, TeamError> {
         let team_id = clean_id("team_id", &input.team_id)?;
         let worker_id = clean_id("worker_id", &input.worker_id)?;
-        let team = self.team_mut(&team_id)?;
-        let worker = team
+        let index = self
+            .teams
+            .iter()
+            .position(|team| team.id == team_id)
+            .ok_or_else(|| TeamError::TeamNotFound(team_id.clone()))?;
+        let mut updated = self.teams[index].clone();
+        let worker = updated
             .workers
             .iter_mut()
             .find(|worker| worker.id == worker_id)
             .ok_or_else(|| TeamError::WorkerNotFound(worker_id.clone()))?;
         worker.last_nudge_ms = now_ms;
-        team.updated_at_ms = now_ms;
+        updated.updated_at_ms = now_ms;
         let worker = worker.clone();
         self.push_event(
             &team_id,
@@ -607,6 +637,7 @@ impl TeamStoreData {
             format!("worker {}", worker.id),
             now_ms,
         )?;
+        self.teams[index] = updated;
         Ok(worker)
     }
 
@@ -617,15 +648,20 @@ impl TeamStoreData {
     ) -> Result<TeamWorker, TeamError> {
         let team_id = clean_id("team_id", &input.team_id)?;
         let worker_id = clean_id("worker_id", &input.worker_id)?;
-        let team = self.team_mut(&team_id)?;
-        let worker = team
+        let index = self
+            .teams
+            .iter()
+            .position(|team| team.id == team_id)
+            .ok_or_else(|| TeamError::TeamNotFound(team_id.clone()))?;
+        let mut updated = self.teams[index].clone();
+        let worker = updated
             .workers
             .iter_mut()
             .find(|worker| worker.id == worker_id)
             .ok_or_else(|| TeamError::WorkerNotFound(worker_id.clone()))?;
         worker.status = "shutdown_requested".to_string();
         worker.shutdown_requested_at_ms = now_ms;
-        team.updated_at_ms = now_ms;
+        updated.updated_at_ms = now_ms;
         let worker = worker.clone();
         self.push_event(
             &team_id,
@@ -633,6 +669,7 @@ impl TeamStoreData {
             format!("worker {}", worker.id),
             now_ms,
         )?;
+        self.teams[index] = updated;
         Ok(worker)
     }
 
@@ -656,22 +693,27 @@ impl TeamStoreData {
         };
         let assigned_worker_id =
             clean_optional_id("assigned_worker_id", input.assigned_worker_id.as_deref())?;
-        let team = self.team_mut(&team_id)?;
+        let index = self
+            .teams
+            .iter()
+            .position(|team| team.id == team_id)
+            .ok_or_else(|| TeamError::TeamNotFound(team_id.clone()))?;
+        let mut updated = self.teams[index].clone();
         if let Some(worker_id) = assigned_worker_id.as_deref() {
-            ensure_worker_exists(team, worker_id)?;
+            ensure_worker_exists(&updated, worker_id)?;
         }
         if let Some(depends_on) = depends_on.as_ref() {
-            validate_task_dependencies(team, &task_id, depends_on)?;
+            validate_task_dependencies(&updated, &task_id, depends_on)?;
         }
-        let index = match team.tasks.iter().position(|task| task.id == task_id) {
+        let task_index = match updated.tasks.iter().position(|task| task.id == task_id) {
             Some(index) => index,
             None => {
-                if team.tasks.len() >= MAX_TASKS_PER_TEAM {
+                if updated.tasks.len() >= MAX_TASKS_PER_TEAM {
                     return Err(TeamError::Invalid(format!(
                         "team task list is full (limit {MAX_TASKS_PER_TEAM})"
                     )));
                 }
-                team.tasks.push(TeamTask {
+                updated.tasks.push(TeamTask {
                     id: task_id.clone(),
                     title: title.clone().unwrap_or_else(|| task_id.clone()),
                     status: status.clone().unwrap_or_else(|| "open".to_string()),
@@ -681,10 +723,10 @@ impl TeamStoreData {
                     created_at_ms: now_ms,
                     updated_at_ms: now_ms,
                 });
-                team.tasks.len() - 1
+                updated.tasks.len() - 1
             }
         };
-        let task = &mut team.tasks[index];
+        let task = &mut updated.tasks[task_index];
         if let Some(title) = title {
             task.title = title;
         }
@@ -701,7 +743,7 @@ impl TeamStoreData {
             task.assigned_worker_id = assigned_worker_id;
         }
         task.updated_at_ms = now_ms;
-        team.updated_at_ms = now_ms;
+        updated.updated_at_ms = now_ms;
         let task = task.clone();
         self.push_event(
             &team_id,
@@ -709,6 +751,7 @@ impl TeamStoreData {
             format!("task {}", task.id),
             now_ms,
         )?;
+        self.teams[index] = updated;
         Ok(task)
     }
 
@@ -726,20 +769,29 @@ impl TeamStoreData {
             Some(id) => clean_id("message_id", &id)?,
             None => format!("msg-{}-{}", now_ms, self.next_event_seq),
         };
-        let team = self.team_mut(&team_id)?;
+        let index = self
+            .teams
+            .iter()
+            .position(|team| team.id == team_id)
+            .ok_or_else(|| TeamError::TeamNotFound(team_id.clone()))?;
+        let mut updated = self.teams[index].clone();
         if let Some(worker_id) = to_worker_id.as_deref() {
-            ensure_worker_exists(team, worker_id)?;
+            ensure_worker_exists(&updated, worker_id)?;
         }
         if let Some(task_id) = task_id.as_deref() {
-            ensure_task_exists(team, task_id)?;
+            ensure_task_exists(&updated, task_id)?;
         }
-        if team.messages.iter().any(|message| message.id == message_id) {
+        if updated
+            .messages
+            .iter()
+            .any(|message| message.id == message_id)
+        {
             return Err(TeamError::Invalid(format!(
                 "message id already exists: {message_id}"
             )));
         }
-        if team.messages.len() >= MAX_MESSAGES_PER_TEAM {
-            let Some(index) = team
+        if updated.messages.len() >= MAX_MESSAGES_PER_TEAM {
+            let Some(index) = updated
                 .messages
                 .iter()
                 .position(|message| message.delivered || message.superseded)
@@ -748,7 +800,7 @@ impl TeamStoreData {
                     "team message list is full with pending messages".to_string(),
                 ));
             };
-            team.messages.remove(index);
+            updated.messages.remove(index);
         }
         let message = TeamMessage {
             id: message_id,
@@ -762,14 +814,15 @@ impl TeamStoreData {
             superseded_at_ms: 0,
             acknowledged_at_ms: 0,
         };
-        team.messages.push(message.clone());
-        team.updated_at_ms = now_ms;
+        updated.messages.push(message.clone());
+        updated.updated_at_ms = now_ms;
         self.push_event(
             &team_id,
             "team.message.sent",
             format!("message {}", message.id),
             now_ms,
         )?;
+        self.teams[index] = updated;
         Ok(message)
     }
 
@@ -787,33 +840,34 @@ impl TeamStoreData {
         if message_ids.is_empty() {
             return Ok(Vec::new());
         }
-        let superseded = {
-            let team = self.team_mut(&team_id)?;
-            let mut superseded = Vec::new();
-            for message in team.messages.iter_mut() {
-                if message_ids
-                    .iter()
-                    .any(|message_id| message_id == &message.id)
-                    && !message.delivered
-                    && !message.superseded
-                {
-                    message.superseded = true;
-                    message.superseded_at_ms = now_ms;
-                    superseded.push(message.clone());
-                }
+        let index = self
+            .teams
+            .iter()
+            .position(|team| team.id == team_id)
+            .ok_or_else(|| TeamError::TeamNotFound(team_id.clone()))?;
+        let mut updated = self.teams[index].clone();
+        let mut superseded = Vec::new();
+        for message in updated.messages.iter_mut() {
+            if message_ids
+                .iter()
+                .any(|message_id| message_id == &message.id)
+                && !message.delivered
+                && !message.superseded
+            {
+                message.superseded = true;
+                message.superseded_at_ms = now_ms;
+                superseded.push(message.clone());
             }
-            if !superseded.is_empty() {
-                team.updated_at_ms = now_ms;
-            }
-            superseded
-        };
+        }
         if !superseded.is_empty() {
+            updated.updated_at_ms = now_ms;
             self.push_event(
                 &team_id,
                 "team.message.superseded",
                 format!("messages {}", superseded.len()),
                 now_ms,
             )?;
+            self.teams[index] = updated;
         }
         Ok(superseded)
     }
@@ -826,8 +880,13 @@ impl TeamStoreData {
         let team_id = clean_id("team_id", &input.team_id)?;
         let message_id = clean_id("message_id", &input.message_id)?;
         let worker_id = clean_optional_id("worker_id", input.worker_id.as_deref())?;
-        let team = self.team_mut(&team_id)?;
-        let message = team
+        let index = self
+            .teams
+            .iter()
+            .position(|team| team.id == team_id)
+            .ok_or_else(|| TeamError::TeamNotFound(team_id.clone()))?;
+        let mut updated = self.teams[index].clone();
+        let message = updated
             .messages
             .iter_mut()
             .find(|message| {
@@ -848,7 +907,7 @@ impl TeamStoreData {
         }
         message.delivered = true;
         message.acknowledged_at_ms = now_ms;
-        team.updated_at_ms = now_ms;
+        updated.updated_at_ms = now_ms;
         let message = message.clone();
         self.push_event(
             &team_id,
@@ -856,6 +915,7 @@ impl TeamStoreData {
             format!("message {}", message.id),
             now_ms,
         )?;
+        self.teams[index] = updated;
         Ok(message)
     }
 
@@ -978,13 +1038,6 @@ impl TeamStoreData {
         rows.sort_by_key(|event| event.seq);
         rows.truncate(limit);
         Ok(rows)
-    }
-
-    fn team_mut(&mut self, team_id: &str) -> Result<&mut TeamState, TeamError> {
-        self.teams
-            .iter_mut()
-            .find(|team| team.id == team_id)
-            .ok_or_else(|| TeamError::TeamNotFound(team_id.to_string()))
     }
 
     fn push_event(
@@ -1895,6 +1948,107 @@ mod tests {
             vec![7]
         );
         save_teams_to_path(&path, &store).unwrap();
+    }
+
+    fn team_store_with_overflow_event(kind: &str) -> TeamStoreData {
+        let mut store = TeamStoreData::default();
+        store
+            .upsert_team(
+                TeamUpsert {
+                    team_id: "team-1".to_string(),
+                    workspace_id: None,
+                    leader_surface_id: None,
+                    name: None,
+                    status: None,
+                    goal: None,
+                },
+                1,
+            )
+            .unwrap();
+        store.events.push(TeamEvent {
+            seq: u64::MAX,
+            team_id: "team-1".to_string(),
+            kind: kind.to_string(),
+            summary: "previous".to_string(),
+            created_at_ms: 2,
+        });
+        store.next_event_seq = u64::MAX;
+        store
+    }
+
+    #[test]
+    fn worker_upsert_sequence_overflow_does_not_mutate_team() {
+        let mut store = team_store_with_overflow_event("team.worker.upserted");
+
+        let err = store
+            .upsert_worker(
+                TeamWorkerUpsert {
+                    team_id: "team-1".to_string(),
+                    worker_id: "worker-1".to_string(),
+                    role: Some("implementer".to_string()),
+                    agent: Some("codex".to_string()),
+                    surface_id: Some("surface-1".to_string()),
+                    worktree_name: None,
+                    status: Some("running".to_string()),
+                    assigned_task_id: None,
+                },
+                3,
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().contains("sequence overflow"));
+        let team = store.get("team-1").unwrap();
+        assert!(team.workers.is_empty());
+        assert_eq!(team.updated_at_ms, 1);
+    }
+
+    #[test]
+    fn task_upsert_sequence_overflow_does_not_mutate_team() {
+        let mut store = team_store_with_overflow_event("team.task.upserted");
+
+        let err = store
+            .upsert_task(
+                TeamTaskUpsert {
+                    team_id: "team-1".to_string(),
+                    task_id: "task-1".to_string(),
+                    title: Some("Inspect".to_string()),
+                    status: Some("done".to_string()),
+                    detail: None,
+                    depends_on: None,
+                    assigned_worker_id: None,
+                },
+                3,
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().contains("sequence overflow"));
+        let team = store.get("team-1").unwrap();
+        assert!(team.tasks.is_empty());
+        assert_eq!(team.updated_at_ms, 1);
+    }
+
+    #[test]
+    fn message_send_sequence_overflow_does_not_mutate_team() {
+        let mut store = team_store_with_overflow_event("team.message.sent");
+
+        let err = store
+            .send_message(
+                TeamMessageSend {
+                    team_id: "team-1".to_string(),
+                    message_id: Some("msg-1".to_string()),
+                    from: "leader".to_string(),
+                    to_worker_id: None,
+                    task_id: None,
+                    body: "inspect".to_string(),
+                },
+                3,
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().contains("sequence overflow"));
+        let team = store.get("team-1").unwrap();
+        assert!(team.messages.is_empty());
+        assert_eq!(team.updated_at_ms, 1);
     }
 
     #[test]
