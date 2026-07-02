@@ -70,9 +70,10 @@ All notable changes to ForkTTY are documented here.
   other stores, and approved approval rows are retained through notification
   churn so later `task.strategy.apply` retries can still consume them.
 - Fixed team store validation/recovery and ack idempotency so legacy duplicate
-  persisted message ids are repaired on load by retaining the first message,
-  strict saves reject invalid state, and repeated message acknowledgements do
-  not emit duplicate `team.message.acked` events.
+  persisted message ids are repaired on load by retaining the first message
+  while preserving delivered/superseded terminal state, strict saves reject
+  invalid state, and repeated message acknowledgements do not emit duplicate
+  `team.message.acked` events.
 - Fixed team/workflow store mutation ordering so event sequence failures cannot
   leave in-memory plan, task, worker, or message updates partially applied
   before the store update is rejected.

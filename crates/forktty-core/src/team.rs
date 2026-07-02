@@ -1265,9 +1265,18 @@ fn validate_store(data: &TeamStoreData) -> Result<(), TeamError> {
 
 fn repair_loaded_store(data: &mut TeamStoreData) -> Result<(), TeamError> {
     for team in &mut data.teams {
-        let mut seen = BTreeSet::new();
-        team.messages
-            .retain(|message| seen.insert(message.id.clone()));
+        let mut repaired: Vec<TeamMessage> = Vec::with_capacity(team.messages.len());
+        for message in std::mem::take(&mut team.messages) {
+            if let Some(existing) = repaired
+                .iter_mut()
+                .find(|existing| existing.id == message.id)
+            {
+                merge_legacy_duplicate_message_state(existing, &message);
+            } else {
+                repaired.push(message);
+            }
+        }
+        team.messages = repaired;
     }
 
     let mut last_seq = 0;
@@ -1358,6 +1367,19 @@ fn validate_team_references(team: &TeamState) -> Result<(), TeamError> {
         }
     }
     Ok(())
+}
+
+fn merge_legacy_duplicate_message_state(existing: &mut TeamMessage, duplicate: &TeamMessage) {
+    if duplicate.delivered {
+        existing.delivered = true;
+        existing.acknowledged_at_ms = existing
+            .acknowledged_at_ms
+            .max(duplicate.acknowledged_at_ms);
+    }
+    if duplicate.superseded {
+        existing.superseded = true;
+        existing.superseded_at_ms = existing.superseded_at_ms.max(duplicate.superseded_at_ms);
+    }
 }
 
 fn validate_task_dependencies(
@@ -2167,6 +2189,97 @@ mod tests {
         assert_eq!(team.messages.len(), 1);
         assert_eq!(team.messages[0].body, "first");
         save_teams_to_path(&path, &store).unwrap();
+    }
+
+    #[test]
+    fn load_repairs_legacy_duplicate_message_ids_without_resurrecting_terminal_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("team-v1.json");
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "version": TEAM_FORMAT_VERSION,
+                "teams": [{
+                    "id": "team-1",
+                    "name": "Launch",
+                    "status": "active",
+                    "created_at_ms": 1,
+                    "updated_at_ms": 1,
+                    "workers": [{
+                        "id": "worker-1",
+                        "surface_id": "surface-1",
+                        "status": "running"
+                    }],
+                    "tasks": [],
+                    "messages": [
+                        {
+                            "id": "msg-1",
+                            "from": "leader",
+                            "to_worker_id": "worker-1",
+                            "body": "pending duplicate",
+                            "created_at_ms": 1,
+                            "delivered": false
+                        },
+                        {
+                            "id": "msg-1",
+                            "from": "leader",
+                            "to_worker_id": "worker-1",
+                            "body": "delivered duplicate",
+                            "created_at_ms": 2,
+                            "delivered": true,
+                            "acknowledged_at_ms": 9
+                        },
+                        {
+                            "id": "msg-2",
+                            "from": "leader",
+                            "to_worker_id": "worker-1",
+                            "body": "pending duplicate",
+                            "created_at_ms": 3,
+                            "delivered": false
+                        },
+                        {
+                            "id": "msg-2",
+                            "from": "leader",
+                            "to_worker_id": "worker-1",
+                            "body": "superseded duplicate",
+                            "created_at_ms": 4,
+                            "superseded": true,
+                            "superseded_at_ms": 10
+                        }
+                    ]
+                }],
+                "events": []
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let store = load_teams_from_path(&path).unwrap();
+        let team = store.get("team-1").unwrap();
+        assert_eq!(team.messages.len(), 2);
+        let delivered = team
+            .messages
+            .iter()
+            .find(|message| message.id == "msg-1")
+            .unwrap();
+        assert!(delivered.delivered);
+        assert_eq!(delivered.acknowledged_at_ms, 9);
+        let superseded = team
+            .messages
+            .iter()
+            .find(|message| message.id == "msg-2")
+            .unwrap();
+        assert!(superseded.superseded);
+        assert_eq!(superseded.superseded_at_ms, 10);
+        assert!(store
+            .inbox(&TeamInboxQuery {
+                team_id: "team-1".to_string(),
+                worker_id: Some("worker-1".to_string()),
+                include_delivered: false,
+                limit: None,
+            })
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
