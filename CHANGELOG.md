@@ -70,6 +70,11 @@ All notable changes to ForkTTY are documented here.
 - Fixed team store validation and ack idempotency so duplicate persisted
   message ids are rejected on load and repeated message acknowledgements do not
   emit duplicate `team.message.acked` events.
+- Fixed small GTK polish issues: failed worktree merge/remove notifications now
+  appear as errors, multi-tab close confirmations say tab instead of pane,
+  sidebar pane counts ignore extra tabs, context menu shortcut/copy icon hints
+  are consistent, notification clear copy matches the action, and workspace
+  popover buttons expose accessible names.
 - Fixed task strategy routing so parallel research/experiment plans respect
   each harness's declared parallel session capacity instead of assigning
   multiple concurrent roles to a single-session harness.

@@ -93,6 +93,7 @@ pub(super) fn show_workspace_popover<W: IsA<gtk::Widget>>(
             }
             inner.append(&body);
             row.set_child(Some(&inner));
+            set_accessible_button_text(&row, &format!("Switch to workspace {}", ws.name), None);
 
             // A strong popover ref here would form a GObject self-cycle and
             // leak the popover on every open; capture a weak ref instead.
@@ -130,6 +131,7 @@ pub(super) fn show_workspace_popover<W: IsA<gtk::Widget>>(
         .build();
     new_inner.append(&new_label);
     new_btn.set_child(Some(&new_inner));
+    set_accessible_button_text(&new_btn, "New Workspace", Some("Ctrl+Shift+N"));
     let popover_for_new = popover.downgrade();
     let state_for_new = state.clone();
     new_btn.connect_clicked(move |_| {

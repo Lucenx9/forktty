@@ -505,26 +505,46 @@ pub(super) fn active_workspace_snapshot(state: &SocketAppState) -> Option<forktt
 pub(super) fn close_pane_confirmation_body(state: &SocketAppState, surface_id: &str) -> String {
     let target = state.model.lock().ok().and_then(|model| {
         let surface = model.surface(surface_id)?;
-        let workspace_name = model
+        let workspace = model
             .list_workspaces()
             .into_iter()
-            .find(|workspace| workspace.id == surface.workspace_id)
-            .map(|workspace| workspace.name)
+            .find(|workspace| workspace.id == surface.workspace_id);
+        let workspace_name = workspace
+            .as_ref()
+            .map(|workspace| workspace.name.clone())
             .unwrap_or_else(|| surface.workspace_id.clone());
-        Some(format!(
-            "'{}' in workspace '{}' ({})",
-            surface_title(surface),
-            workspace_name,
-            compact_path(&surface.cwd)
+        let is_tab = workspace.as_ref().is_some_and(|workspace| {
+            surface_is_in_multi_tab_leaf(&workspace.pane_tree, surface_id)
+        });
+        Some((
+            format!(
+                "'{}' in workspace '{}' ({})",
+                surface_title(surface),
+                workspace_name,
+                compact_path(&surface.cwd)
+            ),
+            is_tab,
         ))
     });
     match target {
-        Some(target) => {
+        Some((target, true)) => format!(
+            "Close tab {target}. Only this tab will be closed. Any process running inside it will be terminated."
+        ),
+        Some((target, false)) => {
             format!("Close pane {target}. Any process running inside it will be terminated.")
         }
         None => {
             format!("Close pane {surface_id}. Any process running inside it will be terminated.")
         }
+    }
+}
+
+fn surface_is_in_multi_tab_leaf(node: &PaneNode, surface_id: &str) -> bool {
+    match node {
+        PaneNode::Leaf { tabs, .. } => tabs.len() > 1 && tabs.iter().any(|tab| tab == surface_id),
+        PaneNode::Split { children, .. } => children
+            .iter()
+            .any(|child| surface_is_in_multi_tab_leaf(child, surface_id)),
     }
 }
 

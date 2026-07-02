@@ -547,7 +547,7 @@ pub(super) fn show_notification_panel(
     clear.add_css_class("settings-inline-action");
     clear.add_css_class("subtle");
     clear.set_sensitive(has_notifications);
-    clear.set_tooltip_text(Some("Clear pending notifications"));
+    clear.set_tooltip_text(Some("Clear all notifications"));
 
     let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     footer.add_css_class("ft-dialog-footer");

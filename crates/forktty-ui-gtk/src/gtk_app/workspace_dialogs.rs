@@ -291,6 +291,15 @@ pub(super) fn create_global_notification(
 }
 
 pub(super) fn create_local_notification(state: &SocketAppState, title: &str, body: &str) {
+    create_local_notification_with_kind(state, title, body, NotificationKind::Info);
+}
+
+pub(super) fn create_local_notification_with_kind(
+    state: &SocketAppState,
+    title: &str,
+    body: &str,
+    kind: NotificationKind,
+) {
     // Resolve the target and create the notification under one lock so the
     // focused surface cannot be closed in between, leaving a notification
     // that points at a surface the model no longer knows.
@@ -303,13 +312,8 @@ pub(super) fn create_local_notification(state: &SocketAppState, title: &str, bod
     else {
         return;
     };
-    let notification = model.create_notification(
-        title,
-        body,
-        NotificationKind::Info,
-        Some(workspace_id),
-        Some(surface_id),
-    );
+    let notification =
+        model.create_notification(title, body, kind, Some(workspace_id), Some(surface_id));
     if state.notification_dispatch {
         dispatch_notification_with_loaded_config(&notification);
     }

@@ -847,7 +847,7 @@ fn build_app_menu_popover(parent: &adw::ApplicationWindow) -> gtk::Popover {
         &popover,
         "forktty-keyboard-symbolic",
         "Keyboard Shortcuts",
-        Some("Ctrl+?"),
+        Some("Ctrl+? / F1"),
         false,
         {
             let parent = parent.clone();

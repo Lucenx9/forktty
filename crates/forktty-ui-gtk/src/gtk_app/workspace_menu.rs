@@ -125,11 +125,12 @@ pub(super) fn build_workspace_context_menu(
 
     let state_ = state.clone();
     let ws_id = workspace_id.clone();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-split-horizontal-symbolic",
         "Split Right",
+        Some("Ctrl+Shift+H"),
         false,
         move || {
             if focus_workspace(&state_, &ws_id) {
@@ -140,11 +141,12 @@ pub(super) fn build_workspace_context_menu(
 
     let state_ = state.clone();
     let ws_id = workspace_id.clone();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-split-vertical-symbolic",
         "Split Down",
+        Some(SPLIT_VERTICAL_SHORTCUT),
         false,
         move || {
             if focus_workspace(&state_, &ws_id) {
@@ -204,7 +206,12 @@ pub(super) fn build_workspace_context_menu(
                 glib::spawn_future_local(async move {
                     match merge_worktree_from_gtk_async(&state, &name).await {
                         Ok(msg) => create_local_notification(&state, "Worktree Merged", &msg),
-                        Err(err) => create_local_notification(&state, "Merge Failed", &err),
+                        Err(err) => create_local_notification_with_kind(
+                            &state,
+                            "Merge Failed",
+                            &err,
+                            NotificationKind::Error,
+                        ),
                     }
                 });
             },
@@ -239,7 +246,12 @@ pub(super) fn build_workspace_context_menu(
                         let name = name_confirm.clone();
                         glib::spawn_future_local(async move {
                             if let Err(err) = remove_worktree_from_gtk_async(&state, &name).await {
-                                create_local_notification(&state, "Remove Failed", &err);
+                                create_local_notification_with_kind(
+                                    &state,
+                                    "Remove Failed",
+                                    &err,
+                                    NotificationKind::Error,
+                                );
                             }
                         });
                     },
@@ -405,11 +417,12 @@ pub(super) fn build_terminal_context_menu(
 
     let state_ = state.clone();
     let sid = surface_id.to_string();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-split-horizontal-symbolic",
         "Split Right",
+        Some("Ctrl+Shift+H"),
         false,
         move || {
             focus_surface_and(&state_, &sid, |state| {
@@ -420,11 +433,12 @@ pub(super) fn build_terminal_context_menu(
 
     let state_ = state.clone();
     let sid = surface_id.to_string();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-split-vertical-symbolic",
         "Split Down",
+        Some(SPLIT_VERTICAL_SHORTCUT),
         false,
         move || {
             focus_surface_and(&state_, &sid, |state| {
@@ -475,7 +489,7 @@ pub(super) fn build_terminal_context_menu(
         add_context_menu_item(
             &menu,
             &popover,
-            "forktty-folder-symbolic",
+            "forktty-copy-symbolic",
             "Copy Working Directory",
             false,
             move || copy_to_clipboard(&cwd),
@@ -486,11 +500,12 @@ pub(super) fn build_terminal_context_menu(
 
     let state_ = state.clone();
     let sid = surface_id.to_string();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-refresh-symbolic",
         "Restart Pane",
+        Some(RESTART_PANE_SHORTCUT),
         false,
         move || {
             restart_surface(&state_, &sid);
@@ -500,11 +515,12 @@ pub(super) fn build_terminal_context_menu(
     let state_ = state.clone();
     let parent_ = parent.clone();
     let sid = surface_id.to_string();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-close-symbolic",
         "Close Pane",
+        Some("Ctrl+Shift+W"),
         true,
         move || {
             show_close_pane_confirmation(&parent_, &state_, &sid);

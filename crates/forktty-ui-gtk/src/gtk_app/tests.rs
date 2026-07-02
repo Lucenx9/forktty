@@ -1125,6 +1125,30 @@ fn focus_relative_pane_ignores_extra_tabs_in_a_single_pane() {
 }
 
 #[test]
+fn close_pane_confirmation_distinguishes_multi_tab_leaf() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let tab_id = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first = workspace.focused_surface_id.clone();
+        model.add_tab(&first).unwrap().id
+    };
+
+    let body = close_pane_confirmation_body(&state, &tab_id);
+
+    assert!(body.starts_with("Close tab "));
+    assert!(body.contains("Only this tab will be closed."));
+}
+
+#[test]
 fn relative_pane_target_rejects_missing_focused_surface() {
     let panes = vec![
         "surface-1".to_string(),
@@ -2743,10 +2767,62 @@ fn command_palette_source_uses_polished_labels_and_accessibility() {
     assert!(source.contains("gtk::accessible::Property::Label"));
     assert!(source.contains("\"Search commands or shortcuts\""));
     assert!(source.contains("command!(\"Keyboard Shortcuts\", Some(\"Ctrl+? / F1\")"));
+    assert!(source.contains("(\"Toggle Maximize Pane\", \"Ctrl+Shift+Enter\")"));
     assert!(source.contains("command!(\"Close Workspace...\""));
     assert!(source.contains("command_enabled!(\n        \"Move Workspace Up\""));
     assert!(source.contains("active_workspace_can_move_relative(state, -1)"));
     assert!(source.contains("active_workspace_can_move_relative(state, 1)"));
+}
+
+#[test]
+fn app_menu_shortcut_label_matches_shortcuts_dialog() {
+    let source = include_str!("app.rs");
+
+    assert!(source.contains("\"Keyboard Shortcuts\""));
+    assert!(source.contains("Some(\"Ctrl+? / F1\")"));
+}
+
+#[test]
+fn worktree_context_failures_use_error_notifications() {
+    let source = include_str!("workspace_menu.rs");
+
+    assert!(source.contains("create_local_notification_with_kind("));
+    assert!(source.contains("\"Merge Failed\""));
+    assert!(source.contains("\"Remove Failed\""));
+    assert!(source.contains("NotificationKind::Error"));
+}
+
+#[test]
+fn terminal_context_menu_accelerated_items_show_shortcuts() {
+    let workspace_menu = include_str!("workspace_menu.rs");
+    let embedded_controls = include_str!("embedded_controls.rs");
+
+    for source in [workspace_menu, embedded_controls] {
+        assert!(source.contains("add_context_menu_item_with_shortcut("));
+        assert!(source.contains("\"Split Right\""));
+        assert!(source.contains("Some(\"Ctrl+Shift+H\")"));
+        assert!(source.contains("\"Split Down\""));
+        assert!(source.contains("Some(SPLIT_VERTICAL_SHORTCUT)"));
+        assert!(source.contains("\"Restart Pane\""));
+        assert!(source.contains("Some(RESTART_PANE_SHORTCUT)"));
+        assert!(source.contains("\"Close Pane\""));
+        assert!(source.contains("Some(\"Ctrl+Shift+W\")"));
+        assert!(!source
+            .contains("\"forktty-folder-symbolic\",\n            \"Copy Working Directory\""));
+    }
+}
+
+#[test]
+fn notification_clear_tooltip_and_workspace_popover_accessibility_are_precise() {
+    let notifications = include_str!("notifications_panel.rs");
+    let popover = include_str!("workspace_popover.rs");
+
+    assert!(notifications.contains("clear.set_tooltip_text(Some(\"Clear all notifications\"));"));
+    assert!(popover.contains("set_accessible_button_text(&row"));
+    assert!(popover.contains("\"Switch to workspace {}\""));
+    assert!(popover.contains("set_accessible_button_text(&new_btn"));
+    assert!(popover.contains("\"New Workspace\""));
+    assert!(popover.contains("Some(\"Ctrl+Shift+N\")"));
 }
 
 #[test]

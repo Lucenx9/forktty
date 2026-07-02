@@ -177,6 +177,29 @@ fn sidebar_snapshot_hides_launch_cwd_title_when_effective_cwd_differs() {
 }
 
 #[test]
+fn sidebar_snapshot_counts_panes_not_tabs_for_count_badge() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", "/tmp");
+        let first = workspace.focused_surface_id.clone();
+        model.add_tab(&first).unwrap();
+    }
+
+    let snapshot = sidebar_snapshot(&state);
+
+    assert_eq!(snapshot.rows[0].pane_count, 1);
+}
+
+#[test]
 fn sidebar_metadata_keeps_inactive_tab_surface_status() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");

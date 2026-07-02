@@ -9,7 +9,7 @@ pub(super) struct SidebarWorkspaceRow {
     meta: String,
     summary: String,
     status: Option<WorkspaceStatusBadge>,
-    surface_count: usize,
+    pub(super) pane_count: usize,
 }
 
 #[derive(Clone)]
@@ -20,7 +20,7 @@ pub(super) struct WorkspaceStatusBadge {
 }
 
 pub(super) struct SidebarSnapshot {
-    rows: Vec<SidebarWorkspaceRow>,
+    pub(super) rows: Vec<SidebarWorkspaceRow>,
     active_workspace_name: Option<String>,
     active_status_label: Option<String>,
     pub(super) active_full_path: Option<String>,
@@ -299,7 +299,7 @@ pub(super) fn refresh_sidebar(
             meta,
             summary,
             status,
-            surface_count,
+            pane_count,
         } = row_data;
         let row = gtk::ListBoxRow::new();
         row.set_selectable(true);
@@ -310,8 +310,8 @@ pub(super) fn refresh_sidebar(
         } else {
             format!("Workspace {}. {}", workspace.name, meta)
         };
-        if surface_count > 1 {
-            accessible_label.push_str(&format!(". {surface_count} panes"));
+        if pane_count > 1 {
+            accessible_label.push_str(&format!(". {pane_count} panes"));
         }
         if let Some(status) = status.as_ref() {
             accessible_label.push_str(&format!(". {}", status.tooltip));
@@ -396,16 +396,16 @@ pub(super) fn refresh_sidebar(
 
         card.append(&text);
 
-        if surface_count > 1 {
+        if pane_count > 1 {
             let count_badge = gtk::Box::new(gtk::Orientation::Horizontal, 3);
             count_badge.add_css_class("workspace-count-badge");
             count_badge.set_valign(gtk::Align::Center);
             let count_icon = gtk::Image::from_icon_name("forktty-grid-symbolic");
             count_icon.add_css_class("workspace-count-icon");
-            count_icon.set_tooltip_text(Some(&format!("{surface_count} panes")));
-            let count_label = gtk::Label::new(Some(&surface_count.to_string()));
+            count_icon.set_tooltip_text(Some(&format!("{pane_count} panes")));
+            let count_label = gtk::Label::new(Some(&pane_count.to_string()));
             count_label.add_css_class("workspace-count");
-            count_label.set_tooltip_text(Some(&format!("{surface_count} panes")));
+            count_label.set_tooltip_text(Some(&format!("{pane_count} panes")));
             count_badge.append(&count_icon);
             count_badge.append(&count_label);
             card.append(&count_badge);
@@ -416,9 +416,9 @@ pub(super) fn refresh_sidebar(
             tooltip.push('\n');
             tooltip.push_str(status.tooltip);
         }
-        if surface_count > 1 {
+        if pane_count > 1 {
             tooltip.push('\n');
-            tooltip.push_str(&format!("{surface_count} panes"));
+            tooltip.push_str(&format!("{pane_count} panes"));
         }
         if !summary.is_empty() {
             tooltip.push('\n');
@@ -582,7 +582,7 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
             latest_attention_notification.as_ref(),
         );
         let surfaces = model.list_surfaces(Some(&workspace.id));
-        let surface_count = surfaces.len();
+        let pane_count = collect_panes(&workspace.pane_tree).len();
         let ssh_host = surfaces.iter().find_map(|s| {
             if let forktty_core::SurfaceKind::Ssh { host } = &s.kind {
                 Some(host.clone())
@@ -599,7 +599,7 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
             meta,
             summary,
             status,
-            surface_count,
+            pane_count,
         });
     }
     let active_workspace = rows
@@ -670,7 +670,7 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
             row.workspace.needs_attention,
             row.workspace.working_dir.to_string_lossy(),
             row.workspace.worktree_name.as_deref().unwrap_or(""),
-            row.surface_count,
+            row.pane_count,
             row.meta,
             row.summary,
             row.status

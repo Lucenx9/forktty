@@ -49,7 +49,7 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
             ("Split Down", SPLIT_VERTICAL_SHORTCUT),
             ("Restart Pane", RESTART_PANE_SHORTCUT),
             ("Close Pane...", "Ctrl+Shift+W"),
-            ("Maximize Pane", "Ctrl+Shift+Enter"),
+            ("Toggle Maximize Pane", "Ctrl+Shift+Enter"),
         ],
     );
     append_shortcut_group(

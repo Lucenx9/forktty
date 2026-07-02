@@ -177,11 +177,12 @@ fn build_embedded_ghostty_context_menu(
 
     let state_ = state.clone();
     let sid = surface_id.to_string();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-split-horizontal-symbolic",
         "Split Right",
+        Some("Ctrl+Shift+H"),
         false,
         move || {
             focus_surface_and(&state_, &sid, |state| {
@@ -192,11 +193,12 @@ fn build_embedded_ghostty_context_menu(
 
     let state_ = state.clone();
     let sid = surface_id.to_string();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-split-vertical-symbolic",
         "Split Down",
+        Some(SPLIT_VERTICAL_SHORTCUT),
         false,
         move || {
             focus_surface_and(&state_, &sid, |state| {
@@ -247,7 +249,7 @@ fn build_embedded_ghostty_context_menu(
         add_context_menu_item(
             &menu,
             &popover,
-            "forktty-folder-symbolic",
+            "forktty-copy-symbolic",
             "Copy Working Directory",
             false,
             move || copy_to_clipboard(&cwd),
@@ -258,11 +260,12 @@ fn build_embedded_ghostty_context_menu(
 
     let state_ = state.clone();
     let sid = surface_id.to_string();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-refresh-symbolic",
         "Restart Pane",
+        Some(RESTART_PANE_SHORTCUT),
         false,
         move || {
             restart_surface(&state_, &sid);
@@ -272,11 +275,12 @@ fn build_embedded_ghostty_context_menu(
     let state_ = state.clone();
     let parent_ = parent.clone();
     let sid = surface_id.to_string();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-close-symbolic",
         "Close Pane",
+        Some("Ctrl+Shift+W"),
         true,
         move || {
             show_close_pane_confirmation(&parent_, &state_, &sid);
