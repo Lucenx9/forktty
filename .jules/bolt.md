@@ -1,0 +1,3 @@
+## 2024-07-02 - Eliminate redundant `.clone()` in `push_tab_to_leaf`
+**Learning:** In Rust, `iter().any(|child| func(..., val.clone()))` will eagerly allocate and clone `val` on *every* iteration of `any`, even those that fail or just continue recursion, until the predicate succeeds. When `val` is a `String` (like `SurfaceId`), this means multiple redundant heap allocations on a cold/miss path.
+**Action:** By refactoring `push_tab_to_leaf` to accept `&str` instead of an owned `String` and pushing an owned string only when an exact match is found, we avoid all intermediate `.clone()` calls during tree traversal.
