@@ -79,6 +79,9 @@ All notable changes to ForkTTY are documented here.
 - Fixed `team.finish --close-workers` so a worker surface close failure leaves
   the team and worker store state unchanged instead of persisting a partial
   shutdown request.
+- Fixed `team.worker.shutdown --close-surface` so a worker surface close
+  failure leaves the worker store state unchanged instead of persisting a
+  partial shutdown request.
 - Fixed small GTK polish issues: failed worktree merge/remove notifications now
   appear as errors, multi-tab close confirmations say tab instead of pane,
   sidebar pane counts ignore extra tabs, context menu shortcut/copy icon hints

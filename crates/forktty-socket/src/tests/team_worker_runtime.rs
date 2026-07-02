@@ -371,6 +371,77 @@ async fn team_worker_shutdown_can_close_launch_owned_worker_surface() {
 
 #[tokio::test]
 #[serial_test::serial]
+async fn team_worker_shutdown_close_failure_keeps_worker_state_unchanged() {
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_codex(bin_dir.path());
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(FailingCloseBackend::default());
+    let mut state = SocketAppState::new(
+        model,
+        backend,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+    let workspace_id = state.model.lock().unwrap().active_workspace().unwrap().id;
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "name": "Close Worker Failure",
+            "workspace_id": workspace_id,
+        }),
+    )
+    .await
+    .unwrap();
+    let launched = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex",
+        }),
+    )
+    .await
+    .unwrap();
+    let surface_id = launched["surface"]["id"].as_str().unwrap();
+
+    let err = dispatch(
+        &state,
+        "team.worker.shutdown",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "text": "stop now",
+            "close_surface": true,
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(err.to_string().contains("close failed"));
+    assert!(state.model.lock().unwrap().surface(surface_id).is_some());
+    let team = dispatch(&state, "team.get", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    assert_eq!(team["workers"][0]["status"], "running");
+    assert_eq!(
+        team["workers"][0]["shutdown_requested_at_ms"]
+            .as_u64()
+            .unwrap_or(0),
+        0
+    );
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn team_worker_launch_does_not_promote_resume_cwd_to_worktree_boundary() {
     let bin_dir = tempfile::tempdir().unwrap();
     let _codex = write_fake_codex(bin_dir.path());

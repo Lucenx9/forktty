@@ -454,7 +454,8 @@ its `close_surface`
 option, exposed by CLI `forktty team-worker-shutdown --close`, immediately
 closes only surfaces that this ForkTTY runtime created through
 `team.worker.launch`, not manually attached user panes or stale persisted launch
-records after restart.
+records after restart. If the surface cannot be closed, the worker store state
+is left unchanged instead of being marked shutdown-requested.
 For smaller control loops, `system.identify`/`forktty identify` returns the
 canonical target workspace/surface, caller id validation, current agent binding,
 and `effective_project_cwd`. ForkTTY pane environment ids are treated as caller

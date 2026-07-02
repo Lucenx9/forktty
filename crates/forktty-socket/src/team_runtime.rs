@@ -500,6 +500,11 @@ pub(crate) async fn worker_shutdown(
     if separate_enter {
         send_team_submit_enter_after_settle(state, &surface_id).await?;
     }
+    let closed = if request.close_surface {
+        Some(close_surface_request(state, &surface_id).await?)
+    } else {
+        None
+    };
     let worker = store_access::team_store_access(state)?
         .update(move |store| {
             store.request_worker_shutdown(
@@ -512,11 +517,6 @@ pub(crate) async fn worker_shutdown(
         })
         .await
         .map_err(DispatchError::from)?;
-    let closed = if request.close_surface {
-        Some(close_surface_request(state, &surface_id).await?)
-    } else {
-        None
-    };
     Ok(json!({
         "sent": true,
         "submitted": request.submit,
