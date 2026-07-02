@@ -365,40 +365,42 @@ impl WorkflowStoreData {
             Some(Err(err)) => return Err(err),
             None => None,
         };
-        let workflow = self
+        let index = self
             .workflows
-            .iter_mut()
-            .find(|workflow| workflow.id == id)
+            .iter()
+            .position(|workflow| workflow.id == id)
             .ok_or(WorkflowError::NotFound)?;
+        let workflow = &self.workflows[index];
         let iteration_changed = input
             .iteration
             .is_some_and(|iteration| workflow.loop_iteration != Some(iteration));
+        let mut updated = workflow.clone();
         if let Some(recipe) = recipe {
-            workflow.loop_recipe = Some(recipe);
+            updated.loop_recipe = Some(recipe);
         }
         if let Some(stage) = stage {
-            workflow.loop_stage = Some(stage);
+            updated.loop_stage = Some(stage);
         }
         if let Some(iteration) = input.iteration {
-            workflow.loop_iteration = Some(iteration);
+            updated.loop_iteration = Some(iteration);
         }
         if let Some(max_iterations) = input.max_iterations {
-            workflow.loop_max_iterations = Some(max_iterations);
+            updated.loop_max_iterations = Some(max_iterations);
         }
         if let Some(stop_reason) = stop_reason {
-            workflow.loop_stop_reason = Some(stop_reason);
+            updated.loop_stop_reason = Some(stop_reason);
         } else if iteration_changed {
-            workflow.loop_stop_reason = None;
+            updated.loop_stop_reason = None;
         }
         if let Some(gates) = gates {
-            workflow.loop_gates = gates;
+            updated.loop_gates = gates;
         } else if iteration_changed {
-            workflow.loop_gates.clear();
+            updated.loop_gates.clear();
         }
-        workflow.loop_updated_at_ms = Some(now_ms);
-        workflow.updated_at_ms = now_ms;
-        validate_workflow_loop_state(workflow)?;
-        let row = workflow.clone();
+        updated.loop_updated_at_ms = Some(now_ms);
+        updated.updated_at_ms = now_ms;
+        validate_workflow_loop_state(&updated)?;
+        let row = updated.clone();
         self.push_event(
             &row.id,
             "workflow.loop.set",
@@ -408,6 +410,7 @@ impl WorkflowStoreData {
                 .unwrap_or_else(|| "loop state updated".to_string()),
             now_ms,
         )?;
+        self.workflows[index] = updated;
         Ok(row)
     }
 
@@ -1520,6 +1523,39 @@ mod tests {
             )
             .unwrap_err();
         assert!(control.to_string().contains("control characters"));
+    }
+
+    #[test]
+    fn invalid_loop_state_update_does_not_mutate_workflow() {
+        let mut store = WorkflowStoreData::default();
+        let workflow = store
+            .upsert(
+                WorkflowUpsert {
+                    workflow_id: Some("workflow-1".to_string()),
+                    status: Some("running".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                1,
+            )
+            .unwrap();
+
+        let err = store
+            .set_loop_state(
+                &workflow.id,
+                WorkflowLoopStateInput {
+                    iteration: Some(2),
+                    max_iterations: Some(1),
+                    ..WorkflowLoopStateInput::default()
+                },
+                2,
+            )
+            .unwrap_err();
+
+        assert!(err.to_string().contains("loop iteration"));
+        let workflow = store.get(&workflow.id).unwrap();
+        assert_eq!(workflow.loop_iteration, None);
+        assert_eq!(workflow.loop_max_iterations, None);
+        assert_eq!(workflow.loop_updated_at_ms, None);
     }
 
     #[test]
