@@ -161,6 +161,73 @@ async fn team_message_dispatch_submit_sends_enter_and_marks_team_wide_delivered(
     );
 }
 
+#[tokio::test]
+async fn team_message_dispatch_rejects_superseded_messages_before_terminal_write() {
+    let (mut state, backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "leader_surface_id": surface_id
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "opencode",
+            "surface_id": surface_id
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.message.send",
+        json!({
+            "team_id": "team-1",
+            "message_id": "msg-stale",
+            "from": "leader",
+            "to_worker_id": "worker-1",
+            "body": "stale assignment"
+        }),
+    )
+    .await
+    .unwrap();
+    forktty_core::update_teams_at_path(state.team_store_path.as_ref().unwrap(), |store| {
+        store.supersede_messages(
+            forktty_core::TeamMessagesSupersede {
+                team_id: "team-1".to_string(),
+                message_ids: vec!["msg-stale".to_string()],
+            },
+            forktty_core::team_now_ms(),
+        )
+    })
+    .unwrap();
+
+    let err = dispatch(
+        &state,
+        "team.message.dispatch",
+        json!({"team_id": "team-1", "message_id": "msg-stale", "submit": true}),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "conflict");
+    assert!(err.to_string().contains("superseded"));
+    assert!(backend.sent_text(surface_id).unwrap().is_empty());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn team_message_dispatch_same_message_concurrently_sends_once() {
     let (first_send_started_tx, first_send_started_rx) = mpsc::channel();

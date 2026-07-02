@@ -466,7 +466,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "team_message_dispatch",
             annotations: mutating_annotations_with_open_world(true, false, true),
-            description: "Send a queued ForkTTY team message to a worker terminal pane and acknowledge it only after the terminal accepts the dispatched input.",
+            description: "Send a queued, non-superseded ForkTTY team message to a worker terminal pane and acknowledge it only after the terminal accepts the dispatched input.",
             input_schema: object_schema(
                 &["team_id", "message_id"],
                 json!({
@@ -480,7 +480,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "team_message_ack",
             annotations: mutating_annotations(false, false),
-            description: "Acknowledge a ForkTTY team mailbox message.",
+            description: "Acknowledge a ForkTTY team mailbox message that has not been superseded.",
             input_schema: object_schema(
                 &["team_id", "message_id"],
                 json!({

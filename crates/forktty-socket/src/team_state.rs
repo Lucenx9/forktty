@@ -334,6 +334,11 @@ pub(crate) async fn team_message_dispatch_target(
             "message already delivered".to_string(),
         ));
     }
+    if message.superseded {
+        return Err(DispatchError::Conflict(
+            "message was superseded".to_string(),
+        ));
+    }
     if let (Some(expected), Some(actual)) = (message.to_worker_id.as_deref(), worker_id) {
         if expected != actual {
             return Err(DispatchError::InvalidParam(

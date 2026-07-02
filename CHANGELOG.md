@@ -100,6 +100,8 @@ All notable changes to ForkTTY are documented here.
   prompts are marked superseded and no longer appear in normal `team.inbox` or
   pending-message counts after a later staged/apply retry changes the task body,
   target worker, or cwd.
+- Fixed team message dispatch and ack so superseded prompts cannot still be
+  delivered explicitly by id or marked acknowledged after replacement.
 - Fixed Codex team message submit so ForkTTY sends the task prompt and Enter as
   separate terminal actions instead of leaving fresh Codex worker prompts staged.
 - Fixed team message dispatch for freshly launched Codex/Claude/Pi workers so

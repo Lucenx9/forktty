@@ -38,6 +38,8 @@ pub enum TeamError {
     UnsupportedVersion(u32),
     #[error("Invalid team data: {0}")]
     Invalid(String),
+    #[error("Team state conflict: {0}")]
+    Conflict(String),
     #[error("Team not found: {0}")]
     TeamNotFound(String),
     #[error("Worker not found: {0}")]
@@ -829,6 +831,9 @@ impl TeamStoreData {
                     })
             })
             .ok_or_else(|| TeamError::MessageNotFound(message_id.clone()))?;
+        if message.superseded {
+            return Err(TeamError::Conflict("message was superseded".to_string()));
+        }
         message.delivered = true;
         message.acknowledged_at_ms = now_ms;
         team.updated_at_ms = now_ms;
@@ -1510,6 +1515,80 @@ mod tests {
                 .unwrap()
                 .len(),
             8
+        );
+    }
+
+    #[test]
+    fn ack_message_rejects_superseded_messages() {
+        let mut store = TeamStoreData::default();
+        store
+            .upsert_team(
+                TeamUpsert {
+                    team_id: "team-1".to_string(),
+                    workspace_id: Some("workspace-1".to_string()),
+                    leader_surface_id: Some("surface-1".to_string()),
+                    name: Some("Launch".to_string()),
+                    status: Some("active".to_string()),
+                    goal: None,
+                },
+                1,
+            )
+            .unwrap();
+        store
+            .upsert_worker(
+                TeamWorkerUpsert {
+                    team_id: "team-1".to_string(),
+                    worker_id: "worker-1".to_string(),
+                    role: None,
+                    agent: Some("codex".to_string()),
+                    surface_id: Some("surface-2".to_string()),
+                    worktree_name: None,
+                    status: Some("running".to_string()),
+                    assigned_task_id: None,
+                },
+                2,
+            )
+            .unwrap();
+        store
+            .send_message(
+                TeamMessageSend {
+                    team_id: "team-1".to_string(),
+                    message_id: Some("msg-stale".to_string()),
+                    from: "leader".to_string(),
+                    to_worker_id: Some("worker-1".to_string()),
+                    task_id: None,
+                    body: "stale assignment".to_string(),
+                },
+                3,
+            )
+            .unwrap();
+        store
+            .supersede_messages(
+                TeamMessagesSupersede {
+                    team_id: "team-1".to_string(),
+                    message_ids: vec!["msg-stale".to_string()],
+                },
+                4,
+            )
+            .unwrap();
+
+        let ack = store.ack_message(
+            TeamMessageAck {
+                team_id: "team-1".to_string(),
+                message_id: "msg-stale".to_string(),
+                worker_id: Some("worker-1".to_string()),
+            },
+            5,
+        );
+
+        assert!(matches!(
+            ack,
+            Err(TeamError::Conflict(message)) if message.contains("superseded")
+        ));
+        assert_eq!(
+            store.summary("team-1").unwrap().messages_pending,
+            0,
+            "superseded messages must stay out of pending counts"
         );
     }
 

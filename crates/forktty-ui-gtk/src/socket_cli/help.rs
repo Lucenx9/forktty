@@ -145,7 +145,7 @@ Low-level aliases still exist:
   forktty team-worker-shutdown --close closes current-runtime launch-owned disposable worker panes
   forktty team-message-send | team.message.send
   forktty team-message-dispatch | team.message.dispatch
-      With --submit, uses provider-aware terminal input and fresh provider TUI worker settle.
+      Rejects superseded messages; with --submit, uses provider-aware terminal input and fresh provider TUI worker settle.
 ";
 
 pub(super) const STATUS_HELP_TEXT: &str = "\

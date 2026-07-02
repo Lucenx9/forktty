@@ -160,8 +160,9 @@ Use mutating tools only for visible coordination:
 - `team_upsert`, `team_task_upsert`, `team_worker_upsert`, and
   `team_worker_heartbeat` update the team control plane.
 - `team_worker_launch` opens a provider worker pane.
-- `team_message_send` queues a message; `team_message_dispatch` sends it to the
-  worker pane and acknowledges only after delivery succeeds.
+- `team_message_send` queues a message; `team_message_dispatch` sends a
+  non-superseded message to the worker pane and acknowledges only after delivery
+  succeeds.
 - `team_inbox` returns active pending messages by default; pass
   `include_delivered` only when you need delivered or superseded history for
   audit/debug.

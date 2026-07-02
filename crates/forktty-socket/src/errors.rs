@@ -131,6 +131,7 @@ impl From<forktty_core::TeamError> for DispatchError {
             T::WorkerNotFound(_) => DispatchError::NotFound("worker".to_string()),
             T::TaskNotFound(_) => DispatchError::NotFound("task".to_string()),
             T::MessageNotFound(_) => DispatchError::NotFound("message".to_string()),
+            T::Conflict(message) => DispatchError::Conflict(message),
             T::Invalid(message) => DispatchError::InvalidParam(message),
             T::UnsupportedVersion(_) | T::Json(_) | T::Io(_) => {
                 DispatchError::Other(err.to_string())

@@ -585,9 +585,10 @@ target worker, or cwd-derived prompt body, apply queues the next deterministic
 `<task-id>-msg-N` prompt and dispatches that fresh prompt instead of sending
 stale instructions to the new pane. Older undelivered deterministic
 `<task-id>-msg-*` prompts for the same task are retained in the full team
-record with `superseded: true`, excluded from normal `team.inbox` results and
-pending-message counts, and returned only by mailbox reads that opt into full
-history with `include_delivered`.
+record with `superseded: true`, cannot be dispatched or acknowledged, are
+excluded from normal `team.inbox` results and pending-message counts, and are
+returned only by mailbox reads that opt into full history with
+`include_delivered`.
 When retrying `submit: true`, an existing live deterministic worker is reused
 only if its harness, role, assigned task, worktree, launch cwd, effective
 surface/workspace cwd target, and status match the current plan assignment. If
@@ -697,6 +698,7 @@ Provider-scoped status and progress keys are automatically cleared when the last
 `team.message.dispatch` foregrounds the recipient worker surface by selecting
 its workspace and tab before writing. If the embedded terminal surface is not
 socket-ready yet, dispatch waits up to 10 seconds before returning `not_ready`.
+Delivered or superseded messages are rejected before any terminal write.
 Submit mode uses provider-aware terminal input: Codex/Claude/Pi get staged text, a
 short settle, and a separate Enter, while line-oriented providers keep text plus
 carriage-return Enter in one write. When the target is a current-runtime
