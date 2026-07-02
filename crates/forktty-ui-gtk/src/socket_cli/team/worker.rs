@@ -106,7 +106,14 @@ pub(in crate::socket_cli) fn handle_team_worker_launch(
     let parsed = parse_flags(args, &[]);
     reject_unknown_options(
         &parsed.options,
-        &["agent", "role", "assigned-task-id", "worktree-name", "args"],
+        &[
+            "agent",
+            "role",
+            "assigned-task-id",
+            "worktree-name",
+            "cwd",
+            "args",
+        ],
         "team-worker-launch",
     )?;
     let positionals = required_positionals(
@@ -136,6 +143,7 @@ pub(in crate::socket_cli) fn handle_team_worker_launch(
         "worktree-name",
         "worktree_name",
     )?;
+    insert_optional_cli_string_param(&mut params, &parsed.options, "cwd", "cwd")?;
     if let Some(args) = comma_list_option(&parsed.options, "args", "--args")? {
         params.insert(
             "args".to_string(),

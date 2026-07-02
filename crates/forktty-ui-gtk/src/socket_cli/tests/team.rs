@@ -130,6 +130,8 @@ fn team_worker_launch_requests_team_worker_launch() {
                     "reviewer",
                     "--assigned-task-id",
                     "task-1",
+                    "--cwd",
+                    "/tmp/forktty-worker",
                     "--args=--model,test",
                 ]),
             )
@@ -142,6 +144,7 @@ fn team_worker_launch_requests_team_worker_launch() {
     assert_eq!(request["params"]["agent"], "codex");
     assert_eq!(request["params"]["role"], "reviewer");
     assert_eq!(request["params"]["assigned_task_id"], "task-1");
+    assert_eq!(request["params"]["cwd"], "/tmp/forktty-worker");
     assert_eq!(request["params"]["args"], json!(["--model", "test"]));
 }
 

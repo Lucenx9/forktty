@@ -1,13 +1,13 @@
 use crate::{
-    current_unix_epoch_ms, optional_bool_param, optional_non_blank_string_param,
-    optional_string_array_param, optional_surface_id_param,
+    current_unix_epoch_ms, format_param_names, optional_bool_param,
+    optional_non_blank_string_param, optional_string_array_param, optional_surface_id_param,
     path_resolver::{canonical_existing_dir, canonical_repo_common_dir},
     required_trimmed_string, store_access, surface_effective_project_cwd, system_runtime,
     task_strategy_params::task_strategy_plan_params,
     team_runtime,
     team_state::worker_surface_is_live,
     workflow_runtime, workspace_effective_project_cwd, workspace_selector_from_params,
-    DispatchError, SocketAppState,
+    workspace_selector_params, DispatchError, SocketAppState, WorkspaceSelectorKind,
 };
 use forktty_core::{
     plan_task_strategy, validate_worktree_name, worktree, FeedApprovalState, FeedEntry,
@@ -174,6 +174,54 @@ fn optional_task_strategy_surface_alias_param(
         (Some(surface_id), _) => Ok(Some(surface_id.to_string())),
         (_, Some(leader_surface_id)) => Ok(Some(leader_surface_id.to_string())),
         (None, None) => Ok(None),
+    }
+}
+
+struct TaskStrategyWorkspaceSelectorParams {
+    workspace_id: Option<String>,
+    workspace_name: Option<String>,
+    worktree_name: Option<String>,
+}
+
+fn task_strategy_workspace_selector_params(
+    params: &Value,
+) -> Result<TaskStrategyWorkspaceSelectorParams, DispatchError> {
+    let selectors = workspace_selector_params(params)?;
+    if selectors.is_empty() {
+        return Ok(TaskStrategyWorkspaceSelectorParams {
+            workspace_id: None,
+            workspace_name: None,
+            worktree_name: None,
+        });
+    }
+    if selectors.len() > 1 {
+        return Err(format!(
+            "Ambiguous workspace selector: cannot combine {}",
+            format_param_names(selectors.iter().map(|selector| selector.key))
+        )
+        .into());
+    }
+    let selector = &selectors[0];
+    match selector.kind {
+        WorkspaceSelectorKind::Id => Ok(TaskStrategyWorkspaceSelectorParams {
+            workspace_id: Some(selector.value.to_string()),
+            workspace_name: None,
+            worktree_name: None,
+        }),
+        WorkspaceSelectorKind::Name => Ok(TaskStrategyWorkspaceSelectorParams {
+            workspace_id: None,
+            workspace_name: Some(selector.value.to_string()),
+            worktree_name: None,
+        }),
+        WorkspaceSelectorKind::WorktreeName => Ok(TaskStrategyWorkspaceSelectorParams {
+            workspace_id: None,
+            workspace_name: None,
+            worktree_name: Some(
+                validate_worktree_name(selector.value)
+                    .map_err(DispatchError::from)?
+                    .to_string(),
+            ),
+        }),
     }
 }
 
@@ -869,15 +917,10 @@ impl TaskStrategyApplyRequest {
         }
         let request_approval = optional_bool_param(params, "request_approval")?.unwrap_or(false);
         let leader_surface_id = optional_task_strategy_surface_alias_param(params)?;
-        let workspace_id =
-            optional_non_blank_string_param(params, "workspace_id")?.map(str::to_string);
-        let workspace_name =
-            optional_non_blank_string_param(params, "workspace_name")?.map(str::to_string);
-        let worktree_name = optional_non_blank_string_param(params, "worktree_name")?
-            .map(validate_worktree_name)
-            .transpose()
-            .map_err(DispatchError::from)?
-            .map(str::to_string);
+        let workspace_selector = task_strategy_workspace_selector_params(params)?;
+        let workspace_id = workspace_selector.workspace_id;
+        let workspace_name = workspace_selector.workspace_name;
+        let worktree_name = workspace_selector.worktree_name;
         let explicit_cwd = explicit_task_strategy_cwd(params)?;
         if worktree_name.is_some() && explicit_cwd.is_some() {
             return Err(DispatchError::InvalidParam(
@@ -971,7 +1014,7 @@ impl TaskStrategyApplyRequest {
             .unwrap_or(false);
         let selected_target_dirty = match task_strategy_target_context(state, params, false) {
             Ok(target) => {
-                if self.worktree_name.is_none() && self.target_cwd.is_none() {
+                if self.target_cwd.is_none() {
                     self.effective_target_cwd = target.cwd.clone();
                 }
                 if self.target_cwd.is_some() {

@@ -22,7 +22,7 @@ Usage:
   forktty team-upsert <team-id> [--workspace-id <id>] [--leader-surface-id <id>] [--name <name>] [--status <status>] [--goal <text>] [--json]
   forktty team-worker-upsert <team-id> <worker-id> [--role <role>] [--agent <agent>] [--surface-id <id>] [--worktree-name <name>] [--status <status>] [--assigned-task-id <id>] [--json]
   forktty team-worker-heartbeat <team-id> <worker-id> [--status <status>] [--assigned-task-id <id>] [--json]
-  forktty team-worker-launch <team-id> <worker-id> [--agent <agent>] [--role <role>] [--assigned-task-id <id>] [--worktree-name <name>] [--args <comma-list>] [--json]
+  forktty team-worker-launch <team-id> <worker-id> [--agent <agent>] [--role <role>] [--assigned-task-id <id>] [--worktree-name <name>] [--cwd <repo>] [--args <comma-list>] [--json]
   forktty team-worker-health <team-id> [--stale-after-ms <ms>] [--json]
   forktty team-worker-nudge <team-id> <worker-id> [--text <text>] [--json]
   forktty team-worker-shutdown <team-id> <worker-id> [--text <text>] [--no-submit] [--close] [--json]

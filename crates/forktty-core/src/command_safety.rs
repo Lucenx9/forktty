@@ -143,9 +143,13 @@ fn env_invokes_shell_trampoline<S: AsRef<str>>(args: &[S]) -> bool {
     while index < args.len() {
         let arg = args[index].as_ref();
         if arg == "--" {
+            index += 1;
+            while index < args.len() && env_assignment(args[index].as_ref()) {
+                index += 1;
+            }
             return args
-                .get(index + 1)
-                .is_some_and(|program| is_shell_trampoline(program.as_ref(), &args[index + 2..]));
+                .get(index)
+                .is_some_and(|program| is_shell_trampoline(program.as_ref(), &args[index + 1..]));
         }
         if matches!(arg, "-S" | "--split-string") {
             return args.get(index + 1).is_some_and(|value| {
@@ -155,21 +159,26 @@ fn env_invokes_shell_trampoline<S: AsRef<str>>(args: &[S]) -> bool {
         if let Some(value) = arg.strip_prefix("--split-string=") {
             return split_env_string_invokes_shell(value, &args[index + 1..]);
         }
-        if matches!(arg, "-u" | "--unset" | "-C" | "--chdir") {
+        if matches!(arg, "-u" | "--unset" | "-C" | "--chdir" | "-a" | "--argv0") {
             index += 2;
             continue;
         }
-        if arg.starts_with("--unset=") || arg.starts_with("--chdir=") {
+        if arg.starts_with("--unset=") || arg.starts_with("--chdir=") || arg.starts_with("--argv0=")
+        {
             index += 1;
             continue;
         }
-        if arg.starts_with('-') || arg.contains('=') {
+        if arg.starts_with('-') || env_assignment(arg) {
             index += 1;
             continue;
         }
         return is_shell_trampoline(arg, &args[index + 1..]);
     }
     false
+}
+
+fn env_assignment(arg: &str) -> bool {
+    arg.contains('=') && !arg.starts_with('=')
 }
 
 fn split_env_string_invokes_shell<S: AsRef<str>>(value: &str, tail: &[S]) -> bool {
@@ -349,6 +358,18 @@ mod tests {
         assert!(is_shell_trampoline(
             "/usr/bin/env",
             &["-i", "FOO=bar", "sh", "-lc", "echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &["--", "FOO=bar", "sh", "-c", "echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &["-a", "fake-argv0", "sh", "-c", "echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &["--argv0=fake-argv0", "sh", "-c", "echo hi"]
         ));
         assert!(!is_shell_trampoline(
             "/usr/bin/env",

@@ -631,17 +631,24 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             name: "workflow_evidence_add",
             annotations: mutating_annotations(false, false),
             description: "Append a bounded evidence artifact to a workflow. Provide text or a path reference; ForkTTY stores metadata and optional text, not arbitrary unbounded files.",
-            input_schema: object_schema(
-                &["workflow_id", "kind", "title"],
-                json!({
-                    "workflow_id": string_prop("Workflow id to update."),
-                    "evidence_id": string_prop("Optional evidence id; ForkTTY derives one when omitted."),
-                    "kind": string_prop("Evidence kind such as test, diff, note, log, or decision."),
-                    "title": string_prop("Evidence title."),
-                    "text": string_prop("Bounded evidence text."),
-                    "path": string_prop("Optional path reference for an artifact already on disk."),
-                }),
-            ),
+            input_schema: {
+                let mut schema = object_schema(
+                    &["workflow_id", "kind", "title"],
+                    json!({
+                        "workflow_id": string_prop("Workflow id to update."),
+                        "evidence_id": string_prop("Optional evidence id; ForkTTY derives one when omitted."),
+                        "kind": string_prop("Evidence kind such as test, diff, note, log, or decision."),
+                        "title": string_prop("Evidence title."),
+                        "text": string_prop("Bounded evidence text."),
+                        "path": string_prop("Optional path reference for an artifact already on disk."),
+                    }),
+                );
+                schema["anyOf"] = json!([
+                    { "required": ["text"] },
+                    { "required": ["path"] },
+                ]);
+                schema
+            },
         },
         ToolSpec {
             name: "workflow_replay",
@@ -733,13 +740,20 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             name: "worktree_status",
             annotations: read_only_annotations(),
             description: "Report whether a worktree is clean, dirty, or otherwise blocked before attach/remove/merge operations. Requires an open ForkTTY workspace on the target repository (see workspace_list).",
-            input_schema: object_schema(
-                &[],
-                json!({
-                    "path": string_prop("Path to the worktree to inspect."),
-                    "cwd": string_prop("Alternative path inside the worktree."),
-                }),
-            ),
+            input_schema: {
+                let mut schema = object_schema(
+                    &[],
+                    json!({
+                        "path": string_prop("Path to the worktree to inspect."),
+                        "cwd": string_prop("Alternative path inside the worktree."),
+                    }),
+                );
+                schema["oneOf"] = json!([
+                    { "required": ["path"] },
+                    { "required": ["cwd"] },
+                ]);
+                schema
+            },
         },
         ToolSpec {
             name: "worktree_create",

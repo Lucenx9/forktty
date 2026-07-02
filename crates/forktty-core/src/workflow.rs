@@ -765,9 +765,7 @@ fn default_workflow_version() -> u32 {
 }
 
 fn bounded_limit(limit: Option<usize>) -> usize {
-    limit
-        .unwrap_or(DEFAULT_QUERY_LIMIT)
-        .clamp(1, MAX_QUERY_LIMIT)
+    limit.unwrap_or(DEFAULT_QUERY_LIMIT).min(MAX_QUERY_LIMIT)
 }
 
 fn workflow_id_for(input: &WorkflowUpsert, mode: &str) -> Result<String, WorkflowError> {
@@ -1195,6 +1193,43 @@ mod tests {
                 "workflow.plan.set",
                 "workflow.evidence.added"
             ]
+        );
+    }
+
+    #[test]
+    fn workflow_queries_accept_zero_limit() {
+        let mut store = WorkflowStoreData::default();
+        let workflow = store
+            .upsert(
+                WorkflowUpsert {
+                    workspace_id: Some("workspace-1".to_string()),
+                    mode: Some("review".to_string()),
+                    status: Some("running".to_string()),
+                    goal: Some("Review the diff".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                10,
+            )
+            .unwrap();
+
+        assert_eq!(
+            store
+                .list(&WorkflowQuery {
+                    limit: Some(0),
+                    ..WorkflowQuery::default()
+                })
+                .len(),
+            0
+        );
+        assert_eq!(
+            store
+                .replay(&WorkflowReplayQuery {
+                    workflow_id: Some(workflow.id),
+                    limit: Some(0),
+                    ..WorkflowReplayQuery::default()
+                })
+                .len(),
+            0
         );
     }
 

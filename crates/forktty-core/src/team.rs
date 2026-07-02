@@ -739,7 +739,16 @@ impl TeamStoreData {
             )));
         }
         if team.messages.len() >= MAX_MESSAGES_PER_TEAM {
-            team.messages.remove(0);
+            let Some(index) = team
+                .messages
+                .iter()
+                .position(|message| message.delivered || message.superseded)
+            else {
+                return Err(TeamError::Conflict(
+                    "team message list is full with pending messages".to_string(),
+                ));
+            };
+            team.messages.remove(index);
         }
         let message = TeamMessage {
             id: message_id,
@@ -1590,6 +1599,81 @@ mod tests {
             0,
             "superseded messages must stay out of pending counts"
         );
+    }
+
+    #[test]
+    fn send_message_does_not_evict_pending_messages_at_cap() {
+        let mut store = TeamStoreData::default();
+        store
+            .upsert_team(
+                TeamUpsert {
+                    team_id: "team-1".to_string(),
+                    workspace_id: Some("workspace-1".to_string()),
+                    leader_surface_id: Some("surface-1".to_string()),
+                    name: Some("Launch".to_string()),
+                    status: Some("active".to_string()),
+                    goal: None,
+                },
+                1,
+            )
+            .unwrap();
+        store
+            .upsert_worker(
+                TeamWorkerUpsert {
+                    team_id: "team-1".to_string(),
+                    worker_id: "worker-1".to_string(),
+                    role: None,
+                    agent: Some("codex".to_string()),
+                    surface_id: Some("surface-2".to_string()),
+                    worktree_name: None,
+                    status: Some("running".to_string()),
+                    assigned_task_id: None,
+                },
+                2,
+            )
+            .unwrap();
+
+        for index in 0..MAX_MESSAGES_PER_TEAM {
+            store
+                .send_message(
+                    TeamMessageSend {
+                        team_id: "team-1".to_string(),
+                        message_id: Some(format!("msg-{index}")),
+                        from: "leader".to_string(),
+                        to_worker_id: Some("worker-1".to_string()),
+                        task_id: None,
+                        body: format!("pending {index}"),
+                    },
+                    10 + index as u64,
+                )
+                .unwrap();
+        }
+
+        let err = store
+            .send_message(
+                TeamMessageSend {
+                    team_id: "team-1".to_string(),
+                    message_id: Some("msg-over-cap".to_string()),
+                    from: "leader".to_string(),
+                    to_worker_id: Some("worker-1".to_string()),
+                    task_id: None,
+                    body: "new pending".to_string(),
+                },
+                10_000,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            TeamError::Conflict(message) if message.contains("pending")
+        ));
+        assert!(store
+            .get("team-1")
+            .unwrap()
+            .messages
+            .iter()
+            .any(|message| message.id == "msg-0"));
+        assert_eq!(store.summary("team-1").unwrap().messages_pending, 1024);
     }
 
     #[test]

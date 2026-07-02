@@ -61,6 +61,8 @@ All notable changes to ForkTTY are documented here.
   positional goals, plan JSON, `cwd`, and approval decisions directly.
 
 ### Fixed
+- Fixed command argv validation so GNU `env` wrappers cannot hide shell
+  trampolines behind `-- NAME=VALUE` assignments or `-a`/`--argv0` arguments.
 - Fixed task strategy routing so parallel research/experiment plans respect
   each harness's declared parallel session capacity instead of assigning
   multiple concurrent roles to a single-session harness.
@@ -82,9 +84,16 @@ All notable changes to ForkTTY are documented here.
 - Fixed task strategy apply so explicit `cwd` launch targets must also be
   inside a Git repository already represented by an open ForkTTY workspace,
   surface, or effective project cwd before any workflow/team mutation.
+- Fixed task strategy apply so camelCase workspace selector aliases such as
+  `workspaceId` and `worktreeName` target the same workspace for dirty-repo
+  inference and workflow/team mutation instead of falling back to the active
+  workspace.
 - Fixed task strategy submit retries so a live worker whose launch cwd or
   surface cwd differs from the selected target cwd is rejected even when the
   retry omits an explicit `cwd`.
+- Fixed worktree-layer task strategy submit retries so a live worker is reused
+  only when its surface cwd still matches the currently selected worktree
+  workspace target.
 - Fixed task strategy submit retries so a persisted worker record with a closed
   or missing surface is relaunched before dispatching its still-pending role
   prompt.
@@ -102,6 +111,16 @@ All notable changes to ForkTTY are documented here.
   target worker, or cwd.
 - Fixed team message dispatch and ack so superseded prompts cannot still be
   delivered explicitly by id or marked acknowledged after replacement.
+- Fixed team message storage so hitting the per-team message cap evicts only
+  delivered or superseded history and rejects new sends rather than silently
+  dropping pending instructions.
+- Fixed MCP tool schemas for `workflow_evidence_add` and `worktree_status` so
+  schema-driven clients see the same required alternatives enforced by the
+  handlers.
+- Fixed `forktty team-worker-launch` so the CLI exposes the documented `--cwd`
+  worker launch target.
+- Fixed workflow list/replay queries so `limit: 0` returns zero rows, matching
+  the other bounded list APIs.
 - Fixed Codex team message submit so ForkTTY sends the task prompt and Enter as
   separate terminal actions instead of leaving fresh Codex worker prompts staged.
 - Fixed team message dispatch for freshly launched Codex/Claude/Pi workers so

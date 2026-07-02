@@ -875,6 +875,40 @@ mod tests {
     }
 
     #[test]
+    fn tool_schemas_express_handler_required_alternatives() {
+        let specs = tool_specs();
+        let workflow_evidence = specs
+            .iter()
+            .find(|tool| tool.name == "workflow_evidence_add")
+            .unwrap();
+        let worktree_status = specs
+            .iter()
+            .find(|tool| tool.name == "worktree_status")
+            .unwrap();
+
+        assert!(workflow_evidence.input_schema["anyOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|schema| schema["required"] == json!(["text"])));
+        assert!(workflow_evidence.input_schema["anyOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|schema| schema["required"] == json!(["path"])));
+        assert!(worktree_status.input_schema["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|schema| schema["required"] == json!(["path"])));
+        assert!(worktree_status.input_schema["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|schema| schema["required"] == json!(["cwd"])));
+    }
+
+    #[test]
     fn team_tools_map_to_socket_team_methods() {
         let (method, params) = build_socket_call_for_test(
             "team_upsert",

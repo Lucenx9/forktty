@@ -958,6 +958,60 @@ async fn task_strategy_apply_rejects_conflicting_workspace_selectors_before_muta
     assert!(teams.as_array().unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn task_strategy_apply_workspace_alias_targets_same_workspace_for_context_and_mutation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    let target_dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let active_workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let active_workspace_id = active_workspace[0]["id"].as_str().unwrap().to_string();
+    let target_workspace = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "target", "workingDir": target_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let target_workspace_id = target_workspace["id"].as_str().unwrap();
+    dispatch(
+        &state,
+        "workspace.select",
+        json!({"id": active_workspace_id}),
+    )
+    .await
+    .unwrap();
+
+    let result = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspaceId": target_workspace_id,
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["status"], "staged");
+    let workflow = dispatch(
+        &state,
+        "workflow.get",
+        json!({"workflow_id": "router-run-1"}),
+    )
+    .await
+    .unwrap();
+    let team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
+        .await
+        .unwrap();
+    assert_eq!(workflow["workspace_id"], target_workspace_id);
+    assert_eq!(team["workspace_id"], target_workspace_id);
+}
+
 #[test]
 fn task_strategy_harness_registry_respects_team_provider_order() {
     let registry = crate::task_strategy_runtime::harness_registry_from_capabilities(&json!({
@@ -3081,6 +3135,69 @@ async fn task_strategy_apply_submit_launches_workers_in_open_worktree_workspace(
             .unwrap();
         assert_eq!(surface.cwd, worktree_dir.path());
     }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn task_strategy_apply_submit_rejects_worktree_worker_when_effective_cwd_changes() {
+    let (mut state, _backend) = test_state();
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _claude = write_fake_program(bin_dir.path(), "claude");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let worktree_dir = tempfile::tempdir().unwrap();
+    let stale_dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    {
+        let mut model = state.model.lock().unwrap();
+        model.create_worktree_workspace("feature", worktree_dir.path(), "feature", "feature-x");
+    };
+
+    dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "worktree_name": "feature-x",
+            "goal": "Implement the router",
+            "approved": ["start_run", "create_worktree", "launch_parallel_workers"],
+            "submit": true,
+            "plan": worktree_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        let focused = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.worktree_name.as_deref() == Some("feature-x"))
+            .unwrap()
+            .focused_surface_id;
+        let target_surface = model.add_tab(&focused).unwrap();
+        assert!(model.set_surface_cwd(&target_surface.id, stale_dir.path().to_path_buf()));
+    }
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "worktree_name": "feature-x",
+            "goal": "Implement the router",
+            "approved": ["start_run", "create_worktree", "launch_parallel_workers"],
+            "submit": true,
+            "plan": worktree_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "conflict");
+    assert!(err.to_string().contains("cwd expected"));
 }
 
 fn staged_team_plan_json() -> Value {
