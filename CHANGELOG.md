@@ -61,6 +61,8 @@ All notable changes to ForkTTY are documented here.
   positional goals, plan JSON, `cwd`, and approval decisions directly.
 
 ### Fixed
+- Fixed `cargo audit` failures by updating the Windows notification backend
+  dependency so the lockfile no longer includes vulnerable `quick-xml` versions.
 - Fixed command argv validation so GNU `env` wrappers cannot hide shell
   trampolines behind `-- NAME=VALUE` assignments or `-a`/`--argv0` arguments.
 - Fixed Feed persistence so corrupt `feed.json` files are quarantined instead
