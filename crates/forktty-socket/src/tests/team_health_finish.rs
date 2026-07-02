@@ -249,6 +249,202 @@ async fn team_finish_can_close_launch_owned_workers() {
 
 #[tokio::test]
 #[serial_test::serial]
+async fn team_finish_close_workers_spawns_replacement_for_inactive_root_worker_surface() {
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_codex(bin_dir.path());
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let (mut state, backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap().to_string();
+    let leader_surface_id = workspace[0]["focused_surface_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "workspace_id": workspace_id,
+            "status": "active"
+        }),
+    )
+    .await
+    .unwrap();
+    let launched = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex"
+        }),
+    )
+    .await
+    .unwrap();
+    let worker_surface_id = launched["surface"]["id"].as_str().unwrap().to_string();
+    dispatch(
+        &state,
+        "surface.close",
+        json!({"surface_id": leader_surface_id}),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "other", "cwd": "/tmp"}),
+    )
+    .await
+    .unwrap();
+
+    let finished = dispatch(
+        &state,
+        "team.finish",
+        json!({"team_id": "team-1", "close_workers": true}),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(finished["finished"], true);
+    let model_surfaces = dispatch(
+        &state,
+        "surface.list",
+        json!({"workspace_id": workspace_id}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(model_surfaces.as_array().unwrap().len(), 1);
+    let replacement_surface_id = model_surfaces[0]["id"].as_str().unwrap().to_string();
+    assert_ne!(replacement_surface_id, worker_surface_id);
+    let runtime_surface_ids = backend
+        .surfaces()
+        .unwrap()
+        .into_iter()
+        .map(|surface| surface.surface_id)
+        .collect::<Vec<_>>();
+    assert!(runtime_surface_ids.contains(&replacement_surface_id));
+    assert!(!runtime_surface_ids.contains(&worker_surface_id));
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn team_finish_close_workers_keeps_root_worker_when_replacement_spawn_fails() {
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_codex(bin_dir.path());
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let bootstrap_backend = Arc::new(HeadlessTerminalBackend::new());
+    let mut bootstrap_state = SocketAppState::new(
+        model.clone(),
+        bootstrap_backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let dir = tempfile::tempdir().unwrap();
+    bootstrap_state.team_store_path = Some(dir.path().join("team-v1.json"));
+    bootstrap_default_workspace(&bootstrap_state, PathBuf::from("/tmp")).unwrap();
+    let workspace = dispatch(&bootstrap_state, "workspace.list", json!({}))
+        .await
+        .unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap().to_string();
+    let leader_surface_id = workspace[0]["focused_surface_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    dispatch(
+        &bootstrap_state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "workspace_id": workspace_id,
+            "status": "active"
+        }),
+    )
+    .await
+    .unwrap();
+    let launched = dispatch(
+        &bootstrap_state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex"
+        }),
+    )
+    .await
+    .unwrap();
+    let worker_surface_id = launched["surface"]["id"].as_str().unwrap().to_string();
+    dispatch(
+        &bootstrap_state,
+        "surface.close",
+        json!({"surface_id": leader_surface_id}),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &bootstrap_state,
+        "workspace.create",
+        json!({"name": "other", "cwd": "/tmp"}),
+    )
+    .await
+    .unwrap();
+    let worker_surface = bootstrap_backend
+        .surfaces()
+        .unwrap()
+        .into_iter()
+        .find(|surface| surface.surface_id == worker_surface_id)
+        .unwrap();
+    let failing_backend = Arc::new(SpawnFailsCloseSucceedsBackend::new(worker_surface));
+    let mut state = SocketAppState::new(
+        model,
+        failing_backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    state.team_store_path = bootstrap_state.team_store_path.clone();
+    crate::team_state::remember_team_launch_owned_surface(
+        &state,
+        "team-1",
+        "worker-1",
+        &worker_surface_id,
+    )
+    .unwrap();
+
+    let err = dispatch(
+        &state,
+        "team.finish",
+        json!({"team_id": "team-1", "close_workers": true}),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(
+        err.to_string().contains("spawn failed"),
+        "unexpected error: {err}"
+    );
+    let runtime_surface_ids = failing_backend
+        .surfaces()
+        .unwrap()
+        .into_iter()
+        .map(|surface| surface.surface_id)
+        .collect::<Vec<_>>();
+    assert!(runtime_surface_ids.contains(&worker_surface_id));
+    let team = dispatch(&state, "team.get", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    assert_eq!(team["status"], "active");
+    assert_eq!(team["workers"][0]["status"], "running");
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn team_finish_close_failure_keeps_worker_state_unchanged() {
     let bin_dir = tempfile::tempdir().unwrap();
     let _codex = write_fake_codex(bin_dir.path());

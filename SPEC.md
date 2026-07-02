@@ -680,7 +680,11 @@ are normalized to closed before the team is marked done. If a disposable worker
 surface cannot be closed, `team.finish` returns an error before persisting any
 worker shutdown request, missing-surface normalization, or team-done state; when
 closing multiple worker surfaces, a later close failure also restores already
-closed runtime surfaces before returning the error.
+closed runtime surfaces before returning the error. Closing launch-owned worker
+surfaces preserves normal `surface.close` replacement behavior, including
+replacement terminals for root panes in inactive workspaces; if that
+replacement terminal cannot be spawned, ForkTTY returns an error before closing
+the worker surface.
 `team.summary` and `context.snapshot` team summaries flag active teams with no
 active workers, open tasks, or pending messages as `active_without_open_work`.
 

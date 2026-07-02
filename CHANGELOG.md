@@ -82,6 +82,10 @@ All notable changes to ForkTTY are documented here.
 - Fixed `team.finish --close-workers` so closing multiple worker panes restores
   any already-closed runtime surface if a later worker surface close fails,
   avoiding a half-closed visible team after an error.
+- Fixed `team.finish --close-workers` so closing a launch-owned worker pane that
+  became the only pane in an inactive workspace still spawns the normal
+  replacement terminal surface, and leaves the worker running if that
+  replacement cannot be spawned.
 - Fixed `team.worker.shutdown --close-surface` so a worker surface close
   failure leaves the worker store state unchanged instead of persisting a
   partial shutdown request.

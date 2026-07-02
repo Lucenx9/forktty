@@ -12,9 +12,10 @@ use crate::team_state::{
     team_worker_launch_owned_surface_id, team_worker_surface_id,
 };
 use crate::{
-    close_surface_request, close_terminal_surface_if_present, close_terminal_surfaces_or_restore,
+    close_replacement_terminal_surface_if_present, close_surface_request,
+    close_terminal_surface_if_present, close_terminal_surfaces_or_restore,
     ensure_terminal_for_active_workspace, evict_hook_session_targets_for_surfaces,
-    rollback_surface_creation, store_access,
+    rollback_surface_creation, spawn_surface_terminal, store_access,
     team_dispatch::{
         dispatch_team_message_text, send_team_message_body_when_ready,
         send_team_submit_enter_after_settle, show_team_message_surface,
@@ -278,52 +279,151 @@ async fn close_team_finish_worker_surfaces(
     }
 
     let _surface_set_guard = state.coordinator.surface_set.lock().await;
-    let surfaces = {
-        let model = state
-            .model
-            .lock()
-            .map_err(|_| "Lock poisoned".to_string())?;
-        close_targets
-            .iter()
-            .map(|(_, surface_id)| {
-                model
-                    .surface(surface_id)
-                    .cloned()
-                    .ok_or(DispatchError::NotFound("surface".to_string()))
-            })
-            .collect::<Result<Vec<_>, _>>()?
-    };
-
-    let text = terminal_text_with_submit_enter("Team finished by leader. You can stop now.", true);
-    for (_, surface_id) in close_targets {
-        state
-            .terminal
-            .send_text(surface_id, &text)
-            .map_err(DispatchError::from)?;
-    }
-    close_terminal_surfaces_or_restore(state, &surfaces).map_err(DispatchError::from)?;
-
-    let mut closed_surfaces = Vec::new();
-    {
-        let mut model = state
-            .model
-            .lock()
-            .map_err(|_| "Lock poisoned".to_string())?;
-        for (worker_id, surface_id) in close_targets {
-            let closed_surface = model
-                .close_surface(surface_id)
-                .ok_or(DispatchError::NotFound("surface".to_string()))?;
-            closed_surfaces.push((worker_id.clone(), surface_id.clone(), json!(closed_surface)));
+    let prepared = prepare_team_finish_surface_closes(state, close_targets)?;
+    let mut spawned_replacements = Vec::new();
+    for close in &prepared {
+        if let Some(replacement) = close.replacement.as_ref() {
+            if let Err(err) = spawn_surface_terminal(state, replacement) {
+                let mut err = err;
+                if let Err(cleanup_err) =
+                    cleanup_team_finish_replacements(state, &spawned_replacements)
+                {
+                    err = format!("{err}; replacement cleanup failed: {cleanup_err}");
+                }
+                return Err(err.into());
+            }
+            spawned_replacements.push(replacement.clone());
         }
     }
 
-    let surface_ids = close_targets
+    let text = terminal_text_with_submit_enter("Team finished by leader. You can stop now.", true);
+    for close in &prepared {
+        if let Err(err) = state.terminal.send_text(&close.surface_id, &text) {
+            let mut err = err.to_string();
+            if let Err(cleanup_err) = cleanup_team_finish_replacements(state, &spawned_replacements)
+            {
+                err = format!("{err}; replacement cleanup failed: {cleanup_err}");
+            }
+            return Err(err.into());
+        }
+    }
+    let surfaces = prepared
         .iter()
-        .map(|(_, surface_id)| surface_id.clone())
+        .map(|close| close.surface.clone())
+        .collect::<Vec<_>>();
+    if let Err(err) = close_terminal_surfaces_or_restore(state, &surfaces) {
+        let mut err = err;
+        if let Err(cleanup_err) = cleanup_team_finish_replacements(state, &spawned_replacements) {
+            err = format!("{err}; replacement cleanup failed: {cleanup_err}");
+        }
+        return Err(err.into());
+    }
+
+    let mut closed_surfaces = Vec::new();
+    for close in &prepared {
+        let closed_surface = close_model_surface_after_terminal_closed(
+            state,
+            &close.surface_id,
+            close.replacement.clone(),
+        )?;
+        closed_surfaces.push((
+            close.worker_id.clone(),
+            close.surface_id.clone(),
+            closed_surface,
+        ));
+    }
+
+    let surface_ids = prepared
+        .iter()
+        .map(|close| close.surface_id.clone())
         .collect::<Vec<_>>();
     evict_hook_session_targets_for_surfaces(state, &surface_ids)?;
     ensure_terminal_for_active_workspace(state).await?;
     Ok(closed_surfaces)
+}
+
+struct TeamFinishSurfaceClose {
+    worker_id: String,
+    surface_id: String,
+    surface: forktty_core::Surface,
+    replacement: Option<forktty_core::Surface>,
+}
+
+fn prepare_team_finish_surface_closes(
+    state: &SocketAppState,
+    close_targets: &[(String, String)],
+) -> Result<Vec<TeamFinishSurfaceClose>, DispatchError> {
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    close_targets
+        .iter()
+        .map(|(worker_id, surface_id)| {
+            let surface = model
+                .surface(surface_id)
+                .cloned()
+                .ok_or(DispatchError::NotFound("surface".to_string()))?;
+            Ok(TeamFinishSurfaceClose {
+                worker_id: worker_id.clone(),
+                surface_id: surface_id.clone(),
+                surface,
+                replacement: model.prepare_root_surface_replacement(surface_id),
+            })
+        })
+        .collect()
+}
+
+fn cleanup_team_finish_replacements(
+    state: &SocketAppState,
+    replacements: &[forktty_core::Surface],
+) -> Result<(), String> {
+    let mut cleanup_errors = Vec::new();
+    for replacement in replacements {
+        if let Err(err) = close_replacement_terminal_surface_if_present(state, &replacement.id) {
+            cleanup_errors.push(err);
+        }
+    }
+    if cleanup_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(cleanup_errors.join("; "))
+    }
+}
+
+fn close_model_surface_after_terminal_closed(
+    state: &SocketAppState,
+    surface_id: &str,
+    root_replacement: Option<forktty_core::Surface>,
+) -> Result<Value, DispatchError> {
+    if let Some(replacement) = root_replacement {
+        let (surface, replacement_in_model) = {
+            let mut model = state
+                .model
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            let surface = model
+                .close_surface_with_replacement(surface_id, Some(replacement.clone()))
+                .ok_or(DispatchError::NotFound("surface".to_string()));
+            let replacement_in_model = model.surface(&replacement.id).is_some();
+            (surface, replacement_in_model)
+        };
+        if surface.is_err() || !replacement_in_model {
+            close_replacement_terminal_surface_if_present(state, &replacement.id)?;
+        }
+        return Ok(json!(surface?));
+    }
+
+    let surface = {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        model
+            .close_surface(surface_id)
+            .ok_or(DispatchError::NotFound("surface".to_string()))?
+    };
+    Ok(json!(surface))
 }
 
 fn team_finish_actions(health: &Value, close_workers: bool) -> Vec<Value> {
