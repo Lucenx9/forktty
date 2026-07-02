@@ -387,7 +387,7 @@ impl TeamStoreData {
             "team.upserted",
             format!("team {}", team.id),
             now_ms,
-        );
+        )?;
         Ok(team)
     }
 
@@ -467,7 +467,7 @@ impl TeamStoreData {
             "team.worker.upserted",
             format!("worker {}", worker.id),
             now_ms,
-        );
+        )?;
         Ok(worker)
     }
 
@@ -544,7 +544,7 @@ impl TeamStoreData {
             "team.worker.launched",
             format!("worker {}", worker.id),
             now_ms,
-        );
+        )?;
         Ok(worker)
     }
 
@@ -581,7 +581,7 @@ impl TeamStoreData {
             "team.worker.heartbeat",
             format!("worker {}", worker.id),
             now_ms,
-        );
+        )?;
         Ok(worker)
     }
 
@@ -606,7 +606,7 @@ impl TeamStoreData {
             "team.worker.nudged",
             format!("worker {}", worker.id),
             now_ms,
-        );
+        )?;
         Ok(worker)
     }
 
@@ -632,7 +632,7 @@ impl TeamStoreData {
             "team.worker.shutdown_requested",
             format!("worker {}", worker.id),
             now_ms,
-        );
+        )?;
         Ok(worker)
     }
 
@@ -708,7 +708,7 @@ impl TeamStoreData {
             "team.task.upserted",
             format!("task {}", task.id),
             now_ms,
-        );
+        )?;
         Ok(task)
     }
 
@@ -769,7 +769,7 @@ impl TeamStoreData {
             "team.message.sent",
             format!("message {}", message.id),
             now_ms,
-        );
+        )?;
         Ok(message)
     }
 
@@ -813,7 +813,7 @@ impl TeamStoreData {
                 "team.message.superseded",
                 format!("messages {}", superseded.len()),
                 now_ms,
-            );
+            )?;
         }
         Ok(superseded)
     }
@@ -852,7 +852,7 @@ impl TeamStoreData {
             "team.message.acked",
             format!("message {}", message.id),
             now_ms,
-        );
+        )?;
         Ok(message)
     }
 
@@ -984,20 +984,36 @@ impl TeamStoreData {
             .ok_or_else(|| TeamError::TeamNotFound(team_id.to_string()))
     }
 
-    fn push_event(&mut self, team_id: &str, kind: &str, summary: String, now_ms: u64) {
+    fn push_event(
+        &mut self,
+        team_id: &str,
+        kind: &str,
+        summary: String,
+        now_ms: u64,
+    ) -> Result<(), TeamError> {
+        let highest_seq = self
+            .events
+            .last()
+            .map(|last| last.seq)
+            .unwrap_or(0)
+            .max(self.next_event_seq.saturating_sub(1));
+        let seq = highest_seq
+            .checked_add(1)
+            .ok_or_else(|| TeamError::Invalid("team event sequence overflow".to_string()))?;
         let event = TeamEvent {
-            seq: self.next_event_seq,
-            team_id: team_id.to_string(),
-            kind: kind.to_string(),
-            summary,
+            seq,
+            team_id: clean_id("event.team_id", team_id)?,
+            kind: clean_short("event.kind", kind)?,
+            summary: clean_short("event.summary", &summary)?,
             created_at_ms: now_ms,
         };
-        self.next_event_seq = self.next_event_seq.saturating_add(1).max(1);
+        self.next_event_seq = event.seq.saturating_add(1);
         self.events.push(event);
         if self.events.len() > MAX_EVENTS {
             let drop_count = self.events.len() - MAX_EVENTS;
             self.events.drain(0..drop_count);
         }
+        Ok(())
     }
 }
 
@@ -1145,6 +1161,11 @@ fn validate_store(data: &TeamStoreData) -> Result<(), TeamError> {
             "too many teams (limit {MAX_TEAMS})"
         )));
     }
+    if data.events.len() > MAX_EVENTS {
+        return Err(TeamError::Invalid(format!(
+            "too many team events (limit {MAX_EVENTS})"
+        )));
+    }
     let mut team_ids = BTreeSet::new();
     for team in &data.teams {
         clean_id("team_id", &team.id)?;
@@ -1169,6 +1190,18 @@ fn validate_store(data: &TeamStoreData) -> Result<(), TeamError> {
             )));
         }
         validate_team_references(team)?;
+    }
+    let mut last_seq = 0;
+    for event in &data.events {
+        clean_id("event.team_id", &event.team_id)?;
+        clean_short("event.kind", &event.kind)?;
+        clean_short("event.summary", &event.summary)?;
+        if event.seq <= last_seq {
+            return Err(TeamError::Invalid(
+                "team events must be sorted by increasing seq".to_string(),
+            ));
+        }
+        last_seq = event.seq;
     }
     Ok(())
 }
@@ -1674,6 +1707,116 @@ mod tests {
             .iter()
             .any(|message| message.id == "msg-0"));
         assert_eq!(store.summary("team-1").unwrap().messages_pending, 1024);
+    }
+
+    #[test]
+    fn push_event_recovers_from_stale_next_event_seq() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("team-v1.json");
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "version": TEAM_FORMAT_VERSION,
+                "teams": [{
+                    "id": "team-1",
+                    "workspace_id": "workspace-1",
+                    "leader_surface_id": "surface-1",
+                    "name": "Launch",
+                    "status": "active",
+                    "created_at_ms": 1,
+                    "updated_at_ms": 1,
+                    "workers": [],
+                    "tasks": [],
+                    "messages": []
+                }],
+                "events": [
+                    {
+                        "seq": 5,
+                        "team_id": "team-1",
+                        "kind": "team.created",
+                        "summary": "created",
+                        "created_at_ms": 1
+                    },
+                    {
+                        "seq": 6,
+                        "team_id": "team-1",
+                        "kind": "team.updated",
+                        "summary": "updated",
+                        "created_at_ms": 2
+                    }
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let mut store = load_teams_from_path(&path).unwrap();
+        assert_eq!(store.next_event_seq, 1);
+
+        store
+            .upsert_team(
+                TeamUpsert {
+                    team_id: "team-1".to_string(),
+                    workspace_id: None,
+                    leader_surface_id: None,
+                    name: None,
+                    status: Some("done".to_string()),
+                    goal: None,
+                },
+                3,
+            )
+            .unwrap();
+
+        assert_eq!(
+            store
+                .events(&TeamEventQuery {
+                    team_id: None,
+                    since_seq: Some(6),
+                    limit: None,
+                })
+                .unwrap()
+                .iter()
+                .map(|event| event.seq)
+                .collect::<Vec<_>>(),
+            vec![7]
+        );
+        save_teams_to_path(&path, &store).unwrap();
+    }
+
+    #[test]
+    fn load_rejects_non_increasing_event_sequences() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("team-v1.json");
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "version": TEAM_FORMAT_VERSION,
+                "teams": [],
+                "events": [
+                    {
+                        "seq": 5,
+                        "team_id": "team-1",
+                        "kind": "team.created",
+                        "summary": "created",
+                        "created_at_ms": 1
+                    },
+                    {
+                        "seq": 5,
+                        "team_id": "team-1",
+                        "kind": "team.updated",
+                        "summary": "updated",
+                        "created_at_ms": 2
+                    }
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let err = load_teams_from_path(&path).unwrap_err();
+        assert!(matches!(
+            err,
+            TeamError::Invalid(message) if message.contains("increasing seq")
+        ));
     }
 
     #[test]

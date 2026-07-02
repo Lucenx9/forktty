@@ -121,6 +121,9 @@ All notable changes to ForkTTY are documented here.
   worker launch target.
 - Fixed workflow list/replay queries so `limit: 0` returns zero rows, matching
   the other bounded list APIs.
+- Fixed team event persistence so stores with stale or missing
+  `next_event_seq` mint new event sequence numbers after the highest persisted
+  event, and corrupted non-increasing event histories are rejected on load.
 - Fixed Codex team message submit so ForkTTY sends the task prompt and Enter as
   separate terminal actions instead of leaving fresh Codex worker prompts staged.
 - Fixed team message dispatch for freshly launched Codex/Claude/Pi workers so
