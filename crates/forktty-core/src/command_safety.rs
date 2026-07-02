@@ -185,15 +185,12 @@ fn split_env_string_invokes_shell<S: AsRef<str>>(value: &str, tail: &[S]) -> boo
     let Ok(parts) = shell_words::split(value) else {
         return false;
     };
-    let Some((program, split_args)) = parts.split_first() else {
-        return false;
-    };
-    let args = split_args
+    let args = parts
         .iter()
         .map(String::as_str)
         .chain(tail.iter().map(AsRef::as_ref))
         .collect::<Vec<_>>();
-    is_shell_trampoline(program, &args)
+    env_invokes_shell_trampoline(&args)
 }
 
 /// Returns true when `path` is an absolute path to a regular executable file.
@@ -422,6 +419,10 @@ mod tests {
         assert!(is_shell_trampoline(
             "/usr/bin/env",
             &["-S", "sh -c 'echo hi'"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &["-S", "-- sh -c 'echo hi'"]
         ));
         assert!(is_shell_trampoline(
             "/usr/bin/env",
