@@ -137,6 +137,8 @@ All notable changes to ForkTTY are documented here.
 - Fixed MCP tool schemas for `workflow_evidence_add` and `worktree_status` so
   schema-driven clients see the same required alternatives enforced by the
   handlers.
+- Fixed workflow evidence auto ids so omitted `evidence_id` values skip over
+  existing explicit evidence ids instead of permanently colliding with them.
 - Fixed `forktty team-worker-launch` so the CLI exposes the documented `--cwd`
   worker launch target.
 - Fixed workflow list/replay queries so `limit: 0` returns zero rows, matching

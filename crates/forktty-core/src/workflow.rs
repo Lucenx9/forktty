@@ -478,7 +478,7 @@ impl WorkflowStoreData {
         }
         let evidence_id = match input.id {
             Some(id) => clean_id("evidence.id", &id)?,
-            None => format!("evidence-{}", workflow.evidence.len() + 1),
+            None => next_workflow_evidence_id(&workflow.evidence)?,
         };
         if workflow
             .evidence
@@ -580,6 +580,18 @@ impl WorkflowStoreData {
         }
         Ok(())
     }
+}
+
+fn next_workflow_evidence_id(evidence: &[WorkflowEvidence]) -> Result<String, WorkflowError> {
+    for index in 1..=MAX_EVIDENCE_ITEMS {
+        let candidate = format!("evidence-{index}");
+        if !evidence.iter().any(|evidence| evidence.id == candidate) {
+            return Ok(candidate);
+        }
+    }
+    Err(WorkflowError::InvalidData(format!(
+        "workflow evidence is full (limit {MAX_EVIDENCE_ITEMS})"
+    )))
 }
 
 impl WorkflowState {
@@ -1194,6 +1206,54 @@ mod tests {
                 "workflow.evidence.added"
             ]
         );
+    }
+
+    #[test]
+    fn auto_evidence_id_skips_explicit_collisions() {
+        let mut store = WorkflowStoreData::default();
+        let workflow = store
+            .upsert(
+                WorkflowUpsert {
+                    workflow_id: Some("workflow-1".to_string()),
+                    status: Some("running".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                1,
+            )
+            .unwrap();
+        store
+            .add_evidence(
+                &workflow.id,
+                WorkflowEvidenceInput {
+                    id: Some("evidence-2".to_string()),
+                    kind: "note".to_string(),
+                    title: "explicit".to_string(),
+                    text: Some("explicit id".to_string()),
+                    path: None,
+                },
+                2,
+            )
+            .unwrap();
+
+        let workflow = store
+            .add_evidence(
+                &workflow.id,
+                WorkflowEvidenceInput {
+                    id: None,
+                    kind: "note".to_string(),
+                    title: "auto".to_string(),
+                    text: Some("auto id".to_string()),
+                    path: None,
+                },
+                3,
+            )
+            .unwrap();
+
+        assert!(workflow
+            .evidence
+            .iter()
+            .any(|evidence| evidence.id == "evidence-1"));
+        assert_eq!(workflow.evidence.len(), 2);
     }
 
     #[test]

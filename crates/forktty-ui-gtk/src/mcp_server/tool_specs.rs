@@ -636,7 +636,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
                     &["workflow_id", "kind", "title"],
                     json!({
                         "workflow_id": string_prop("Workflow id to update."),
-                        "evidence_id": string_prop("Optional evidence id; ForkTTY derives one when omitted."),
+                        "evidence_id": string_prop("Optional evidence id; ForkTTY derives the first available evidence-N id when omitted."),
                         "kind": string_prop("Evidence kind such as test, diff, note, log, or decision."),
                         "title": string_prop("Evidence title."),
                         "text": string_prop("Bounded evidence text."),

@@ -318,6 +318,11 @@ Implemented categories:
 | Events | `events.subscribe` |
 | Browser | `browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.fill`, `browser.back`, `browser.forward`, `browser.reload`, `browser.profile.list`, `browser.profile.create`, `browser.profile.delete`, `browser.history.list`, `browser.history.search`, `browser.history.clear`, `browser.bookmark.add`, `browser.bookmark.list`, `browser.bookmark.remove` |
 
+`workflow.evidence.add` accepts an optional caller-provided `evidence_id`; when
+omitted, ForkTTY derives the first available `evidence-N` id for that workflow
+instead of deriving from the evidence count alone, so explicit ids do not block
+later automatic evidence appends.
+
 `workspace.create` and `workspace.create_ssh` default omitted names to the
 allocated `workspace-N` id name, keeping the visible workspace label aligned
 with the real workspace id.
