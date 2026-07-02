@@ -159,6 +159,17 @@ fn env_invokes_shell_trampoline<S: AsRef<str>>(args: &[S]) -> bool {
         if let Some(value) = arg.strip_prefix("--split-string=") {
             return split_env_string_invokes_shell(value, &args[index + 1..]);
         }
+        match env_short_split_string_option(arg) {
+            Some(EnvSplitStringOption::Inline(value)) => {
+                return split_env_string_invokes_shell(value, &args[index + 1..]);
+            }
+            Some(EnvSplitStringOption::Next) => {
+                return args.get(index + 1).is_some_and(|value| {
+                    split_env_string_invokes_shell(value.as_ref(), &args[index + 2..])
+                });
+            }
+            None => {}
+        }
         if matches!(arg, "-u" | "--unset" | "-C" | "--chdir" | "-a" | "--argv0") {
             index += 2;
             continue;
@@ -175,6 +186,31 @@ fn env_invokes_shell_trampoline<S: AsRef<str>>(args: &[S]) -> bool {
         return is_shell_trampoline(arg, &args[index + 1..]);
     }
     false
+}
+
+enum EnvSplitStringOption<'a> {
+    Inline(&'a str),
+    Next,
+}
+
+fn env_short_split_string_option(arg: &str) -> Option<EnvSplitStringOption<'_>> {
+    let short_options = arg.strip_prefix('-')?;
+    if arg.starts_with("--") || short_options.is_empty() {
+        return None;
+    }
+    let split_index = short_options.find('S')?;
+    if !short_options[..split_index]
+        .chars()
+        .all(|ch| matches!(ch, '0' | 'i' | 'v'))
+    {
+        return None;
+    }
+    let value = &short_options[split_index + 1..];
+    if value.is_empty() {
+        Some(EnvSplitStringOption::Next)
+    } else {
+        Some(EnvSplitStringOption::Inline(value))
+    }
 }
 
 fn env_assignment(arg: &str) -> bool {
@@ -419,6 +455,12 @@ mod tests {
         assert!(is_shell_trampoline(
             "/usr/bin/env",
             &["-S", "sh -c 'echo hi'"]
+        ));
+        assert!(is_shell_trampoline("/usr/bin/env", &["-Ssh -c 'echo hi'"]));
+        assert!(is_shell_trampoline("/usr/bin/env", &["-vSsh -c 'echo hi'"]));
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &["-vS", "sh -c 'echo hi'"]
         ));
         assert!(is_shell_trampoline(
             "/usr/bin/env",

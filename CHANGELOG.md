@@ -65,7 +65,8 @@ All notable changes to ForkTTY are documented here.
   dependency so the lockfile no longer includes vulnerable `quick-xml` versions.
 - Fixed command argv validation so GNU `env` wrappers cannot hide shell
   trampolines behind `-- NAME=VALUE` assignments, `-a`/`--argv0` arguments,
-  or `-S`/`--split-string` values that begin with `--`.
+  `-S`/`--split-string` values that begin with `--`, or attached/clustered
+  `-Sstring` and `-vSstring` split-string forms.
 - Fixed Feed persistence so corrupt `feed.json` files are quarantined instead
   of disabling the Feed on every launch, Feed saves are fsync-backed like the
   other stores, and approved approval rows are retained through notification
