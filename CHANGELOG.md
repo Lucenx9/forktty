@@ -77,8 +77,8 @@ All notable changes to ForkTTY are documented here.
   leave in-memory plan, task, worker, or message updates partially applied
   before the store update is rejected.
 - Fixed `team.finish --close-workers` so a worker surface close failure leaves
-  the team and worker store state unchanged instead of persisting a partial
-  shutdown request.
+  team and worker store state unchanged instead of persisting partial shutdown
+  requests or missing-surface worker cleanup before the error.
 - Fixed `team.worker.shutdown --close-surface` so a worker surface close
   failure leaves the worker store state unchanged instead of persisting a
   partial shutdown request.

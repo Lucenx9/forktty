@@ -677,8 +677,8 @@ tasks, pending messages, or live-looking worker final states. With
 `close_workers`, it only closes disposable worker surfaces created by
 `team.worker.launch` in the current ForkTTY runtime; missing worker surfaces
 are normalized to closed before the team is marked done. If a disposable worker
-surface cannot be closed, `team.finish` returns an error before persisting that
-worker as shutdown-requested or marking the team done.
+surface cannot be closed, `team.finish` returns an error before persisting any
+worker shutdown request, missing-surface normalization, or team-done state.
 `team.summary` and `context.snapshot` team summaries flag active teams with no
 active workers, open tasks, or pending messages as `active_without_open_work`.
 

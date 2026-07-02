@@ -163,35 +163,14 @@ pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Val
         )));
     }
 
-    let mut closed = Vec::new();
-    for action in finish_actions
+    let mark_closed_worker_ids = finish_actions
         .iter()
         .filter(|action| action.get("action").and_then(Value::as_str) == Some("mark_worker_closed"))
-    {
-        let Some(worker_id) = action.get("worker_id").and_then(Value::as_str) else {
-            continue;
-        };
-        let worker_id_for_store = worker_id.to_string();
-        let team_id_for_store = team_id.clone();
-        store_access::team_store_access(state)?
-            .update(move |store| {
-                store.upsert_worker(
-                    forktty_core::TeamWorkerUpsert {
-                        team_id: team_id_for_store,
-                        worker_id: worker_id_for_store,
-                        role: None,
-                        agent: None,
-                        surface_id: None,
-                        worktree_name: None,
-                        status: Some("closed".to_string()),
-                        assigned_task_id: None,
-                    },
-                    forktty_core::team_now_ms(),
-                )
-            })
-            .await
-            .map_err(DispatchError::from)?;
-    }
+        .filter_map(|action| action.get("worker_id").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+    let mut closed_surfaces = Vec::new();
     for (worker_id, surface_id) in close_targets {
         let text =
             terminal_text_with_submit_enter("Team finished by leader. You can stop now.", true);
@@ -200,32 +179,46 @@ pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Val
             .send_text(&surface_id, &text)
             .map_err(DispatchError::from)?;
         let closed_surface = close_surface_request(state, &surface_id).await?;
-        let worker_id_for_store = worker_id.clone();
-        let team_id_for_store = team_id.clone();
-        let worker = store_access::team_store_access(state)?
-            .update(move |store| {
-                store.request_worker_shutdown(
-                    forktty_core::TeamWorkerAction {
-                        team_id: team_id_for_store,
-                        worker_id: worker_id_for_store,
-                    },
-                    forktty_core::team_now_ms(),
-                )
-            })
-            .await
-            .map_err(DispatchError::from)?;
-        closed.push(json!({
-            "worker_id": worker_id,
-            "surface_id": surface_id,
-            "worker": worker,
-            "closed": closed_surface,
-        }));
+        closed_surfaces.push((worker_id, surface_id, closed_surface));
     }
 
+    let shutdown_worker_ids = closed_surfaces
+        .iter()
+        .map(|(worker_id, _, _)| worker_id.clone())
+        .collect::<Vec<_>>();
     let team_id_for_store = team_id.clone();
-    let team = store_access::team_store_access(state)?
+    let (closed_workers, team) = store_access::team_store_access(state)?
         .update(move |store| {
-            store.upsert_team(
+            let now_ms = forktty_core::team_now_ms();
+            for worker_id in mark_closed_worker_ids {
+                store.upsert_worker(
+                    forktty_core::TeamWorkerUpsert {
+                        team_id: team_id_for_store.clone(),
+                        worker_id,
+                        role: None,
+                        agent: None,
+                        surface_id: None,
+                        worktree_name: None,
+                        status: Some("closed".to_string()),
+                        assigned_task_id: None,
+                    },
+                    now_ms,
+                )?;
+            }
+
+            let mut closed_workers = Vec::new();
+            for worker_id in shutdown_worker_ids {
+                let worker = store.request_worker_shutdown(
+                    forktty_core::TeamWorkerAction {
+                        team_id: team_id_for_store.clone(),
+                        worker_id: worker_id.clone(),
+                    },
+                    now_ms,
+                )?;
+                closed_workers.push((worker_id, worker));
+            }
+
+            let team = store.upsert_team(
                 forktty_core::TeamUpsert {
                     team_id: team_id_for_store,
                     workspace_id: None,
@@ -234,11 +227,26 @@ pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Val
                     status: Some("done".to_string()),
                     goal: None,
                 },
-                forktty_core::team_now_ms(),
-            )
+                now_ms,
+            )?;
+            Ok((closed_workers, team))
         })
         .await
         .map_err(DispatchError::from)?;
+    let mut closed = Vec::new();
+    for (worker_id, surface_id, closed_surface) in closed_surfaces {
+        let worker = closed_workers
+            .iter()
+            .find(|(id, _)| id == &worker_id)
+            .map(|(_, worker)| worker.clone())
+            .ok_or_else(|| DispatchError::NotFound("worker".to_string()))?;
+        closed.push(json!({
+            "worker_id": worker_id,
+            "surface_id": surface_id,
+            "worker": worker,
+            "closed": closed_surface,
+        }));
+    }
     let store = store_access::team_store_access(state)?
         .load()
         .await

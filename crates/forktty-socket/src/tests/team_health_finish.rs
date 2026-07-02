@@ -314,6 +314,98 @@ async fn team_finish_close_failure_keeps_worker_state_unchanged() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
+async fn team_finish_close_failure_keeps_missing_surface_worker_state_unchanged() {
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_codex(bin_dir.path());
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(FailsSecondCloseBackend::default());
+    let mut state = SocketAppState::new(
+        model,
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "workspace_id": workspace_id,
+            "status": "active"
+        }),
+    )
+    .await
+    .unwrap();
+    let missing_worker = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-missing",
+            "agent": "codex"
+        }),
+    )
+    .await
+    .unwrap();
+    let missing_surface_id = missing_worker["surface"]["id"].as_str().unwrap();
+    backend.close(missing_surface_id).unwrap();
+    dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-close",
+            "agent": "codex"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let err = dispatch(
+        &state,
+        "team.finish",
+        json!({"team_id": "team-1", "close_workers": true}),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(err.to_string().contains("close failed"));
+    let team = dispatch(&state, "team.get", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    let missing_worker = team["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|worker| worker["id"] == "worker-missing")
+        .unwrap();
+    let close_worker = team["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|worker| worker["id"] == "worker-close")
+        .unwrap();
+    assert_eq!(team["status"], "active");
+    assert_eq!(missing_worker["status"], "running");
+    assert_eq!(close_worker["status"], "running");
+    assert_eq!(
+        close_worker["shutdown_requested_at_ms"]
+            .as_u64()
+            .unwrap_or(0),
+        0
+    );
+}
+
+#[tokio::test]
 async fn team_finish_close_workers_reports_uncloseable_active_worker() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();
