@@ -406,6 +406,112 @@ async fn team_finish_close_failure_keeps_missing_surface_worker_state_unchanged(
 }
 
 #[tokio::test]
+#[serial_test::serial]
+async fn team_finish_close_failure_restores_already_closed_worker_surfaces() {
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_codex(bin_dir.path());
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(FailsSecondCloseBackend::default());
+    let mut state = SocketAppState::new(
+        model,
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "workspace_id": workspace_id,
+            "status": "active"
+        }),
+    )
+    .await
+    .unwrap();
+    let first = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-first",
+            "agent": "codex"
+        }),
+    )
+    .await
+    .unwrap();
+    let second = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-second",
+            "agent": "codex"
+        }),
+    )
+    .await
+    .unwrap();
+    let first_surface_id = first["surface"]["id"].as_str().unwrap().to_string();
+    let second_surface_id = second["surface"]["id"].as_str().unwrap().to_string();
+
+    let err = dispatch(
+        &state,
+        "team.finish",
+        json!({"team_id": "team-1", "close_workers": true}),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(err.to_string().contains("second close failed"));
+    let team = dispatch(&state, "team.get", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    assert_eq!(team["status"], "active");
+    for worker_id in ["worker-first", "worker-second"] {
+        let worker = team["workers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|worker| worker["id"] == worker_id)
+            .unwrap();
+        assert_eq!(worker["status"], "running");
+        assert_eq!(worker["shutdown_requested_at_ms"].as_u64().unwrap_or(0), 0);
+    }
+
+    let model_surfaces = dispatch(
+        &state,
+        "surface.list",
+        json!({"workspace_id": workspace_id}),
+    )
+    .await
+    .unwrap();
+    let model_surface_ids = model_surfaces
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|surface| surface["id"].as_str())
+        .collect::<Vec<_>>();
+    assert!(model_surface_ids.contains(&first_surface_id.as_str()));
+    assert!(model_surface_ids.contains(&second_surface_id.as_str()));
+    let runtime_surface_ids = backend
+        .surfaces()
+        .unwrap()
+        .into_iter()
+        .map(|surface| surface.surface_id)
+        .collect::<Vec<_>>();
+    assert!(runtime_surface_ids.contains(&first_surface_id));
+    assert!(runtime_surface_ids.contains(&second_surface_id));
+}
+
+#[tokio::test]
 async fn team_finish_close_workers_reports_uncloseable_active_worker() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();

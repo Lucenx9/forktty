@@ -79,6 +79,9 @@ All notable changes to ForkTTY are documented here.
 - Fixed `team.finish --close-workers` so a worker surface close failure leaves
   team and worker store state unchanged instead of persisting partial shutdown
   requests or missing-surface worker cleanup before the error.
+- Fixed `team.finish --close-workers` so closing multiple worker panes restores
+  any already-closed runtime surface if a later worker surface close fails,
+  avoiding a half-closed visible team after an error.
 - Fixed `team.worker.shutdown --close-surface` so a worker surface close
   failure leaves the worker store state unchanged instead of persisting a
   partial shutdown request.

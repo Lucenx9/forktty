@@ -416,7 +416,8 @@ finalization blocks on open tasks, pending messages, or live-looking workers
 unless `--force` is supplied, closes only current-runtime launch-owned
 disposable worker panes with `--close-workers`, normalizes missing worker
 surfaces as closed, and marks the team done only after all requested worker
-surface closes succeed.
+surface closes succeed. If a later worker close fails, any already-closed
+runtime surfaces are restored and the team store remains unchanged.
 Context snapshots also include compact `workflow_summaries` rows. Full workflow
 records with durable memory, plan steps, and evidence are included only when
 `context.snapshot` receives `include_workflow_details: true`. Workflow summary

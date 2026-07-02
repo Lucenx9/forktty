@@ -12,8 +12,9 @@ use crate::team_state::{
     team_worker_launch_owned_surface_id, team_worker_surface_id,
 };
 use crate::{
-    close_surface_request, close_terminal_surface_if_present, rollback_surface_creation,
-    store_access,
+    close_surface_request, close_terminal_surface_if_present, close_terminal_surfaces_or_restore,
+    ensure_terminal_for_active_workspace, evict_hook_session_targets_for_surfaces,
+    rollback_surface_creation, store_access,
     team_dispatch::{
         dispatch_team_message_text, send_team_message_body_when_ready,
         send_team_submit_enter_after_settle, show_team_message_surface,
@@ -170,17 +171,7 @@ pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Val
         .map(str::to_string)
         .collect::<Vec<_>>();
 
-    let mut closed_surfaces = Vec::new();
-    for (worker_id, surface_id) in close_targets {
-        let text =
-            terminal_text_with_submit_enter("Team finished by leader. You can stop now.", true);
-        state
-            .terminal
-            .send_text(&surface_id, &text)
-            .map_err(DispatchError::from)?;
-        let closed_surface = close_surface_request(state, &surface_id).await?;
-        closed_surfaces.push((worker_id, surface_id, closed_surface));
-    }
+    let closed_surfaces = close_team_finish_worker_surfaces(state, &close_targets).await?;
 
     let shutdown_worker_ids = closed_surfaces
         .iter()
@@ -276,6 +267,63 @@ pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Val
 
 fn summary_u64(summary: &Value, key: &str) -> u64 {
     summary.get(key).and_then(Value::as_u64).unwrap_or(0)
+}
+
+async fn close_team_finish_worker_surfaces(
+    state: &SocketAppState,
+    close_targets: &[(String, String)],
+) -> Result<Vec<(String, String, Value)>, DispatchError> {
+    if close_targets.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let _surface_set_guard = state.coordinator.surface_set.lock().await;
+    let surfaces = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        close_targets
+            .iter()
+            .map(|(_, surface_id)| {
+                model
+                    .surface(surface_id)
+                    .cloned()
+                    .ok_or(DispatchError::NotFound("surface".to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    let text = terminal_text_with_submit_enter("Team finished by leader. You can stop now.", true);
+    for (_, surface_id) in close_targets {
+        state
+            .terminal
+            .send_text(surface_id, &text)
+            .map_err(DispatchError::from)?;
+    }
+    close_terminal_surfaces_or_restore(state, &surfaces).map_err(DispatchError::from)?;
+
+    let mut closed_surfaces = Vec::new();
+    {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        for (worker_id, surface_id) in close_targets {
+            let closed_surface = model
+                .close_surface(surface_id)
+                .ok_or(DispatchError::NotFound("surface".to_string()))?;
+            closed_surfaces.push((worker_id.clone(), surface_id.clone(), json!(closed_surface)));
+        }
+    }
+
+    let surface_ids = close_targets
+        .iter()
+        .map(|(_, surface_id)| surface_id.clone())
+        .collect::<Vec<_>>();
+    evict_hook_session_targets_for_surfaces(state, &surface_ids)?;
+    ensure_terminal_for_active_workspace(state).await?;
+    Ok(closed_surfaces)
 }
 
 fn team_finish_actions(health: &Value, close_workers: bool) -> Vec<Value> {
