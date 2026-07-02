@@ -843,6 +843,9 @@ impl TeamStoreData {
         if message.superseded {
             return Err(TeamError::Conflict("message was superseded".to_string()));
         }
+        if message.delivered {
+            return Ok(message.clone());
+        }
         message.delivered = true;
         message.acknowledged_at_ms = now_ms;
         team.updated_at_ms = now_ms;
@@ -1253,8 +1256,15 @@ fn validate_team_references(team: &TeamState) -> Result<(), TeamError> {
         }
         validate_task_dependencies(team, &task.id, &task.depends_on)?;
     }
+    let mut message_ids = BTreeSet::new();
     for message in &team.messages {
-        clean_id("message_id", &message.id)?;
+        let message_id = clean_id("message_id", &message.id)?;
+        if !message_ids.insert(message_id.clone()) {
+            return Err(TeamError::Invalid(format!(
+                "team {} has duplicate message id: {message_id}",
+                team.id
+            )));
+        }
         clean_id("message.from", &message.from)?;
         clean_long("message.body", &message.body)?;
         if let Some(worker_id) = message.to_worker_id.as_deref() {
@@ -1635,6 +1645,85 @@ mod tests {
     }
 
     #[test]
+    fn ack_message_is_event_idempotent_when_already_delivered() {
+        let mut store = TeamStoreData::default();
+        store
+            .upsert_team(
+                TeamUpsert {
+                    team_id: "team-1".to_string(),
+                    workspace_id: Some("workspace-1".to_string()),
+                    leader_surface_id: Some("surface-1".to_string()),
+                    name: Some("Launch".to_string()),
+                    status: Some("active".to_string()),
+                    goal: None,
+                },
+                1,
+            )
+            .unwrap();
+        store
+            .upsert_worker(
+                TeamWorkerUpsert {
+                    team_id: "team-1".to_string(),
+                    worker_id: "worker-1".to_string(),
+                    role: None,
+                    agent: Some("codex".to_string()),
+                    surface_id: Some("surface-2".to_string()),
+                    worktree_name: None,
+                    status: Some("running".to_string()),
+                    assigned_task_id: None,
+                },
+                2,
+            )
+            .unwrap();
+        store
+            .send_message(
+                TeamMessageSend {
+                    team_id: "team-1".to_string(),
+                    message_id: Some("msg-1".to_string()),
+                    from: "leader".to_string(),
+                    to_worker_id: Some("worker-1".to_string()),
+                    task_id: None,
+                    body: "hello".to_string(),
+                },
+                3,
+            )
+            .unwrap();
+
+        store
+            .ack_message(
+                TeamMessageAck {
+                    team_id: "team-1".to_string(),
+                    message_id: "msg-1".to_string(),
+                    worker_id: Some("worker-1".to_string()),
+                },
+                4,
+            )
+            .unwrap();
+        store
+            .ack_message(
+                TeamMessageAck {
+                    team_id: "team-1".to_string(),
+                    message_id: "msg-1".to_string(),
+                    worker_id: Some("worker-1".to_string()),
+                },
+                5,
+            )
+            .unwrap();
+
+        let ack_events = store
+            .events(&TeamEventQuery {
+                team_id: Some("team-1".to_string()),
+                since_seq: None,
+                limit: None,
+            })
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.kind == "team.message.acked")
+            .count();
+        assert_eq!(ack_events, 1);
+    }
+
+    #[test]
     fn send_message_does_not_evict_pending_messages_at_cap() {
         let mut store = TeamStoreData::default();
         store
@@ -1816,6 +1905,50 @@ mod tests {
         assert!(matches!(
             err,
             TeamError::Invalid(message) if message.contains("increasing seq")
+        ));
+    }
+
+    #[test]
+    fn load_rejects_duplicate_message_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("team-v1.json");
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "version": TEAM_FORMAT_VERSION,
+                "teams": [{
+                    "id": "team-1",
+                    "name": "Launch",
+                    "status": "active",
+                    "created_at_ms": 1,
+                    "updated_at_ms": 1,
+                    "workers": [],
+                    "tasks": [],
+                    "messages": [
+                        {
+                            "id": "msg-1",
+                            "from": "leader",
+                            "body": "first",
+                            "created_at_ms": 1
+                        },
+                        {
+                            "id": "msg-1",
+                            "from": "leader",
+                            "body": "second",
+                            "created_at_ms": 2
+                        }
+                    ]
+                }],
+                "events": []
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let err = load_teams_from_path(&path).unwrap_err();
+        assert!(matches!(
+            err,
+            TeamError::Invalid(message) if message.contains("duplicate message id")
         ));
     }
 

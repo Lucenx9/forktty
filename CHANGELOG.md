@@ -63,6 +63,13 @@ All notable changes to ForkTTY are documented here.
 ### Fixed
 - Fixed command argv validation so GNU `env` wrappers cannot hide shell
   trampolines behind `-- NAME=VALUE` assignments or `-a`/`--argv0` arguments.
+- Fixed Feed persistence so corrupt `feed.json` files are quarantined instead
+  of disabling the Feed on every launch, Feed saves are fsync-backed like the
+  other stores, and approved approval rows are retained through notification
+  churn so later `task.strategy.apply` retries can still consume them.
+- Fixed team store validation and ack idempotency so duplicate persisted
+  message ids are rejected on load and repeated message acknowledgements do not
+  emit duplicate `team.message.acked` events.
 - Fixed task strategy routing so parallel research/experiment plans respect
   each harness's declared parallel session capacity instead of assigning
   multiple concurrent roles to a single-session harness.

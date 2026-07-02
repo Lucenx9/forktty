@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, path::Path};
+use std::{collections::BTreeSet, io::Write, path::Path};
 
 use serde::{Deserialize, Serialize};
 
@@ -114,6 +114,21 @@ impl FeedStore {
         Ok(store)
     }
 
+    pub fn open_recovering_at(path: impl AsRef<Path>) -> Result<Self, FeedError> {
+        let path = path.as_ref().to_path_buf();
+        match Self::open_at(&path) {
+            Ok(store) => Ok(store),
+            Err(FeedError::Json(_)) => {
+                quarantine_corrupt_feed_file(&path)?;
+                Ok(Self {
+                    path,
+                    entries: Vec::new(),
+                })
+            }
+            Err(err) => Err(err),
+        }
+    }
+
     pub fn default_path() -> Option<std::path::PathBuf> {
         dirs::state_dir()
             .or_else(dirs::data_local_dir)
@@ -124,7 +139,7 @@ impl FeedStore {
         let Some(path) = Self::default_path() else {
             return Ok(None);
         };
-        Self::open_at(path).map(Some)
+        Self::open_recovering_at(path).map(Some)
     }
 
     pub fn append(&mut self, entry: FeedEntry) -> Result<(), FeedError> {
@@ -236,30 +251,24 @@ impl FeedStore {
     fn bound_entries(&mut self) {
         self.entries
             .sort_by_key(|entry| std::cmp::Reverse(entry.created_at_ms));
-        let mut pending = self
+        let mut approvals = self
             .entries
             .iter()
-            .filter(|entry| {
-                entry.entry_type == FeedEntryType::Approval
-                    && entry.approval_state == Some(FeedApprovalState::Pending)
-            })
+            .filter(|entry| entry.entry_type == FeedEntryType::Approval)
             .cloned()
             .collect::<Vec<_>>();
-        pending.truncate(MAX_FEED_ENTRIES);
-        let remaining = MAX_FEED_ENTRIES.saturating_sub(pending.len());
+        approvals.truncate(MAX_FEED_ENTRIES);
+        let remaining = MAX_FEED_ENTRIES.saturating_sub(approvals.len());
         let mut rest = self
             .entries
             .iter()
-            .filter(|entry| {
-                !(entry.entry_type == FeedEntryType::Approval
-                    && entry.approval_state == Some(FeedApprovalState::Pending))
-            })
+            .filter(|entry| entry.entry_type != FeedEntryType::Approval)
             .take(remaining)
             .cloned()
             .collect::<Vec<_>>();
-        pending.append(&mut rest);
-        pending.sort_by_key(|entry| std::cmp::Reverse(entry.created_at_ms));
-        self.entries = pending;
+        approvals.append(&mut rest);
+        approvals.sort_by_key(|entry| std::cmp::Reverse(entry.created_at_ms));
+        self.entries = approvals;
     }
 
     fn save(&self) -> Result<(), FeedError> {
@@ -283,10 +292,21 @@ impl FeedStore {
             .path
             .with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
         let result = (|| -> Result<(), FeedError> {
-            std::fs::write(&tmp_path, &bytes).map_err(|err| FeedError::Io(err.to_string()))?;
+            let mut tmp_file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp_path)
+                .map_err(|err| FeedError::Io(err.to_string()))?;
             apply_feed_file_permissions(&tmp_path)?;
+            tmp_file
+                .write_all(&bytes)
+                .map_err(|err| FeedError::Io(err.to_string()))?;
+            tmp_file
+                .sync_all()
+                .map_err(|err| FeedError::Io(err.to_string()))?;
             std::fs::rename(&tmp_path, &self.path).map_err(|err| FeedError::Io(err.to_string()))?;
             apply_feed_file_permissions(&self.path)?;
+            sync_parent_dir(&self.path)?;
             Ok(())
         })();
         if result.is_err() {
@@ -294,6 +314,24 @@ impl FeedStore {
         }
         result
     }
+}
+
+fn quarantine_corrupt_feed_file(path: &Path) -> Result<(), FeedError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => return Err(FeedError::Io("feed path is not a regular file".to_string())),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(FeedError::Io(err.to_string())),
+    }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let quarantine_path =
+        crate::backup::reserve_unique_backup_path(path, &format!("json.bad-{nonce}"));
+    std::fs::rename(path, &quarantine_path).map_err(|err| FeedError::Io(err.to_string()))?;
+    sync_parent_dir(&quarantine_path)?;
+    Ok(())
 }
 
 fn ensure_private_feed_dir(parent: &Path) -> Result<(), FeedError> {
@@ -326,6 +364,16 @@ fn apply_feed_file_permissions(path: &Path) -> Result<(), FeedError> {
     {
         let _ = path;
     }
+    Ok(())
+}
+
+fn sync_parent_dir(path: &Path) -> Result<(), FeedError> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+    std::fs::File::open(parent)
+        .and_then(|dir| dir.sync_all())
+        .map_err(|err| FeedError::Io(err.to_string()))?;
     Ok(())
 }
 
@@ -465,6 +513,50 @@ mod tests {
         assert!(store.list(None, MAX_FEED_ENTRIES).iter().any(|entry| {
             entry.id == "feed-1" && entry.approval_state == Some(FeedApprovalState::Pending)
         }));
+    }
+
+    #[test]
+    fn approved_approvals_survive_feed_churn() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feed.json");
+        let mut store = FeedStore::open_at(&path).unwrap();
+        let mut approval = entry("feed-1", "w1");
+        approval.entry_type = FeedEntryType::Approval;
+        approval.approval_state = Some(FeedApprovalState::Pending);
+        store.append(approval).unwrap();
+        store
+            .decide_approval("feed-1", FeedApprovalState::Approved)
+            .unwrap();
+        for index in 2..(MAX_FEED_ENTRIES + 20) {
+            store.append(entry(&format!("feed-{index}"), "w1")).unwrap();
+        }
+
+        assert!(store.list(None, MAX_FEED_ENTRIES).iter().any(|entry| {
+            entry.id == "feed-1" && entry.approval_state == Some(FeedApprovalState::Approved)
+        }));
+    }
+
+    #[test]
+    fn recovering_open_quarantines_corrupt_feed_and_starts_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feed.json");
+        std::fs::write(&path, b"{broken json").unwrap();
+
+        let store = FeedStore::open_recovering_at(&path).unwrap();
+
+        assert!(store.list(None, 10).is_empty());
+        assert!(!path.exists());
+        let quarantined = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(
+            quarantined
+                .iter()
+                .any(|name| name.starts_with("feed.json.bad-")),
+            "expected corrupt feed quarantine sibling, got {quarantined:?}"
+        );
     }
 
     #[test]
