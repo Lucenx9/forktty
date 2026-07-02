@@ -400,6 +400,8 @@ an existing worker. Context snapshots include compact `team_summaries` rows so
 leaders can scan worker/task/message counts without first calling
 `team.summary` for each team; full team records with mailbox message bodies are
 included only when `context.snapshot` receives `include_team_details: true`.
+Superseded task-strategy prompts remain in full team history but are excluded
+from normal inbox and pending-message counts.
 `team_summaries` rows include `consistency_warnings` when a team marked `done`
 still has active workers, open tasks, or pending messages, or when an `active`
 team has no open work left. Snapshots raise `team_consistency_warning` in

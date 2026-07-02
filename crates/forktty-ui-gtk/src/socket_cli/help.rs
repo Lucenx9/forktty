@@ -31,6 +31,7 @@ Usage:
   forktty team-message-dispatch <team-id> <message-id> [--worker-id <id>] [--submit] [--json]
   forktty team-message-ack <team-id> <message-id> [--worker-id <id>] [--json]
   forktty team-inbox <team-id> [--worker-id <id>] [--include-delivered] [--limit <n>] [--json]
+      Read active pending messages; --include-delivered also includes delivered and superseded history.
   forktty team-summary <team-id> [--json]
   forktty team-events [--team-id <id>] [--since-seq <n>] [--limit <n>] [--json]
   forktty team ask <team-id> <worker-id> [--agent <agent>] --task-id <id> --prompt <text>

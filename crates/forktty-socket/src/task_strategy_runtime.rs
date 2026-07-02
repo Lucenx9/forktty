@@ -518,13 +518,15 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
             }
 
             let base_message_id = format!("{task_id}-msg-1");
+            let expected_body =
+                assignment_prompt(&request.goal, assignment, request.target_cwd.as_deref());
             let message_id = request
                 .assignment_message_id(
                     state,
                     &task_id,
                     &base_message_id,
                     request.submit.then_some(worker_id.as_str()),
-                    &assignment_prompt(&request.goal, assignment, request.target_cwd.as_deref()),
+                    &expected_body,
                     worker_launched_for_assignment,
                 )
                 .await?;
@@ -552,6 +554,17 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
                     "status": "applied",
                     "team_id": request.team_id,
                     "message_id": message["id"],
+                }));
+            }
+            let superseded_message_ids = request
+                .supersede_stale_assignment_messages(state, &task_id, &message_id)
+                .await?;
+            if !superseded_message_ids.is_empty() {
+                actions.push(json!({
+                    "method": "team.message.supersede",
+                    "status": "applied",
+                    "team_id": request.team_id,
+                    "message_ids": superseded_message_ids,
                 }));
             }
 
@@ -953,7 +966,11 @@ impl TaskStrategyApplyRequest {
                 if self.worktree_name.is_none() && self.target_cwd.is_none() {
                     self.effective_target_cwd = target.cwd.clone();
                 }
-                infer_repo_dirty(target.cwd.as_deref())
+                if self.target_cwd.is_some() {
+                    false
+                } else {
+                    infer_repo_dirty(target.cwd.as_deref())
+                }
             }
             Err(err) if self.worktree_name.is_some() && err.code() == "not_found" => false,
             Err(err) => return Err(err),
@@ -1473,6 +1490,41 @@ impl TaskStrategyApplyRequest {
             .into_iter()
             .flatten()
             .any(|message| message["id"].as_str() == Some(message_id)))
+    }
+
+    async fn supersede_stale_assignment_messages(
+        &self,
+        state: &SocketAppState,
+        task_id: &str,
+        current_message_id: &str,
+    ) -> Result<Vec<String>, DispatchError> {
+        let team = team_runtime::get(state, &json!({"team_id": self.team_id})).await?;
+        let prefix = format!("{task_id}-msg-");
+        let Some(messages) = team["messages"].as_array() else {
+            return Ok(Vec::new());
+        };
+        let message_ids = messages
+            .iter()
+            .filter(|message| message["task_id"].as_str() == Some(task_id))
+            .filter(|message| !message["delivered"].as_bool().unwrap_or(false))
+            .filter(|message| !message["superseded"].as_bool().unwrap_or(false))
+            .filter_map(|message| message["id"].as_str())
+            .filter(|message_id| *message_id != current_message_id)
+            .filter(|message_id| message_id.starts_with(&prefix))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if message_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let input = forktty_core::TeamMessagesSupersede {
+            team_id: self.team_id.clone(),
+            message_ids,
+        };
+        let messages = store_access::team_store_access(state)?
+            .update(move |store| store.supersede_messages(input, forktty_core::team_now_ms()))
+            .await
+            .map_err(DispatchError::from)?;
+        Ok(messages.into_iter().map(|message| message.id).collect())
     }
 
     async fn assignment_message_id(

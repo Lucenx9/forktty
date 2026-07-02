@@ -136,6 +136,10 @@ pub struct TeamMessage {
     pub created_at_ms: u64,
     #[serde(default)]
     pub delivered: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub superseded: bool,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub superseded_at_ms: u64,
     #[serde(default)]
     pub acknowledged_at_ms: u64,
 }
@@ -234,6 +238,12 @@ pub struct TeamMessageAck {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TeamMessagesSupersede {
+    pub team_id: String,
+    pub message_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TeamInboxQuery {
     pub team_id: String,
     pub worker_id: Option<String>,
@@ -272,6 +282,10 @@ fn default_next_event_seq() -> u64 {
 
 fn is_zero_u64(value: &u64) -> bool {
     *value == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl Default for TeamStoreData {
@@ -733,6 +747,8 @@ impl TeamStoreData {
             body,
             created_at_ms: now_ms,
             delivered: false,
+            superseded: false,
+            superseded_at_ms: 0,
             acknowledged_at_ms: 0,
         };
         team.messages.push(message.clone());
@@ -744,6 +760,51 @@ impl TeamStoreData {
             now_ms,
         );
         Ok(message)
+    }
+
+    pub fn supersede_messages(
+        &mut self,
+        input: TeamMessagesSupersede,
+        now_ms: u64,
+    ) -> Result<Vec<TeamMessage>, TeamError> {
+        let team_id = clean_id("team_id", &input.team_id)?;
+        let message_ids = input
+            .message_ids
+            .into_iter()
+            .map(|message_id| clean_id("message_id", &message_id))
+            .collect::<Result<Vec<_>, _>>()?;
+        if message_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let superseded = {
+            let team = self.team_mut(&team_id)?;
+            let mut superseded = Vec::new();
+            for message in team.messages.iter_mut() {
+                if message_ids
+                    .iter()
+                    .any(|message_id| message_id == &message.id)
+                    && !message.delivered
+                    && !message.superseded
+                {
+                    message.superseded = true;
+                    message.superseded_at_ms = now_ms;
+                    superseded.push(message.clone());
+                }
+            }
+            if !superseded.is_empty() {
+                team.updated_at_ms = now_ms;
+            }
+            superseded
+        };
+        if !superseded.is_empty() {
+            self.push_event(
+                &team_id,
+                "team.message.superseded",
+                format!("messages {}", superseded.len()),
+                now_ms,
+            );
+        }
+        Ok(superseded)
     }
 
     pub fn ack_message(
@@ -796,7 +857,9 @@ impl TeamStoreData {
         let mut rows = team
             .messages
             .iter()
-            .filter(|message| query.include_delivered || !message.delivered)
+            .filter(|message| {
+                query.include_delivered || (!message.delivered && !message.superseded)
+            })
             .filter(|message| {
                 worker_id.as_deref().is_none_or(|worker_id| {
                     message
@@ -837,7 +900,7 @@ impl TeamStoreData {
         let messages_pending = team
             .messages
             .iter()
-            .filter(|message| !message.delivered)
+            .filter(|message| !message.delivered && !message.superseded)
             .count();
         let last_event_seq = self
             .events

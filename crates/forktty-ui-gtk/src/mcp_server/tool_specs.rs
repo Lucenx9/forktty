@@ -493,13 +493,13 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "team_inbox",
             annotations: read_only_annotations(),
-            description: "Read pending mailbox messages for a ForkTTY team or worker.",
+            description: "Read active pending mailbox messages for a ForkTTY team or worker. Superseded task-strategy prompts are hidden unless full history is requested.",
             input_schema: object_schema(
                 &["team_id"],
                 json!({
                     "team_id": string_prop("Team id."),
                     "worker_id": string_prop("Worker id to filter messages."),
-                    "include_delivered": boolean_prop("Include already acknowledged messages."),
+                    "include_delivered": boolean_prop("Include already acknowledged and superseded messages."),
                     "limit": integer_prop("Maximum messages to return."),
                 }),
             ),

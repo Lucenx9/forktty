@@ -834,6 +834,50 @@ async fn task_strategy_apply_uses_explicit_cwd_for_dirty_isolation() {
 }
 
 #[tokio::test]
+async fn task_strategy_apply_explicit_clean_cwd_ignores_dirty_leader_surface_for_isolation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let dirty_repo = tempfile::tempdir().unwrap();
+    git2::Repository::init(dirty_repo.path()).unwrap();
+    std::fs::write(dirty_repo.path().join("dirty.txt"), "dirty\n").unwrap();
+    let clean_repo = tempfile::tempdir().unwrap();
+    git2::Repository::init(clean_repo.path()).unwrap();
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let dirty_surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.set_surface_cwd(dirty_surface_id, dirty_repo.path().to_path_buf()));
+        model.create_workspace("clean-target", clean_repo.path());
+    }
+
+    let mut plan = staged_team_plan_json();
+    plan["layers"]["worktree"] = json!(false);
+    plan["approvals"] = json!(["start_run"]);
+
+    let result = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": dirty_surface_id,
+            "cwd": clean_repo.path(),
+            "goal": "Implement the router fix",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["status"], "staged");
+    assert!(result["blocked_approvals"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_apply_rejects_conflicting_workspace_selectors_before_mutation() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();
@@ -2236,6 +2280,27 @@ async fn task_strategy_apply_submit_does_not_reuse_staged_prompt_with_stale_cwd(
     let sent = backend.sent_text(implementer_surface_id).unwrap().join("");
     assert!(sent.contains(submit_dir.to_str().unwrap()));
     assert!(!sent.contains(staged_dir.to_str().unwrap()));
+    let inbox = dispatch(
+        &state,
+        "team.inbox",
+        json!({
+            "team_id": "router-run-1",
+            "worker_id": "router-run-1-implementer-1-worker"
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(inbox.as_array().unwrap().is_empty());
+    let messages = team["messages"].as_array().unwrap();
+    assert!(messages.iter().any(|message| {
+        message["id"] == "router-run-1-implementer-1-msg-1"
+            && message["delivered"] == false
+            && message["superseded"] == true
+            && message["body"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(staged_dir.to_str().unwrap())
+    }));
 }
 
 #[tokio::test]

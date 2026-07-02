@@ -583,7 +583,11 @@ same compatible live worker is reused. If a worker record must be relaunched,
 or if an existing staged role prompt no longer matches the current task,
 target worker, or cwd-derived prompt body, apply queues the next deterministic
 `<task-id>-msg-N` prompt and dispatches that fresh prompt instead of sending
-stale instructions to the new pane.
+stale instructions to the new pane. Older undelivered deterministic
+`<task-id>-msg-*` prompts for the same task are retained in the full team
+record with `superseded: true`, excluded from normal `team.inbox` results and
+pending-message counts, and returned only by mailbox reads that opt into full
+history with `include_delivered`.
 When retrying `submit: true`, an existing live deterministic worker is reused
 only if its harness, role, assigned task, worktree, launch cwd, effective
 surface/workspace cwd target, and status match the current plan assignment. If

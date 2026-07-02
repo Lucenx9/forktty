@@ -96,6 +96,10 @@ All notable changes to ForkTTY are documented here.
 - Fixed staged task strategy apply retries so a changed cwd, body, or target
   queues the next deterministic role prompt instead of reusing a stale pending
   message.
+- Fixed task strategy prompt replacement so older undelivered deterministic role
+  prompts are marked superseded and no longer appear in normal `team.inbox` or
+  pending-message counts after a later staged/apply retry changes the task body,
+  target worker, or cwd.
 - Fixed Codex team message submit so ForkTTY sends the task prompt and Enter as
   separate terminal actions instead of leaving fresh Codex worker prompts staged.
 - Fixed team message dispatch for freshly launched Codex/Claude/Pi workers so

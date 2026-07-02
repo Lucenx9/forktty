@@ -162,6 +162,9 @@ Use mutating tools only for visible coordination:
 - `team_worker_launch` opens a provider worker pane.
 - `team_message_send` queues a message; `team_message_dispatch` sends it to the
   worker pane and acknowledges only after delivery succeeds.
+- `team_inbox` returns active pending messages by default; pass
+  `include_delivered` only when you need delivered or superseded history for
+  audit/debug.
 - `team_finish` verifies open tasks, pending messages, and live-looking worker
   final states, optionally closes only current-runtime launch-owned disposable
   worker panes, and marks the team done. Prefer a dry-run before finalizing

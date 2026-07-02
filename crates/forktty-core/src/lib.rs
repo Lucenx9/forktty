@@ -65,9 +65,9 @@ pub use task_strategy::{
 pub use team::{
     load_teams, load_teams_from_path, now_ms as team_now_ms, save_teams_to_path, team_store_path,
     update_teams, update_teams_at_path, TeamError, TeamEvent, TeamEventQuery, TeamHeartbeat,
-    TeamInboxQuery, TeamMessage, TeamMessageAck, TeamMessageSend, TeamQuery, TeamState,
-    TeamStoreData, TeamSummary, TeamTask, TeamTaskUpsert, TeamUpsert, TeamWorker, TeamWorkerAction,
-    TeamWorkerLaunch, TeamWorkerUpsert,
+    TeamInboxQuery, TeamMessage, TeamMessageAck, TeamMessageSend, TeamMessagesSupersede, TeamQuery,
+    TeamState, TeamStoreData, TeamSummary, TeamTask, TeamTaskUpsert, TeamUpsert, TeamWorker,
+    TeamWorkerAction, TeamWorkerLaunch, TeamWorkerUpsert,
 };
 pub use update::{select_newest_update, AssetKind, AvailableUpdate, ReleaseAsset, TargetArch};
 pub use workflow::{
