@@ -68,7 +68,10 @@ All notable changes to ForkTTY are documented here.
 - Fixed Feed persistence so corrupt `feed.json` files are quarantined instead
   of disabling the Feed on every launch, Feed saves are fsync-backed like the
   other stores, and approved approval rows are retained through notification
-  churn so later `task.strategy.apply` retries can still consume them.
+  churn so later `task.strategy.apply` retries can still consume them; prompt
+  notification approval decisions are now preserved only for the same persisted
+  prompt payload so a same-millisecond id collision after restart cannot inherit
+  an old decision.
 - Fixed team store validation/recovery and ack idempotency so legacy duplicate
   persisted message ids are repaired on load by retaining the first message
   while preserving delivered/superseded terminal state, strict saves reject

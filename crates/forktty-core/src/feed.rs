@@ -145,11 +145,7 @@ impl FeedStore {
     pub fn append(&mut self, entry: FeedEntry) -> Result<(), FeedError> {
         let previous = self.entries.clone();
         let entry = match self.entries.iter().find(|existing| existing.id == entry.id) {
-            Some(existing)
-                if existing.entry_type == FeedEntryType::Approval
-                    && existing.created_at_ms == entry.created_at_ms
-                    && existing.approval_state != Some(FeedApprovalState::Pending) =>
-            {
+            Some(existing) if should_preserve_approval_decision(existing, &entry) => {
                 let mut entry = entry;
                 entry.approval_state = existing.approval_state.clone();
                 entry
@@ -314,6 +310,29 @@ impl FeedStore {
         }
         result
     }
+}
+
+fn should_preserve_approval_decision(existing: &FeedEntry, entry: &FeedEntry) -> bool {
+    existing.entry_type == FeedEntryType::Approval
+        && entry.entry_type == FeedEntryType::Approval
+        && existing.created_at_ms == entry.created_at_ms
+        && matches!(
+            existing.approval_state,
+            Some(
+                FeedApprovalState::Approved
+                    | FeedApprovalState::Denied
+                    | FeedApprovalState::Dismissed
+                    | FeedApprovalState::Stale
+            )
+        )
+        && existing.kind == entry.kind
+        && existing.key == entry.key
+        && existing.value == entry.value
+        && existing.total == entry.total
+        && existing.title == entry.title
+        && existing.body == entry.body
+        && existing.workspace_id == entry.workspace_id
+        && existing.surface_id == entry.surface_id
 }
 
 fn quarantine_corrupt_feed_file(path: &Path) -> Result<(), FeedError> {
@@ -490,6 +509,33 @@ mod tests {
 
         approval.title = "new prompt".to_string();
         approval.created_at_ms += 1;
+        store.append(approval).unwrap();
+
+        let listed = store.list(None, 10);
+        assert_eq!(listed[0].title, "new prompt");
+        assert_eq!(listed[0].approval_state, Some(FeedApprovalState::Pending));
+    }
+
+    #[test]
+    fn append_does_not_reuse_approval_decision_for_different_prompt_payload_with_same_id_and_time()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("feed.json");
+        let mut store = FeedStore::open_at(&path).unwrap();
+        let mut approval = entry("feed-1", "w1");
+        approval.entry_type = FeedEntryType::Approval;
+        approval.kind = Some("prompt".to_string());
+        approval.title = "old prompt".to_string();
+        approval.body = "run old command?".to_string();
+        approval.created_at_ms = 42;
+        approval.approval_state = Some(FeedApprovalState::Pending);
+        store.append(approval.clone()).unwrap();
+        store
+            .decide_approval("feed-1", FeedApprovalState::Approved)
+            .unwrap();
+
+        approval.title = "new prompt".to_string();
+        approval.body = "run new command?".to_string();
         store.append(approval).unwrap();
 
         let listed = store.list(None, 10);
