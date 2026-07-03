@@ -45,6 +45,35 @@ fn select_tab_switches_active_and_focus() {
 }
 
 #[test]
+fn restore_session_aligns_active_tab_with_focused_surface() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let first_id = workspace.focused_surface_id.clone();
+    let tab2 = model.add_tab(&first_id).expect("add_tab");
+    let mut session = model.to_session_data();
+
+    let workspace = session
+        .workspaces
+        .iter_mut()
+        .find(|workspace| workspace.id == "workspace-1")
+        .expect("workspace persisted");
+    workspace.focused_surface_id = tab2.id.clone();
+    let PaneNode::Leaf { active, .. } = &mut workspace.pane_tree else {
+        panic!("expected a tab leaf");
+    };
+    *active = 0;
+    crate::session::validate_session_data(&session).unwrap();
+
+    let mut restored = WorkspaceModel::new();
+    restored.restore_session(session);
+
+    let workspace = restored.list_workspaces().remove(0);
+    assert_eq!(workspace.focused_surface_id, tab2.id);
+    assert_eq!(workspace.pane_tree.leaf_active_id(), Some(&tab2.id));
+    assert_ne!(workspace.pane_tree.leaf_active_id(), Some(&first_id));
+}
+
+#[test]
 fn move_tab_reorders_within_leaf_and_preserves_active_tab() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");

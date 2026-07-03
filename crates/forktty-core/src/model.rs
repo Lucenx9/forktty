@@ -340,6 +340,7 @@ impl WorkspaceModel {
                     workspace.focused_surface_id = first_leaf.clone();
                 }
             }
+            let _ = ensure_focused_surface_active(&mut workspace);
             for surface_id in leaf_ids {
                 // Recover the persisted kind/title (e.g. a browser pane's url)
                 // when present; otherwise fall back to a default terminal so
@@ -490,6 +491,9 @@ impl WorkspaceModel {
                         workspace.focused_surface_id = first_leaf.clone();
                         changed = true;
                     }
+                }
+                if ensure_focused_surface_active(workspace) {
+                    changed = true;
                 }
             }
 
@@ -1392,6 +1396,15 @@ pub enum WorkspaceSelector<'a> {
     Id(&'a str),
     Name(&'a str),
     WorktreeName(&'a str),
+}
+
+fn ensure_focused_surface_active(workspace: &mut Workspace) -> bool {
+    let before = workspace.pane_tree.clone();
+    if set_leaf_active_for_surface(&mut workspace.pane_tree, &workspace.focused_surface_id) {
+        workspace.pane_tree != before
+    } else {
+        false
+    }
 }
 
 fn numeric_suffix(id: &str) -> u64 {

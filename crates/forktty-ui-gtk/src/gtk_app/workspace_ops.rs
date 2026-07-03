@@ -94,21 +94,38 @@ pub(super) fn select_tab_in_focused_pane(
     state: &SocketAppState,
     navigation: TabNavigation,
 ) -> bool {
-    let mut model = match state.model.lock() {
-        Ok(model) => model,
-        Err(_) => return false,
+    let selected = {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return false,
+        };
+        let Some(workspace) = model.active_workspace() else {
+            return false;
+        };
+        let Some(target) = tab_navigation_target(
+            &workspace.pane_tree,
+            &workspace.focused_surface_id,
+            navigation,
+        ) else {
+            return false;
+        };
+        model.select_tab(&target)
     };
-    let Some(workspace) = model.active_workspace() else {
-        return false;
+    if selected {
+        save_session_from_state(state);
+    }
+    selected
+}
+
+pub(super) fn select_tab_surface(state: &SocketAppState, surface_id: &str) -> bool {
+    let selected = match state.model.lock() {
+        Ok(mut model) => model.select_tab(surface_id),
+        Err(_) => false,
     };
-    let Some(target) = tab_navigation_target(
-        &workspace.pane_tree,
-        &workspace.focused_surface_id,
-        navigation,
-    ) else {
-        return false;
-    };
-    model.select_tab(&target)
+    if selected {
+        save_session_from_state(state);
+    }
+    selected
 }
 
 pub(super) fn move_focused_tab(state: &SocketAppState, direction: TabMoveDirection) -> bool {

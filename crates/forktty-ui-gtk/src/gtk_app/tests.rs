@@ -1335,6 +1335,57 @@ fn select_tab_in_focused_pane_wraps_and_jumps_edges() {
 }
 
 #[test]
+fn select_tab_in_focused_pane_saves_session_immediately() {
+    let home_dir = tempfile::tempdir().unwrap();
+    let state_dir = tempfile::tempdir().unwrap();
+    let data_dir = tempfile::tempdir().unwrap();
+    let home = home_dir.path().to_string_lossy();
+    let state_home = state_dir.path().to_string_lossy();
+    let data_home = data_dir.path().to_string_lossy();
+
+    crate::test_env::with_env(
+        &[
+            ("HOME", Some(home.as_ref())),
+            ("XDG_STATE_HOME", Some(state_home.as_ref())),
+            ("XDG_DATA_HOME", Some(data_home.as_ref())),
+        ],
+        || {
+            let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+            let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+            let state = SocketAppState::new(
+                model.clone(),
+                terminal,
+                "/bin/sh",
+                PathBuf::from("/tmp/forktty.sock"),
+            )
+            .with_notification_dispatch(false);
+            let (first, second) = {
+                let mut model = model.lock().unwrap();
+                let workspace = model.create_workspace("main", "/tmp");
+                let first = workspace.focused_surface_id.clone();
+                let second = model.add_tab(&first).unwrap().id;
+                assert!(model.select_tab(&first));
+                (first, second)
+            };
+
+            assert!(select_tab_in_focused_pane(&state, TabNavigation::Next));
+
+            let saved = forktty_core::session::load_session()
+                .unwrap()
+                .expect("tab selection should save a session immediately");
+            let workspace = saved
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.id == "workspace-1")
+                .expect("workspace persisted");
+            assert_eq!(workspace.focused_surface_id, second);
+            assert_eq!(workspace.pane_tree.leaf_active_id(), Some(&second));
+            assert_ne!(workspace.pane_tree.leaf_active_id(), Some(&first));
+        },
+    );
+}
+
+#[test]
 fn close_active_terminal_does_not_spawn_terminal_for_remaining_browser() {
     let project_dir = tempfile::tempdir().unwrap();
     let project_cwd = project_dir.path().to_path_buf();
@@ -2897,6 +2948,31 @@ fn terminal_context_menu_accelerated_items_show_shortcuts() {
         assert!(!source
             .contains("\"forktty-folder-symbolic\",\n            \"Copy Working Directory\""));
     }
+}
+
+#[test]
+fn tab_context_menu_accelerated_items_show_shortcuts() {
+    let source = include_str!("controller.rs");
+
+    assert!(source.contains("add_context_menu_item_with_shortcut("));
+    assert!(source.contains("\"New Tab\""));
+    assert!(source.contains("Some(\"Ctrl+Shift+T\")"));
+    assert!(source.contains("\"Split Right\""));
+    assert!(source.contains("Some(\"Ctrl+Shift+H\")"));
+    assert!(source.contains("\"Split Down\""));
+    assert!(source.contains("Some(SPLIT_VERTICAL_SHORTCUT)"));
+    assert!(source.contains("\"Close Tab\""));
+    assert!(source.contains("Some(\"Ctrl+Shift+W\")"));
+}
+
+#[test]
+fn pane_tab_selectors_are_keyboard_activatable() {
+    let source = include_str!("controller.rs");
+
+    assert!(source.contains("let keyboard_select = gtk::EventControllerKey::new();"));
+    assert!(source.contains("gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter"));
+    assert!(source.contains("gtk::gdk::Key::space"));
+    assert!(source.contains("select.add_controller(keyboard_select);"));
 }
 
 #[test]

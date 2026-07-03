@@ -64,6 +64,20 @@ fn embedded_title_is_launcher_wrapper(title: &str) -> bool {
     matches!(title.trim(), "/usr/bin/env" | "/bin/env" | "env")
 }
 
+fn select_tab_from_tabstrip(
+    state: &Option<SocketAppState>,
+    model: &Arc<Mutex<WorkspaceModel>>,
+    surface_id: &str,
+) -> bool {
+    if let Some(state) = state {
+        return select_tab_surface(state, surface_id);
+    }
+    match model.lock() {
+        Ok(mut model) => model.select_tab(surface_id),
+        Err(_) => false,
+    }
+}
+
 impl TerminalController {
     pub(super) fn new(
         container: gtk::Box,
@@ -720,6 +734,10 @@ impl TerminalController {
         let tabstrip = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         tabstrip.add_css_class("pane-tabstrip");
         tabstrip.set_hexpand(true);
+        let stack = gtk::Stack::new();
+        stack.set_hexpand(true);
+        stack.set_vexpand(true);
+        stack.set_transition_type(gtk::StackTransitionType::None);
         let mut tab_widgets = Vec::with_capacity(tabs.len());
         let mut labels = Vec::with_capacity(tabs.len());
         let mut select_areas = Vec::with_capacity(tabs.len());
@@ -759,15 +777,38 @@ impl TerminalController {
             ))]);
 
             let model_for_select = self.model.clone();
+            let state_for_select = self.state.clone();
+            let stack_for_select = stack.clone();
             let select_id = surface_id.clone();
             let primary_click = gtk::GestureClick::new();
             primary_click.set_button(gtk::gdk::BUTTON_PRIMARY);
             primary_click.connect_released(move |_, _n_press, _x, _y| {
-                if let Ok(mut m) = model_for_select.lock() {
-                    let _ = m.select_tab(&select_id);
+                if select_tab_from_tabstrip(&state_for_select, &model_for_select, &select_id) {
+                    stack_for_select.set_visible_child_name(select_id.as_str());
                 }
             });
             select.add_controller(primary_click);
+
+            let model_for_select = self.model.clone();
+            let state_for_select = self.state.clone();
+            let stack_for_select = stack.clone();
+            let select_id = surface_id.clone();
+            let keyboard_select = gtk::EventControllerKey::new();
+            keyboard_select.connect_key_pressed(move |_, key, _keycode, _modifiers| {
+                if !matches!(
+                    key,
+                    gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter | gtk::gdk::Key::space
+                ) {
+                    return glib::Propagation::Proceed;
+                }
+                if select_tab_from_tabstrip(&state_for_select, &model_for_select, &select_id) {
+                    stack_for_select.set_visible_child_name(select_id.as_str());
+                    glib::Propagation::Stop
+                } else {
+                    glib::Propagation::Proceed
+                }
+            });
+            select.add_controller(keyboard_select);
 
             let close = gtk::Button::builder()
                 .icon_name("forktty-close-symbolic")
@@ -816,10 +857,6 @@ impl TerminalController {
 
         // Keep tab children mounted and switch the visible child in-place so a
         // tab change does not rebuild the surrounding split tree.
-        let stack = gtk::Stack::new();
-        stack.set_hexpand(true);
-        stack.set_vexpand(true);
-        stack.set_transition_type(gtk::StackTransitionType::None);
         for surface_id in tabs {
             let pane_widget = self.pane_widget_for(surface_id);
             stack.add_named(&pane_widget, Some(surface_id.as_str()));
@@ -1097,22 +1134,24 @@ fn build_tab_context_menu(state: &SocketAppState, surface_id: &str) -> gtk::Popo
 
     let state_for_new_tab = state.clone();
     let new_tab_id = surface_id.to_string();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-add-symbolic",
         "New Tab",
+        Some("Ctrl+Shift+T"),
         false,
         move || add_new_tab_surface(&state_for_new_tab, &new_tab_id),
     );
 
     let state_for_split = state.clone();
     let split_id = surface_id.to_string();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-split-horizontal-symbolic",
         "Split Right",
+        Some("Ctrl+Shift+H"),
         false,
         move || {
             focus_surface_and(&state_for_split, &split_id, |state| {
@@ -1123,11 +1162,12 @@ fn build_tab_context_menu(state: &SocketAppState, surface_id: &str) -> gtk::Popo
 
     let state_for_split = state.clone();
     let split_id = surface_id.to_string();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-split-vertical-symbolic",
         "Split Down",
+        Some(SPLIT_VERTICAL_SHORTCUT),
         false,
         move || {
             focus_surface_and(&state_for_split, &split_id, |state| {
@@ -1140,11 +1180,12 @@ fn build_tab_context_menu(state: &SocketAppState, surface_id: &str) -> gtk::Popo
 
     let state_for_close = state.clone();
     let close_id = surface_id.to_string();
-    add_context_menu_item(
+    add_context_menu_item_with_shortcut(
         &menu,
         &popover,
         "forktty-close-symbolic",
         "Close Tab",
+        Some("Ctrl+Shift+W"),
         true,
         move || {
             close_tab_surface(&state_for_close, &close_id);

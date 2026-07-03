@@ -37,6 +37,12 @@ All notable changes to ForkTTY are documented here.
   guessing or exact internal enum names.
 
 ### Fixed
+- Fixed restored multi-tab panes so the workspace focused surface is also made
+  the active tab in its leaf, preventing hidden-tab focus after loading or
+  repairing a session.
+- Fixed tab selection from shortcuts, the command palette, and pane tab strips
+  so it saves session state immediately; tab-strip items are now keyboard
+  activatable and their context menu shows the existing shortcut hints.
 - Fixed the vendored Ghostty GTK embedding source so it carries ForkTTY's
   resize cursor-preservation and bounded wrap-count patches, preventing the
   packaged `ghostty-gtk-embed.so` path from missing the same maximize/resize
