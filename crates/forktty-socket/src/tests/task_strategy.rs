@@ -812,6 +812,39 @@ async fn task_strategy_apply_rejects_loop_metadata_for_unsupported_strategy_with
 }
 
 #[tokio::test]
+async fn task_strategy_apply_rejects_unsupported_parallel_research_role_without_mutation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let mut plan = parallel_research_plan_json();
+    plan["assignments"][1]["role"] = json!("synthesizer");
+    plan["assignments"][1]["reason"] = json!("client supplied eager synthesizer");
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Compare router implementations",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err
+        .to_string()
+        .contains("does not support role synthesizer"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_plan_infers_dirty_repo_from_active_surface_cwd() {
     let (state, _backend) = test_state();
     let repo_dir = tempfile::tempdir().unwrap();
@@ -4528,9 +4561,9 @@ fn parallel_research_plan_json() -> Value {
                 "reason": "primary research harness"
             },
             {
-                "role": "synthesizer",
+                "role": "researcher",
                 "harness_id": "codex",
-                "reason": "synthesizer role"
+                "reason": "second research lane"
             }
         ],
         "approvals": ["start_run", "launch_parallel_workers"],

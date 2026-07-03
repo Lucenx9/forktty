@@ -544,9 +544,10 @@ workflow/team state, matching the visible team worker cap used by submit runs
 and avoiding empty workflow plans. A submitted plan cannot force
 `layers.team: true` onto a strategy that the planner does not treat as a team
 strategy, cannot force `layers.loop_metadata: true` onto a strategy that the
-planner does not treat as a verify-loop strategy, and `team` or
-`loop_metadata` layers require the `workflow` layer so ForkTTY does not create
-orphan team state or no-op loop metadata.
+planner does not treat as a verify-loop strategy, or attach assignment roles
+that the planner would not assign for that strategy. `team` or `loop_metadata`
+layers require the `workflow` layer so ForkTTY does not create orphan team
+state or no-op loop metadata.
 When both surface aliases are provided, `leader_surface_id` and `surface_id`
 must refer to the same surface. The MCP `task_strategy_apply` tool forwards
 the current `FORKTTY_WORKSPACE_ID` and `FORKTTY_SURFACE_ID` as the default

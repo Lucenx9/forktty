@@ -87,7 +87,7 @@ fn task_plan_requests_task_strategy_plan() {
                     },
                     "assignments": [
                         {"role": "researcher", "harness_id": "codex", "reason": "ready"},
-                        {"role": "synthesizer", "harness_id": "claude", "reason": "ready"}
+                        {"role": "researcher", "harness_id": "claude", "reason": "ready"}
                     ],
                     "approvals": ["start_run", "launch_parallel_workers"],
                     "reasons": ["parallelism requested"]

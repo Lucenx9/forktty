@@ -153,6 +153,21 @@ fn task_strategy_supports_loop_metadata_layer(strategy: &TaskStrategy) -> bool {
     )
 }
 
+fn task_strategy_supports_assignment_role(strategy: &TaskStrategy, role: &HarnessRole) -> bool {
+    match strategy {
+        TaskStrategy::Solo | TaskStrategy::SoloTracked | TaskStrategy::SoloWithVerifyLoop => {
+            matches!(role, HarnessRole::Implementer)
+        }
+        TaskStrategy::ImplementerPlusReviewer | TaskStrategy::TeamPipeline => {
+            matches!(role, HarnessRole::Implementer | HarnessRole::Reviewer)
+        }
+        TaskStrategy::ParallelResearch | TaskStrategy::ParallelExperiment => {
+            matches!(role, HarnessRole::Researcher)
+        }
+        TaskStrategy::ReviewOnly => matches!(role, HarnessRole::Reviewer),
+    }
+}
+
 fn infer_likely_user_visible_change(goal: &str) -> bool {
     let lower = goal.to_lowercase();
     let edit_tokens = ["fix", "bug", "bugs", "add", "drop", "port"];
@@ -1064,6 +1079,13 @@ fn validate_submitted_task_strategy_plan(plan: &TaskStrategyPlan) -> Result<(), 
         validate_submitted_task_strategy_text("plan.safety_notes", safety_note)?;
     }
     for assignment in &plan.assignments {
+        if !task_strategy_supports_assignment_role(&plan.strategy, &assignment.role) {
+            return Err(DispatchError::InvalidParam(format!(
+                "task.strategy.apply strategy {} does not support role {}",
+                task_strategy_wire_value(&plan.strategy),
+                role_id(&assignment.role)
+            )));
+        }
         validate_task_strategy_id("plan.assignments.harness_id", &assignment.harness_id)?;
         validate_submitted_task_strategy_text("plan.assignments.reason", &assignment.reason)?;
         validate_submitted_score_factors("plan.assignments.factors", &assignment.factors)?;
