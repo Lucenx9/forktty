@@ -23,6 +23,7 @@ mod metadata_params;
 mod metadata_runtime;
 mod methods;
 mod notification_dispatch;
+mod orchestration_cleanup_runtime;
 mod param_helpers;
 mod path_resolver;
 mod project_action_params;
@@ -487,6 +488,7 @@ mod tests {
     mod metadata;
     mod metadata_hooks;
     mod notification_feed;
+    mod orchestration_cleanup;
     mod protocol_dispatch;
     mod remote;
     mod socket_bind;

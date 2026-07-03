@@ -563,12 +563,63 @@ fn skill_setup_summary_reports_repaired_state_after_install() {
         let spec = supported_skill_targets(&strings(&["agents"])).unwrap()[0];
         let plan = build_skill_setup_plan(spec).unwrap();
         assert_eq!(plan.status, "update_available");
-        let summary = skill_setup_summary(&plan, false, Some(PathBuf::from("backup")));
+        let summary = skill_setup_summary(
+            &plan,
+            false,
+            Some(PathBuf::from("backup")),
+            vec![PathBuf::from("old-backup")],
+        );
 
         assert_eq!(summary["changed"], true);
         assert_eq!(summary["status"], "up_to_date");
         assert_eq!(summary["installedChecksum"], summary["sourceChecksum"]);
         assert!(summary["repairCommand"].is_null());
+        assert_eq!(summary["removedBackups"][0], "old-backup");
+    });
+}
+
+#[test]
+fn skill_setup_prunes_old_managed_backups_but_keeps_unmanaged_backups() {
+    let home = tempfile::tempdir().unwrap();
+    let home_s = home.path().to_string_lossy().to_string();
+
+    with_env(&[("HOME", Some(home_s.as_str()))], || {
+        let context = test_context();
+        handle_skills_setup(&context, strings(&["agents"])).unwrap();
+        let skill_dir = agent_skills_dir();
+        let parent = skill_dir.parent().unwrap().to_path_buf();
+        let unmanaged_backup = parent.join("forktty-agent-orchestration.bak-manual");
+        fs::create_dir_all(&unmanaged_backup).unwrap();
+        fs::write(
+            unmanaged_backup.join("SKILL.md"),
+            "# manually saved skill\n",
+        )
+        .unwrap();
+
+        for index in 0..5 {
+            fs::write(
+                skill_dir.join("SKILL.md"),
+                format!("{AGENT_SKILL_MARKER}\n# stale {index}\n"),
+            )
+            .unwrap();
+            handle_skills_setup(&context, strings(&["agents"])).unwrap();
+        }
+
+        assert!(unmanaged_backup.exists());
+        assert_eq!(backup_count(&parent, "forktty-agent-orchestration.bak-"), 4);
+        let managed = fs::read_dir(&parent)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with("forktty-agent-orchestration.bak-"))
+                    && fs::read_to_string(entry.path().join("SKILL.md"))
+                        .is_ok_and(|text| text.contains(AGENT_SKILL_MARKER))
+            })
+            .count();
+        assert_eq!(managed, 3);
     });
 }
 

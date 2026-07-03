@@ -4,6 +4,16 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Added
+- Added dry-run-first `orchestration.cleanup` over socket and
+  `forktty cleanup orchestration` so stale team/workflow records can be
+  inspected and conservatively closed without touching live worker surfaces.
+
+### Changed
+- `forktty skills setup` and `forktty skills remove` now retain only the three
+  newest ForkTTY-managed skill backups per target and report pruned backups,
+  while leaving unmanaged `.bak-*` directories untouched.
+
 ## [0.2.0-alpha.17] - 2026-07-03
 
 ### Added

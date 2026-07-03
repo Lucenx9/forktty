@@ -72,6 +72,8 @@ Usage:
       Ask ForkTTY to choose a read-only strategy for a task before selecting team, loop, worktree, or harnesses. If --profile is omitted, ForkTTY infers a router profile when the goal clearly asks for speed, caution, parallel work, or review. ForkTTY can infer last-known-good stickiness from completed task-strategy workflows; --last-known-good-json may override or enrich it. --harness-signals-json may pass per-harness cooldown/lockout signals for scripts. If --repo-dirty or --user-visible is omitted, ForkTTY infers dirty state from --cwd inside an open ForkTTY workspace/surface repo or the selected surface/workspace cwd and edit intent from the goal when possible.
   forktty task-apply --run-id <id> --plan-json <json> [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--cwd <repo>] [--leader-surface-id <id>|--surface-id <id>] [--workflow-id <id>] [--team-id <id>] [--approved <ids>|--request-approval|--approval-id <id>] [--submit] <goal> [--json]
       Apply an approved strategy. Defaults to staged workflow/team state; --request-approval creates a Feed approval without starting, --approval-id consumes an approved request, and --submit launches visible workers for supported team plans. Pass --cwd when the repo target differs from the selected ForkTTY pane and is already represented by an open ForkTTY workspace/surface repo; worktree-layer apply requires an already-open worktree workspace.
+  forktty cleanup orchestration [--dry-run|--apply] [--workspace-id <id>] [--json]
+      Inspect or apply conservative cleanup for stale team/workflow orchestration records; dry-run is the default and live worker surfaces are reported for manual review.
   forktty feed [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--limit <n>] [--json]
   forktty feed respond <approval-id> --decision approve|deny [--json]
   forktty workflows [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--surface-id <id>] [--session-id <id>] [--query <text>] [--limit <n>] [--json]
@@ -230,6 +232,8 @@ pub(super) const COMPLETION_COMMANDS: &[&str] = &[
     "identify",
     "wait",
     "feed",
+    "cleanup",
+    "orchestration-cleanup",
     "task-plan",
     "task-apply",
     "workflows",

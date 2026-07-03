@@ -44,6 +44,7 @@ pub(super) const SKILL_TARGETS: &[SkillTargetSpec] = &[
 ];
 
 const DEFAULT_SKILL_SETUP_TARGET_KEYS: &[&str] = &["agents", "claude"];
+const MAX_AGENT_SKILL_BACKUPS: usize = 3;
 
 pub(super) struct SkillSetupPlan {
     pub(super) spec: &'static SkillTargetSpec,
@@ -98,6 +99,7 @@ pub(super) fn handle_skills_setup(context: &CliContext, args: Vec<String>) -> Cl
     let mut summaries = Vec::new();
     for plan in plans {
         let mut backup_path = None;
+        let mut removed_backups = Vec::new();
         if plan.changed && !dry_run {
             backup_path = backup_skill_dir(&plan.skill_dir)?;
             for (path, content) in &plan.files {
@@ -105,7 +107,15 @@ pub(super) fn handle_skills_setup(context: &CliContext, args: Vec<String>) -> Cl
                 atomic_write_file(path, content.as_bytes())?;
             }
         }
-        summaries.push(skill_setup_summary(&plan, dry_run, backup_path));
+        if !dry_run {
+            removed_backups = prune_managed_skill_backups(&plan.skill_dir)?;
+        }
+        summaries.push(skill_setup_summary(
+            &plan,
+            dry_run,
+            backup_path,
+            removed_backups,
+        ));
     }
 
     if context.json {
@@ -135,6 +145,11 @@ pub(super) fn handle_skills_setup(context: &CliContext, args: Vec<String>) -> Cl
         if let Some(backup) = summary["backupPath"].as_str() {
             write_stdout_line(&format!("  backup: {backup}"))?;
         }
+        if let Some(removed) = summary["removedBackups"].as_array() {
+            for backup in removed.iter().filter_map(Value::as_str) {
+                write_stdout_line(&format!("  removed backup: {backup}"))?;
+            }
+        }
     }
     Ok(())
 }
@@ -157,8 +172,12 @@ pub(super) fn handle_skills_remove(context: &CliContext, args: Vec<String>) -> C
     let mut summaries = Vec::new();
     for plan in plans {
         let mut backup_path = None;
+        let mut removed_backups = Vec::new();
         if plan.changed && !dry_run {
             backup_path = backup_skill_dir(&plan.skill_dir)?;
+        }
+        if !dry_run {
+            removed_backups = prune_managed_skill_backups(&plan.skill_dir)?;
         }
         summaries.push(json!({
             "target": plan.spec.key,
@@ -168,6 +187,7 @@ pub(super) fn handle_skills_remove(context: &CliContext, args: Vec<String>) -> C
             "configPath": plan.skill_dir,
             "changed": plan.changed,
             "backupPath": backup_path,
+            "removedBackups": removed_backups,
             "dryRun": dry_run,
         }));
     }
@@ -192,6 +212,11 @@ pub(super) fn handle_skills_remove(context: &CliContext, args: Vec<String>) -> C
         write_stdout_line(&format!("{target}: {verb} ForkTTY skill at {skill_dir}"))?;
         if let Some(backup) = summary["backupPath"].as_str() {
             write_stdout_line(&format!("  backup: {backup}"))?;
+        }
+        if let Some(removed) = summary["removedBackups"].as_array() {
+            for backup in removed.iter().filter_map(Value::as_str) {
+                write_stdout_line(&format!("  removed backup: {backup}"))?;
+            }
         }
     }
     Ok(())
@@ -237,6 +262,7 @@ pub(super) fn skill_setup_summary(
     plan: &SkillSetupPlan,
     dry_run: bool,
     backup_path: Option<PathBuf>,
+    removed_backups: Vec<PathBuf>,
 ) -> Value {
     let applied = plan.changed && !dry_run;
     let installed_checksum = if applied {
@@ -258,6 +284,7 @@ pub(super) fn skill_setup_summary(
         "installedChecksum": installed_checksum,
         "repairCommand": if applied { None } else { plan.repair_command.clone() },
         "backupPath": backup_path,
+        "removedBackups": removed_backups,
         "dryRun": dry_run,
     })
 }
@@ -531,4 +558,63 @@ fn backup_skill_dir(path: &Path) -> CliResult<Option<PathBuf>> {
             Err(err) => return Err(err.into()),
         }
     }
+}
+
+fn prune_managed_skill_backups(path: &Path) -> CliResult<Vec<PathBuf>> {
+    let Some(parent) = path.parent() else {
+        return Ok(Vec::new());
+    };
+    let prefix = format!(
+        "{}.bak-",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(AGENT_SKILL_NAME)
+    );
+    let entries = match fs::read_dir(parent) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err.into()),
+    };
+    let mut backups = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(nonce) = name.strip_prefix(&prefix) else {
+            continue;
+        };
+        let backup_path = entry.path();
+        if is_managed_skill_backup(&backup_path)? {
+            let timestamp = nonce
+                .split('-')
+                .next()
+                .and_then(|value| value.parse::<u128>().ok())
+                .unwrap_or_default();
+            backups.push((timestamp, nonce.to_string(), backup_path));
+        }
+    }
+    backups.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+    let mut removed = Vec::new();
+    for (_, _, backup) in backups.into_iter().skip(MAX_AGENT_SKILL_BACKUPS) {
+        fs::remove_dir_all(&backup)?;
+        removed.push(backup);
+    }
+    Ok(removed)
+}
+
+fn is_managed_skill_backup(path: &Path) -> CliResult<bool> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Ok(false);
+    }
+    let Some(text) = read_text_config(&path.join("SKILL.md"), "agent skill backup")? else {
+        return Ok(false);
+    };
+    Ok(text.contains(AGENT_SKILL_MARKER))
 }

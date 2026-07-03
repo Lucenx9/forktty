@@ -298,6 +298,8 @@ forktty feed respond '<approval-id-from-request>' --decision approve
 forktty task-apply --run-id router-run-1 --plan-json '<plan-json>' --approval-id '<approval-id-from-request>' "fix this bug and verify it"
 forktty task-apply --run-id router-run-1 --plan-json '<plan-json>' --approved start_run "fix this bug and verify it"
 forktty task-apply --run-id router-run-1 --plan-json '<team-plan-json>' --cwd /path/to/repo --approved start_run,launch_parallel_workers --submit "review this implementation"
+forktty cleanup orchestration --dry-run
+forktty cleanup orchestration --apply
 forktty workflow-loop-set loop-runtime --stage verify --iteration 2 --max-iterations 4
 forktty team ask review-team claude-review --agent claude --task-id review-head --prompt "Review HEAD read-only" --submit
 forktty team review review-team claude-review --agent claude --task-id review-head --commit HEAD --submit
@@ -386,6 +388,11 @@ otherwise apply returns `conflict` before dispatching a prompt to the wrong
 pane.
 Worktree creation, push, merge, destructive commands, and out-of-scope edits
 require later explicit approval.
+`forktty cleanup orchestration` is a dry-run-first maintenance command for
+stale team/workflow records left after interrupted agent runs. It only marks
+records whose worker surfaces no longer exist, supersedes their pending prompts,
+and reports live surfaces for manual review; `--apply` is required before it
+writes.
 
 `forktty team ask` and `forktty team review` compose the existing team socket
 methods for common coordination flows: create/update the team, create the task,
@@ -628,7 +635,10 @@ forktty skills remove agents
 `$CLAUDE_CONFIG_DIR/skills/forktty-agent-orchestration` or
 `~/.claude/skills/forktty-agent-orchestration`. Setup refuses to overwrite an
 unmanaged skill with the same name; managed updates/removals first move the old
-directory to a `.bak-*` backup. `forktty skills setup --dry-run` and
+directory to a `.bak-*` backup. Non-dry-run setup/remove keep the three newest
+ForkTTY-managed backups per target and prune older managed backups, while
+leaving backup-like directories without the ForkTTY marker untouched.
+`forktty skills setup --dry-run` and
 `forktty --json doctor` report the managed skill status
 (`missing`, `up_to_date`, `update_available`, or `unmanaged`), source and
 installed checksums, and a `forktty skills setup <target>` repair command when

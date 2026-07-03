@@ -6,6 +6,7 @@ use super::agent::{
 };
 #[cfg(feature = "browser")]
 use super::browser::handle_browser;
+use super::cleanup::{handle_cleanup, handle_orchestration_cleanup};
 use super::feed::handle_feed;
 use super::hooks::handle_hooks;
 use super::mcp::handle_mcp;
@@ -157,6 +158,10 @@ pub(super) fn dispatch_command(
             handle_context_snapshot(context, args)
         }
         "feed" | "feed-list" | "feed:list" => handle_feed(context, args),
+        "cleanup" => handle_cleanup(context, args),
+        "orchestration-cleanup" | "orchestration:cleanup" | "orchestration.cleanup" => {
+            handle_orchestration_cleanup(context, args)
+        }
         "task-plan" | "task:plan" | "task.strategy.plan" => handle_task_plan(context, args),
         "task-apply" | "task:apply" | "task.strategy.apply" => handle_task_apply(context, args),
         "workflows" | "workflow-list" | "workflow:list" | "workflow.list" => {

@@ -2,9 +2,10 @@
 
 use crate::{
     agent_runtime, browser_import, browser_runtime, context_runtime, feed_runtime, hook_session,
-    metadata_runtime, methods, project_action_runtime, remote, status_runtime, surface_runtime,
-    system_runtime, task_strategy_runtime, team_runtime, topology_runtime, workflow_runtime,
-    workspace_runtime, worktree_runtime, DispatchError, SocketAppState,
+    metadata_runtime, methods, orchestration_cleanup_runtime, project_action_runtime, remote,
+    status_runtime, surface_runtime, system_runtime, task_strategy_runtime, team_runtime,
+    topology_runtime, workflow_runtime, workspace_runtime, worktree_runtime, DispatchError,
+    SocketAppState,
 };
 use serde_json::Value;
 
@@ -26,6 +27,7 @@ pub async fn dispatch(
         "system.capabilities" => Ok(system_runtime::capabilities()),
         "system.identify" => system_runtime::identify(state, &params),
         "context.snapshot" => context_runtime::snapshot(state, &params).await,
+        "orchestration.cleanup" => orchestration_cleanup_runtime::cleanup(state, &params).await,
         "task.strategy.plan" => task_strategy_runtime::plan(state, &params).await,
         "task.strategy.apply" => task_strategy_runtime::apply(state, &params).await,
         "feed.approval.respond" => feed_runtime::approval_respond(state, &params),

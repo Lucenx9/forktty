@@ -23,6 +23,7 @@ mod agent;
 mod args;
 #[cfg(any(feature = "browser", test))]
 mod browser;
+mod cleanup;
 mod feed;
 mod help;
 mod hooks;
@@ -66,6 +67,8 @@ use args::{
 use args::{insert_optional_trimmed_string_param, required_trimmed_arg};
 #[cfg(test)]
 use browser::handle_browser;
+#[cfg(test)]
+use cleanup::handle_orchestration_cleanup;
 #[cfg(test)]
 use feed::handle_feed;
 #[cfg(test)]

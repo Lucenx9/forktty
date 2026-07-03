@@ -80,6 +80,7 @@ const CORE_METHOD_SPECS: &[MethodSpec] = &[
     MethodSpec::public("notification.clear"),
     MethodSpec::public("notification.create"),
     MethodSpec::public("notification.list"),
+    MethodSpec::public("orchestration.cleanup"),
     MethodSpec::public("pane.new_tab"),
     MethodSpec::public("pane.select_tab"),
     MethodSpec::public("project.action.list"),

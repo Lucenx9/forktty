@@ -619,6 +619,23 @@ surface/workspace cwd target, and status match the current plan assignment. If
 the worker id points at a different live assignment, apply returns `conflict`
 before dispatching a role prompt to the wrong pane.
 
+`orchestration.cleanup` is a conservative maintenance method for stale
+team/workflow coordination records. It accepts optional `workspace_id`,
+`apply`, and `dry_run` fields. Dry-run is the default and returns planned
+`teamActions` and `workflowActions` without mutation; passing `apply: true`
+applies only actions that are safe from current ForkTTY model state. Cleanup
+may mark non-terminal workers whose recorded surface no longer exists as
+`closed`, cancel open tasks assigned to those stale workers, supersede
+undelivered messages targeting those workers/tasks, mark teams with no live
+workers, open tasks, or pending messages as `done`, mark active workflows with
+all-terminal plan steps as `done`, and close open plan steps on already
+terminal workflows. If a non-terminal worker still references an existing
+surface, cleanup reports a `team.worker.manual_review` action and does not
+mutate that worker, task, surface, or terminal. The method never sends terminal
+input, closes panes, launches workers, creates worktrees, or rebases/merges
+code. The CLI wrapper is `forktty cleanup orchestration`, with `--apply`
+required for writes.
+
 Example request:
 
 ```json
@@ -858,7 +875,10 @@ skills location (`~/.claude/skills/forktty-agent-orchestration`, or
 `forktty skills remove` removes only skill directories containing ForkTTY's
 managed marker and moves the directory to a `.bak-*` backup. Setup refuses to
 overwrite an existing skill directory with the same name unless its `SKILL.md`
-contains the ForkTTY-managed marker. `forktty skills setup --dry-run` and
+contains the ForkTTY-managed marker. Non-dry-run setup/remove retain the three
+newest `.bak-*` directories that still contain the ForkTTY-managed marker for
+that target and prune older managed backups; backup-like directories without
+the marker are treated as user-managed and left untouched. `forktty skills setup --dry-run` and
 `forktty --json doctor` report each managed skill target's status
 (`missing`, `up_to_date`, `update_available`, `unmanaged`, or `invalid`),
 source and installed checksums, and `forktty skills setup <target>` as the

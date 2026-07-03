@@ -188,6 +188,36 @@ fn backup_count(dir: &Path, prefix: &str) -> usize {
 }
 
 #[test]
+fn orchestration_cleanup_cli_forwards_apply_and_workspace_filter() {
+    let request = with_socket_response(
+        |req| {
+            json!({
+                "id": req["id"],
+                "ok": true,
+                "result": {
+                    "dryRun": false,
+                    "applied": true,
+                    "workspaceId": "workspace-1",
+                    "teamActions": [],
+                    "workflowActions": []
+                }
+            })
+            .to_string()
+        },
+        |socket_path| {
+            handle_orchestration_cleanup(
+                &ctx_for(socket_path),
+                strings(&["--apply", "--workspace-id", "workspace-1"]),
+            )
+            .unwrap();
+        },
+    );
+    assert_eq!(request["method"], "orchestration.cleanup");
+    assert_eq!(request["params"]["apply"], true);
+    assert_eq!(request["params"]["workspace_id"], "workspace-1");
+}
+
+#[test]
 fn doctor_report_includes_agent_integration_paths() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
