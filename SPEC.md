@@ -384,6 +384,9 @@ It can include `strategy`, `harness_id`, and `reason`; matching candidates get
 a small explainable score factor named `last_known_good_strategy` or
 `last_known_good_harness`. This is stickiness, not a hard override: readiness,
 cooldown, lockout, task fit, approvals, and visibility rules still win.
+Explicit `last_known_good.reason`, `cooldown_reason`, and `lockout_reason`
+strings are capped at 512 UTF-8 bytes because they are echoed in plan score
+explanations.
 When `last_known_good` is omitted, the planner best-effort reads completed
 `task_strategy` workflows for the selected workspace and infers the most recent
 usable strategy/harness evidence recorded by `task.strategy.apply`. Explicit

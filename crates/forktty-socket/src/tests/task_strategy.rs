@@ -1429,6 +1429,101 @@ async fn task_strategy_plan_rejects_malformed_harness_signals() {
 }
 
 #[tokio::test]
+async fn task_strategy_plan_rejects_oversized_harness_signal_reason() {
+    let (state, _backend) = test_state();
+    let reason =
+        "x".repeat(forktty_core::protocol_limits::SOCKET_TASK_STRATEGY_REASON_MAX_BYTES + 1);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "goal": "Inspect router state",
+            "harness_signals": {
+                "codex": {
+                    "cooldown": true,
+                    "cooldown_reason": reason
+                }
+            }
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "payload_too_large");
+    assert!(err.to_string().contains("harness_signals.reason"));
+}
+
+#[tokio::test]
+async fn task_strategy_plan_rejects_oversized_last_known_good_reason() {
+    let (state, _backend) = test_state();
+    let reason =
+        "x".repeat(forktty_core::protocol_limits::SOCKET_TASK_STRATEGY_REASON_MAX_BYTES + 1);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "goal": "Fix the task router bug",
+            "last_known_good": {
+                "strategy": "solo_with_verify_loop",
+                "harness_id": "codex",
+                "reason": reason
+            }
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "payload_too_large");
+    assert!(err.to_string().contains("last_known_good.reason"));
+}
+
+#[tokio::test]
+async fn task_strategy_plan_rejects_invalid_last_known_good_harness_id() {
+    let (state, _backend) = test_state();
+
+    let err = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "goal": "Fix the task router bug",
+            "last_known_good": {
+                "harness_id": "codex with spaces"
+            }
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("last_known_good.harness_id"));
+}
+
+#[tokio::test]
+async fn task_strategy_plan_rejects_invalid_harness_signal_key() {
+    let (state, _backend) = test_state();
+
+    let err = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "goal": "Fix the task router bug",
+            "harness_signals": {
+                "codex with spaces": {
+                    "cooldown": true
+                }
+            }
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("harness_signals key"));
+}
+
+#[tokio::test]
 async fn task_strategy_plan_rejects_blank_goal() {
     let (state, _backend) = test_state();
     let err = dispatch(&state, "task.strategy.plan", json!({ "goal": " " }))

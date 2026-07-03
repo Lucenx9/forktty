@@ -11,8 +11,8 @@ use crate::{
     workspace_selector_params, DispatchError, SocketAppState, WorkspaceSelectorKind,
 };
 use forktty_core::{
-    plan_task_strategy, validate_worktree_name, worktree, FeedApprovalState, FeedEntry,
-    FeedEntryType, HarnessAssignment, HarnessCapability, HarnessHealth, HarnessRegistry,
+    plan_task_strategy, protocol_limits, validate_worktree_name, worktree, FeedApprovalState,
+    FeedEntry, FeedEntryType, HarnessAssignment, HarnessCapability, HarnessHealth, HarnessRegistry,
     HarnessRole, HarnessRoutingSignals, TaskClass, TaskRouterProfile, TaskStrategy,
     TaskStrategyApproval, TaskStrategyInput, TaskStrategyLastKnownGood, TaskStrategyPlan,
     WorkflowQuery, WorkflowState, WorkspaceSelector,
@@ -21,6 +21,8 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_PROVIDER_MAX_PARALLEL_SESSIONS: u32 = 4;
+const MAX_TASK_STRATEGY_REASON_BYTES: usize =
+    protocol_limits::SOCKET_TASK_STRATEGY_REASON_MAX_BYTES;
 
 pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let plan_params = task_strategy_plan_params(params)?;
@@ -777,7 +779,16 @@ fn last_known_good_from_value(value: &Value) -> Result<TaskStrategyLastKnownGood
         .map(task_strategy_from_str)
         .transpose()?;
     let harness_id = optional_object_string(object, "harness_id", "last_known_good")?;
-    let reason = optional_object_string(object, "reason", "last_known_good")?;
+    if let Some(harness_id) = harness_id.as_deref() {
+        validate_task_strategy_id("last_known_good.harness_id", harness_id)?;
+    }
+    let reason = optional_bounded_object_string(
+        object,
+        "reason",
+        "last_known_good",
+        "last_known_good.reason",
+        MAX_TASK_STRATEGY_REASON_BYTES,
+    )?;
     Ok(TaskStrategyLastKnownGood {
         strategy,
         harness_id,
@@ -804,6 +815,26 @@ fn optional_object_string(
             "{path}.{key} must be a string"
         ))),
     }
+}
+
+fn optional_bounded_object_string(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    path: &str,
+    field: &'static str,
+    limit: usize,
+) -> Result<Option<String>, DispatchError> {
+    let value = optional_object_string(object, key, path)?;
+    if let Some(value) = value.as_deref() {
+        if value.len() > limit {
+            return Err(DispatchError::PayloadTooLarge {
+                field,
+                limit,
+                actual: value.len(),
+            });
+        }
+    }
+    Ok(value)
 }
 
 pub(crate) fn harness_registry_from_capabilities(capabilities: &Value) -> HarnessRegistry {
@@ -876,6 +907,7 @@ pub(crate) fn apply_harness_routing_signals(
     };
 
     for (harness_id, value) in signals {
+        validate_task_strategy_id("harness_signals key", harness_id)?;
         let path = format!("harness_signals.{harness_id}");
         let Some(signal) = value.as_object() else {
             return Err(DispatchError::InvalidParam(format!(
@@ -927,6 +959,12 @@ fn optional_signal_reason(
             let trimmed = value.trim();
             if trimmed.is_empty() {
                 Ok(None)
+            } else if trimmed.len() > MAX_TASK_STRATEGY_REASON_BYTES {
+                Err(DispatchError::PayloadTooLarge {
+                    field: "harness_signals.reason",
+                    limit: MAX_TASK_STRATEGY_REASON_BYTES,
+                    actual: trimmed.len(),
+                })
             } else {
                 Ok(Some(trimmed.to_string()))
             }

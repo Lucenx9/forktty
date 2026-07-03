@@ -20,6 +20,9 @@ pub const SOCKET_METADATA_TEXT_MAX_BYTES: usize = 16_384;
 /// Maximum UTF-8 bytes accepted for task strategy goals before they are copied
 /// into workflow, team task, and worker prompt state.
 pub const SOCKET_TASK_STRATEGY_GOAL_MAX_BYTES: usize = 4_096;
+/// Maximum UTF-8 bytes accepted for optional task strategy explanation hints
+/// that are echoed in score factors and plan reasons.
+pub const SOCKET_TASK_STRATEGY_REASON_MAX_BYTES: usize = 512;
 
 /// Maximum size of one JSON-RPC MCP stdio message.
 pub const MCP_MESSAGE_MAX_BYTES: usize = SOCKET_REQUEST_MAX_BYTES;

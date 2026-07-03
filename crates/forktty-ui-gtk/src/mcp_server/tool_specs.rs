@@ -103,12 +103,12 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
                     "router_profile": string_prop("Optional router profile: balanced, fast, conservative, parallel, or review_heavy."),
                     "last_known_good": {
                         "type": "object",
-                        "description": "Optional advisory last-known-good routing evidence. May include strategy, harness_id, and reason. When omitted, ForkTTY can infer evidence from completed task-strategy workflows in the selected workspace. Explicit evidence wins over inferred history. It adds a small explainable score bias and never overrides readiness, cooldown, lockout, approvals, or task fit.",
+                        "description": format!("Optional advisory last-known-good routing evidence. May include strategy, harness_id, and reason; reason is capped at {} UTF-8 bytes. When omitted, ForkTTY can infer evidence from completed task-strategy workflows in the selected workspace. Explicit evidence wins over inferred history. It adds a small explainable score bias and never overrides readiness, cooldown, lockout, approvals, or task fit.", protocol_limits::SOCKET_TASK_STRATEGY_REASON_MAX_BYTES),
                         "additionalProperties": true
                     },
                     "harness_signals": {
                         "type": "object",
-                        "description": "Optional per-harness routing signals keyed by harness id. Each value may include cooldown, cooldown_reason, locked_out, and lockout_reason. Cooldown is a soft penalty; locked_out excludes that harness from assignments.",
+                        "description": format!("Optional per-harness routing signals keyed by harness id. Each value may include cooldown, cooldown_reason, locked_out, and lockout_reason; reason fields are capped at {} UTF-8 bytes. Cooldown is a soft penalty; locked_out excludes that harness from assignments.", protocol_limits::SOCKET_TASK_STRATEGY_REASON_MAX_BYTES),
                         "additionalProperties": true
                     },
                     "workspace_id": string_prop("Workspace id whose focused surface/project cwd should inform planning. Defaults from the ForkTTY caller context when available."),
