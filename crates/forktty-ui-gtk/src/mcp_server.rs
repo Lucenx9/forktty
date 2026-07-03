@@ -509,7 +509,7 @@ mod tests {
         assert!(responses[0]["result"]["instructions"]
             .as_str()
             .unwrap()
-            .contains("For ordinary edits in the current repo, work normally"));
+            .contains("for ordinary repo edits, work directly"));
 
         let resources = responses[1]["result"]["resources"].as_array().unwrap();
         assert!(resources

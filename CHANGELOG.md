@@ -49,6 +49,8 @@ All notable changes to ForkTTY are documented here.
   onto strategies that do not support team orchestration.
 - Fixed task strategy apply so submitted team or loop metadata layers require
   workflow state instead of creating orphan team records or no-op loop runs.
+- Fixed task strategy apply so client-submitted plans cannot force loop
+  metadata onto strategies that do not support verify-loop orchestration.
 - Fixed `orchestration.cleanup` so `dry_run=false` without `apply=true` is
   rejected instead of mutating stale orchestration records.
 - Fixed `orchestration.cleanup` so non-terminal workers without a recorded

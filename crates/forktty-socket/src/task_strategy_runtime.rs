@@ -146,6 +146,13 @@ fn task_strategy_supports_team_layer(strategy: &TaskStrategy) -> bool {
     )
 }
 
+fn task_strategy_supports_loop_metadata_layer(strategy: &TaskStrategy) -> bool {
+    matches!(
+        strategy,
+        TaskStrategy::SoloWithVerifyLoop | TaskStrategy::ImplementerPlusReviewer
+    )
+}
+
 fn infer_likely_user_visible_change(goal: &str) -> bool {
     let lower = goal.to_lowercase();
     let edit_tokens = ["fix", "bug", "bugs", "add", "drop", "port"];
@@ -1027,6 +1034,12 @@ fn validate_submitted_task_strategy_plan(plan: &TaskStrategyPlan) -> Result<(), 
         return Err(DispatchError::InvalidParam(
             "task.strategy.apply team layer requires workflow layer".to_string(),
         ));
+    }
+    if plan.layers.loop_metadata && !task_strategy_supports_loop_metadata_layer(&plan.strategy) {
+        return Err(DispatchError::InvalidParam(format!(
+            "task.strategy.apply strategy {} does not support loop metadata layer",
+            task_strategy_wire_value(&plan.strategy)
+        )));
     }
     if plan.layers.loop_metadata && !plan.layers.workflow {
         return Err(DispatchError::InvalidParam(
