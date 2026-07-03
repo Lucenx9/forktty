@@ -722,6 +722,66 @@ async fn task_strategy_apply_rejects_team_layer_for_non_team_strategy_without_mu
 }
 
 #[tokio::test]
+async fn task_strategy_apply_rejects_team_layer_without_workflow_without_mutation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let mut plan = staged_team_plan_json();
+    plan["layers"]["workflow"] = json!(false);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("team layer requires workflow"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn task_strategy_apply_rejects_loop_metadata_without_workflow_without_mutation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let mut plan = solo_verify_plan_json();
+    plan["layers"]["workflow"] = json!(false);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Fix the router",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("loop metadata requires workflow"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_plan_infers_dirty_repo_from_active_surface_cwd() {
     let (state, _backend) = test_state();
     let repo_dir = tempfile::tempdir().unwrap();

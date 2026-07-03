@@ -1023,6 +1023,16 @@ fn validate_submitted_task_strategy_plan(plan: &TaskStrategyPlan) -> Result<(), 
             task_strategy_wire_value(&plan.strategy)
         )));
     }
+    if plan.layers.team && !plan.layers.workflow {
+        return Err(DispatchError::InvalidParam(
+            "task.strategy.apply team layer requires workflow layer".to_string(),
+        ));
+    }
+    if plan.layers.loop_metadata && !plan.layers.workflow {
+        return Err(DispatchError::InvalidParam(
+            "task.strategy.apply loop metadata requires workflow layer".to_string(),
+        ));
+    }
     if plan.assignments.is_empty() {
         return Err(DispatchError::InvalidParam(
             "task.strategy.apply plan requires at least one assignment; team layer requires at least one team assignment"
