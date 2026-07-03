@@ -627,6 +627,41 @@ async fn task_strategy_apply_rejects_oversized_plan_reason_without_mutation() {
 }
 
 #[tokio::test]
+async fn task_strategy_apply_rejects_too_many_assignments_without_mutation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let mut plan = staged_team_plan_json();
+    let assignment = plan["assignments"][0].clone();
+    plan["assignments"] = Value::Array(
+        (0..=forktty_core::protocol_limits::SOCKET_TASK_STRATEGY_ASSIGNMENT_MAX_COUNT)
+            .map(|_| assignment.clone())
+            .collect(),
+    );
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("too many assignments"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_plan_infers_dirty_repo_from_active_surface_cwd() {
     let (state, _backend) = test_state();
     let repo_dir = tempfile::tempdir().unwrap();

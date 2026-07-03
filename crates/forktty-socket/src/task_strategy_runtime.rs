@@ -23,6 +23,8 @@ use std::path::{Path, PathBuf};
 const DEFAULT_PROVIDER_MAX_PARALLEL_SESSIONS: u32 = 4;
 const MAX_TASK_STRATEGY_REASON_BYTES: usize =
     protocol_limits::SOCKET_TASK_STRATEGY_REASON_MAX_BYTES;
+const MAX_TASK_STRATEGY_ASSIGNMENTS: usize =
+    protocol_limits::SOCKET_TASK_STRATEGY_ASSIGNMENT_MAX_COUNT;
 
 pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let plan_params = task_strategy_plan_params(params)?;
@@ -996,6 +998,11 @@ fn optional_signal_reason(
 }
 
 fn validate_submitted_task_strategy_plan(plan: &TaskStrategyPlan) -> Result<(), DispatchError> {
+    if plan.assignments.len() > MAX_TASK_STRATEGY_ASSIGNMENTS {
+        return Err(DispatchError::InvalidParam(format!(
+            "task.strategy.apply plan has too many assignments (limit {MAX_TASK_STRATEGY_ASSIGNMENTS})"
+        )));
+    }
     for reason in &plan.reasons {
         validate_submitted_task_strategy_text("plan.reasons", reason)?;
     }

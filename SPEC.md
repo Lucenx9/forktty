@@ -538,7 +538,9 @@ The submitted plan is treated as untrusted client input: before mutation,
 ForkTTY revalidates assignment harness ids and compact plan text fields such
 as reasons, safety notes, and score factors so they cannot inject control
 characters or oversized strings into workflow steps, team task details,
-approval fingerprints, or worker prompts.
+approval fingerprints, or worker prompts. It also rejects plans with more
+than 64 assignments before creating workflow/team state, matching the visible
+team worker cap used by submit runs.
 When both surface aliases are provided, `leader_surface_id` and `surface_id`
 must refer to the same surface. The MCP `task_strategy_apply` tool forwards
 the current `FORKTTY_WORKSPACE_ID` and `FORKTTY_SURFACE_ID` as the default

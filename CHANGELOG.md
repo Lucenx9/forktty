@@ -40,6 +40,9 @@ All notable changes to ForkTTY are documented here.
 - Fixed task strategy apply so submitted plan reasons and score details are
   revalidated before they can inflate workflow/team state, approval
   fingerprints, or worker prompts.
+- Fixed task strategy apply so submitted plans with more assignments than
+  visible team worker capacity are rejected before creating partial
+  workflow/team state.
 - Fixed `orchestration.cleanup` so `dry_run=false` without `apply=true` is
   rejected instead of mutating stale orchestration records.
 - Fixed `orchestration.cleanup` so non-terminal workers without a recorded
