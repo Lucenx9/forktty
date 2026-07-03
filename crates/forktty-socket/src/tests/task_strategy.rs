@@ -70,6 +70,46 @@ async fn task_strategy_plan_returns_read_only_strategy() {
 }
 
 #[tokio::test]
+async fn task_strategy_plan_response_stays_compact() {
+    let (state, _backend) = test_state();
+    let result = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "goal": "Fix the task strategy router bug, review the result, and run focused verification",
+            "task_kind": "focused_bugfix",
+            "router_profile": "review_heavy",
+            "repo_dirty": true,
+            "likely_user_visible_change": true,
+            "last_known_good": {
+                "strategy": "implementer_plus_reviewer",
+                "harness_id": "codex",
+                "reason": "recent successful router fix"
+            },
+            "harness_signals": {
+                "codex": {
+                    "cooldown": true,
+                    "cooldown_reason": "recent quota warning"
+                },
+                "claude": {
+                    "locked_out": true,
+                    "lockout_reason": "provider unavailable for this run"
+                }
+            }
+        }),
+    )
+    .await
+    .unwrap();
+
+    let bytes = serde_json::to_vec(&result).unwrap().len();
+    assert!(
+        bytes <= 16_000,
+        "task.strategy.plan response is {bytes} bytes; keep router explanations compact"
+    );
+    assert!(result["candidate_scores"].as_array().unwrap().len() >= 4);
+}
+
+#[tokio::test]
 async fn task_strategy_plan_accepts_explicit_router_profile() {
     let (state, _backend) = test_state();
     let result = dispatch(
