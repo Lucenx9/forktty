@@ -602,6 +602,21 @@ mod tests {
     }
 
     #[test]
+    fn agent_guide_pins_structured_task_kind_routing_guidance() {
+        for text in [
+            agent_guide::mcp_server_instructions(),
+            agent_guide::operating_guide_text(),
+        ] {
+            assert!(text.contains("mutating task_kind hints"));
+            assert!(text.contains("caller-normalized task_kind hints"));
+            assert!(text.contains("high-confidence goal"));
+        }
+        assert!(agent_guide::session_context_lines()
+            .iter()
+            .any(|line| line.contains("caller-normalized task_kind hints")));
+    }
+
+    #[test]
     fn task_strategy_plan_tool_maps_to_socket_method() {
         let (method, params) = build_socket_call_for_test(
             "task_strategy_plan",
