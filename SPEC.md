@@ -328,7 +328,8 @@ allocated `workspace-N` id name, keeping the visible workspace label aligned
 with the real workspace id.
 
 `task.strategy.plan` is a read-only task strategy planner. It accepts a user
-`goal` capped at 4096 UTF-8 bytes, optional workspace/surface target selectors (`workspace_id`,
+`goal` capped at 4096 UTF-8 bytes and rejected when it contains terminal
+control characters other than newline or tab, optional workspace/surface target selectors (`workspace_id`,
 `workspace_name`, `worktree_name`, `surface_id`), an optional absolute `cwd`
 override for read-only repository context inference inside a Git repository
 already represented by an open ForkTTY workspace, surface, or effective project
@@ -386,7 +387,7 @@ a small explainable score factor named `last_known_good_strategy` or
 cooldown, lockout, task fit, approvals, and visibility rules still win.
 Explicit `last_known_good.reason`, `cooldown_reason`, and `lockout_reason`
 strings are capped at 512 UTF-8 bytes because they are echoed in plan score
-explanations.
+explanations, and they are rejected when they contain control characters.
 When `last_known_good` is omitted, the planner best-effort reads completed
 `task_strategy` workflows for the selected workspace and infers the most recent
 usable strategy/harness evidence recorded by `task.strategy.apply`. Explicit
@@ -529,7 +530,7 @@ Example response:
 ```
 
 `task.strategy.apply` is the visible mutation phase for a previously returned
-task strategy plan. It accepts required `run_id`, `goal` capped at 4096 UTF-8 bytes, and `plan` fields
+task strategy plan. It accepts required `run_id`, `goal` capped at 4096 UTF-8 bytes and rejected when it contains terminal control characters other than newline or tab, and `plan` fields
 plus optional `approved`, `approval_id`, `request_approval`, `workflow_id`,
 `team_id`, `workspace_id` or other workspace selector including
 `worktree_name`, `cwd`, `leader_surface_id`/`surface_id`, and `submit`.

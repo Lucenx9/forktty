@@ -833,6 +833,11 @@ fn optional_bounded_object_string(
                 actual: value.len(),
             });
         }
+        if value.chars().any(char::is_control) {
+            return Err(DispatchError::InvalidParam(format!(
+                "Invalid parameter {field}: must not contain control characters"
+            )));
+        }
     }
     Ok(value)
 }
@@ -965,6 +970,10 @@ fn optional_signal_reason(
                     limit: MAX_TASK_STRATEGY_REASON_BYTES,
                     actual: trimmed.len(),
                 })
+            } else if trimmed.chars().any(char::is_control) {
+                Err(DispatchError::InvalidParam(format!(
+                    "{path}.{key} must not contain control characters"
+                )))
             } else {
                 Ok(Some(trimmed.to_string()))
             }

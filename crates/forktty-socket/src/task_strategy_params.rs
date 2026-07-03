@@ -86,5 +86,13 @@ pub(crate) fn task_strategy_goal_param(params: &Value) -> Result<String, Dispatc
             actual: goal.len(),
         });
     }
+    if goal
+        .chars()
+        .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\t'))
+    {
+        return Err(DispatchError::InvalidParam(
+            "Invalid parameter goal: must not contain terminal control characters".to_string(),
+        ));
+    }
     Ok(goal.to_string())
 }
