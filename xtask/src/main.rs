@@ -114,10 +114,36 @@ const VTE_CHECK_PATHS: &[&str] = &[
 
 const GHOSTTY_VENDOR_PATH: &str = "vendor/ghostty";
 const GHOSTTY_VENDOR_URL: &str = "https://github.com/Lucenx9/ghostty.git";
-const GHOSTTY_VENDOR_REV: &str = "31da31b65d1011b59e40932cd2b81cb9c69556bd";
+const GHOSTTY_VENDOR_REV: &str = "1ef34f73853d21e86b1395257832965af12f3ff3";
 const GHOSTTY_GTK_LIB_PROBE_SCRIPT: &str = "scripts/ghostty-gtk-lib-probe.sh";
 const PACKAGING_SCRIPTS: &[&str] = &["scripts/build-deb.sh", "scripts/build-appimage.sh"];
 const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
+const GHOSTTY_GTK_PROBE_REQUIRED_SYMBOLS: &[&str] = &[
+    "ghostty_gtk_context_set_wakeup_callback",
+    "ghostty_gtk_surface_send_text",
+    "ghostty_gtk_surface_new_with_working_directory_and_command",
+    "ghostty_gtk_surface_new_with_working_directory_command_and_scrollback_limit",
+    "ghostty_gtk_surface_read_text_limited",
+    "ghostty_gtk_surface_exit_code",
+    "ghostty_gtk_surface_child_pid",
+    "ghostty_gtk_surface_perform_action",
+    "ghostty_gtk_surface_restore_scrollback",
+    "ghostty_gtk_text_free",
+];
+const GHOSTTY_GTK_RESIZE_PATCH_MARKERS: &[(&str, &str)] = &[
+    (
+        "src/terminal/PageList.zig",
+        "FORKTTY PATCH: cursor-pin walking can cycle past the page list",
+    ),
+    (
+        "src/terminal/PageList.zig",
+        "FORKTTY PATCH: after column reflow, cursor-pin walking can",
+    ),
+    (
+        "src/terminal/Screen.zig",
+        "FORKTTY PATCH: use a temporary tracked pin for resize",
+    ),
+];
 
 fn main() -> ExitCode {
     match run() {
@@ -284,8 +310,25 @@ fn check_full_ghostty_vendor() -> Result<()> {
             "{GHOSTTY_VENDOR_PATH} must be pinned to {GHOSTTY_VENDOR_REV}, got {actual}"
         ));
     }
+    check_ghostty_vendor_resize_patch_markers(&root)?;
 
     println!("full Ghostty vendor: {actual}");
+    Ok(())
+}
+
+fn check_ghostty_vendor_resize_patch_markers(root: &Path) -> Result<()> {
+    let vendor = root.join(GHOSTTY_VENDOR_PATH);
+    for (relative_path, marker) in GHOSTTY_GTK_RESIZE_PATCH_MARKERS {
+        let path = vendor.join(relative_path);
+        let raw = fs::read_to_string(&path)
+            .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+        if !raw.contains(marker) {
+            return Err(format!(
+                "{} is missing Ghostty GTK resize safety patch marker `{marker}`",
+                path.display()
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -315,6 +358,14 @@ fn check_packaging_ghostty_gtk_lib_guard() -> Result<()> {
         if !probe.contains(needle) {
             return Err(format!(
                 "{} must support `{needle}` so packaging can reuse the Ghostty GTK probe",
+                GHOSTTY_GTK_LIB_PROBE_SCRIPT
+            ));
+        }
+    }
+    for symbol in GHOSTTY_GTK_PROBE_REQUIRED_SYMBOLS {
+        if !probe.contains(symbol) {
+            return Err(format!(
+                "{} must verify required Ghostty GTK ABI symbol `{symbol}`",
                 GHOSTTY_GTK_LIB_PROBE_SCRIPT
             ));
         }

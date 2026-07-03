@@ -725,7 +725,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "surface_capture_tail",
             annotations: read_only_annotations(),
-            description: "Capture the last N lines of a ForkTTY terminal surface, including scrollback. Defaults surface_id from FORKTTY_SURFACE_ID.",
+            description: "Capture recent text from a ForkTTY terminal surface. Embedded Ghostty panes currently serve this from Ghostty's visible-text ABI, so use surface_read_text with scope=all when bounded full scrollback text is required. Defaults surface_id from FORKTTY_SURFACE_ID.",
             input_schema: object_schema(
                 &[],
                 json!({

@@ -123,13 +123,15 @@ verify_ghostty_gtk_lib_symbols() {
 
   for symbol in \
     ghostty_gtk_context_set_wakeup_callback \
+    ghostty_gtk_surface_send_text \
     ghostty_gtk_surface_new_with_working_directory_and_command \
     ghostty_gtk_surface_new_with_working_directory_command_and_scrollback_limit \
     ghostty_gtk_surface_read_text_limited \
     ghostty_gtk_surface_exit_code \
     ghostty_gtk_surface_child_pid \
     ghostty_gtk_surface_perform_action \
-    ghostty_gtk_surface_restore_scrollback
+    ghostty_gtk_surface_restore_scrollback \
+    ghostty_gtk_text_free
   do
     if ! nm -D "$lib_path" | awk -v symbol="$symbol" '$NF == symbol { found = 1 } END { exit found ? 0 : 1 }'; then
       echo "Ghostty GTK embedding library is missing ${symbol}: $lib_path" >&2
