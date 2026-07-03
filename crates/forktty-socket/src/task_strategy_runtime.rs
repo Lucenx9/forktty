@@ -1007,6 +1007,12 @@ fn optional_signal_reason(
 }
 
 fn validate_submitted_task_strategy_plan(plan: &TaskStrategyPlan) -> Result<(), DispatchError> {
+    if plan.assignments.is_empty() {
+        return Err(DispatchError::InvalidParam(
+            "task.strategy.apply plan requires at least one assignment; team layer requires at least one team assignment"
+                .to_string(),
+        ));
+    }
     if plan.assignments.len() > MAX_TASK_STRATEGY_ASSIGNMENTS {
         return Err(DispatchError::InvalidParam(format!(
             "task.strategy.apply plan has too many assignments (limit {MAX_TASK_STRATEGY_ASSIGNMENTS})"
