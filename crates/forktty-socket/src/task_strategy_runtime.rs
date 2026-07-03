@@ -15,8 +15,8 @@ use forktty_core::{
     worktree, FeedApprovalState, FeedEntry, FeedEntryType, HarnessAssignment, HarnessCapability,
     HarnessCooldownKind, HarnessHealth, HarnessRegistry, HarnessRole, HarnessRoutingSignals,
     TaskClass, TaskRouterProfile, TaskStrategy, TaskStrategyApproval, TaskStrategyInput,
-    TaskStrategyLastKnownGood, TaskStrategyPlan, TaskStrategyScoreFactor, WorkflowQuery,
-    WorkflowState, WorkspaceSelector,
+    TaskStrategyLastKnownGood, TaskStrategyLayers, TaskStrategyPlan, TaskStrategyScoreFactor,
+    WorkflowQuery, WorkflowState, WorkspaceSelector,
 };
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -762,7 +762,10 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
                         state,
                         &request.team_worker_launch_params(assignment, &task_id, &worker_id),
                     )
-                    .await?;
+                    .await
+                    .map_err(|err| {
+                        with_next_best_harness_hint(err, assignment, &request.plan.layers)
+                    })?;
                     actions.push(json!({
                         "method": "team.worker.launch",
                         "status": "applied",
@@ -1118,6 +1121,55 @@ fn optional_signal_bool(
         Some(_) => Err(DispatchError::InvalidParam(format!(
             "{path}.{key} must be a boolean"
         ))),
+    }
+}
+
+/// Advisory retry hint for a failed assignment launch: the next-best ready
+/// harness for the same role, ranked with the plan-time scorer. Returns None
+/// when no other ready harness exists. It suggests only; it never retries.
+pub(crate) fn next_best_harness_suggestion(
+    failed: &HarnessAssignment,
+    registry: &HarnessRegistry,
+    layers: &TaskStrategyLayers,
+) -> Option<String> {
+    let next = forktty_core::ranked_harnesses_for_role(&failed.role, registry, layers)
+        .into_iter()
+        .find(|assignment| assignment.harness_id != failed.harness_id)?;
+    Some(format!(
+        "next-best ready harness for {}: {}; retry the apply with that assignment",
+        role_id(&failed.role),
+        next.harness_id
+    ))
+}
+
+/// Append an advisory hint to a dispatch error message while preserving the
+/// error variant and code. Variants without a free-text message pass through.
+fn append_dispatch_error_hint(err: DispatchError, hint: &str) -> DispatchError {
+    match err {
+        DispatchError::NotFound(msg) => DispatchError::NotFound(format!("{msg}; {hint}")),
+        DispatchError::Conflict(msg) => DispatchError::Conflict(format!("{msg}; {hint}")),
+        DispatchError::AlreadyExists(msg) => DispatchError::AlreadyExists(format!("{msg}; {hint}")),
+        DispatchError::NotReady(msg) => DispatchError::NotReady(format!("{msg}; {hint}")),
+        DispatchError::InvalidParam(msg) => DispatchError::InvalidParam(format!("{msg}; {hint}")),
+        DispatchError::PreconditionFailed(msg) => {
+            DispatchError::PreconditionFailed(format!("{msg}; {hint}"))
+        }
+        DispatchError::Other(msg) => DispatchError::Other(format!("{msg}; {hint}")),
+        other => other,
+    }
+}
+
+/// Attach the next-best-harness hint to a launch-path failure for one
+/// assignment, using current system capabilities as the candidate registry.
+fn with_next_best_harness_hint(
+    err: DispatchError,
+    assignment: &HarnessAssignment,
+    layers: &TaskStrategyLayers,
+) -> DispatchError {
+    let registry = harness_registry_from_capabilities(&system_runtime::capabilities());
+    match next_best_harness_suggestion(assignment, &registry, layers) {
+        Some(hint) => append_dispatch_error_hint(err, &hint),
+        None => err,
     }
 }
 
@@ -1887,13 +1939,23 @@ impl TaskStrategyApplyRequest {
 
     fn validate_submit_assignments_launchable(&self) -> Result<(), DispatchError> {
         for assignment in &self.plan.assignments {
-            let selection = select_team_worker_provider(Some(assignment.harness_id.as_str()))?;
-            let _ = team_worker_launch_command_with_program(
-                &selection.selected_agent,
-                &selection.program,
-                Some(role_id(&assignment.role)),
-                Vec::new(),
-            )?;
+            let launchable = select_team_worker_provider(Some(assignment.harness_id.as_str()))
+                .and_then(|selection| {
+                    team_worker_launch_command_with_program(
+                        &selection.selected_agent,
+                        &selection.program,
+                        Some(role_id(&assignment.role)),
+                        Vec::new(),
+                    )
+                    .map(|_| ())
+                });
+            if let Err(err) = launchable {
+                return Err(with_next_best_harness_hint(
+                    err,
+                    assignment,
+                    &self.plan.layers,
+                ));
+            }
         }
         Ok(())
     }

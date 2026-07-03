@@ -604,7 +604,11 @@ local preconditions such as required team assignments, `worktree_name`, and
 already-open worktree workspaces before creating approval requests. With
 `submit: true`, it also validates that every assignment names a launchable
 provider harness after approvals are satisfied but before any workflow/team
-mutation. A plan with
+mutation. When that validation or a later worker launch fails for an
+assignment, the error message appends an advisory hint naming the next-best
+ready harness for the same role (ranked with the plan-time scorer against
+current capabilities); the hint is a retry suggestion only — apply never
+retries or substitutes harnesses on its own. A plan with
 `layers.team: true` must include at least one assignment even when staging, so
 apply cannot create an empty team run. With `request_approval: true`, missing approvals
 create or reuse a pending Feed approval with a deterministic request-bound id shaped like

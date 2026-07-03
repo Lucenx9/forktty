@@ -2373,6 +2373,47 @@ fn task_strategy_harness_signals_apply_cooldown_and_lockout_separately() {
 }
 
 #[test]
+fn launch_failure_suggestion_names_next_best_harness_for_role() {
+    let registry = cooldown_inference_registry();
+    let failed = forktty_core::HarnessAssignment {
+        role: HarnessRole::Reviewer,
+        harness_id: "claude".to_string(),
+        reason: "highest-scored ready harness for reviewer".to_string(),
+        score: 0,
+        factors: Vec::new(),
+    };
+
+    let hint = crate::task_strategy_runtime::next_best_harness_suggestion(
+        &failed,
+        &registry,
+        &forktty_core::TaskStrategyLayers::default(),
+    )
+    .unwrap();
+    assert!(hint.contains("codex"), "{hint}");
+    assert!(hint.contains("reviewer"), "{hint}");
+
+    let single = crate::task_strategy_runtime::harness_registry_from_capabilities(&json!({
+        "provider_capabilities": {
+            "claude": {
+                "team_worker_launch": true,
+                "launchable": true,
+                "safe_resume": true,
+                "cwd_resume_flag": true,
+                "available_on_path": true,
+                "executable": "/usr/bin/claude",
+                "disabled_by_config": false
+            }
+        }
+    }));
+    assert!(crate::task_strategy_runtime::next_best_harness_suggestion(
+        &failed,
+        &single,
+        &forktty_core::TaskStrategyLayers::default(),
+    )
+    .is_none());
+}
+
+#[test]
 fn harness_signals_parse_and_validate_cooldown_kind() {
     let mut registry = cooldown_inference_registry();
     crate::task_strategy_runtime::apply_harness_routing_signals(

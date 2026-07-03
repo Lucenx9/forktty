@@ -5,6 +5,10 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- Task strategy apply now appends an advisory next-best-harness hint to
+  assignment launchability and worker launch failures, naming the highest
+  scored other ready harness for the same role so callers can retry without
+  re-planning; apply never retries or substitutes harnesses on its own.
 - Task strategy `harness_signals` now accept an optional `cooldown_kind`
   (`quota`, `auth`, `crash`, or `timeout`) so the soft cooldown penalty scales
   with the cause instead of weighing every reason the same; unknown kinds and

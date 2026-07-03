@@ -1031,6 +1031,24 @@ fn self_assignments_for_strategy(strategy: &TaskStrategy) -> Vec<HarnessAssignme
     }]
 }
 
+/// Rank the ready harnesses in `registry` for one role, best first, using the
+/// same scorer as plan-time assignment. Callers use this after a launch
+/// failure to suggest the next-best harness without re-planning; it never
+/// launches anything.
+pub fn ranked_harnesses_for_role(
+    role: &HarnessRole,
+    registry: &HarnessRegistry,
+    layers: &TaskStrategyLayers,
+) -> Vec<HarnessAssignment> {
+    let ready = registry
+        .harnesses
+        .iter()
+        .enumerate()
+        .filter(|(_, harness)| harness_available_for_routing(harness))
+        .collect::<Vec<_>>();
+    scored_harness_assignments(role.clone(), &ready, layers, None)
+}
+
 fn select_harness_assignment(
     role: HarnessRole,
     ready: &[(usize, &HarnessCapability)],
@@ -2255,6 +2273,39 @@ mod tests {
             .factors
             .iter()
             .any(|factor| factor.name == "session_cooldown" && factor.points == 0));
+    }
+
+    #[test]
+    fn ranked_harnesses_for_role_orders_ready_harnesses_and_skips_locked_out() {
+        let registry = HarnessRegistry {
+            harnesses: vec![
+                harness("codex", false, true),
+                harness("claude", true, true),
+                harness_with_signals(
+                    "opencode",
+                    HarnessRoutingSignals {
+                        locked_out: true,
+                        lockout_reason: Some("task mode disabled".to_string()),
+                        ..HarnessRoutingSignals::default()
+                    },
+                ),
+            ],
+        };
+
+        let ranked = ranked_harnesses_for_role(
+            &HarnessRole::Reviewer,
+            &registry,
+            &TaskStrategyLayers::default(),
+        );
+
+        let ids = ranked
+            .iter()
+            .map(|assignment| assignment.harness_id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["claude", "codex"]);
+        assert!(ranked
+            .iter()
+            .all(|assignment| assignment.role == HarnessRole::Reviewer));
     }
 
     #[test]
