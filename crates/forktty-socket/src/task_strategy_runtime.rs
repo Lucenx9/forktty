@@ -1825,7 +1825,7 @@ fn assignment_prompt(
 ) -> String {
     let target = assignment_target_context_lines(target);
     format!(
-        "ForkTTY task assignment.\nGoal: {goal}\nRole: {}\nHarness: {}\nReason: {}{target}\nStay within this role, do not subdelegate, and report verification evidence before completion.",
+        "ForkTTY task assignment.\nGoal: {goal}\nRole: {}\nHarness: {}\nReason: {}{target}\nThe leader already applied this task strategy and launched this worker pane; do not call task.strategy.apply, team.worker.launch, worktree_create, or launch nested workers unless the leader sends a separate explicit instruction.\nStay within this role, do not subdelegate, and report verification evidence before completion.",
         role_id(&assignment.role),
         assignment.harness_id,
         assignment.reason

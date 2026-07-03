@@ -2,7 +2,7 @@ use crate::{
     coordinator::TeamTerminalDispatchedMessage, ensure_model_surface_exists, store_access,
     DispatchError, SocketAppState,
 };
-use forktty_core::{Surface, TeamState, TeamWorker};
+use forktty_core::{Surface, TeamState, TeamSummary, TeamWorker};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -497,6 +497,45 @@ pub(crate) fn team_worker_health_rows(
         "stale_after_ms": stale_after_ms,
         "workers": workers,
     }))
+}
+
+pub(crate) fn runtime_team_summary_value(
+    state: &SocketAppState,
+    summary: TeamSummary,
+    team: &TeamState,
+    stale_after_ms: u64,
+) -> Result<Value, DispatchError> {
+    let health = team_worker_health_rows(state, team, stale_after_ms)?;
+    let runtime_active_workers = health["workers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|worker| {
+            matches!(
+                worker["final_state"].as_str(),
+                Some("running" | "stale" | "needs_input" | "starting")
+            )
+        })
+        .count();
+    let persistent_active_workers = summary.workers_active;
+    let mut summary = json!(summary);
+    summary["workers_active"] = json!(runtime_active_workers);
+    if persistent_active_workers > runtime_active_workers {
+        push_summary_warning(&mut summary, "active_workers_without_live_surface");
+    }
+    Ok(summary)
+}
+
+fn push_summary_warning(summary: &mut Value, warning: &str) {
+    let Some(warnings) = summary["consistency_warnings"].as_array_mut() else {
+        return;
+    };
+    if !warnings
+        .iter()
+        .any(|existing| existing.as_str() == Some(warning))
+    {
+        warnings.push(json!(warning));
+    }
 }
 
 fn team_worker_final_state(

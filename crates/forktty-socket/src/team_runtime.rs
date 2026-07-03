@@ -7,7 +7,7 @@ use crate::team_state::{
     ensure_team_worker_can_launch, forget_team_message_terminal_body_sent,
     forget_team_message_terminal_dispatched, remember_team_launch_owned_surface,
     remember_team_message_terminal_body_sent, remember_team_message_terminal_dispatched,
-    team_message_dispatch_target, team_message_terminal_body_sent,
+    runtime_team_summary_value, team_message_dispatch_target, team_message_terminal_body_sent,
     team_terminal_dispatched_message, team_worker_agent, team_worker_health_rows,
     team_worker_launch_owned_surface_id, team_worker_surface_id,
 };
@@ -78,7 +78,12 @@ pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Val
     let team = store
         .get(&team_id)
         .ok_or(DispatchError::NotFound("team".to_string()))?;
-    let summary_before = json!(store.summary(&team_id).map_err(DispatchError::from)?);
+    let summary_before = runtime_team_summary_value(
+        state,
+        store.summary(&team_id).map_err(DispatchError::from)?,
+        &team,
+        DEFAULT_TEAM_WORKER_STALE_MS,
+    )?;
     let health_before = team_worker_health_rows(state, &team, DEFAULT_TEAM_WORKER_STALE_MS)?;
     let finish_actions = team_finish_actions(&health_before, close_workers);
     let active_workers = team_finish_active_workers(&health_before);
@@ -243,10 +248,15 @@ pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Val
         .load()
         .await
         .map_err(DispatchError::from)?;
-    let summary_after = json!(store.summary(&team_id).map_err(DispatchError::from)?);
     let team_after = store
         .get(&team_id)
         .ok_or(DispatchError::NotFound("team".to_string()))?;
+    let summary_after = runtime_team_summary_value(
+        state,
+        store.summary(&team_id).map_err(DispatchError::from)?,
+        &team_after,
+        DEFAULT_TEAM_WORKER_STALE_MS,
+    )?;
     let health_after = team_worker_health_rows(state, &team_after, DEFAULT_TEAM_WORKER_STALE_MS)?;
     Ok(json!({
         "team_id": team_id,
@@ -802,10 +812,17 @@ pub(crate) async fn summary(
         .load()
         .await
         .map_err(DispatchError::from)?;
-    let summary = store
-        .summary(&request.team_id)
-        .map_err(DispatchError::from)?;
-    Ok(json!(summary))
+    let team = store
+        .get(&request.team_id)
+        .ok_or(DispatchError::NotFound("team".to_string()))?;
+    runtime_team_summary_value(
+        state,
+        store
+            .summary(&request.team_id)
+            .map_err(DispatchError::from)?,
+        &team,
+        DEFAULT_TEAM_WORKER_STALE_MS,
+    )
 }
 
 pub(crate) async fn events(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {

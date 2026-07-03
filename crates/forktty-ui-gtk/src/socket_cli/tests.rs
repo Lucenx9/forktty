@@ -344,6 +344,13 @@ fn parse_flags_handles_boolean_options_and_terminator() {
     assert_eq!(parsed.options.get("dry-run"), Some(&FlagValue::Bool));
     assert_eq!(parsed.positionals, vec!["codex"]);
 
+    let parsed = parse_flags(strings(&["--dry-run", "false", "codex"]), &["dry-run"]);
+    assert_eq!(
+        parsed.options.get("dry-run"),
+        Some(&FlagValue::String("false".to_string()))
+    );
+    assert_eq!(parsed.positionals, vec!["codex"]);
+
     let parsed = parse_flags(strings(&["--title", "Heads up", "--", "--body"]), &[]);
     assert_eq!(
         parsed.options.get("title"),

@@ -1,9 +1,9 @@
 use crate::context_params::ContextSnapshotRequest;
 use crate::{
     agent_health_rows, agent_session_rows, current_unix_epoch_ms, feed_view, remote,
-    status_runtime, store_access, surface_effective_project_cwd, topology_view, workflow_runtime,
-    DispatchError, SocketAppState, MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES,
-    MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_SURFACES,
+    status_runtime, store_access, surface_effective_project_cwd, team_state, topology_view,
+    workflow_runtime, DispatchError, SocketAppState, DEFAULT_TEAM_WORKER_STALE_MS,
+    MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES, MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_SURFACES,
 };
 use forktty_core::{SurfaceKind, WorkflowQuery, WorkflowState};
 use forktty_terminal::TerminalTextCapture;
@@ -461,9 +461,16 @@ async fn context_snapshot_team_state(
     });
     let summaries = teams
         .iter()
-        .map(|team| store.summary(&team.id).map(|summary| json!(summary)))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(DispatchError::from)?;
+        .map(|team| {
+            let summary = store.summary(&team.id).map_err(DispatchError::from)?;
+            team_state::runtime_team_summary_value(
+                state,
+                summary,
+                team,
+                DEFAULT_TEAM_WORKER_STALE_MS,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let teams = if include_team_details {
         json!(teams)
     } else {

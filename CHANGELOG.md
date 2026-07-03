@@ -63,6 +63,16 @@ All notable changes to ForkTTY are documented here.
 ### Fixed
 - Fixed `cargo audit` failures by updating the Windows notification backend
   dependency so the lockfile no longer includes vulnerable `quick-xml` versions.
+- Fixed CLI boolean parsing so commands such as
+  `forktty task-plan --repo-dirty false --parallel false` treat the following
+  `true`/`false` token as the option value instead of silently leaving it in the
+  positional task goal.
+- Fixed `team.summary` and compact context snapshots so workers whose terminal
+  surfaces disappeared are no longer counted as active and now raise a
+  consistency warning.
+- Fixed task strategy worker prompts so launched workers are told that the
+  leader already applied the plan and must not call `task.strategy.apply`,
+  launch nested workers, or create nested worktrees unless separately directed.
 - Fixed command argv validation so GNU `env` wrappers cannot hide shell
   trampolines behind `-- NAME=VALUE` assignments, `-a`/`--argv0` arguments,
   `-S`/`--split-string` values that begin with `--`, or attached/clustered

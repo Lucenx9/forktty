@@ -57,6 +57,68 @@ async fn team_worker_health_reports_active_status_as_running_final_state() {
 }
 
 #[tokio::test]
+async fn team_summary_excludes_active_workers_with_missing_surfaces() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "workspace_id": workspace_id,
+            "status": "active"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.task.upsert",
+        json!({
+            "team_id": "team-1",
+            "task_id": "task-1",
+            "title": "Smoke",
+            "status": "running"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "surface_id": surface_id,
+            "status": "running",
+            "assigned_task_id": "task-1"
+        }),
+    )
+    .await
+    .unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.close_surface(surface_id).is_some());
+    }
+
+    let summary = dispatch(&state, "team.summary", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+
+    assert_eq!(summary["workers_total"], 1);
+    assert_eq!(summary["workers_active"], 0);
+    assert!(summary["consistency_warnings"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("active_workers_without_live_surface")));
+}
+
+#[tokio::test]
 async fn team_finish_marks_quiescent_active_team_done() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();

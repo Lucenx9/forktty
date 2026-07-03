@@ -154,6 +154,65 @@ fn task_plan_requests_task_strategy_plan() {
 }
 
 #[test]
+fn task_plan_accepts_space_separated_false_bool_options() {
+    let request = with_socket_response(
+        |req| {
+            json!({
+                "id": req["id"],
+                "ok": true,
+                "result": {
+                    "strategy": "solo_tracked",
+                    "task_class": "repo_inspection",
+                    "router_profile": "balanced",
+                    "layers": {
+                        "workflow": true,
+                        "team": false,
+                        "loop_metadata": false,
+                        "worktree": false,
+                        "feed": true,
+                        "mcp": true,
+                        "hooks": true
+                    },
+                    "assignments": [
+                        {"role": "implementer", "harness_id": "codex", "reason": "ready"}
+                    ],
+                    "approvals": ["start_run"],
+                    "reasons": ["repo inspection"]
+                }
+            })
+            .to_string()
+        },
+        |socket_path| {
+            handle_task_plan(
+                &ctx_for(socket_path),
+                strings(&[
+                    "--cwd",
+                    "/repo/forktty",
+                    "--repo-dirty",
+                    "false",
+                    "--parallel",
+                    "false",
+                    "--review",
+                    "false",
+                    "--user-visible",
+                    "false",
+                    "Inspect",
+                    "router",
+                    "state",
+                ]),
+            )
+            .unwrap();
+        },
+    );
+
+    assert_eq!(request["params"]["goal"], "Inspect router state");
+    assert_eq!(request["params"]["repo_dirty"], false);
+    assert_eq!(request["params"]["user_requested_parallelism"], false);
+    assert_eq!(request["params"]["user_requested_review"], false);
+    assert_eq!(request["params"]["likely_user_visible_change"], false);
+}
+
+#[test]
 fn task_plan_can_target_surface_for_context_detection() {
     let request = with_socket_response(
         |req| {

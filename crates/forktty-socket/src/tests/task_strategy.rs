@@ -2235,6 +2235,9 @@ async fn task_strategy_apply_submit_launches_visible_workers_and_dispatches_prom
     assert_eq!(backend.spawn_shell(reviewer_surface).unwrap(), "claude");
     assert_eq!(backend.sent_text(implementer_surface).unwrap().len(), 2);
     assert_eq!(backend.sent_text(reviewer_surface).unwrap().len(), 2);
+    let implementer_text = backend.sent_text(implementer_surface).unwrap().join("");
+    assert!(implementer_text.contains("The leader already applied this task strategy"));
+    assert!(implementer_text.contains("do not call task.strategy.apply"));
 }
 
 #[tokio::test]

@@ -124,8 +124,18 @@ pub(super) fn parse_flags(args: Vec<String>, boolean_options: &[&str]) -> Parsed
             continue;
         }
         if boolean_options.contains(&raw) {
-            parsed.options.insert(raw.to_string(), FlagValue::Bool);
-            index += 1;
+            if matches!(
+                args.get(index + 1).map(String::as_str),
+                Some("true" | "false")
+            ) {
+                parsed
+                    .options
+                    .insert(raw.to_string(), FlagValue::String(args[index + 1].clone()));
+                index += 2;
+            } else {
+                parsed.options.insert(raw.to_string(), FlagValue::Bool);
+                index += 1;
+            }
             continue;
         }
         if args
