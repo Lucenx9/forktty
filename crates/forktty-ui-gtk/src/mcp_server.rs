@@ -621,6 +621,20 @@ mod tests {
     }
 
     #[test]
+    fn task_strategy_tool_descriptions_stay_compact() {
+        for name in ["task_strategy_plan", "task_strategy_apply"] {
+            let spec = tool_specs()
+                .into_iter()
+                .find(|spec| spec.name == name)
+                .expect("task strategy tool exists");
+            assert!(
+                spec.description.len() <= 500,
+                "{name} description should stay compact; put long policy in the operating guide resource/prompt"
+            );
+        }
+    }
+
+    #[test]
     fn task_strategy_plan_tool_maps_to_socket_method() {
         let (method, params) = build_socket_call_for_test(
             "task_strategy_plan",
