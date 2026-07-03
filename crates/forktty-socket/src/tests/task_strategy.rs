@@ -2567,6 +2567,61 @@ async fn task_strategy_apply_submit_reuses_worker_when_explicit_cwd_spelling_cha
 
 #[tokio::test]
 #[serial_test::serial]
+async fn task_strategy_apply_rejects_explicit_cwd_resolving_to_non_utf8_path_without_mutation() {
+    use std::ffi::OsString;
+    use std::os::unix::{ffi::OsStringExt, fs::symlink};
+
+    let (mut state, _backend) = test_state();
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _claude = write_fake_program(bin_dir.path(), "claude");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let store_dir = tempfile::tempdir().unwrap();
+    let repo_parent = tempfile::tempdir().unwrap();
+    let invalid_repo_name = OsString::from_vec(b"repo-\xff".to_vec());
+    let repo_dir = repo_parent.path().join(invalid_repo_name);
+    std::fs::create_dir_all(&repo_dir).unwrap();
+    git2::Repository::init(&repo_dir).unwrap();
+    let link_parent = tempfile::tempdir().unwrap();
+    let repo_link = link_parent.path().join("repo-link");
+    symlink(&repo_dir, &repo_link).unwrap();
+    state.workflow_store_path = Some(store_dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(store_dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.set_surface_cwd(surface_id, repo_link.clone()));
+    }
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": surface_id,
+            "cwd": repo_link,
+            "goal": "Implement the router",
+            "approved": ["start_run", "launch_parallel_workers"],
+            "submit": true,
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("valid UTF-8"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn task_strategy_apply_submit_does_not_reuse_staged_prompt_with_stale_cwd() {
     let (mut state, backend) = test_state();
     let bin_dir = tempfile::tempdir().unwrap();

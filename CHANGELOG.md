@@ -14,6 +14,11 @@ All notable changes to ForkTTY are documented here.
   newest ForkTTY-managed skill backups per target and report pruned backups,
   while leaving unmanaged `.bak-*` directories untouched.
 
+### Security
+- Rejected task-strategy `cwd` values whose canonical path is not valid UTF-8,
+  avoiding a panic when launching team workers from a symlink to a non-UTF-8
+  repository path.
+
 ## [0.2.0-alpha.17] - 2026-07-03
 
 ### Added
