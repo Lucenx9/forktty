@@ -305,6 +305,68 @@ async fn task_strategy_plan_infers_last_known_good_from_completed_workflow() {
 }
 
 #[tokio::test]
+async fn task_strategy_plan_ignores_invalid_inferred_last_known_good_harness_id() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let huge_harness_id = format!("legacy-{}", "x".repeat(20_000));
+
+    dispatch(
+        &state,
+        "workflow.upsert",
+        json!({
+            "workflow_id": "router-success-oversized-harness",
+            "workspace_id": workspace_id,
+            "mode": "task_strategy",
+            "status": "done",
+            "goal": "Inspect router",
+            "memory": "Task strategy: SoloTracked. Run id: router-success-oversized-harness."
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "workflow.plan.set",
+        json!({
+            "workflow_id": "router-success-oversized-harness",
+            "steps": [
+                {
+                    "id": "implement",
+                    "title": "Implementer: legacy",
+                    "status": "done",
+                    "detail": format!("Goal: Inspect router\nRole: implementer\nHarness: {huge_harness_id}\nReason: completed")
+                }
+            ]
+        }),
+    )
+    .await
+    .unwrap();
+
+    let result = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "workspace_id": workspace_id,
+            "goal": "Inspect router state",
+            "repo_dirty": false
+        }),
+    )
+    .await
+    .unwrap();
+
+    let bytes = serde_json::to_vec(&result).unwrap().len();
+    assert!(
+        bytes <= 16_000,
+        "task.strategy.plan response is {bytes} bytes after invalid inferred harness id"
+    );
+    let text = serde_json::to_string(&result).unwrap();
+    assert!(!text.contains(&huge_harness_id));
+}
+
+#[tokio::test]
 async fn task_strategy_plan_prefers_explicit_last_known_good_over_workflow_history() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();

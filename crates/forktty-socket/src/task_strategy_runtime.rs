@@ -486,6 +486,7 @@ fn harness_id_from_workflow_plan(workflow: &WorkflowState) -> Option<String> {
         .find_map(|line| line.trim().strip_prefix("Harness:"))
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .filter(|value| validate_task_strategy_id("workflow.plan.harness_id", value).is_ok())
         .map(str::to_string)
 }
 

@@ -35,6 +35,8 @@ All notable changes to ForkTTY are documented here.
   characters before reaching worker prompts or score explanations.
 - Fixed task strategy text validation so terminal/control characters at trimmed
   string edges are rejected instead of silently dropped.
+- Fixed task strategy last-known-good inference so invalid harness ids in old
+  workflow plan text are ignored instead of inflating router explanations.
 - Fixed `orchestration.cleanup` so `dry_run=false` without `apply=true` is
   rejected instead of mutating stale orchestration records.
 - Fixed `orchestration.cleanup` so non-terminal workers without a recorded
