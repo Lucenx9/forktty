@@ -2526,6 +2526,14 @@ async fn task_strategy_apply_submit_launches_visible_workers_and_dispatches_prom
 
     assert_eq!(result["status"], "running");
     assert_eq!(result["blocked_approvals"], json!([]));
+    let result_json = serde_json::to_string(&result).unwrap();
+    assert!(
+        result_json.len() <= 8_000,
+        "task.strategy.apply submit response is {} bytes; return action summaries, not full team records",
+        result_json.len()
+    );
+    assert!(!result_json.contains("ForkTTY task assignment."));
+    assert!(!result_json.contains("The leader already applied this task strategy"));
     let action_methods = result["actions"]
         .as_array()
         .unwrap()
