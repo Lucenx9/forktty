@@ -804,6 +804,11 @@ fn optional_object_string(
     match object.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(value)) => {
+            if value.chars().any(char::is_control) {
+                return Err(DispatchError::InvalidParam(format!(
+                    "{path}.{key} must not contain control characters"
+                )));
+            }
             let trimmed = value.trim();
             if trimmed.is_empty() {
                 Ok(None)
@@ -961,6 +966,11 @@ fn optional_signal_reason(
     match signal.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(value)) => {
+            if value.chars().any(char::is_control) {
+                return Err(DispatchError::InvalidParam(format!(
+                    "{path}.{key} must not contain control characters"
+                )));
+            }
             let trimmed = value.trim();
             if trimmed.is_empty() {
                 Ok(None)

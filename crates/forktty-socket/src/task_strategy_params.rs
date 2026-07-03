@@ -1,5 +1,5 @@
 use crate::DispatchError;
-use crate::{optional_bool_param, optional_non_blank_string_param, required_trimmed_string};
+use crate::{optional_bool_param, optional_non_blank_string_param, required_string};
 use forktty_core::protocol_limits;
 use serde_json::Value;
 
@@ -78,21 +78,22 @@ pub(crate) fn task_strategy_plan_params(
 }
 
 pub(crate) fn task_strategy_goal_param(params: &Value) -> Result<String, DispatchError> {
-    let goal = required_trimmed_string(params, "goal")?;
-    if goal.len() > MAX_TASK_STRATEGY_GOAL_BYTES {
-        return Err(DispatchError::PayloadTooLarge {
-            field: "goal",
-            limit: MAX_TASK_STRATEGY_GOAL_BYTES,
-            actual: goal.len(),
-        });
-    }
-    if goal
+    let raw_goal = required_string(params, "goal")?;
+    if raw_goal
         .chars()
         .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\t'))
     {
         return Err(DispatchError::InvalidParam(
             "Invalid parameter goal: must not contain terminal control characters".to_string(),
         ));
+    }
+    let goal = raw_goal.trim();
+    if goal.len() > MAX_TASK_STRATEGY_GOAL_BYTES {
+        return Err(DispatchError::PayloadTooLarge {
+            field: "goal",
+            limit: MAX_TASK_STRATEGY_GOAL_BYTES,
+            actual: goal.len(),
+        });
     }
     Ok(goal.to_string())
 }

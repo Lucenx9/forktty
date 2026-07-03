@@ -1540,24 +1540,26 @@ async fn task_strategy_plan_rejects_oversized_harness_signal_reason() {
 async fn task_strategy_plan_rejects_control_characters_in_harness_signal_reason() {
     let (state, _backend) = test_state();
 
-    let err = dispatch(
-        &state,
-        "task.strategy.plan",
-        json!({
-            "goal": "Inspect router state",
-            "harness_signals": {
-                "codex": {
-                    "cooldown": true,
-                    "cooldown_reason": "quota\u{1b}[31m"
+    for reason in ["quota\u{1b}[31m", "quota\r"] {
+        let err = dispatch(
+            &state,
+            "task.strategy.plan",
+            json!({
+                "goal": "Inspect router state",
+                "harness_signals": {
+                    "codex": {
+                        "cooldown": true,
+                        "cooldown_reason": reason
+                    }
                 }
-            }
-        }),
-    )
-    .await
-    .unwrap_err();
+            }),
+        )
+        .await
+        .unwrap_err();
 
-    assert_eq!(err.code(), "invalid_param");
-    assert!(err.to_string().contains("control characters"));
+        assert_eq!(err.code(), "invalid_param");
+        assert!(err.to_string().contains("control characters"));
+    }
 }
 
 #[tokio::test]
@@ -1589,22 +1591,24 @@ async fn task_strategy_plan_rejects_oversized_last_known_good_reason() {
 async fn task_strategy_plan_rejects_control_characters_in_last_known_good_reason() {
     let (state, _backend) = test_state();
 
-    let err = dispatch(
-        &state,
-        "task.strategy.plan",
-        json!({
-            "goal": "Fix the task router bug",
-            "last_known_good": {
-                "strategy": "solo_with_verify_loop",
-                "reason": "previous\u{1b}[31mrun"
-            }
-        }),
-    )
-    .await
-    .unwrap_err();
+    for reason in ["previous\u{1b}[31mrun", "previous run\r"] {
+        let err = dispatch(
+            &state,
+            "task.strategy.plan",
+            json!({
+                "goal": "Fix the task router bug",
+                "last_known_good": {
+                    "strategy": "solo_with_verify_loop",
+                    "reason": reason
+                }
+            }),
+        )
+        .await
+        .unwrap_err();
 
-    assert_eq!(err.code(), "invalid_param");
-    assert!(err.to_string().contains("last_known_good.reason"));
+        assert_eq!(err.code(), "invalid_param");
+        assert!(err.to_string().contains("last_known_good.reason"));
+    }
 }
 
 #[tokio::test]
@@ -1678,7 +1682,11 @@ async fn task_strategy_plan_rejects_oversized_goal() {
 async fn task_strategy_plan_rejects_terminal_control_characters_in_goal() {
     let (state, _backend) = test_state();
 
-    for goal in ["Fix router\u{1b}[31m", "Fix router\rsubmit early"] {
+    for goal in [
+        "Fix router\u{1b}[31m",
+        "Fix router\rsubmit early",
+        "Fix router\r",
+    ] {
         let err = dispatch(&state, "task.strategy.plan", json!({ "goal": goal }))
             .await
             .unwrap_err();
@@ -1741,25 +1749,27 @@ async fn task_strategy_apply_rejects_terminal_control_characters_in_goal_without
     state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
     state.team_store_path = Some(dir.path().join("team-v1.json"));
 
-    let err = dispatch(
-        &state,
-        "task.strategy.apply",
-        json!({
-            "run_id": "router-run-1",
-            "goal": "Implement router\rsubmit early",
-            "approved": ["start_run"],
-            "plan": staged_team_plan_json()
-        }),
-    )
-    .await
-    .unwrap_err();
+    for goal in ["Implement router\rsubmit early", "Implement router\r"] {
+        let err = dispatch(
+            &state,
+            "task.strategy.apply",
+            json!({
+                "run_id": "router-run-1",
+                "goal": goal,
+                "approved": ["start_run"],
+                "plan": staged_team_plan_json()
+            }),
+        )
+        .await
+        .unwrap_err();
 
-    assert_eq!(err.code(), "invalid_param");
-    assert!(err.to_string().contains("terminal control characters"));
-    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
-    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
-    assert!(workflows.as_array().unwrap().is_empty());
-    assert!(teams.as_array().unwrap().is_empty());
+        assert_eq!(err.code(), "invalid_param");
+        assert!(err.to_string().contains("terminal control characters"));
+        let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+        let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+        assert!(workflows.as_array().unwrap().is_empty());
+        assert!(teams.as_array().unwrap().is_empty());
+    }
 }
 
 #[tokio::test]
