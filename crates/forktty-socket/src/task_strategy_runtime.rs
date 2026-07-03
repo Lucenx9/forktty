@@ -11,11 +11,11 @@ use crate::{
     workspace_selector_params, DispatchError, SocketAppState, WorkspaceSelectorKind,
 };
 use forktty_core::{
-    plan_task_strategy, validate_worktree_name, worktree, FeedApprovalState, FeedEntry,
-    FeedEntryType, HarnessAssignment, HarnessCapability, HarnessHealth, HarnessRegistry,
-    HarnessRole, HarnessRoutingSignals, TaskRouterProfile, TaskStrategy, TaskStrategyApproval,
-    TaskStrategyInput, TaskStrategyLastKnownGood, TaskStrategyPlan, WorkflowQuery, WorkflowState,
-    WorkspaceSelector,
+    is_review_primary_goal, plan_task_strategy, validate_worktree_name, worktree,
+    FeedApprovalState, FeedEntry, FeedEntryType, HarnessAssignment, HarnessCapability,
+    HarnessHealth, HarnessRegistry, HarnessRole, HarnessRoutingSignals, TaskRouterProfile,
+    TaskStrategy, TaskStrategyApproval, TaskStrategyInput, TaskStrategyLastKnownGood,
+    TaskStrategyPlan, WorkflowQuery, WorkflowState, WorkspaceSelector,
 };
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -95,7 +95,9 @@ pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value
 
 fn infer_likely_user_visible_change(goal: &str) -> bool {
     let lower = goal.to_lowercase();
-    let edit_tokens = ["fix", "bug", "bugs", "add", "drop", "port"];
+    let edit_tokens = [
+        "fix", "bug", "bugs", "add", "drop", "port", "crea", "creare",
+    ];
     let edit_prefixes = [
         "fixe",
         "fixi",
@@ -122,6 +124,21 @@ fn infer_likely_user_visible_change(goal: &str) -> bool {
         "renam",
         "writ",
         "creat",
+        // Italian inflection prefixes, kept in sync with the classifier in
+        // forktty-core::task_strategy.
+        "corregg",
+        "risolv",
+        "aggiung",
+        "costru",
+        "svilupp",
+        "realizz",
+        "aggiorn",
+        "rimuov",
+        "elimin",
+        "riscriv",
+        "rinomin",
+        "scriv",
+        "cancell",
     ];
     if contains_token(&lower, &edit_tokens) || contains_token_prefix(&lower, &edit_prefixes) {
         return true;
@@ -143,27 +160,6 @@ fn infer_likely_user_visible_change(goal: &str) -> bool {
         "spec",
     ];
     contains_token_prefix(&lower, &visible_surface_terms)
-}
-
-fn infer_review_primary_goal(goal: &str) -> bool {
-    let lower = goal.to_lowercase();
-    let skip = [
-        "the",
-        "a",
-        "an",
-        "please",
-        "quickly",
-        "carefully",
-        "thoroughly",
-    ];
-    let mut tokens = lower
-        .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .filter(|token| !token.is_empty() && !skip.contains(token));
-    let first = tokens.next();
-    if first == Some("read") && tokens.next() == Some("only") {
-        return true;
-    }
-    matches!(first, Some("review" | "reviews"))
 }
 
 fn contains_token_prefix(value: &str, prefixes: &[&str]) -> bool {
@@ -1067,7 +1063,7 @@ impl TaskStrategyApplyRequest {
             Err(err) => return Err(err),
         };
         let review_only_goal = matches!(self.plan.strategy, TaskStrategy::ReviewOnly)
-            && infer_review_primary_goal(&self.goal);
+            && is_review_primary_goal(&self.goal);
         if (explicit_target_dirty || selected_target_dirty)
             && infer_likely_user_visible_change(&self.goal)
             && !review_only_goal

@@ -189,7 +189,7 @@ pub fn plan_task_strategy(input: TaskStrategyInput) -> Result<TaskStrategyPlan, 
     let top_scored_strategy = candidate_scores
         .first()
         .map(|candidate| candidate.strategy.clone())
-        .unwrap_or_else(|| strategy_for_class(&task_class, &input));
+        .expect("all_task_strategies() always yields at least one scored candidate");
     let strategy = input
         .explicit_mode
         .clone()
@@ -467,6 +467,12 @@ fn score_strategy_candidate(
     }
 }
 
+/// Profile weights may intentionally outrank `task_class_fit_points` (for
+/// example `Parallel` grants up to 110 while class fit tops out at 95): an
+/// explicit or inferred profile is a stronger routing signal than the
+/// keyword-derived task class. The corpus test
+/// `goal_routing_corpus_pins_classifier_and_weights` pins the combined effect
+/// of these weights; extend it when retuning any constant here.
 fn router_profile_fit_points(
     strategy: &TaskStrategy,
     router_profile: &TaskRouterProfile,
@@ -599,13 +605,13 @@ fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
     if contains_parallel_research_intent(&lower) {
         return TaskClass::ParallelResearch;
     }
-    if is_review_primary_goal(&lower) {
+    if is_review_primary_goal(goal) {
         return TaskClass::ReviewOnly;
     }
     if contains_implementation_intent(&lower) {
         return TaskClass::FeatureImplementation;
     }
-    if contains_token_prefix(&lower, &["fix", "bug"]) {
+    if contains_bugfix_intent(&lower) {
         return TaskClass::FocusedBugfix;
     }
     if contains_comparison_research_intent(&lower) {
@@ -613,14 +619,27 @@ fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
     }
     if contains_token(
         &lower,
-        &["test", "tests", "testing", "verify", "verifies", "verified"],
-    ) {
+        &[
+            "test", "tests", "testing", "verify", "verifies", "verified", "testa", "testare",
+        ],
+    ) || contains_token_prefix(&lower, &["verific"])
+    {
         return TaskClass::FocusedBugfix;
     }
-    if contains_token(&lower, &["review", "reviews"]) {
+    if contains_token(
+        &lower,
+        &["review", "reviews", "rivedi", "revisiona", "revisione"],
+    ) {
         return TaskClass::ReviewOnly;
     }
     TaskClass::RepoInspection
+}
+
+fn contains_bugfix_intent(lower: &str) -> bool {
+    // Exact tokens plus explicit inflection prefixes: a bare "fix"/"bug" prefix
+    // would also match unrelated words such as "fixtures".
+    contains_token(lower, &["fix", "bug", "bugs", "baco", "bachi"])
+        || contains_token_prefix(lower, &["fixe", "fixi", "bugfix", "corregg", "risolv"])
 }
 
 fn contains_parallel_research_intent(lower: &str) -> bool {
@@ -633,26 +652,26 @@ fn contains_comparison_research_intent(lower: &str) -> bool {
 }
 
 fn contains_implementation_intent(lower: &str) -> bool {
+    // Italian additions use inflection prefixes with no English collisions
+    // ("aggiung*", "costru*", ...); "implement" as a prefix covers both the
+    // English forms and Italian "implementa"/"implementare".
     contains_token(
         lower,
         &[
-            "implement",
-            "implements",
-            "implemented",
-            "implementing",
-            "add",
-            "adds",
-            "added",
-            "adding",
-            "build",
-            "builds",
-            "built",
-            "building",
+            "add", "adds", "added", "adding", "build", "builds", "built", "building", "crea",
+            "creare",
         ],
+    ) || contains_token_prefix(
+        lower,
+        &["implement", "aggiung", "costru", "svilupp", "realizz"],
     )
 }
 
-fn is_review_primary_goal(lower: &str) -> bool {
+/// Returns true when the goal reads as a review-first request (the first
+/// meaningful token is a review verb), as opposed to an editing goal that
+/// merely mentions a review.
+pub fn is_review_primary_goal(goal: &str) -> bool {
+    let lower = goal.to_lowercase();
     let skip = [
         "the",
         "a",
@@ -661,6 +680,19 @@ fn is_review_primary_goal(lower: &str) -> bool {
         "quickly",
         "carefully",
         "thoroughly",
+        "per",
+        "favore",
+        "fai",
+        "una",
+        "un",
+        "uno",
+        "il",
+        "lo",
+        "la",
+        "le",
+        "gli",
+        "i",
+        "di",
     ];
     let mut tokens = lower
         .split(|ch: char| !ch.is_ascii_alphanumeric())
@@ -669,7 +701,10 @@ fn is_review_primary_goal(lower: &str) -> bool {
     if first == Some("read") && tokens.next() == Some("only") {
         return true;
     }
-    matches!(first, Some(token) if token == "review" || token == "reviews")
+    matches!(
+        first,
+        Some("review" | "reviews" | "rivedi" | "revisiona" | "revisione")
+    )
 }
 
 fn infer_router_profile(
@@ -692,7 +727,10 @@ fn infer_router_profile(
     let lower = goal.to_lowercase();
     if contains_token_prefix(
         &lower,
-        &["quick", "fast", "asap", "urgent", "small", "simple"],
+        &[
+            "quick", "fast", "asap", "urgent", "small", "simple", "veloc", "rapid", "piccol",
+            "semplic",
+        ],
     ) {
         return TaskRouterProfile::Fast;
     }
@@ -705,6 +743,12 @@ fn infer_router_profile(
             "conservative",
             "risk",
             "thorough",
+            "sicur",
+            "attent",
+            "attenz",
+            "prudent",
+            "accurat",
+            "cautel",
         ],
     ) {
         return TaskRouterProfile::Conservative;
@@ -733,22 +777,6 @@ pub fn phase_one_classifier_reachable_classes() -> &'static [TaskClass] {
         TaskClass::ReviewOnly,
         TaskClass::ParallelResearch,
     ]
-}
-
-fn strategy_for_class(task_class: &TaskClass, input: &TaskStrategyInput) -> TaskStrategy {
-    match task_class {
-        TaskClass::TinyAnswer => TaskStrategy::Solo,
-        TaskClass::RepoInspection => TaskStrategy::SoloTracked,
-        TaskClass::FocusedBugfix | TaskClass::VerifyFixLoop => TaskStrategy::SoloWithVerifyLoop,
-        TaskClass::FeatureImplementation if input.user_requested_review => {
-            TaskStrategy::ImplementerPlusReviewer
-        }
-        TaskClass::FeatureImplementation => TaskStrategy::SoloWithVerifyLoop,
-        TaskClass::ReviewOnly => TaskStrategy::ReviewOnly,
-        TaskClass::ParallelResearch => TaskStrategy::ParallelResearch,
-        TaskClass::ParallelExperiment => TaskStrategy::ParallelExperiment,
-        TaskClass::LongRunningTeamRun => TaskStrategy::TeamPipeline,
-    }
 }
 
 fn layers_for_strategy(strategy: &TaskStrategy) -> TaskStrategyLayers {
@@ -1299,6 +1327,152 @@ mod tests {
         HarnessCapability {
             routing_signals: signals,
             ..harness(id, false, true)
+        }
+    }
+
+    fn plan_for_goal(goal: &str, likely_user_visible_change: bool) -> TaskStrategyPlan {
+        plan_task_strategy(TaskStrategyInput {
+            goal: goal.to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: false,
+            user_requested_review: false,
+            likely_user_visible_change,
+            harness_registry: caps(),
+        })
+        .unwrap()
+    }
+
+    /// Table-driven corpus pinning goal → (class, profile, strategy) as one
+    /// unit. Any retuning of classifier keywords or score constants must keep
+    /// this table passing (or update it deliberately in the same change).
+    #[test]
+    fn goal_routing_corpus_pins_classifier_and_weights() {
+        struct Case {
+            goal: &'static str,
+            editing: bool,
+            class: TaskClass,
+            profile: TaskRouterProfile,
+            strategy: TaskStrategy,
+        }
+        let cases = [
+            Case {
+                goal: "Fix the flaky socket test and rerun it",
+                editing: true,
+                class: TaskClass::FocusedBugfix,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
+            Case {
+                goal: "Correggi il bug nel router dei task",
+                editing: true,
+                class: TaskClass::FocusedBugfix,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
+            Case {
+                goal: "Risolvi velocemente il problema di avvio",
+                editing: true,
+                class: TaskClass::FocusedBugfix,
+                profile: TaskRouterProfile::Fast,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
+            Case {
+                goal: "Carefully fix the config quarantine logic",
+                editing: true,
+                class: TaskClass::FocusedBugfix,
+                profile: TaskRouterProfile::Conservative,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
+            Case {
+                goal: "Procedi con attenzione: correggi il parsing degli argomenti",
+                editing: true,
+                class: TaskClass::FocusedBugfix,
+                profile: TaskRouterProfile::Conservative,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
+            Case {
+                goal: "Implement retry logic for the socket client",
+                editing: true,
+                class: TaskClass::FeatureImplementation,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
+            Case {
+                goal: "Implementa la logica di retry nel client",
+                editing: true,
+                class: TaskClass::FeatureImplementation,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
+            Case {
+                goal: "Aggiungi un flag di configurazione al CLI",
+                editing: true,
+                class: TaskClass::FeatureImplementation,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
+            Case {
+                goal: "Review the worktree merge changes",
+                editing: false,
+                class: TaskClass::ReviewOnly,
+                profile: TaskRouterProfile::ReviewHeavy,
+                strategy: TaskStrategy::ReviewOnly,
+            },
+            Case {
+                goal: "Fai la review delle modifiche al router",
+                editing: false,
+                class: TaskClass::ReviewOnly,
+                profile: TaskRouterProfile::ReviewHeavy,
+                strategy: TaskStrategy::ReviewOnly,
+            },
+            Case {
+                goal: "Rivedi le modifiche al worktree layer",
+                editing: false,
+                class: TaskClass::ReviewOnly,
+                profile: TaskRouterProfile::ReviewHeavy,
+                strategy: TaskStrategy::ReviewOnly,
+            },
+            Case {
+                goal: "Compare caching approaches for the renderer",
+                editing: false,
+                class: TaskClass::ParallelResearch,
+                profile: TaskRouterProfile::Parallel,
+                strategy: TaskStrategy::ParallelResearch,
+            },
+            Case {
+                goal: "Confronta due approcci per la cache",
+                editing: false,
+                class: TaskClass::ParallelResearch,
+                profile: TaskRouterProfile::Parallel,
+                strategy: TaskStrategy::ParallelResearch,
+            },
+            // Regression: "fixtures" must not prefix-match "fix" into a bugfix.
+            Case {
+                goal: "Summarize the fixtures directory layout",
+                editing: false,
+                class: TaskClass::RepoInspection,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloTracked,
+            },
+        ];
+
+        for case in cases {
+            let plan = plan_for_goal(case.goal, case.editing);
+            assert_eq!(plan.task_class, case.class, "class for {:?}", case.goal);
+            assert_eq!(
+                plan.router_profile, case.profile,
+                "profile for {:?}",
+                case.goal
+            );
+            assert_eq!(plan.strategy, case.strategy, "strategy for {:?}", case.goal);
+            assert_eq!(
+                plan.candidate_scores[0].strategy, plan.strategy,
+                "top candidate for {:?}",
+                case.goal
+            );
         }
     }
 

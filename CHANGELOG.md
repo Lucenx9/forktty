@@ -17,6 +17,10 @@ All notable changes to ForkTTY are documented here.
 - Task strategy routing now treats explicit parallel-review wording such as
   "review parallela" as parallel research even when callers omit the boolean
   parallel hint.
+- Task strategy goal classification, router profile inference, and edit-intent
+  inference now also recognize common Italian task wording (e.g. "correggi",
+  "implementa", "aggiungi", "rivedi", "confronta", "velocemente", "con
+  attenzione") instead of falling back to repo inspection.
 
 ### Fixed
 - Fixed `orchestration.cleanup` so `dry_run=false` without `apply=true` is
@@ -25,6 +29,9 @@ All notable changes to ForkTTY are documented here.
   surface are reported for manual review instead of being closed as stale.
 - Fixed task strategy parallel worker prompts so repeated researcher lanes get
   deterministic, distinct scopes instead of duplicate broad instructions.
+- Fixed task strategy goal classification so unrelated words that merely start
+  with "fix" or "bug" (such as "fixtures") no longer classify a goal as a
+  focused bugfix.
 
 ## [0.2.0-alpha.17] - 2026-07-03
 
