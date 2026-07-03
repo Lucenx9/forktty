@@ -635,6 +635,27 @@ mod tests {
     }
 
     #[test]
+    fn tools_list_response_stays_within_token_budget() {
+        let input = br#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}
+"#;
+        let mut output = Vec::new();
+        run_with_io(
+            BufReader::new(&input[..]),
+            &mut output,
+            PathBuf::from("/run/user/1000/forktty.sock"),
+        )
+        .unwrap();
+
+        assert!(
+            output.len() <= 50_000,
+            "MCP tools/list response is {} bytes; keep always-discovered tool metadata compact",
+            output.len()
+        );
+        let response: Value = serde_json::from_slice(&output).unwrap();
+        assert!(response["result"]["tools"].as_array().unwrap().len() > 10);
+    }
+
+    #[test]
     fn task_strategy_plan_tool_maps_to_socket_method() {
         let (method, params) = build_socket_call_for_test(
             "task_strategy_plan",
