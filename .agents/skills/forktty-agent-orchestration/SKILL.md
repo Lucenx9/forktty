@@ -66,10 +66,11 @@ work. For small local code changes, read and edit the repo directly.
    cwd when no `worktree_name` is used. Worktree-layer role prompts name the
    selected worktree and its effective cwd.
    Apply recomputes dirty-repo edit isolation from the selected
-   surface/workspace plus any explicit `cwd`, then recomputes worktree approvals
-   and multi-worker submit approvals from the requested operation and effective
-   plan shape before trusting the plan's approval list. Primary read-only
-   review goals do not force dirty-repo worktree isolation.
+   surface/workspace plus any explicit `cwd`, normalized plan `task_class`, and
+   mutating strategy shape, then recomputes worktree approvals and multi-worker
+   submit approvals from the requested operation and effective plan shape before
+   trusting the plan's approval list. Primary read-only review goals do not
+   force dirty-repo worktree isolation.
    `approved` is a caller attestation; use Feed `request_approval` when a
    separate human decision is required. If approvals are
    missing, use `request_approval` to publish a Feed approval without starting

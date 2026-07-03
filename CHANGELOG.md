@@ -30,6 +30,8 @@ All notable changes to ForkTTY are documented here.
 - Fixed task strategy dirty-repo isolation so apply-time safety treats mutating
   strategy shapes as edit intent even if a client submits a stale read-only
   task class.
+- Fixed the managed ForkTTY orchestration skill text so installed agent skills
+  describe the same dirty-repo isolation inputs as the socket/MCP runtime.
 - Fixed task strategy goal classification so unrelated words that merely start
   with "fix" or "bug" (such as "fixtures") no longer classify a goal as a
   focused bugfix.

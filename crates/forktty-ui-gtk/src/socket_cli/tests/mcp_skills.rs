@@ -212,6 +212,8 @@ fn skill_setup_writes_default_targets_and_is_idempotent() {
                 assert!(skill.contains(AGENT_SKILL_MARKER));
                 assert!(skill.contains("context_snapshot"));
                 assert!(skill.contains("team_message_dispatch"));
+                assert!(skill.contains("normalized plan `task_class`"));
+                assert!(skill.contains("mutating strategy shape"));
                 let metadata = fs::read_to_string(path.join("agents").join("openai.yaml")).unwrap();
                 assert!(metadata.contains("value: \"forktty\""));
                 assert!(metadata.contains("allow_implicit_invocation: true"));
