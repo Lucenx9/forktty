@@ -25,6 +25,10 @@ const MAX_TASK_STRATEGY_REASON_BYTES: usize =
     protocol_limits::SOCKET_TASK_STRATEGY_REASON_MAX_BYTES;
 const MAX_TASK_STRATEGY_ASSIGNMENTS: usize =
     protocol_limits::SOCKET_TASK_STRATEGY_ASSIGNMENT_MAX_COUNT;
+const MAX_TASK_STRATEGY_PLAN_REASONS: usize = 32;
+const MAX_TASK_STRATEGY_SAFETY_NOTES: usize = 16;
+const MAX_TASK_STRATEGY_CANDIDATE_SCORES: usize = 8;
+const MAX_TASK_STRATEGY_SCORE_FACTORS: usize = 32;
 
 pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let plan_params = task_strategy_plan_params(params)?;
@@ -1103,6 +1107,21 @@ fn validate_submitted_task_strategy_plan(plan: &TaskStrategyPlan) -> Result<(), 
         };
         return Err(DispatchError::InvalidParam(message));
     }
+    validate_submitted_task_strategy_item_count(
+        "plan.reasons",
+        plan.reasons.len(),
+        MAX_TASK_STRATEGY_PLAN_REASONS,
+    )?;
+    validate_submitted_task_strategy_item_count(
+        "plan.safety_notes",
+        plan.safety_notes.len(),
+        MAX_TASK_STRATEGY_SAFETY_NOTES,
+    )?;
+    validate_submitted_task_strategy_item_count(
+        "plan.candidate_scores",
+        plan.candidate_scores.len(),
+        MAX_TASK_STRATEGY_CANDIDATE_SCORES,
+    )?;
     for reason in &plan.reasons {
         validate_submitted_task_strategy_text("plan.reasons", reason)?;
     }
@@ -1131,9 +1150,27 @@ fn validate_submitted_score_factors(
     field: &'static str,
     factors: &[TaskStrategyScoreFactor],
 ) -> Result<(), DispatchError> {
+    validate_submitted_task_strategy_item_count(
+        field,
+        factors.len(),
+        MAX_TASK_STRATEGY_SCORE_FACTORS,
+    )?;
     for factor in factors {
         validate_submitted_task_strategy_text(field, &factor.name)?;
         validate_submitted_task_strategy_text(field, &factor.reason)?;
+    }
+    Ok(())
+}
+
+fn validate_submitted_task_strategy_item_count(
+    field: &'static str,
+    len: usize,
+    limit: usize,
+) -> Result<(), DispatchError> {
+    if len > limit {
+        return Err(DispatchError::InvalidParam(format!(
+            "{field} has too many items (limit {limit})"
+        )));
     }
     Ok(())
 }

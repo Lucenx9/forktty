@@ -40,6 +40,9 @@ All notable changes to ForkTTY are documented here.
 - Fixed task strategy apply so submitted plan reasons and score details are
   revalidated before they can inflate workflow/team state, approval
   fingerprints, or worker prompts.
+- Fixed task strategy apply so client-submitted explanation arrays and score
+  factor lists are count-bounded before mutation, avoiding token-heavy approval
+  fingerprints from oversized but individually valid plan details.
 - Fixed task strategy apply so submitted plans with more assignments than
   visible team worker capacity are rejected before creating partial
   workflow/team state.
