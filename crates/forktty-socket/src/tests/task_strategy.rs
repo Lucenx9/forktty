@@ -829,6 +829,65 @@ async fn task_strategy_apply_uses_plan_task_class_for_dirty_isolation() {
 }
 
 #[tokio::test]
+async fn task_strategy_apply_uses_mutating_strategy_for_dirty_isolation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    std::fs::write(repo_dir.path().join("dirty.txt"), "dirty\n").unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        model.create_worktree_workspace("feature", repo_dir.path(), "feature", "feature-x");
+    };
+    let plan = json!({
+        "task_class": "repo_inspection",
+        "strategy": "solo_with_verify_loop",
+        "layers": {
+            "workflow": true,
+            "team": false,
+            "loop_metadata": true,
+            "worktree": false,
+            "feed": true,
+            "mcp": true,
+            "hooks": true
+        },
+        "assignments": [
+            {
+                "role": "implementer",
+                "harness_id": "codex",
+                "reason": "verify-loop harness"
+            }
+        ],
+        "approvals": ["start_run"],
+        "reasons": ["client supplied stale task class"],
+        "safety_notes": ["visible setup only"]
+    });
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "worktree_name": "feature-x",
+            "goal": "Bitte diese Änderung umsetzen",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "precondition_failed");
+    assert!(err.to_string().contains("create_worktree"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_apply_forces_dirty_isolation_for_common_editing_verbs() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();

@@ -113,6 +113,16 @@ fn task_class_likely_user_visible_change(task_class: &TaskClass) -> bool {
     )
 }
 
+fn task_strategy_likely_user_visible_change(strategy: &TaskStrategy) -> bool {
+    matches!(
+        strategy,
+        TaskStrategy::SoloWithVerifyLoop
+            | TaskStrategy::ImplementerPlusReviewer
+            | TaskStrategy::ParallelExperiment
+            | TaskStrategy::TeamPipeline
+    )
+}
+
 fn infer_likely_user_visible_change(goal: &str) -> bool {
     let lower = goal.to_lowercase();
     let edit_tokens = ["fix", "bug", "bugs", "add", "drop", "port"];
@@ -1085,6 +1095,7 @@ impl TaskStrategyApplyRequest {
         let review_only_strategy = matches!(self.plan.strategy, TaskStrategy::ReviewOnly);
         let likely_user_visible_change =
             task_class_likely_user_visible_change(&self.plan.task_class)
+                || task_strategy_likely_user_visible_change(&self.plan.strategy)
                 || infer_likely_user_visible_change(&self.goal);
         if (explicit_target_dirty || selected_target_dirty)
             && likely_user_visible_change

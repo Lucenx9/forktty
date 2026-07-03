@@ -536,13 +536,13 @@ the current `FORKTTY_WORKSPACE_ID` and `FORKTTY_SURFACE_ID` as the default
 workspace and leader surface when the caller omits explicit target selectors.
 Before any workflow/team/worker mutation it recomputes server-side dirty
 repo/edit-intent worktree isolation from the selected surface/workspace cwd,
-any explicit `cwd`, the normalized plan `task_class`, and high-confidence goal
-wording, then recomputes required approvals from the requested operation and
-effective plan shape (`start_run` always, `create_worktree` when the effective
-layers require worktree isolation, and `launch_parallel_workers` when
-`submit: true` would launch more than one assignment worker) plus applicable
-approvals listed by the plan. It then verifies they are present in `approved`
-or satisfied by a
+any explicit `cwd`, the normalized plan `task_class`, mutating strategy shape,
+and high-confidence goal wording, then recomputes required approvals from the
+requested operation and effective plan shape (`start_run` always,
+`create_worktree` when the effective layers require worktree isolation, and
+`launch_parallel_workers` when `submit: true` would launch more than one
+assignment worker) plus applicable approvals listed by the plan. It then
+verifies they are present in `approved` or satisfied by a
 matching approved task-strategy Feed approval passed as `approval_id`;
 otherwise missing approval returns `precondition_failed` and leaves
 workflow/team stores unchanged. The `approved` array is a programmatic caller

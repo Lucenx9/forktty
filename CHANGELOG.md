@@ -27,6 +27,9 @@ All notable changes to ForkTTY are documented here.
   deterministic, distinct scopes instead of duplicate broad instructions.
 - Fixed task strategy dirty-repo isolation so apply-time safety also uses the
   normalized plan task class, not only English goal wording.
+- Fixed task strategy dirty-repo isolation so apply-time safety treats mutating
+  strategy shapes as edit intent even if a client submits a stale read-only
+  task class.
 - Fixed task strategy goal classification so unrelated words that merely start
   with "fix" or "bug" (such as "fixtures") no longer classify a goal as a
   focused bugfix.

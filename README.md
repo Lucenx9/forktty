@@ -365,10 +365,12 @@ authorization. If a caller instead retries
 with an equivalent explicit `--approved` / `approved` attestation, ForkTTY
 dismisses the now-superseded pending Feed approval so it no longer raises a
 `pending_approval` risk flag. Apply recomputes dirty-repo edit isolation from
-the selected surface/workspace plus any explicit `--cwd` / `cwd`, and required
-approvals from the requested operation and effective plan shape, so dirty
-editing tasks cannot drop `create_worktree` and multi-worker submit cannot drop
-`launch_parallel_workers` from the JSON to bypass review.
+the selected surface/workspace plus any explicit `--cwd` / `cwd`, normalized
+plan `task_class`, mutating strategy shape, and high-confidence goal wording,
+then recomputes required approvals from the requested operation and effective
+plan shape, so dirty editing tasks cannot drop `create_worktree` and
+multi-worker submit cannot drop `launch_parallel_workers` from the JSON to
+bypass review.
 `--approved`/`approved` is a programmatic caller attestation; use
 `--request-approval` and retry with `--approval-id` when a
 Feed-backed human approval is required. Pass `--cwd`/`cwd` when the repository
