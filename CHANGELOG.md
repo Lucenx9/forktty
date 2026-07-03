@@ -121,9 +121,17 @@ All notable changes to ForkTTY are documented here.
 - Fixed task strategy routing so parallel research/experiment plans respect
   each harness's declared parallel session capacity instead of assigning
   multiple concurrent roles to a single-session harness.
+- Fixed task strategy routing so a single launchable harness can provide
+  multiple parallel research lanes when its declared session capacity permits
+  it, instead of degrading to a non-parallel strategy.
 - Fixed task strategy routing so parallel research/experiment plans do not
   launch an eager synthesizer worker before researcher workers can produce
   output.
+- Fixed task strategy routing so review-requested implementer/reviewer plans
+  no longer require worktree isolation in clean repositories unless dirty-repo
+  edit isolation actually applies.
+- Fixed provider capability reporting so plan-mode support is exposed through
+  `system.capabilities` and used by task-strategy reviewer scoring.
 - Fixed task strategy approval retries so an approved Feed request covering a
   superset of required approvals can still satisfy the remaining approvals when
   the caller also supplies explicit attestations for part of the same request.
@@ -156,6 +164,14 @@ All notable changes to ForkTTY are documented here.
 - Fixed task strategy routing so review-primary goals that mention
   implementation terms still stay read-only review work and no longer force
   dirty-repo worktree isolation.
+- Fixed task strategy dirty-repo edit inference so unrelated words such as
+  "dropdown", "fixture", or "portable" no longer trigger worktree isolation
+  through short edit-prefix matches.
+- Fixed MCP `task_strategy_apply` so calls without explicit target selectors
+  inherit the current ForkTTY workspace and leader surface from the MCP
+  environment, matching the intended in-pane apply flow.
+- Fixed task strategy submit apply so unlaunchable harness assignments are
+  rejected after approvals but before workflow/team state is mutated.
 - Fixed worktree-layer task strategy apply so staged task details and worker
   prompts name the selected worktree and effective repository cwd.
 - Fixed task strategy submit retries so a persisted worker record with a closed

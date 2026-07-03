@@ -204,7 +204,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 ],
                 name,
             )?;
-            let mut params = workspace_target_params(args, false)?;
+            let mut params = workspace_target_params(args, true)?;
             params.insert(
                 "run_id".to_string(),
                 Value::String(required_non_blank(args, "run_id")?),
@@ -229,8 +229,19 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             insert_optional_non_blank_param(args, &mut params, "approval_id")?;
             insert_optional_bool_param(args, &mut params, "request_approval")?;
             insert_optional_non_blank_param(args, &mut params, "cwd")?;
-            insert_optional_non_blank_param(args, &mut params, "leader_surface_id")?;
-            insert_optional_non_blank_param(args, &mut params, "surface_id")?;
+            if let Some(surface_id) = optional_non_blank(args, "leader_surface_id")? {
+                if !has_workspace_selector_arg(args) {
+                    params.remove("workspace_id");
+                }
+                params.insert("leader_surface_id".to_string(), Value::String(surface_id));
+            } else if let Some(surface_id) = optional_non_blank(args, "surface_id")? {
+                if !has_workspace_selector_arg(args) {
+                    params.remove("workspace_id");
+                }
+                params.insert("surface_id".to_string(), Value::String(surface_id));
+            } else if let Some(surface_id) = trimmed_env("FORKTTY_SURFACE_ID") {
+                params.insert("leader_surface_id".to_string(), Value::String(surface_id));
+            }
             insert_optional_non_blank_param(args, &mut params, "workflow_id")?;
             insert_optional_non_blank_param(args, &mut params, "team_id")?;
             insert_optional_bool_param(args, &mut params, "submit")?;

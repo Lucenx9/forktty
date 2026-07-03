@@ -216,8 +216,10 @@ or parallel workers:
    `forktty capabilities` for `provider_capabilities` and
    `team_provider_policy` when provider support is uncertain; do not assume
    removed, missing, or non-default-install providers are launchable unless
-   capabilities shows a resolved executable. If the user did not name a
-   provider, prefer auto-selection and report the returned `selection` summary.
+   capabilities shows a resolved executable. Capability metadata also reports
+   plan-mode reviewer support and parallel session capacity for router scoring.
+   If the user did not name a provider, prefer auto-selection and report the
+   returned `selection` summary.
    Do not run real provider probes just to test quota or auth; those conditions
    must come from the visible worker TUI, hooks, or an explicit user report. Keep
    prompts scoped and include:

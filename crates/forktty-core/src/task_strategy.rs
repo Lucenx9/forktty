@@ -766,10 +766,10 @@ fn layers_for_strategy(strategy: &TaskStrategy) -> TaskStrategyLayers {
             workflow: true,
             team: true,
             loop_metadata: true,
-            worktree: true,
             feed: true,
             mcp: true,
             hooks: true,
+            ..TaskStrategyLayers::default()
         },
         TaskStrategy::ParallelResearch
         | TaskStrategy::ParallelExperiment
@@ -893,6 +893,37 @@ fn assignments_for_strategy(
         for assignment in &mut additional_researchers {
             assignment.reason =
                 "next highest-scored ready harness for parallel context isolation".to_string();
+        }
+        if assignments.len() + additional_researchers.len() < 2 {
+            let mut existing_assignments = assignments.clone();
+            existing_assignments.extend(additional_researchers.iter().cloned());
+            let scored_researchers = scored_harness_assignments(
+                HarnessRole::Researcher,
+                &ready,
+                layers,
+                last_known_good,
+            );
+            for assignment in scored_researchers {
+                if additional_researchers.len() >= 2 {
+                    break;
+                }
+                if !harness_has_remaining_assignment_capacity(
+                    &ready,
+                    &assignment.harness_id,
+                    &existing_assignments,
+                ) {
+                    continue;
+                }
+                let mut assignment = assignment;
+                assignment.reason =
+                    "highest-scored ready harness reused for parallel research because declared session capacity allows another lane"
+                        .to_string();
+                existing_assignments.push(assignment.clone());
+                additional_researchers.push(assignment);
+                if existing_assignments.len() >= 2 {
+                    break;
+                }
+            }
         }
         assignments.extend(additional_researchers);
         if assignments.len() < 2 {
@@ -1345,6 +1376,10 @@ mod tests {
             .factors
             .iter()
             .any(|factor| factor.name == "review_request" && factor.points > 0));
+        assert!(!plan.layers.worktree);
+        assert!(!plan
+            .approvals
+            .contains(&TaskStrategyApproval::CreateWorktree));
     }
 
     #[test]
@@ -1665,6 +1700,41 @@ mod tests {
         assert_ne!(plan.strategy, TaskStrategy::ParallelResearch);
         assert_eq!(plan.assignments.len(), 1);
         assert!(!plan
+            .approvals
+            .contains(&TaskStrategyApproval::LaunchParallelWorkers));
+    }
+
+    #[test]
+    fn parallel_research_can_reuse_one_harness_when_capacity_allows() {
+        let plan = plan_task_strategy(TaskStrategyInput {
+            goal: "Compare three approaches for a multi-harness router".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: true,
+            user_requested_review: false,
+            likely_user_visible_change: false,
+            harness_registry: HarnessRegistry {
+                harnesses: vec![HarnessCapability {
+                    max_parallel_sessions: Some(3),
+                    ..harness("codex", false, true)
+                }],
+            },
+        })
+        .unwrap();
+
+        assert_eq!(plan.strategy, TaskStrategy::ParallelResearch);
+        let researchers = plan
+            .assignments
+            .iter()
+            .filter(|assignment| assignment.role == HarnessRole::Researcher)
+            .collect::<Vec<_>>();
+        assert!(researchers.len() >= 2);
+        assert!(researchers
+            .iter()
+            .all(|assignment| assignment.harness_id == "codex"));
+        assert!(plan
             .approvals
             .contains(&TaskStrategyApproval::LaunchParallelWorkers));
     }

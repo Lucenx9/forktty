@@ -11,6 +11,7 @@ pub(crate) struct ProviderCapability {
     safe_resume: bool,
     cwd_resume_flag: bool,
     permission_bypass_resume: bool,
+    supports_plan_mode: bool,
 }
 
 const PROVIDER_CAPABILITIES: &[ProviderCapability] = &[
@@ -21,6 +22,7 @@ const PROVIDER_CAPABILITIES: &[ProviderCapability] = &[
         safe_resume: true,
         cwd_resume_flag: true,
         permission_bypass_resume: true,
+        supports_plan_mode: false,
     },
     ProviderCapability {
         agent: "claude",
@@ -29,6 +31,7 @@ const PROVIDER_CAPABILITIES: &[ProviderCapability] = &[
         safe_resume: true,
         cwd_resume_flag: false,
         permission_bypass_resume: true,
+        supports_plan_mode: true,
     },
     ProviderCapability {
         agent: "opencode",
@@ -37,6 +40,7 @@ const PROVIDER_CAPABILITIES: &[ProviderCapability] = &[
         safe_resume: true,
         cwd_resume_flag: false,
         permission_bypass_resume: false,
+        supports_plan_mode: false,
     },
     ProviderCapability {
         agent: "pi",
@@ -45,6 +49,7 @@ const PROVIDER_CAPABILITIES: &[ProviderCapability] = &[
         safe_resume: true,
         cwd_resume_flag: false,
         permission_bypass_resume: false,
+        supports_plan_mode: false,
     },
     ProviderCapability {
         agent: "antigravity",
@@ -53,6 +58,7 @@ const PROVIDER_CAPABILITIES: &[ProviderCapability] = &[
         safe_resume: true,
         cwd_resume_flag: false,
         permission_bypass_resume: false,
+        supports_plan_mode: false,
     },
     ProviderCapability {
         agent: "grok",
@@ -61,6 +67,7 @@ const PROVIDER_CAPABILITIES: &[ProviderCapability] = &[
         safe_resume: true,
         cwd_resume_flag: true,
         permission_bypass_resume: false,
+        supports_plan_mode: false,
     },
 ];
 
@@ -101,6 +108,7 @@ pub(crate) fn capabilities(path: Option<&OsStr>, team: &forktty_core::TeamConfig
                 "safe_resume": capability.safe_resume,
                 "cwd_resume_flag": capability.cwd_resume_flag,
                 "permission_bypass_resume": capability.permission_bypass_resume,
+                "plan_mode": capability.supports_plan_mode,
                 "aliases": capability.aliases,
                 "available_on_path": resolution.available_on_path,
                 "executable": resolution
@@ -190,6 +198,7 @@ pub(crate) fn considered_row(
         "configured_command": resolution.configured.then(|| resolution.program.clone()),
         "available": available,
         "reason": reason,
+        "plan_mode": capability.supports_plan_mode,
         "available_on_path": resolution.available_on_path,
         "executable": resolution
             .executable

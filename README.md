@@ -528,9 +528,10 @@ require Node.js.
 `provider_capabilities` matrix for the supported providers (`codex`, `claude`,
 `pi`, `opencode`, `antigravity`, and `grok`), including their launch program, whether
 ForkTTY has safe resume support, and whether the provider exposes a dedicated
-cwd resume flag. It also reports `available_on_path`, the resolved executable
-path when present, configured command overrides for harnesses installed outside
-the ForkTTY process `PATH`, disabled/missing reasons, and the active
+cwd resume flag, plan-mode reviewer support, and parallel session capacity. It
+also reports `available_on_path`, the resolved executable path when present,
+configured command overrides for harnesses installed outside the ForkTTY process
+`PATH`, disabled/missing reasons, and the active
 `team_provider_policy` used when team launches omit `--agent`. It also includes
 `pty_persistence`, a read-only diagnostic block showing whether
 `general.persist_terminal_processes` is configured and whether a supported

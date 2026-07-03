@@ -657,6 +657,48 @@ fn task_strategy_real_provider_shape_reuses_single_launchable_harness_for_review
             && assignment.harness_id == "codex"));
 }
 
+#[test]
+fn task_strategy_harness_registry_maps_provider_plan_mode_capability() {
+    let registry = crate::task_strategy_runtime::harness_registry_from_capabilities(&json!({
+        "provider_capabilities": {
+            "codex": {
+                "team_worker_launch": true,
+                "launchable": true,
+                "safe_resume": true,
+                "cwd_resume_flag": true,
+                "available_on_path": true,
+                "executable": "/usr/bin/codex",
+                "disabled_by_config": false,
+                "plan_mode": false
+            },
+            "claude": {
+                "team_worker_launch": true,
+                "launchable": true,
+                "safe_resume": true,
+                "cwd_resume_flag": false,
+                "available_on_path": true,
+                "executable": "/usr/bin/claude",
+                "disabled_by_config": false,
+                "plan_mode": true
+            }
+        }
+    }));
+
+    let codex = registry
+        .harnesses
+        .iter()
+        .find(|harness| harness.id == "codex")
+        .unwrap();
+    let claude = registry
+        .harnesses
+        .iter()
+        .find(|harness| harness.id == "claude")
+        .unwrap();
+
+    assert!(!codex.supports_plan_mode);
+    assert!(claude.supports_plan_mode);
+}
+
 #[tokio::test]
 async fn task_strategy_apply_forces_dirty_editing_worktree_approval() {
     let (mut state, _backend) = test_state();
@@ -711,12 +753,17 @@ async fn task_strategy_apply_forces_dirty_isolation_for_common_editing_verbs() {
         model.create_worktree_workspace("feature", repo_dir.path(), "feature", "feature-x");
     };
     let goals = [
+        "Fixing legacy parser bugs",
+        "Fixed bugfix parser path",
+        "Adding parser fallback",
         "Delete legacy flag from parser",
         "Replace legacy flag in parser",
         "Rewrite legacy flag parser",
         "Migrate legacy flag parser",
+        "Dropping legacy flag parser",
         "Drop legacy flag parser",
         "Convert legacy flag parser",
+        "Porting legacy flag parser",
         "Port legacy flag parser",
         "Patch legacy flag parser",
     ];
@@ -746,6 +793,41 @@ async fn task_strategy_apply_forces_dirty_isolation_for_common_editing_verbs() {
     let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
     assert!(workflows.as_array().unwrap().is_empty());
     assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn task_strategy_apply_does_not_force_dirty_isolation_for_edit_prefix_false_positives() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    std::fs::write(repo_dir.path().join("dirty.txt"), "dirty\n").unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        model.create_worktree_workspace("feature", repo_dir.path(), "feature", "feature-x");
+    };
+    let mut plan = staged_team_plan_json();
+    plan["layers"]["worktree"] = json!(false);
+    plan["approvals"] = json!(["start_run"]);
+
+    let applied = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "worktree_name": "feature-x",
+            "goal": "Review dropdown fixture portability",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(applied["status"], "staged");
+    assert_eq!(applied["blocked_approvals"], json!([]));
 }
 
 #[tokio::test]
@@ -1795,6 +1877,37 @@ async fn task_strategy_apply_rejects_team_layer_without_assignments_before_mutat
 
     assert_eq!(err.code(), "invalid_param");
     assert!(err.to_string().contains("at least one team assignment"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn task_strategy_apply_submit_rejects_unlaunchable_assignment_before_mutation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let mut plan = staged_team_plan_json();
+    plan["assignments"][0]["harness_id"] = json!("self");
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement the router",
+            "approved": ["start_run", "launch_parallel_workers"],
+            "submit": true,
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("self"));
     let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
     let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
     assert!(workflows.as_array().unwrap().is_empty());

@@ -751,6 +751,50 @@ mod tests {
     }
 
     #[test]
+    fn task_strategy_apply_tool_defaults_to_env_workspace_and_surface() {
+        let plan = json!({
+            "task_class": "feature_implementation",
+            "strategy": "implementer_plus_reviewer",
+            "layers": {
+                "workflow": true,
+                "team": true,
+                "loop_metadata": true,
+                "worktree": false,
+                "feed": true,
+                "mcp": true,
+                "hooks": true
+            },
+            "assignments": [
+                {"role": "implementer", "harness_id": "codex", "reason": "ready"}
+            ],
+            "approvals": ["start_run"],
+            "reasons": ["classified task as FeatureImplementation"],
+            "safety_notes": ["visible setup only"]
+        });
+        let (method, params) = with_env(
+            &[
+                ("FORKTTY_WORKSPACE_ID", Some("workspace-env")),
+                ("FORKTTY_SURFACE_ID", Some("surface-env")),
+            ],
+            || {
+                build_socket_call_for_test(
+                    "task_strategy_apply",
+                    json!({
+                        "run_id": "router-run-1",
+                        "goal": "Implement the router",
+                        "plan": plan
+                    }),
+                )
+                .unwrap()
+            },
+        );
+
+        assert_eq!(method, "task.strategy.apply");
+        assert_eq!(params["workspace_id"], "workspace-env");
+        assert_eq!(params["leader_surface_id"], "surface-env");
+    }
+
+    #[test]
     fn task_strategy_apply_tool_can_request_approval_without_approved_ids() {
         let plan = json!({
             "task_class": "feature_implementation",

@@ -4,6 +4,7 @@ use crate::{
     path_resolver::{canonical_existing_dir, canonical_repo_common_dir},
     required_trimmed_string, store_access, surface_effective_project_cwd, system_runtime,
     task_strategy_params::task_strategy_plan_params,
+    team_provider::{select_team_worker_provider, team_worker_launch_command_with_program},
     team_runtime,
     team_state::worker_surface_is_live,
     workflow_runtime, workspace_effective_project_cwd, workspace_selector_from_params,
@@ -94,11 +95,14 @@ pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value
 
 fn infer_likely_user_visible_change(goal: &str) -> bool {
     let lower = goal.to_lowercase();
+    let edit_tokens = ["fix", "bug", "bugs", "add", "drop", "port"];
     let edit_prefixes = [
-        "fix",
-        "bug",
+        "fixe",
+        "fixi",
+        "bugfix",
         "implement",
-        "add",
+        "adde",
+        "addi",
         "build",
         "change",
         "updat",
@@ -110,15 +114,16 @@ fn infer_likely_user_visible_change(goal: &str) -> bool {
         "replac",
         "rewrit",
         "migrat",
-        "drop",
+        "dropp",
         "convert",
-        "port",
+        "porte",
+        "porti",
         "patch",
         "renam",
         "writ",
         "creat",
     ];
-    if contains_token_prefix(&lower, &edit_prefixes) {
+    if contains_token(&lower, &edit_tokens) || contains_token_prefix(&lower, &edit_prefixes) {
         return true;
     }
 
@@ -165,6 +170,12 @@ fn contains_token_prefix(value: &str, prefixes: &[&str]) -> bool {
     value
         .split(|ch: char| !ch.is_ascii_alphanumeric())
         .any(|token| prefixes.iter().any(|prefix| token.starts_with(prefix)))
+}
+
+fn contains_token(value: &str, tokens: &[&str]) -> bool {
+    value
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| tokens.contains(&token))
 }
 
 fn infer_repo_dirty(cwd: Option<&Path>) -> bool {
@@ -484,6 +495,9 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
                 missing_approvals.join(", ")
             )));
         }
+    }
+    if request.submit && request.plan.layers.team {
+        request.validate_submit_assignments_launchable()?;
     }
 
     let run_status = if request.submit { "running" } else { "staged" };
@@ -805,7 +819,10 @@ fn harness_capability_from_provider(id: &str, provider: &Value) -> HarnessCapabi
         supports_resume: provider["safe_resume"].as_bool().unwrap_or(false),
         supports_hooks: true,
         supports_mcp: true,
-        supports_plan_mode: false,
+        supports_plan_mode: provider["plan_mode"]
+            .as_bool()
+            .or_else(|| provider["supports_plan_mode"].as_bool())
+            .unwrap_or(false),
         supports_worktree_cwd: supports_team_launch,
         max_parallel_sessions: supports_team_launch
             .then_some(DEFAULT_PROVIDER_MAX_PARALLEL_SESSIONS),
@@ -1364,6 +1381,19 @@ impl TaskStrategyApplyRequest {
                     )));
                 }
             }
+        }
+        Ok(())
+    }
+
+    fn validate_submit_assignments_launchable(&self) -> Result<(), DispatchError> {
+        for assignment in &self.plan.assignments {
+            let selection = select_team_worker_provider(Some(assignment.harness_id.as_str()))?;
+            let _ = team_worker_launch_command_with_program(
+                &selection.selected_agent,
+                &selection.program,
+                Some(role_id(&assignment.role)),
+                Vec::new(),
+            )?;
         }
         Ok(())
     }

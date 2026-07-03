@@ -342,11 +342,14 @@ harness-role assignments with role-specific score/factor breakdowns, required
 approvals, ranked candidate strategy scores with factor breakdowns, reasons,
 and safety notes before an agent chooses team, workflow loop,
 worktree, MCP, hooks, or a provider harness. The planner grounds
-harness scoring in `system.capabilities.provider_capabilities` and uses the
-configured `team_provider_policy.provider_order` as a tie-break. When assigning
-more than one role, it also respects each harness's `max_parallel_sessions`
-capacity; parallel research/experiment strategies are not selected unless at
-least two visible assignment roles fit the available harness capacity. When
+harness scoring in `system.capabilities.provider_capabilities`, including
+provider `plan_mode` and `max_parallel_sessions` capability metadata, and uses
+the configured `team_provider_policy.provider_order` as a tie-break. When
+assigning more than one role, it also respects each harness's
+`max_parallel_sessions` capacity; parallel research/experiment strategies are
+not selected unless at least two visible assignment roles fit the available
+harness capacity, including multiple lanes on one harness when that harness
+declares enough parallel session capacity. When
 `repo_dirty` is omitted,
 it infers simple git dirty/conflict state from the selected surface or
 workspace effective project cwd, or from `cwd` when the caller passes one
@@ -522,7 +525,9 @@ plus optional `approved`, `approval_id`, `request_approval`, `workflow_id`,
 `team_id`, `workspace_id` or other workspace selector including
 `worktree_name`, `cwd`, `leader_surface_id`/`surface_id`, and `submit`.
 When both surface aliases are provided, `leader_surface_id` and `surface_id`
-must refer to the same surface.
+must refer to the same surface. The MCP `task_strategy_apply` tool forwards
+the current `FORKTTY_WORKSPACE_ID` and `FORKTTY_SURFACE_ID` as the default
+workspace and leader surface when the caller omits explicit target selectors.
 Before any workflow/team/worker mutation it recomputes server-side dirty
 repo/edit-intent worktree isolation from the selected surface/workspace cwd and
 any explicit `cwd`, then recomputes required approvals from the requested
@@ -543,7 +548,10 @@ the original request-bound set.
 A `launch_parallel_workers` entry in the plan is treated as a future submit
 approval and is not required for staged-only apply calls. Apply validates
 local preconditions such as required team assignments, `worktree_name`, and
-already-open worktree workspaces before creating approval requests. A plan with
+already-open worktree workspaces before creating approval requests. With
+`submit: true`, it also validates that every assignment names a launchable
+provider harness after approvals are satisfied but before any workflow/team
+mutation. A plan with
 `layers.team: true` must include at least one assignment even when staging, so
 apply cannot create an empty team run. With `request_approval: true`, missing approvals
 create or reuse a pending Feed approval with a deterministic request-bound id shaped like
@@ -711,7 +719,7 @@ omit full workflow goals, memory, evidence, and gate notes; use
 
 Agent rows from `agent.list`, `agent.health`, `status.summary`, and `context.snapshot` include `lifecycle_evidence` as diagnostic metadata, not as a second source of lifecycle truth. The block repeats the persisted lifecycle source, last activity, observation time, nullable age, matching workspace/provider status key/value/source/scope when present, and permission mode when present. `status_scope: "workspace_provider"` means the status row is shared by same-provider sessions in that workspace and is not per-session live proof. `agent.health` additionally includes `ready` and `readiness_reason` in that block so clients can explain stale-looking or non-resumable rows without joining separate response fields.
 
-`system.capabilities` includes `provider_capabilities` with the supported provider program, configured command override when present, aliases, resume features, PATH detection (`available_on_path`, `executable`), launchability, and disabled/missing reason, plus `team_provider_policy` mirroring the active `[team]` provider-selection config including `provider_commands`. It also includes `pty_persistence`, a read-only diagnostic block with `config_enabled`, `available`, `active`, broker name/executable when present, scope, and unavailable reason so clients can distinguish "configured but no broker installed" from active process persistence. `team.worker.launch` accepts optional `agent`; omitted or `auto` selects the first configured provider that is not disabled and whose default program or configured command is currently resolvable. An explicit provider still uses the same argv-only validation and returns `precondition_failed` if disabled or missing. Successful launches return a `selection` object with the requested agent, selected provider, selected program, default program, configured command, executable path, reason, and considered candidates. ForkTTY does not preflight provider quota/auth by calling model CLIs; those states appear in the visible worker TUI and hooks, and users can change Settings or pass an explicit provider for the next launch.
+`system.capabilities` includes `provider_capabilities` with the supported provider program, configured command override when present, aliases, resume features, plan-mode reviewer support, PATH detection (`available_on_path`, `executable`), launchability, and disabled/missing reason, plus `team_provider_policy` mirroring the active `[team]` provider-selection config including `provider_commands`. It also includes `pty_persistence`, a read-only diagnostic block with `config_enabled`, `available`, `active`, broker name/executable when present, scope, and unavailable reason so clients can distinguish "configured but no broker installed" from active process persistence. `team.worker.launch` accepts optional `agent`; omitted or `auto` selects the first configured provider that is not disabled and whose default program or configured command is currently resolvable. An explicit provider still uses the same argv-only validation and returns `precondition_failed` if disabled or missing. Successful launches return a `selection` object with the requested agent, selected provider, selected program, default program, configured command, executable path, reason, and considered candidates. ForkTTY does not preflight provider quota/auth by calling model CLIs; those states appear in the visible worker TUI and hooks, and users can change Settings or pass an explicit provider for the next launch.
 
 Claude Code `team.worker.launch` calls add documented permission-mode defaults unless the caller already supplied Claude permission args: review roles start with `--permission-mode dontAsk` plus pre-approved built-in read tools (`Read`, `Grep`, and `Glob`), while other Claude workers start with `--permission-mode auto`.
 
