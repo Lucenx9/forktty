@@ -1,6 +1,10 @@
 use crate::DispatchError;
 use crate::{optional_bool_param, optional_non_blank_string_param, required_trimmed_string};
+use forktty_core::protocol_limits;
 use serde_json::Value;
+
+pub(crate) const MAX_TASK_STRATEGY_GOAL_BYTES: usize =
+    protocol_limits::SOCKET_TASK_STRATEGY_GOAL_MAX_BYTES;
 
 pub(crate) struct TaskStrategyPlanParams {
     pub(crate) goal: String,
@@ -18,7 +22,7 @@ pub(crate) struct TaskStrategyPlanParams {
 pub(crate) fn task_strategy_plan_params(
     params: &Value,
 ) -> Result<TaskStrategyPlanParams, DispatchError> {
-    let goal = required_trimmed_string(params, "goal")?.to_string();
+    let goal = task_strategy_goal_param(params)?;
     let explicit_strategy =
         optional_non_blank_string_param(params, "strategy")?.map(str::to_string);
     let router_profile =
@@ -71,4 +75,16 @@ pub(crate) fn task_strategy_plan_params(
         user_requested_review,
         likely_user_visible_change,
     })
+}
+
+pub(crate) fn task_strategy_goal_param(params: &Value) -> Result<String, DispatchError> {
+    let goal = required_trimmed_string(params, "goal")?;
+    if goal.len() > MAX_TASK_STRATEGY_GOAL_BYTES {
+        return Err(DispatchError::PayloadTooLarge {
+            field: "goal",
+            limit: MAX_TASK_STRATEGY_GOAL_BYTES,
+            actual: goal.len(),
+        });
+    }
+    Ok(goal.to_string())
 }

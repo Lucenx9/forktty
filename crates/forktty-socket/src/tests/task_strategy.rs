@@ -1439,6 +1439,48 @@ async fn task_strategy_plan_rejects_blank_goal() {
 }
 
 #[tokio::test]
+async fn task_strategy_plan_rejects_oversized_goal() {
+    let (state, _backend) = test_state();
+    let goal = "x".repeat(task_strategy_params::MAX_TASK_STRATEGY_GOAL_BYTES + 1);
+
+    let err = dispatch(&state, "task.strategy.plan", json!({ "goal": goal }))
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.code(), "payload_too_large");
+    assert!(err.to_string().contains("goal"));
+}
+
+#[tokio::test]
+async fn task_strategy_apply_rejects_oversized_goal_without_mutation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let goal = "x".repeat(task_strategy_params::MAX_TASK_STRATEGY_GOAL_BYTES + 1);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": goal,
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "payload_too_large");
+    assert!(err.to_string().contains("goal"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_apply_rejects_missing_start_approval_without_mutation() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();

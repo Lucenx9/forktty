@@ -23,6 +23,9 @@ All notable changes to ForkTTY are documented here.
   without relying on ForkTTY keyword guessing.
 
 ### Fixed
+- Fixed task strategy plan/apply input validation so oversized goals are
+  rejected before they can be copied into workflow/team state or worker
+  prompts.
 - Fixed `orchestration.cleanup` so `dry_run=false` without `apply=true` is
   rejected instead of mutating stale orchestration records.
 - Fixed `orchestration.cleanup` so non-terminal workers without a recorded

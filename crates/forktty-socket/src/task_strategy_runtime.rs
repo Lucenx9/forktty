@@ -3,7 +3,7 @@ use crate::{
     optional_non_blank_string_param, optional_string_array_param, optional_surface_id_param,
     path_resolver::{canonical_existing_dir, canonical_repo_common_dir},
     required_trimmed_string, store_access, surface_effective_project_cwd, system_runtime,
-    task_strategy_params::task_strategy_plan_params,
+    task_strategy_params::{task_strategy_goal_param, task_strategy_plan_params},
     team_provider::{select_team_worker_provider, team_worker_launch_command_with_program},
     team_runtime,
     team_state::worker_surface_is_live,
@@ -967,7 +967,7 @@ impl TaskStrategyApplyRequest {
             .unwrap_or(&run_id)
             .to_string();
         validate_task_strategy_id("team_id", &team_id)?;
-        let goal = required_trimmed_string(params, "goal")?.to_string();
+        let goal = task_strategy_goal_param(params)?;
         let plan_value = params
             .get("plan")
             .ok_or(DispatchError::MissingParam("plan"))?

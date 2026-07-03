@@ -1,5 +1,6 @@
 //! MCP tool registry, JSON schemas, and client annotation metadata.
 
+use forktty_core::protocol_limits;
 use serde_json::{json, Value};
 
 pub(super) struct ToolSpec {
@@ -93,7 +94,10 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             input_schema: object_schema(
                 &["goal"],
                 json!({
-                    "goal": string_prop("User task or desired outcome."),
+                    "goal": string_prop(&format!(
+                        "User task or desired outcome, up to {} UTF-8 bytes.",
+                        protocol_limits::SOCKET_TASK_STRATEGY_GOAL_MAX_BYTES
+                    )),
                     "strategy": string_prop("Optional explicit strategy override, for example solo_with_verify_loop, implementer_plus_reviewer, parallel_research, or review_only."),
                     "task_kind": string_prop("Optional normalized task kind hint, for example focused_bugfix, feature_implementation, review_only, or parallel_research. Use for clear multilingual intent instead of keyword guessing."),
                     "router_profile": string_prop("Optional router profile: balanced, fast, conservative, parallel, or review_heavy."),
@@ -127,7 +131,10 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
                 &["run_id", "goal", "plan"],
                 json!({
                     "run_id": string_prop("Stable run id used to derive deterministic workflow, team, task, and message ids."),
-                    "goal": string_prop("User task or desired outcome."),
+                    "goal": string_prop(&format!(
+                        "User task or desired outcome, up to {} UTF-8 bytes.",
+                        protocol_limits::SOCKET_TASK_STRATEGY_GOAL_MAX_BYTES
+                    )),
                     "plan": {
                         "type": "object",
                         "description": "The task.strategy.plan result object to apply.",
