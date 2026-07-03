@@ -1077,6 +1077,37 @@ async fn task_strategy_apply_rejects_unsupported_parallel_research_role_without_
 }
 
 #[tokio::test]
+async fn task_strategy_apply_rejects_wrong_role_mix_without_mutation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let mut plan = staged_team_plan_json();
+    plan["assignments"][0]["role"] = json!("reviewer");
+    plan["assignments"][0]["reason"] = json!("client supplied duplicate reviewer");
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement the router",
+            "approved": ["start_run", "launch_parallel_workers"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("requires 1 implementer"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_apply_rejects_extra_non_team_assignments_without_mutation() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();

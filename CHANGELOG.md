@@ -48,6 +48,9 @@ All notable changes to ForkTTY are documented here.
 - Fixed task strategy apply so duplicate approval entries in a submitted plan
   are rejected before mutation instead of inflating approval fingerprints with
   redundant state.
+- Fixed task strategy apply so team strategies reject client-submitted role
+  mixes the planner would never produce, such as implementer-plus-reviewer
+  plans with duplicate reviewers and no implementer.
 - Fixed task strategy apply so submitted plans with more assignments than
   visible team worker capacity are rejected before creating partial
   workflow/team state.

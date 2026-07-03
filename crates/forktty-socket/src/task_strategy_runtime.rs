@@ -1126,10 +1126,61 @@ fn validate_submitted_task_strategy_plan(plan: &TaskStrategyPlan) -> Result<(), 
         validate_submitted_task_strategy_text("plan.assignments.reason", &assignment.reason)?;
         validate_submitted_score_factors("plan.assignments.factors", &assignment.factors)?;
     }
+    validate_submitted_task_strategy_role_mix(plan)?;
     for candidate in &plan.candidate_scores {
         validate_submitted_score_factors("plan.candidate_scores.factors", &candidate.factors)?;
     }
     Ok(())
+}
+
+fn validate_submitted_task_strategy_role_mix(plan: &TaskStrategyPlan) -> Result<(), DispatchError> {
+    let implementers = plan
+        .assignments
+        .iter()
+        .filter(|assignment| assignment.role == HarnessRole::Implementer)
+        .count();
+    let reviewers = plan
+        .assignments
+        .iter()
+        .filter(|assignment| assignment.role == HarnessRole::Reviewer)
+        .count();
+    let researchers = plan
+        .assignments
+        .iter()
+        .filter(|assignment| assignment.role == HarnessRole::Researcher)
+        .count();
+    let strategy = task_strategy_wire_value(&plan.strategy);
+    let valid = match plan.strategy {
+        TaskStrategy::Solo | TaskStrategy::SoloTracked | TaskStrategy::SoloWithVerifyLoop => {
+            implementers == 1
+        }
+        TaskStrategy::ImplementerPlusReviewer | TaskStrategy::TeamPipeline => {
+            implementers == 1 && reviewers == 1
+        }
+        TaskStrategy::ParallelResearch | TaskStrategy::ParallelExperiment => {
+            researchers == plan.assignments.len()
+        }
+        TaskStrategy::ReviewOnly => reviewers == 1,
+    };
+    if valid {
+        return Ok(());
+    }
+
+    let expected = match plan.strategy {
+        TaskStrategy::Solo | TaskStrategy::SoloTracked | TaskStrategy::SoloWithVerifyLoop => {
+            "requires 1 implementer assignment"
+        }
+        TaskStrategy::ImplementerPlusReviewer | TaskStrategy::TeamPipeline => {
+            "requires 1 implementer and 1 reviewer assignment"
+        }
+        TaskStrategy::ParallelResearch | TaskStrategy::ParallelExperiment => {
+            "requires researcher assignments"
+        }
+        TaskStrategy::ReviewOnly => "requires 1 reviewer assignment",
+    };
+    Err(DispatchError::InvalidParam(format!(
+        "task.strategy.apply strategy {strategy} {expected}"
+    )))
 }
 
 fn validate_submitted_task_strategy_approvals(
