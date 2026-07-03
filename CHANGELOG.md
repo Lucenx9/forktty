@@ -54,6 +54,9 @@ All notable changes to ForkTTY are documented here.
 - Fixed task strategy apply so client-submitted plans cannot attach assignment
   roles that the selected strategy would not produce, such as eager synthesizer
   workers for parallel research runs.
+- Fixed task strategy apply so client-submitted plans cannot inflate assignment
+  counts beyond the selected strategy shape, preventing orphan solo/review steps
+  and over-wide parallel research runs.
 - Fixed `orchestration.cleanup` so `dry_run=false` without `apply=true` is
   rejected instead of mutating stale orchestration records.
 - Fixed `orchestration.cleanup` so non-terminal workers without a recorded

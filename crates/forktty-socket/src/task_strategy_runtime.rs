@@ -168,6 +168,17 @@ fn task_strategy_supports_assignment_role(strategy: &TaskStrategy, role: &Harnes
     }
 }
 
+fn task_strategy_assignment_count_bounds(strategy: &TaskStrategy) -> (usize, usize) {
+    match strategy {
+        TaskStrategy::Solo
+        | TaskStrategy::SoloTracked
+        | TaskStrategy::SoloWithVerifyLoop
+        | TaskStrategy::ReviewOnly => (1, 1),
+        TaskStrategy::ImplementerPlusReviewer | TaskStrategy::TeamPipeline => (2, 2),
+        TaskStrategy::ParallelResearch | TaskStrategy::ParallelExperiment => (2, 3),
+    }
+}
+
 fn infer_likely_user_visible_change(goal: &str) -> bool {
     let lower = goal.to_lowercase();
     let edit_tokens = ["fix", "bug", "bugs", "add", "drop", "port"];
@@ -1071,6 +1082,26 @@ fn validate_submitted_task_strategy_plan(plan: &TaskStrategyPlan) -> Result<(), 
         return Err(DispatchError::InvalidParam(format!(
             "task.strategy.apply plan has too many assignments (limit {MAX_TASK_STRATEGY_ASSIGNMENTS})"
         )));
+    }
+    let (min_assignments, max_assignments) = task_strategy_assignment_count_bounds(&plan.strategy);
+    if plan.assignments.len() < min_assignments || plan.assignments.len() > max_assignments {
+        let assignment_count = plan.assignments.len();
+        let strategy = task_strategy_wire_value(&plan.strategy);
+        let message = if min_assignments == max_assignments {
+            let expected = if min_assignments == 1 {
+                "one assignment".to_string()
+            } else {
+                format!("{min_assignments} assignments")
+            };
+            format!(
+                "task.strategy.apply strategy {strategy} supports exactly {expected}; got {assignment_count}"
+            )
+        } else {
+            format!(
+                "task.strategy.apply strategy {strategy} supports between {min_assignments} and {max_assignments} assignments; got {assignment_count}"
+            )
+        };
+        return Err(DispatchError::InvalidParam(message));
     }
     for reason in &plan.reasons {
         validate_submitted_task_strategy_text("plan.reasons", reason)?;

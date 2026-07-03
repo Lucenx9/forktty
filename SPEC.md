@@ -541,7 +541,9 @@ characters or oversized strings into workflow steps, team task details,
 approval fingerprints, or worker prompts. It also rejects plans with more
 than 64 assignments, or with no assignments at all, before creating
 workflow/team state, matching the visible team worker cap used by submit runs
-and avoiding empty workflow plans. A submitted plan cannot force
+and avoiding empty workflow plans. It also rejects assignment counts that the
+selected strategy would not produce, such as multiple solo/review assignments
+or over-wide parallel research runs. A submitted plan cannot force
 `layers.team: true` onto a strategy that the planner does not treat as a team
 strategy, cannot force `layers.loop_metadata: true` onto a strategy that the
 planner does not treat as a verify-loop strategy, or attach assignment roles

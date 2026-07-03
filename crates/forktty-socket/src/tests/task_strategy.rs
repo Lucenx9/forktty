@@ -845,6 +845,75 @@ async fn task_strategy_apply_rejects_unsupported_parallel_research_role_without_
 }
 
 #[tokio::test]
+async fn task_strategy_apply_rejects_extra_non_team_assignments_without_mutation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let mut plan = solo_verify_plan_json();
+    let extra = plan["assignments"][0].clone();
+    plan["assignments"].as_array_mut().unwrap().push(extra);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Fix task strategy routing",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err
+        .to_string()
+        .contains("strategy solo_with_verify_loop supports exactly one assignment"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn task_strategy_apply_rejects_overwide_parallel_research_without_mutation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let mut plan = parallel_research_plan_json();
+    while plan["assignments"].as_array().unwrap().len() < 4 {
+        let mut extra = plan["assignments"][0].clone();
+        extra["reason"] = json!("client supplied extra research lane");
+        plan["assignments"].as_array_mut().unwrap().push(extra);
+    }
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Compare router implementations",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err
+        .to_string()
+        .contains("strategy parallel_research supports between 2 and 3 assignments"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_plan_infers_dirty_repo_from_active_surface_cwd() {
     let (state, _backend) = test_state();
     let repo_dir = tempfile::tempdir().unwrap();
@@ -4141,6 +4210,7 @@ async fn task_strategy_apply_submit_rejects_live_worker_blocked_status_before_di
     let (mut state, backend) = test_state();
     let bin_dir = tempfile::tempdir().unwrap();
     let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _claude = write_fake_program(bin_dir.path(), "claude");
     let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
     let dir = tempfile::tempdir().unwrap();
     state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
@@ -4196,15 +4266,14 @@ async fn task_strategy_apply_submit_rejects_live_worker_blocked_status_before_di
     .unwrap();
 
     let mut plan = staged_team_plan_json();
-    plan["assignments"] = json!([plan["assignments"][0].clone()]);
-    plan["approvals"] = json!(["start_run"]);
+    plan["approvals"] = json!(["start_run", "launch_parallel_workers"]);
     let err = dispatch(
         &state,
         "task.strategy.apply",
         json!({
             "run_id": "router-run-1",
             "goal": "Implement the router",
-            "approved": ["start_run"],
+            "approved": ["start_run", "launch_parallel_workers"],
             "submit": true,
             "plan": plan
         }),
