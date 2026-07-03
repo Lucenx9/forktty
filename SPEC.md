@@ -680,16 +680,18 @@ before dispatching a role prompt to the wrong pane.
 team/workflow coordination records. It accepts optional `workspace_id`,
 `apply`, and `dry_run` fields. Dry-run is the default and returns planned
 `teamActions` and `workflowActions` without mutation; passing `apply: true`
-applies only actions that are safe from current ForkTTY model state. Cleanup
+applies only actions that are safe from current ForkTTY model and terminal
+runtime state. Cleanup
 rejects `dry_run: false` unless `apply: true` is also present, so callers
 cannot write by disabling dry-run alone. Cleanup
-may mark non-terminal workers whose recorded surface no longer exists as
-`closed`, cancel open tasks assigned to those stale workers, supersede
-undelivered messages targeting those workers/tasks, mark teams with no live
-workers, open tasks, or pending messages as `done`, mark active workflows with
-all-terminal plan steps as `done`, and close open plan steps on already
-terminal workflows. If a non-terminal worker still references an existing
-surface or has no recorded surface, cleanup reports a
+may mark non-terminal workers whose recorded surface no longer exists in the
+workspace model or no longer exists in the terminal runtime as `closed`, cancel
+open tasks assigned to those stale workers, supersede undelivered messages
+targeting those workers/tasks, mark teams with no live workers, open tasks, or
+pending messages as `done`, mark active workflows with all-terminal plan steps
+as `done`, and close open plan steps on already terminal workflows. If a
+non-terminal worker still references a model surface with a live terminal
+runtime, or has no recorded surface, cleanup reports a
 `team.worker.manual_review` action and does not mutate that worker, task,
 surface, or terminal. The method never sends terminal input, closes panes,
 launches workers, creates worktrees, or rebases/merges code. The CLI wrapper is
@@ -783,9 +785,12 @@ When a request advances to a different iteration without supplying replacement
 gates or a replacement stop reason, ForkTTY clears the previous gate rows and
 stop reason so stale failed checks do not describe the new pass.
 Agents use it to make a visible loop such as discover/plan/execute/verify
-auditable across context compaction. `context.snapshot` exposes compact
-`loop_summaries` by default, including recipe, stage, gate counts, iteration
-budget, stale surface-binding detection, and loop risk flags such as
+auditable across context compaction. `context.snapshot` exposes stale
+workflow surface bindings on workflow summary/detail rows through
+`surface_present`, `stale_binding`, and `active_with_missing_surface`
+consistency warnings, even when the workflow has no loop metadata. It also
+exposes compact `loop_summaries` by default, including recipe, stage, gate
+counts, iteration budget, stale surface-binding detection, and loop risk flags such as
 `loop_gate_failed`, `loop_needs_human`, `loop_blocked`,
 `loop_budget_exhausted`, and `loop_stale_binding`. Loop summaries deliberately
 omit full workflow goals, memory, evidence, and gate notes; use

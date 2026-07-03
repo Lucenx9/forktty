@@ -141,6 +141,83 @@ async fn orchestration_cleanup_dry_run_then_apply_closes_missing_surface_records
 }
 
 #[tokio::test]
+async fn orchestration_cleanup_closes_workers_when_surface_runtime_is_missing() {
+    let (mut state, backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let surface_id = workspace[0]["focused_surface_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({"team_id": "team-1", "status": "active"}),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "status": "running",
+            "surface_id": surface_id
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.task.upsert",
+        json!({
+            "team_id": "team-1",
+            "task_id": "task-1",
+            "title": "Runtime-missing work",
+            "status": "running",
+            "assigned_worker_id": "worker-1"
+        }),
+    )
+    .await
+    .unwrap();
+
+    backend.close(&surface_id).unwrap();
+    assert!(state.model.lock().unwrap().surface(&surface_id).is_some());
+
+    let dry_run = dispatch(&state, "orchestration.cleanup", json!({}))
+        .await
+        .unwrap();
+    assert!(dry_run["teamActions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| {
+            action["kind"] == "team.worker.close_stale"
+                && action["workerId"] == "worker-1"
+                && action["reason"] == "worker_surface_runtime_missing"
+                && action["applied"] == false
+        }));
+
+    let applied = dispatch(&state, "orchestration.cleanup", json!({"apply": true}))
+        .await
+        .unwrap();
+    assert!(applied["teamActions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action["kind"] == "team.finish_stale" && action["applied"] == true));
+    let team = dispatch(&state, "team.get", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    assert_eq!(team["status"], "done");
+    assert_eq!(team["workers"][0]["status"], "closed");
+    assert_eq!(team["tasks"][0]["status"], "cancelled");
+}
+
+#[tokio::test]
 async fn orchestration_cleanup_does_not_close_worker_without_recorded_surface() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();

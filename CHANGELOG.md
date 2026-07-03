@@ -37,6 +37,15 @@ All notable changes to ForkTTY are documented here.
   guessing or exact internal enum names.
 
 ### Fixed
+- Fixed Antigravity `PreToolUse` hook responses so ForkTTY returns the current
+  `{"decision":"allow"}` gating decision instead of the older `approve` value
+  that `agy` 1.0.16 rejects before tool execution.
+- Fixed `orchestration.cleanup` so team workers whose surface remains in the
+  workspace model but no longer has a terminal runtime are treated as stale
+  instead of blocking cleanup as manual-review live workers.
+- Fixed `context.snapshot` workflow summaries/details so active non-loop
+  workflows bound to missing surfaces report `surface_present`,
+  `stale_binding`, and a workflow consistency warning.
 - Fixed `surface.focus` over the socket/MCP boundary so focusing a surface in
   an inactive workspace also selects that workspace and rolls back to the
   previous workspace if terminal startup fails.

@@ -259,7 +259,7 @@ async fn context_snapshot_workflows(
     };
     let summaries = workflows
         .iter()
-        .map(context_snapshot_workflow_summary_row)
+        .map(|workflow| context_snapshot_workflow_summary_row(workflow, &current_surface_ids))
         .collect::<Vec<_>>();
     let loop_summaries = workflows
         .iter()
@@ -268,7 +268,7 @@ async fn context_snapshot_workflows(
     let workflows = if include_workflow_details {
         json!(workflows
             .into_iter()
-            .map(context_snapshot_workflow_row)
+            .map(|workflow| context_snapshot_workflow_row(workflow, &current_surface_ids))
             .collect::<Vec<_>>())
     } else {
         json!([])
@@ -276,17 +276,29 @@ async fn context_snapshot_workflows(
     Ok((workflows, json!(summaries), json!(loop_summaries)))
 }
 
-fn context_snapshot_workflow_row(workflow: WorkflowState) -> Value {
-    let warnings = workflow_consistency_warnings(&workflow);
+fn context_snapshot_workflow_row(
+    workflow: WorkflowState,
+    current_surface_ids: &HashSet<String>,
+) -> Value {
+    let surface_present = workflow_surface_present(&workflow, current_surface_ids);
+    let stale_binding = surface_present == Some(false);
+    let warnings = workflow_consistency_warnings(&workflow, stale_binding);
     let mut value = serde_json::to_value(workflow).unwrap_or_else(|_| json!({}));
     if let Some(object) = value.as_object_mut() {
+        object.insert("surface_present".to_string(), json!(surface_present));
+        object.insert("stale_binding".to_string(), json!(stale_binding));
         object.insert("consistency_warnings".to_string(), json!(warnings));
     }
     value
 }
 
-fn context_snapshot_workflow_summary_row(workflow: &WorkflowState) -> Value {
-    let warnings = workflow_consistency_warnings(workflow);
+fn context_snapshot_workflow_summary_row(
+    workflow: &WorkflowState,
+    current_surface_ids: &HashSet<String>,
+) -> Value {
+    let surface_present = workflow_surface_present(workflow, current_surface_ids);
+    let stale_binding = surface_present == Some(false);
+    let warnings = workflow_consistency_warnings(workflow, stale_binding);
     let plan_steps_total = workflow.plan.len();
     let plan_steps_open = workflow
         .plan
@@ -307,8 +319,20 @@ fn context_snapshot_workflow_summary_row(workflow: &WorkflowState) -> Value {
         "plan_steps_total": plan_steps_total,
         "plan_steps_open": plan_steps_open,
         "evidence_total": workflow.evidence.len(),
+        "surface_present": surface_present,
+        "stale_binding": stale_binding,
         "consistency_warnings": warnings,
     })
+}
+
+fn workflow_surface_present(
+    workflow: &WorkflowState,
+    current_surface_ids: &HashSet<String>,
+) -> Option<bool> {
+    workflow
+        .surface_id
+        .as_deref()
+        .map(|surface_id| current_surface_ids.contains(surface_id))
 }
 
 fn context_snapshot_loop_summary_row(
@@ -318,10 +342,7 @@ fn context_snapshot_loop_summary_row(
     if !workflow_has_loop_state(workflow) {
         return None;
     }
-    let surface_present = workflow
-        .surface_id
-        .as_deref()
-        .map(|surface_id| current_surface_ids.contains(surface_id));
+    let surface_present = workflow_surface_present(workflow, current_surface_ids);
     let stale_binding = surface_present == Some(false);
     let gates_total = workflow.loop_gates.len();
     let gates_passed = workflow
@@ -391,9 +412,16 @@ fn loop_gate_status_is_running(status: &str) -> bool {
     )
 }
 
-fn workflow_consistency_warnings(workflow: &WorkflowState) -> Vec<&'static str> {
+fn workflow_consistency_warnings(
+    workflow: &WorkflowState,
+    stale_binding: bool,
+) -> Vec<&'static str> {
+    let mut warnings = Vec::new();
+    if workflow_status_is_active(&workflow.status) && stale_binding {
+        warnings.push("active_with_missing_surface");
+    }
     if workflow.plan.is_empty() {
-        return Vec::new();
+        return warnings;
     }
     let plan_open = workflow
         .plan
@@ -404,12 +432,11 @@ fn workflow_consistency_warnings(workflow: &WorkflowState) -> Vec<&'static str> 
         .iter()
         .all(|step| workflow_plan_step_status_is_terminal(&step.status));
     if workflow_status_is_terminal(&workflow.status) && plan_open {
-        vec!["done_with_open_plan_steps"]
+        warnings.push("done_with_open_plan_steps");
     } else if workflow_status_is_active(&workflow.status) && plan_complete {
-        vec!["running_with_completed_plan"]
-    } else {
-        Vec::new()
+        warnings.push("running_with_completed_plan");
     }
+    warnings
 }
 
 fn workflow_status_is_terminal(status: &str) -> bool {

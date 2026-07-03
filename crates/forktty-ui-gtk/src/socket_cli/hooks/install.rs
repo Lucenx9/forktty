@@ -549,7 +549,7 @@ pub(in crate::socket_cli) const ANTIGRAVITY_SCRIPT_TAG: &str = "forktty-managed-
 /// Antigravity executes `command` as one executable path (no argv splitting,
 /// no shell), so each event points at a generated wrapper script that runs
 /// the launcher with the usual guard line. PreToolUse is a gating hook, so its
-/// disabled/failed fallback explicitly approves tool use; non-gating events
+/// disabled/failed fallback explicitly allows tool use; non-gating events
 /// fall back to `{}` because Antigravity rejects unknown response fields like
 /// `continue` under strict protojson unmarshaling.
 pub(in crate::socket_cli) fn build_antigravity_hook_script(
@@ -558,7 +558,7 @@ pub(in crate::socket_cli) fn build_antigravity_hook_script(
     event: &str,
 ) -> String {
     let fallback = if event == "pre-tool" {
-        r#"{"decision":"approve"}"#
+        r#"{"decision":"allow"}"#
     } else {
         "{}"
     };

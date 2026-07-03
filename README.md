@@ -443,9 +443,10 @@ the worker surface.
 Context snapshots also include compact `workflow_summaries` rows. Full workflow
 records with durable memory, plan steps, and evidence are included only when
 `context.snapshot` receives `include_workflow_details: true`. Workflow summary
-rows include `consistency_warnings`, with `workflow_consistency_warning` in
-`risk_flags` when a running workflow has a completed plan or a terminal workflow
-still has open steps. Snapshot feed rows are compact by default: approvals and
+rows include `surface_present`, `stale_binding`, and `consistency_warnings`,
+with `workflow_consistency_warning` in `risk_flags` when a running workflow has
+a completed plan, an active workflow is bound to a missing surface, or a
+terminal workflow still has open steps. Snapshot feed rows are compact by default: approvals and
 notifications remain, while status and progress trace rows are available with
 `include_feed_trace: true`.
 For closed loops, `workflow.loop.set` / `workflow_loop_set` /
@@ -471,8 +472,9 @@ metadata.
 `surface_present`, `surface_runtime_present`, `surface_ready`, and a derived
 `final_state` such as `shutdown_requested`, `closed`, `starting`,
 `surface_missing`, or `stale` so cleanup decisions do not require interpreting
-raw worker fields; a worker surface is live only when it still exists in the
-workspace model and the terminal backend still reports a ready runtime.
+raw worker fields; cleanup treats a worker surface as live only when it still
+exists in the workspace model and the terminal backend still reports that
+surface, while `surface_ready` remains a separate startup/readiness signal.
 `team.worker.shutdown` uses the same provider-aware submit behavior by default;
 its `close_surface`
 option, exposed by CLI `forktty team-worker-shutdown --close`, immediately

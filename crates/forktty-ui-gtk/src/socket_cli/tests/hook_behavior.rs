@@ -683,7 +683,7 @@ fn antigravity_pre_tool_response_explicitly_allows_tool_use() {
         },
     )
     .unwrap();
-    assert_eq!(response, json!({ "decision": "approve" }));
+    assert_eq!(response, json!({ "decision": "allow" }));
 
     let response = build_hook_response(
         agent_spec("antigravity").unwrap(),
@@ -701,7 +701,7 @@ fn antigravity_pre_tool_response_explicitly_allows_tool_use() {
 fn antigravity_pre_tool_wrapper_fallback_explicitly_allows_tool_use() {
     let spec = agent_spec("antigravity").unwrap();
     let pre_tool = build_antigravity_hook_script(Path::new("/usr/bin/forktty"), spec, "pre-tool");
-    assert!(pre_tool.contains("printf '%s\\n' '{\"decision\":\"approve\"}'"));
+    assert!(pre_tool.contains("printf '%s\\n' '{\"decision\":\"allow\"}'"));
 
     let post_tool = build_antigravity_hook_script(Path::new("/usr/bin/forktty"), spec, "post-tool");
     assert!(post_tool.contains("printf '%s\\n' '{}'"));

@@ -163,7 +163,7 @@ Antigravity v1.0.3 supports `PreInvocation`, `PreToolUse`, and `PostToolUse`;
 tool hooks use the nested matcher plus `hooks` array shape.
 unknown event names are dropped silently, and hook stdout is unmarshaled
 strictly. ForkTTY therefore avoids the `continue` JSON used by other
-providers; it returns an explicit `{"decision":"approve"}` for the gating
+providers; it returns an explicit `{"decision":"allow"}` for the gating
 `PreToolUse` hook and `{}` for non-gating Antigravity hooks.
 Antigravity runs the generated wrapper scripts from its config directory, so
 ForkTTY derives Antigravity `resume_cwd` from the hook payload's

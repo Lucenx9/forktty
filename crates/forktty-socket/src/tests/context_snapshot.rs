@@ -106,6 +106,85 @@ async fn context_snapshot_exposes_effective_project_cwd_from_resume_cwd() {
 }
 
 #[tokio::test]
+async fn context_snapshot_marks_non_loop_workflows_with_missing_surface() {
+    let (mut state, _) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap().to_string();
+    let base_surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    let stale_surface = dispatch(
+        &state,
+        "pane.new_tab",
+        json!({"surface_id": base_surface_id}),
+    )
+    .await
+    .unwrap();
+    let stale_surface_id = stale_surface["id"].as_str().unwrap().to_string();
+
+    dispatch(
+        &state,
+        "workflow.upsert",
+        json!({
+            "workflow_id": "workflow-1",
+            "workspace_id": workspace_id,
+            "surface_id": stale_surface_id,
+            "mode": "review",
+            "status": "running",
+            "goal": "Audit dashboard"
+        }),
+    )
+    .await
+    .unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.close_surface(&stale_surface_id).is_some());
+    }
+
+    let snapshot = dispatch(
+        &state,
+        "context.snapshot",
+        json!({
+            "workspace_id": workspace_id,
+            "tail_lines": 0,
+            "include_workflow_details": true
+        }),
+    )
+    .await
+    .unwrap();
+
+    let workflow_summary = snapshot["workflow_summaries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|workflow| workflow["id"] == "workflow-1")
+        .unwrap();
+    assert_eq!(workflow_summary["surface_present"], false);
+    assert_eq!(workflow_summary["stale_binding"], true);
+    assert!(workflow_summary["consistency_warnings"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("active_with_missing_surface")));
+    assert!(snapshot["risk_flags"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("workflow_consistency_warning")));
+
+    let workflow_detail = snapshot["workflows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|workflow| workflow["id"] == "workflow-1")
+        .unwrap();
+    assert_eq!(workflow_detail["surface_present"], false);
+    assert_eq!(workflow_detail["stale_binding"], true);
+    assert!(workflow_detail["consistency_warnings"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("active_with_missing_surface")));
+}
+
+#[tokio::test]
 async fn context_snapshot_limits_terminal_tail_surface_count() {
     let surface_limit = MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_SURFACES;
     let (state, backend) = test_state();

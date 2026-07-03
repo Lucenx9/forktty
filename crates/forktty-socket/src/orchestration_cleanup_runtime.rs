@@ -29,16 +29,16 @@ pub(crate) async fn cleanup(
     }
     let mutate = apply;
     let workspace_id = optional_non_blank_string_param(params, "workspace_id")?.map(str::to_string);
-    let live_surface_ids = live_surface_ids(state)?;
+    let surface_liveness = surface_liveness(state)?;
 
     let team_actions = match store_access::optional_team_store_access(state) {
         Some(access) if mutate => {
-            let live_surface_ids = live_surface_ids.clone();
+            let surface_liveness = surface_liveness.clone();
             let workspace_id = workspace_id.clone();
             access
                 .update(move |store| {
                     let actions =
-                        plan_team_cleanup(store, &live_surface_ids, workspace_id.as_deref());
+                        plan_team_cleanup(store, &surface_liveness, workspace_id.as_deref());
                     apply_team_cleanup(store, &actions)?;
                     Ok(actions
                         .into_iter()
@@ -52,7 +52,7 @@ pub(crate) async fn cleanup(
         }
         Some(access) => {
             let store = access.load().await?;
-            plan_team_cleanup(&store, &live_surface_ids, workspace_id.as_deref())
+            plan_team_cleanup(&store, &surface_liveness, workspace_id.as_deref())
                 .into_iter()
                 .map(|action| action.into_json(false))
                 .collect()
@@ -97,16 +97,37 @@ pub(crate) async fn cleanup(
     }))
 }
 
-fn live_surface_ids(state: &SocketAppState) -> Result<BTreeSet<String>, DispatchError> {
+#[derive(Clone)]
+struct SurfaceLiveness {
+    model_surface_ids: BTreeSet<String>,
+    live_surface_ids: BTreeSet<String>,
+}
+
+fn surface_liveness(state: &SocketAppState) -> Result<SurfaceLiveness, DispatchError> {
+    let terminal_surface_ids = state
+        .terminal
+        .surfaces()
+        .map_err(DispatchError::from)?
+        .into_iter()
+        .map(|surface| surface.surface_id)
+        .collect::<BTreeSet<_>>();
     let model = state
         .model
         .lock()
         .map_err(|_| DispatchError::Other("Lock poisoned".to_string()))?;
-    Ok(model
+    let model_surface_ids = model
         .list_surfaces(None)
         .into_iter()
         .map(|surface| surface.id)
-        .collect())
+        .collect::<BTreeSet<_>>();
+    let live_surface_ids = model_surface_ids
+        .intersection(&terminal_surface_ids)
+        .cloned()
+        .collect();
+    Ok(SurfaceLiveness {
+        model_surface_ids,
+        live_surface_ids,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,7 +224,7 @@ impl TeamCleanupAction {
 
 fn plan_team_cleanup(
     store: &TeamStoreData,
-    live_surface_ids: &BTreeSet<String>,
+    surface_liveness: &SurfaceLiveness,
     workspace_id: Option<&str>,
 ) -> Vec<TeamCleanupAction> {
     let mut actions = Vec::new();
@@ -217,7 +238,7 @@ fn plan_team_cleanup(
                 continue;
             }
             match worker.surface_id.as_deref() {
-                Some(surface_id) if live_surface_ids.contains(surface_id) => {
+                Some(surface_id) if surface_liveness.live_surface_ids.contains(surface_id) => {
                     live_worker_blockers = true;
                     actions.push(TeamCleanupAction::ManualReview {
                         team_id: team.id.clone(),
@@ -226,12 +247,17 @@ fn plan_team_cleanup(
                         reason: "worker_surface_still_exists",
                     });
                 }
-                Some(_) => {
+                Some(surface_id) => {
                     stale_workers.insert(worker.id.clone());
+                    let reason = if surface_liveness.model_surface_ids.contains(surface_id) {
+                        "worker_surface_runtime_missing"
+                    } else {
+                        "worker_surface_missing"
+                    };
                     actions.push(TeamCleanupAction::CloseWorker {
                         team_id: team.id.clone(),
                         worker_id: worker.id.clone(),
-                        reason: "worker_surface_missing",
+                        reason,
                     });
                 }
                 None => {

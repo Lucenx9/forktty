@@ -1064,7 +1064,7 @@ pub(in crate::socket_cli) fn build_hook_response(
     // events can use an empty object as a no-op response.
     if spec.key == "antigravity" {
         if event == "pre-tool" {
-            return Ok(json!({ "decision": "approve" }));
+            return Ok(json!({ "decision": "allow" }));
         }
         return Ok(json!({}));
     }
