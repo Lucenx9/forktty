@@ -149,7 +149,8 @@ pub const TERMINAL_THEME_CHOICES: &[&str] = &[
     TERMINAL_THEME_GRUVBOX_DARK,
 ];
 pub const TEAM_AGENT_AUTO: &str = "auto";
-pub const TEAM_PROVIDER_CHOICES: &[&str] = &["codex", "claude", "pi", "opencode", "antigravity"];
+pub const TEAM_PROVIDER_CHOICES: &[&str] =
+    &["codex", "claude", "pi", "opencode", "antigravity", "grok"];
 pub const MAX_PERSISTENT_SCROLLBACK_LINES: u32 = 1_000;
 
 const MAX_CONFIG_SIZE_BYTES: u64 = 1024 * 1024;
@@ -674,6 +675,7 @@ pub fn canonical_team_provider(value: &str) -> Option<&'static str> {
         "claude" | "claude_code" | "claude-code" => Some("claude"),
         "opencode" | "open_code" | "open-code" => Some("opencode"),
         "antigravity" | "agy" => Some("antigravity"),
+        "grok" | "grok_build" | "grok-build" => Some("grok"),
         "pi" => Some("pi"),
         _ => None,
     }
@@ -686,6 +688,7 @@ pub fn team_provider_program(provider: &str) -> Option<&'static str> {
         "pi" => Some("pi"),
         "opencode" => Some("opencode"),
         "antigravity" => Some("agy"),
+        "grok" => Some("grok"),
         _ => None,
     }
 }
@@ -780,7 +783,7 @@ fn validate_notification_command(command: &str) -> Result<(), ConfigError> {
 fn validate_team_config(team: &TeamConfig) -> Result<(), ConfigError> {
     if normalize_team_agent_choice(&team.default_agent).as_deref() != Some(&team.default_agent) {
         return Err(ConfigError::Invalid(
-            "team.default_agent must be auto, codex, claude, pi, opencode, or antigravity"
+            "team.default_agent must be auto, codex, claude, pi, opencode, antigravity, or grok"
                 .to_string(),
         ));
     }
@@ -813,7 +816,7 @@ fn validate_team_provider_list(
     for value in values {
         if canonical_team_provider(value) != Some(value.as_str()) {
             return Err(ConfigError::Invalid(format!(
-                "{name} entries must be canonical provider names: codex, claude, pi, opencode, antigravity"
+                "{name} entries must be canonical provider names: codex, claude, pi, opencode, antigravity, grok"
             )));
         }
         if seen
@@ -833,7 +836,7 @@ fn validate_team_provider_commands(commands: &BTreeMap<String, String>) -> Resul
     for (provider, command) in commands {
         if canonical_team_provider(provider) != Some(provider.as_str()) {
             return Err(ConfigError::Invalid(
-                "team.provider_commands keys must be canonical provider names: codex, claude, pi, opencode, antigravity"
+                "team.provider_commands keys must be canonical provider names: codex, claude, pi, opencode, antigravity, grok"
                     .to_string(),
             ));
         }

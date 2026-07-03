@@ -31,7 +31,7 @@ async fn capabilities_report_provider_detection_and_team_policy() {
     assert_eq!(policy["default_agent"], "auto");
     assert_eq!(
         policy["provider_order"],
-        json!(["codex", "claude", "pi", "opencode", "antigravity"])
+        json!(["codex", "claude", "pi", "opencode", "antigravity", "grok"])
     );
     assert_eq!(policy["auto_fallback"], true);
     assert_eq!(policy["disabled_agents"], json!([]));
@@ -52,6 +52,9 @@ async fn capabilities_report_provider_detection_and_team_policy() {
         providers["claude"]["unavailable_reason"],
         "program_not_found"
     );
+    assert_eq!(providers["grok"]["program"], "grok");
+    assert_eq!(providers["grok"]["available_on_path"], false);
+    assert_eq!(providers["grok"]["unavailable_reason"], "program_not_found");
     assert_eq!(result["pty_persistence"]["config_enabled"], false);
     assert_eq!(result["pty_persistence"]["available"], false);
     assert_eq!(result["pty_persistence"]["active"], false);
@@ -345,6 +348,9 @@ fn team_worker_launch_accepts_documented_provider_aliases() {
         ("open-code", "opencode"),
         ("antigravity", "agy"),
         ("agy", "agy"),
+        ("grok", "grok"),
+        ("grok_build", "grok"),
+        ("grok-build", "grok"),
         ("pi", "pi"),
     ] {
         let (program, args) = team_worker_launch_command(alias, None, Vec::new()).unwrap();

@@ -990,6 +990,77 @@ async fn team_message_dispatch_submit_uses_separate_enter_for_pi() {
 }
 
 #[tokio::test]
+async fn team_message_dispatch_submit_uses_separate_enter_for_grok() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(RecordingEnterBackend::default());
+    let mut state = SocketAppState::new(
+        model,
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    state.workflow_store_path = None;
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "leader_surface_id": surface_id
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "grok",
+            "surface_id": surface_id
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.message.send",
+        json!({
+            "team_id": "team-1",
+            "message_id": "msg-submit",
+            "from": "leader",
+            "to_worker_id": "worker-1",
+            "body": "run status"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let result = dispatch(
+        &state,
+        "team.message.dispatch",
+        json!({"team_id": "team-1", "message_id": "msg-submit", "submit": true}),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["submitted"], true);
+    assert_eq!(result["message"]["delivered"], true);
+    assert_eq!(
+        backend.sent_text(surface_id).unwrap(),
+        vec!["run status".to_string()]
+    );
+    assert_eq!(backend.entered_surfaces(), vec![surface_id.to_string()]);
+}
+
+#[tokio::test]
 async fn team_message_dispatch_retry_after_separate_enter_failure_does_not_resend_body() {
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let backend = Arc::new(FailingEnterBackend::default());
@@ -1495,4 +1566,86 @@ async fn team_message_dispatch_waits_before_prompting_fresh_antigravity_worker()
         vec!["run status\r".to_string()]
     );
     assert!(backend.entered_surfaces().is_empty());
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn team_message_dispatch_waits_before_prompting_fresh_grok_worker() {
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _grok = write_fake_program(bin_dir.path(), "grok");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(RecordingEnterBackend::default());
+    let mut state = SocketAppState::new(
+        model,
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    state.workflow_store_path = None;
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let leader_surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "leader_surface_id": leader_surface_id
+        }),
+    )
+    .await
+    .unwrap();
+    let launched = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "grok"
+        }),
+    )
+    .await
+    .unwrap();
+    let launched_surface_id = launched["surface"]["id"].as_str().unwrap();
+    dispatch(
+        &state,
+        "team.message.send",
+        json!({
+            "team_id": "team-1",
+            "message_id": "msg-submit",
+            "from": "leader",
+            "to_worker_id": "worker-1",
+            "body": "run status"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let started = Instant::now();
+    let result = dispatch(
+        &state,
+        "team.message.dispatch",
+        json!({"team_id": "team-1", "message_id": "msg-submit", "submit": true}),
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        started.elapsed() >= Duration::from_millis(500),
+        "fresh Grok worker dispatch should wait for the provider TUI before prompting"
+    );
+    assert_eq!(result["submitted"], true);
+    assert_eq!(
+        backend.sent_text(launched_surface_id).unwrap(),
+        vec!["run status".to_string()]
+    );
+    assert_eq!(
+        backend.entered_surfaces(),
+        vec![launched_surface_id.to_string()]
+    );
 }

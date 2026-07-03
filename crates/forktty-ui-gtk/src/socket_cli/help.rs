@@ -121,15 +121,15 @@ High-level wrappers:
   forktty team ask <team-id> <worker-id> [--agent <agent>] --task-id <id> --prompt <text>
       Create/update the team, create the task, launch a fresh worker surface, assign the task, queue the prompt, and dispatch it.
       Omit --agent, or pass --agent auto, to use Settings > Agents team provider selection.
-      Submit uses provider-aware terminal input; Codex/Claude/Pi get text, a short settle, then Enter.
+      Submit uses provider-aware terminal input; Codex/Claude/Pi/Grok get text, a short settle, then Enter.
       Freshly launched provider TUI workers wait briefly before the first prompt.
       Re-running ask/review launches another worker; use team-message-send + team-message-dispatch for follow-ups.
-      Options: --agent <auto|codex|claude|pi|opencode|antigravity>, --role <role>, --title <title>, --goal <text>, --worktree-name <name>,
+      Options: --agent <auto|codex|claude|pi|opencode|antigravity|grok>, --role <role>, --title <title>, --goal <text>, --worktree-name <name>,
                --args <comma-list>, --submit[=true|false] (default: true; pass --submit=false to stage only).
 
   forktty team review <team-id> <worker-id> [--agent <agent>] --task-id <id> [--commit <rev>]
       Same flow as ask, with a read-only commit review prompt.
-      Options: --agent <auto|codex|claude|pi|opencode|antigravity>, --role <role>, --worktree-name <name>, --args <comma-list>,
+      Options: --agent <auto|codex|claude|pi|opencode|antigravity|grok>, --role <role>, --worktree-name <name>, --args <comma-list>,
                --prompt-extra <text>, --submit[=true|false] (default: true; pass --submit=false to stage only).
 
   forktty team watch <team-id> [--stale-after-ms <ms>] [--limit <n>] [--include-delivered]

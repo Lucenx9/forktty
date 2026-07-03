@@ -783,6 +783,11 @@ async fn team_worker_shutdown_submit_uses_separate_enter_for_pi() {
     assert_worker_shutdown_uses_separate_enter("pi").await;
 }
 
+#[tokio::test]
+async fn team_worker_shutdown_submit_uses_separate_enter_for_grok() {
+    assert_worker_shutdown_uses_separate_enter("grok").await;
+}
+
 async fn assert_worker_shutdown_uses_separate_enter(agent: &str) {
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let backend = Arc::new(RecordingEnterBackend::default());

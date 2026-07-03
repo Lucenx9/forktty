@@ -456,6 +456,8 @@ async fn capabilities_lists_only_dispatchable_methods() {
     assert_eq!(providers["codex"]["safe_resume"], true);
     assert_eq!(providers["claude"]["cwd_resume_flag"], false);
     assert_eq!(providers["antigravity"]["program"], "agy");
+    assert_eq!(providers["grok"]["program"], "grok");
+    assert_eq!(providers["grok"]["cwd_resume_flag"], true);
     assert_eq!(providers["pi"]["program"], "pi");
     assert_eq!(providers["pi"]["safe_resume"], true);
     assert!(providers.get("gemini").is_none());

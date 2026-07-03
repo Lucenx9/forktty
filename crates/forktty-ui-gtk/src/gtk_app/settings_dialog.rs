@@ -218,7 +218,7 @@ pub(super) fn show_settings_dialog_page(
         .title("Provider order")
         .text(team_provider_list_text(&loaded.team.provider_order))
         .show_apply_button(true)
-        .tooltip_text("Comma-separated providers: codex, claude, pi, opencode, antigravity")
+        .tooltip_text("Comma-separated providers: codex, claude, pi, opencode, antigravity, grok")
         .build();
     team_provider_order.add_css_class("settings-row");
     team_provider_list.append(&team_provider_order);
@@ -1252,6 +1252,7 @@ pub(super) const TEAM_DEFAULT_AGENT_ITEMS: &[(&str, &str)] = &[
     ("pi", "Pi"),
     ("opencode", "OpenCode"),
     ("antigravity", "Antigravity"),
+    ("grok", "Grok"),
 ];
 
 fn team_provider_label(provider: &str) -> &'static str {
@@ -1261,6 +1262,7 @@ fn team_provider_label(provider: &str) -> &'static str {
         "pi" => "Pi",
         "opencode" => "OpenCode",
         "antigravity" => "Antigravity",
+        "grok" => "Grok",
         _ => "Provider",
     }
 }

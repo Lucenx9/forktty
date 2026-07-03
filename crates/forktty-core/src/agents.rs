@@ -14,6 +14,7 @@ pub enum AgentKind {
     ClaudeCode,
     Codex,
     Antigravity,
+    Grok,
     Pi,
     #[serde(rename = "opencode", alias = "open_code")]
     OpenCode,
@@ -26,6 +27,7 @@ pub fn agent_metadata_aliases(agent: AgentKind) -> &'static [&'static str] {
         AgentKind::ClaudeCode => &["claude", "claude-code", "claude_code"],
         AgentKind::Codex => &["codex"],
         AgentKind::Antigravity => &["antigravity", "agy"],
+        AgentKind::Grok => &["grok", "grok-build", "grok_build"],
         AgentKind::Pi => &["pi"],
         AgentKind::OpenCode => &["opencode", "open-code", "open_code"],
         AgentKind::Custom => &["custom"],
@@ -124,6 +126,16 @@ pub fn agent_resume_command_with_cwd_and_permission_mode(
             ("claude", args)
         }
         AgentKind::Antigravity => ("agy", vec!["--conversation".to_string(), session_id]),
+        AgentKind::Grok => {
+            let mut args = Vec::new();
+            if let Some(resume_cwd) = resume_cwd {
+                args.push("--cwd".to_string());
+                args.push(safe_resume_cwd(resume_cwd)?);
+            }
+            args.push("--resume".to_string());
+            args.push(session_id);
+            ("grok", args)
+        }
         AgentKind::Pi => ("pi", vec!["--session".to_string(), session_id]),
         AgentKind::OpenCode => ("opencode", vec!["--session".to_string(), session_id]),
         AgentKind::Custom => return Err(AgentResumeError::UnsupportedAgent(agent)),
@@ -328,6 +340,15 @@ mod tests {
     }
 
     #[test]
+    fn grok_provider_key_matches_documented_spelling() {
+        assert_eq!(serde_json::to_string(&AgentKind::Grok).unwrap(), "\"grok\"");
+        assert_eq!(
+            serde_json::from_str::<AgentKind>("\"grok\"").unwrap(),
+            AgentKind::Grok
+        );
+    }
+
+    #[test]
     fn builds_provider_resume_commands_as_argv() {
         let cases = [
             (
@@ -345,6 +366,7 @@ mod tests {
                 "agy",
                 &["--conversation", "agy-session-1"][..],
             ),
+            (AgentKind::Grok, "grok", &["--resume", "grok-session-1"][..]),
             (
                 AgentKind::OpenCode,
                 "opencode",
@@ -396,6 +418,16 @@ mod tests {
         )
         .unwrap();
         assert_eq!(claude.args, ["--resume", "claude-session-1"]);
+        let grok = super::agent_resume_command_with_cwd(
+            AgentKind::Grok,
+            "grok-session-1",
+            Some(std::path::Path::new("/tmp/project")),
+        )
+        .unwrap();
+        assert_eq!(
+            grok.args,
+            ["--cwd", "/tmp/project", "--resume", "grok-session-1"]
+        );
     }
 
     #[test]

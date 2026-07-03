@@ -375,13 +375,13 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "team_worker_launch",
             annotations: mutating_annotations(false, false),
-            description: "Launch a provider worker in a new ForkTTY tab and attach it to a team worker record. If agent is omitted or auto, ForkTTY selects the first configured available provider from Settings. Supported agents are codex, claude, pi, opencode, and antigravity. Claude launches add documented permission-mode defaults unless args already include Claude permission controls; Pi review-role launches add read-only tool defaults unless args already include Pi tool controls.",
+            description: "Launch a provider worker in a new ForkTTY tab and attach it to a team worker record. If agent is omitted or auto, ForkTTY selects the first configured available provider from Settings. Supported agents are codex, claude, pi, opencode, antigravity, and grok. Claude launches add documented permission-mode defaults unless args already include Claude permission controls; Pi review-role launches add read-only tool defaults unless args already include Pi tool controls.",
             input_schema: object_schema(
                 &["team_id", "worker_id"],
                 json!({
                     "team_id": string_prop("Team id."),
                     "worker_id": string_prop("Worker id."),
-                    "agent": string_prop("Provider to launch: auto, codex, claude, pi, opencode, or antigravity. Defaults to auto."),
+                    "agent": string_prop("Provider to launch: auto, codex, claude, pi, opencode, antigravity, or grok. Defaults to auto."),
                     "role": string_prop("Worker role."),
                     "assigned_task_id": string_prop("Task id currently assigned to this worker."),
                     "worktree_name": string_prop("Worktree name assigned to this worker."),
@@ -418,14 +418,14 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "team_worker_shutdown",
             annotations: mutating_annotations(true, false),
-            description: "Request team worker shutdown with provider-aware submit behavior by default, including a short settle before Codex/Claude/Pi Enter, mark the worker shutdown_requested after the terminal accepts the input, and optionally close current-runtime launch-owned worker panes immediately.",
+            description: "Request team worker shutdown with provider-aware submit behavior by default, including a short settle before Codex/Claude/Pi/Grok Enter, mark the worker shutdown_requested after the terminal accepts the input, and optionally close current-runtime launch-owned worker panes immediately.",
             input_schema: object_schema(
                 &["team_id", "worker_id"],
                 json!({
                     "team_id": string_prop("Team id."),
                     "worker_id": string_prop("Worker id."),
                     "text": string_prop("Optional exact shutdown request text."),
-                    "submit": boolean_prop("Use provider-aware submit behavior for the shutdown terminal input, including a short settle before Codex/Claude/Pi Enter. Defaults to true; set false to stage text without Enter."),
+                    "submit": boolean_prop("Use provider-aware submit behavior for the shutdown terminal input, including a short settle before Codex/Claude/Pi/Grok Enter. Defaults to true; set false to stage text without Enter."),
                     "close_surface": boolean_prop("Immediately close the worker surface after shutdown text is accepted by the terminal. Defaults to false and only works for surfaces created by team_worker_launch in the current ForkTTY runtime."),
                 }),
             ),
@@ -473,7 +473,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
                     "team_id": string_prop("Team id."),
                     "message_id": string_prop("Message id."),
                     "worker_id": string_prop("Required when dispatching a team-wide message."),
-                    "submit": boolean_prop("Use provider-aware submit behavior for the dispatched terminal input, including a short settle before Codex/Claude/Pi Enter and a brief initial prompt settle for freshly launched provider TUI workers. Defaults to false."),
+                    "submit": boolean_prop("Use provider-aware submit behavior for the dispatched terminal input, including a short settle before Codex/Claude/Pi/Grok Enter and a brief initial prompt settle for freshly launched provider TUI workers. Defaults to false."),
                 }),
             ),
         },

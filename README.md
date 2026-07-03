@@ -526,7 +526,7 @@ require Node.js.
 
 `forktty capabilities` includes the socket method list plus a
 `provider_capabilities` matrix for the supported providers (`codex`, `claude`,
-`pi`, `opencode`, and `antigravity`), including their launch program, whether
+`pi`, `opencode`, `antigravity`, and `grok`), including their launch program, whether
 ForkTTY has safe resume support, and whether the provider exposes a dedicated
 cwd resume flag. It also reports `available_on_path`, the resolved executable
 path when present, configured command overrides for harnesses installed outside
@@ -737,8 +737,8 @@ blocked_terminal_apps = []
 blocked_terminal_types = []
 
 [team]
-default_agent = "auto" # "auto", "codex", "claude", "pi", "opencode", or "antigravity"
-provider_order = ["codex", "claude", "pi", "opencode", "antigravity"]
+default_agent = "auto" # "auto", "codex", "claude", "pi", "opencode", "antigravity", or "grok"
+provider_order = ["codex", "claude", "pi", "opencode", "antigravity", "grok"]
 auto_fallback = true
 disabled_agents = []
 

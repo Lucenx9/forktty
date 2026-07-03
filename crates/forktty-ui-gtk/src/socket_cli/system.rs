@@ -177,7 +177,7 @@ pub(super) fn format_capabilities_lines(result: &Value) -> Vec<String> {
         .and_then(Value::as_object)
     {
         let mut names = Vec::new();
-        for name in ["codex", "claude", "pi", "opencode", "antigravity"] {
+        for name in ["codex", "claude", "pi", "opencode", "antigravity", "grok"] {
             if providers.contains_key(name) {
                 names.push(name.to_string());
             }

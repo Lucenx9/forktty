@@ -67,7 +67,7 @@ pub(crate) fn terminal_text_and_separate_enter(
 fn agent_uses_separate_submit_enter(agent: Option<&str>) -> bool {
     matches!(
         normalized_agent(agent).as_str(),
-        "claude" | "claude_code" | "claude-code" | "codex" | "pi"
+        "claude" | "claude_code" | "claude-code" | "codex" | "grok" | "pi"
     )
 }
 
@@ -91,7 +91,14 @@ pub(crate) async fn wait_for_provider_initial_prompt_settle(
 fn agent_needs_initial_prompt_settle(agent: Option<&str>) -> bool {
     matches!(
         normalized_agent(agent).as_str(),
-        "claude" | "claude_code" | "claude-code" | "codex" | "opencode" | "pi" | "antigravity"
+        "claude"
+            | "claude_code"
+            | "claude-code"
+            | "codex"
+            | "grok"
+            | "opencode"
+            | "pi"
+            | "antigravity"
     )
 }
 

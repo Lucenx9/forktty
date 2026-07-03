@@ -188,7 +188,7 @@ fn team_config_defaults_to_auto_provider_policy() {
     assert_eq!(config.team.default_agent, "auto");
     assert_eq!(
         config.team.provider_order,
-        ["codex", "claude", "pi", "opencode", "antigravity"]
+        ["codex", "claude", "pi", "opencode", "antigravity", "grok"]
     );
     assert!(config.team.auto_fallback);
     assert!(config.team.disabled_agents.is_empty());
@@ -207,10 +207,10 @@ fn team_config_normalizes_provider_aliases_and_drops_invalid_entries() {
 
             [team]
             default_agent = "claude-code"
-            provider_order = ["Pi", "unknown", "codex", "pi", "agy"]
+            provider_order = ["Pi", "unknown", "codex", "pi", "agy", "grok-build"]
             auto_fallback = false
             disabled_agents = ["open-code", "bad", "codex", "codex"]
-            provider_commands = { "claude-code" = " /opt/claude/bin/claude ", agy = "agy-dev", unknown = "ignored" }
+            provider_commands = { "claude-code" = " /opt/claude/bin/claude ", agy = "agy-dev", "grok-build" = " /opt/grok/bin/grok ", unknown = "ignored" }
             "#,
         )
         .unwrap();
@@ -218,7 +218,10 @@ fn team_config_normalizes_provider_aliases_and_drops_invalid_entries() {
     let config = load_config_from_path(&path).unwrap();
 
     assert_eq!(config.team.default_agent, "claude");
-    assert_eq!(config.team.provider_order, ["pi", "codex", "antigravity"]);
+    assert_eq!(
+        config.team.provider_order,
+        ["pi", "codex", "antigravity", "grok"]
+    );
     assert!(!config.team.auto_fallback);
     assert_eq!(config.team.disabled_agents, ["opencode", "codex"]);
     assert_eq!(
@@ -236,6 +239,14 @@ fn team_config_normalizes_provider_aliases_and_drops_invalid_entries() {
             .get("antigravity")
             .map(String::as_str),
         Some("agy-dev")
+    );
+    assert_eq!(
+        config
+            .team
+            .provider_commands
+            .get("grok")
+            .map(String::as_str),
+        Some("/opt/grok/bin/grok")
     );
     assert!(!config.team.provider_commands.contains_key("unknown"));
 }

@@ -54,6 +54,14 @@ const PROVIDER_CAPABILITIES: &[ProviderCapability] = &[
         cwd_resume_flag: false,
         permission_bypass_resume: false,
     },
+    ProviderCapability {
+        agent: "grok",
+        program: "grok",
+        aliases: &["grok", "grok_build", "grok-build"],
+        safe_resume: true,
+        cwd_resume_flag: true,
+        permission_bypass_resume: false,
+    },
 ];
 
 #[derive(Debug, Clone)]

@@ -49,6 +49,9 @@ All notable changes to ForkTTY are documented here.
   from completed task-strategy workflows or accept explicit caller evidence,
   then apply only a small explainable score bias without overriding readiness,
   cooldown, lockout, task fit, or approval rules.
+- Added Grok Build (`grok`) as a visible team/router harness with Settings,
+  `system.capabilities`, `team.worker.launch`, and task-strategy routing
+  support.
 
 ### Changed
 - Reordered the main menu so the standard app items stay grouped, and the
