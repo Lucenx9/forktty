@@ -154,6 +154,10 @@ fn task_strategy_supports_loop_metadata_layer(strategy: &TaskStrategy) -> bool {
     )
 }
 
+fn task_strategy_requires_workflow_layer(strategy: &TaskStrategy) -> bool {
+    !matches!(strategy, TaskStrategy::Solo)
+}
+
 fn task_strategy_supports_assignment_role(strategy: &TaskStrategy, role: &HarnessRole) -> bool {
     match strategy {
         TaskStrategy::Solo | TaskStrategy::SoloTracked | TaskStrategy::SoloWithVerifyLoop => {
@@ -1034,6 +1038,12 @@ fn optional_signal_reason(
 }
 
 fn validate_submitted_task_strategy_plan(plan: &TaskStrategyPlan) -> Result<(), DispatchError> {
+    if task_strategy_supports_team_layer(&plan.strategy) && !plan.layers.team {
+        return Err(DispatchError::InvalidParam(format!(
+            "task.strategy.apply strategy {} requires a team layer",
+            task_strategy_wire_value(&plan.strategy)
+        )));
+    }
     if plan.layers.team && !task_strategy_supports_team_layer(&plan.strategy) {
         return Err(DispatchError::InvalidParam(format!(
             "task.strategy.apply strategy {} does not support a team layer",
@@ -1055,6 +1065,12 @@ fn validate_submitted_task_strategy_plan(plan: &TaskStrategyPlan) -> Result<(), 
         return Err(DispatchError::InvalidParam(
             "task.strategy.apply loop metadata requires workflow layer".to_string(),
         ));
+    }
+    if task_strategy_requires_workflow_layer(&plan.strategy) && !plan.layers.workflow {
+        return Err(DispatchError::InvalidParam(format!(
+            "task.strategy.apply strategy {} requires a workflow layer",
+            task_strategy_wire_value(&plan.strategy)
+        )));
     }
     if plan.assignments.is_empty() {
         return Err(DispatchError::InvalidParam(

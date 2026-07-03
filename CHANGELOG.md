@@ -51,6 +51,12 @@ All notable changes to ForkTTY are documented here.
 - Fixed task strategy apply so team strategies reject client-submitted role
   mixes the planner would never produce, such as implementer-plus-reviewer
   plans with duplicate reviewers and no implementer.
+- Fixed task strategy apply so team strategies cannot be staged without a team
+  layer, avoiding workflow-only runs for plans that require visible worker
+  tasks.
+- Fixed task strategy apply so tracked strategies cannot be staged without a
+  workflow layer, avoiding no-op runs with no durable workflow or team
+  monitoring target.
 - Fixed task strategy apply so submitted plans with more assignments than
   visible team worker capacity are rejected before creating partial
   workflow/team state.

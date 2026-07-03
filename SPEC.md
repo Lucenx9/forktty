@@ -552,7 +552,9 @@ and avoiding empty workflow plans. It also rejects assignment counts and role
 mixes that the selected strategy would not produce, such as multiple
 solo/review assignments, implementer-plus-reviewer plans without exactly one
 implementer and one reviewer, or over-wide parallel research runs. A submitted
-plan cannot force
+plan cannot omit `layers.workflow: true` from strategies that the planner
+tracks through durable workflow state, cannot omit `layers.team: true` from
+strategies that require visible team orchestration, cannot force
 `layers.team: true` onto a strategy that the planner does not treat as a team
 strategy, cannot force `layers.loop_metadata: true` onto a strategy that the
 planner does not treat as a verify-loop strategy, or attach assignment roles

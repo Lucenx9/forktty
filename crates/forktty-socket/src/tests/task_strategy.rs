@@ -984,6 +984,36 @@ async fn task_strategy_apply_rejects_team_layer_without_workflow_without_mutatio
 }
 
 #[tokio::test]
+async fn task_strategy_apply_rejects_team_strategy_without_team_layer() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let mut plan = staged_team_plan_json();
+    plan["layers"]["team"] = json!(false);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("requires a team layer"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_apply_rejects_loop_metadata_without_workflow_without_mutation() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();
@@ -1007,6 +1037,57 @@ async fn task_strategy_apply_rejects_loop_metadata_without_workflow_without_muta
 
     assert_eq!(err.code(), "invalid_param");
     assert!(err.to_string().contains("loop metadata requires workflow"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn task_strategy_apply_rejects_tracked_strategy_without_workflow_layer() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let plan = json!({
+        "task_class": "review_only",
+        "strategy": "review_only",
+        "layers": {
+            "workflow": false,
+            "team": false,
+            "loop_metadata": false,
+            "worktree": false,
+            "feed": true,
+            "mcp": true,
+            "hooks": true
+        },
+        "assignments": [
+            {
+                "role": "reviewer",
+                "harness_id": "claude",
+                "reason": "read-only review"
+            }
+        ],
+        "approvals": ["start_run"],
+        "reasons": ["classified task as ReviewOnly"],
+        "safety_notes": ["visible setup only"]
+    });
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Review the router",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("requires a workflow layer"));
     let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
     let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
     assert!(workflows.as_array().unwrap().is_empty());
