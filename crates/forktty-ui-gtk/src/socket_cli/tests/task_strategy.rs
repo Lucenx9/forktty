@@ -105,6 +105,8 @@ fn task_plan_requests_task_strategy_plan() {
                     "/repo/forktty",
                     "--strategy",
                     "parallel_research",
+                    "--task-kind",
+                    "parallel_research",
                     "--profile",
                     "parallel",
                     "--last-known-good-json",
@@ -129,6 +131,7 @@ fn task_plan_requests_task_strategy_plan() {
     assert_eq!(request["params"]["cwd"], "/repo/forktty");
     assert_eq!(request["params"]["goal"], "Compare router options");
     assert_eq!(request["params"]["strategy"], "parallel_research");
+    assert_eq!(request["params"]["task_kind"], "parallel_research");
     assert_eq!(request["params"]["router_profile"], "parallel");
     assert_eq!(
         request["params"]["last_known_good"]["strategy"],

@@ -333,9 +333,9 @@ with the real workspace id.
 override for read-only repository context inference inside a Git repository
 already represented by an open ForkTTY workspace, surface, or effective project
 cwd, and optional hints
-(`strategy`, `router_profile`, `repo_dirty`, `user_requested_parallelism`,
-`user_requested_review`, `likely_user_visible_change`, `last_known_good`, and
-`harness_signals`).
+(`strategy`, `task_kind` / `task_class_hint`, `router_profile`, `repo_dirty`,
+`user_requested_parallelism`, `user_requested_review`,
+`likely_user_visible_change`, `last_known_good`, and `harness_signals`).
 It returns
 ForkTTY's selected router profile, recommended task class, strategy, layers,
 harness-role assignments with role-specific score/factor breakdowns, required
@@ -355,12 +355,18 @@ it infers simple git dirty/conflict state from the selected surface or
 workspace effective project cwd, or from `cwd` when the caller passes one
 because its real repo differs from the selected ForkTTY pane. `cwd` must be an
 absolute existing directory and is used only for planning context; an explicit
-`repo_dirty` value overrides that inference. When `likely_user_visible_change`
-is omitted, it infers likely
-editing/user-visible intent from the goal text; an explicit false value
-overrides that inference. Primary review goals such as "Review ..." or
-"Read only ..." are treated as read-only review work, so dirty-repo state alone
-does not force worktree isolation for a `review_only` strategy. When
+`repo_dirty` value overrides that inference. `task_kind` is a caller-normalized
+task class hint (`tiny_answer`, `repo_inspection`, `focused_bugfix`,
+`feature_implementation`, `review_only`, `parallel_research`,
+`parallel_experiment`, `verify_fix_loop`, or `long_running_team_run`) for
+clear intent that may be expressed in any language; `task_class_hint` is an
+equivalent socket alias and conflicts if both values differ. When
+`likely_user_visible_change` is omitted, ForkTTY infers likely
+editing/user-visible intent from mutating task-kind hints and high-confidence
+goal wording; an explicit false value overrides that inference. Primary review
+goals such as "Review ..." or "Read only ..." are treated as read-only review
+work, so dirty-repo state alone does not force worktree isolation for a
+`review_only` strategy. When
 `router_profile` is omitted, it uses `balanced`
 unless the goal or request hints clearly imply `fast`, `conservative`,
 `parallel`, or `review_heavy`; an explicit profile reweights the same
@@ -529,13 +535,14 @@ must refer to the same surface. The MCP `task_strategy_apply` tool forwards
 the current `FORKTTY_WORKSPACE_ID` and `FORKTTY_SURFACE_ID` as the default
 workspace and leader surface when the caller omits explicit target selectors.
 Before any workflow/team/worker mutation it recomputes server-side dirty
-repo/edit-intent worktree isolation from the selected surface/workspace cwd and
-any explicit `cwd`, then recomputes required approvals from the requested
-operation and effective plan shape (`start_run` always, `create_worktree` when
-the effective layers require worktree isolation, and `launch_parallel_workers`
-when `submit: true` would launch more than one assignment worker) plus
-applicable approvals listed by the plan. It then verifies they are present in
-`approved` or satisfied by a
+repo/edit-intent worktree isolation from the selected surface/workspace cwd,
+any explicit `cwd`, the normalized plan `task_class`, and high-confidence goal
+wording, then recomputes required approvals from the requested operation and
+effective plan shape (`start_run` always, `create_worktree` when the effective
+layers require worktree isolation, and `launch_parallel_workers` when
+`submit: true` would launch more than one assignment worker) plus applicable
+approvals listed by the plan. It then verifies they are present in `approved`
+or satisfied by a
 matching approved task-strategy Feed approval passed as `approval_id`;
 otherwise missing approval returns `precondition_failed` and leaves
 workflow/team stores unchanged. The `approved` array is a programmatic caller

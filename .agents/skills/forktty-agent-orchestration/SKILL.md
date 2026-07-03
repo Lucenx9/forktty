@@ -31,8 +31,15 @@ work. For small local code changes, read and edit the repo directly.
    provider policy, and an explicit `cwd` inside a Git repository already
    represented by an open ForkTTY workspace, surface, or effective project cwd,
    or the selected surface/workspace cwd for simple git dirty inference, and
-   infers likely user-visible edit intent
-   from the goal when the caller omits that hint. It also selects a router profile (`balanced`,
+   infers likely user-visible edit intent from mutating `task_kind` hints and
+   high-confidence goal wording when the caller omits that hint. If the user's
+   request is clear but expressed in any non-English language, normalize the
+   intent before planning: pass `task_kind` such as `focused_bugfix`,
+   `feature_implementation`, `review_only`, or `parallel_research`, plus
+   explicit `parallel`, `review`, `user_visible`, or `router_profile` hints
+   when those are clear from the request. ForkTTY should decide the strategy,
+   harnesses, layers, and approvals from those structured hints instead of
+   relying on keyword guessing across languages. It also selects a router profile (`balanced`,
    `fast`, `conservative`, `parallel`, or `review_heavy`), inferring one from
    clear goal wording or using an explicit `router_profile` only when the user
    or leader wants to bias the same scorer. It also returns ranked candidate

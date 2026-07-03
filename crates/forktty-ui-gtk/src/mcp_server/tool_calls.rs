@@ -127,6 +127,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 &[
                     "goal",
                     "strategy",
+                    "task_kind",
                     "router_profile",
                     "last_known_good",
                     "harness_signals",
@@ -148,6 +149,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 Value::String(required_non_blank(args, "goal")?),
             );
             insert_optional_non_blank_param(args, &mut params, "strategy")?;
+            insert_optional_non_blank_param(args, &mut params, "task_kind")?;
             insert_optional_non_blank_param(args, &mut params, "router_profile")?;
             insert_optional_object_param(args, &mut params, "last_known_good")?;
             insert_optional_object_param(args, &mut params, "harness_signals")?;

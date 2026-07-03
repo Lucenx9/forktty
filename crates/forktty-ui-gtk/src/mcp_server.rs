@@ -607,6 +607,7 @@ mod tests {
             "task_strategy_plan",
             json!({
                 "goal": "Fix the bug and verify tests",
+                "task_kind": "focused_bugfix",
                 "surface_id": "surface-1",
                 "cwd": "/repo/forktty",
                 "router_profile": "fast",
@@ -629,6 +630,7 @@ mod tests {
 
         assert_eq!(method, "task.strategy.plan");
         assert_eq!(params["goal"], "Fix the bug and verify tests");
+        assert_eq!(params["task_kind"], "focused_bugfix");
         assert_eq!(params["surface_id"], "surface-1");
         assert_eq!(params["cwd"], "/repo/forktty");
         assert_eq!(params["router_profile"], "fast");

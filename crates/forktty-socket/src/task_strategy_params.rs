@@ -6,6 +6,7 @@ pub(crate) struct TaskStrategyPlanParams {
     pub(crate) goal: String,
     pub(crate) explicit_strategy: Option<String>,
     pub(crate) router_profile: Option<String>,
+    pub(crate) task_class_hint: Option<String>,
     pub(crate) last_known_good: Option<Value>,
     pub(crate) harness_signals: Option<Value>,
     pub(crate) repo_dirty: Option<bool>,
@@ -22,6 +23,17 @@ pub(crate) fn task_strategy_plan_params(
         optional_non_blank_string_param(params, "strategy")?.map(str::to_string);
     let router_profile =
         optional_non_blank_string_param(params, "router_profile")?.map(str::to_string);
+    let task_kind = optional_non_blank_string_param(params, "task_kind")?;
+    let task_class_hint_param = optional_non_blank_string_param(params, "task_class_hint")?;
+    let task_class_hint = match (task_kind, task_class_hint_param) {
+        (Some(task_kind), Some(task_class_hint)) if task_kind != task_class_hint => {
+            return Err(DispatchError::InvalidParam(
+                "task_kind and task_class_hint must match when both are provided".to_string(),
+            ));
+        }
+        (Some(value), _) | (_, Some(value)) => Some(value.to_string()),
+        (None, None) => None,
+    };
     let last_known_good = match params.get("last_known_good") {
         None | Some(Value::Null) => None,
         Some(value @ Value::Object(_)) => Some(value.clone()),
@@ -51,6 +63,7 @@ pub(crate) fn task_strategy_plan_params(
         goal,
         explicit_strategy,
         router_profile,
+        task_class_hint,
         last_known_good,
         harness_signals,
         repo_dirty,

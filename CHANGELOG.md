@@ -14,13 +14,9 @@ All notable changes to ForkTTY are documented here.
 - `forktty skills setup` and `forktty skills remove` now retain only the three
   newest ForkTTY-managed skill backups per target and report pruned backups,
   while leaving unmanaged `.bak-*` directories untouched.
-- Task strategy routing now treats explicit parallel-review wording such as
-  "review parallela" as parallel research even when callers omit the boolean
-  parallel hint.
-- Task strategy goal classification, router profile inference, and edit-intent
-  inference now also recognize common Italian task wording (e.g. "correggi",
-  "implementa", "aggiungi", "rivedi", "confronta", "velocemente", "con
-  attenzione") instead of falling back to repo inspection.
+- Task strategy planning now accepts a normalized `task_kind` /
+  `task_class_hint` so agents can pass clear user intent across languages
+  without relying on ForkTTY keyword guessing.
 
 ### Fixed
 - Fixed `orchestration.cleanup` so `dry_run=false` without `apply=true` is
@@ -29,6 +25,8 @@ All notable changes to ForkTTY are documented here.
   surface are reported for manual review instead of being closed as stale.
 - Fixed task strategy parallel worker prompts so repeated researcher lanes get
   deterministic, distinct scopes instead of duplicate broad instructions.
+- Fixed task strategy dirty-repo isolation so apply-time safety also uses the
+  normalized plan task class, not only English goal wording.
 - Fixed task strategy goal classification so unrelated words that merely start
   with "fix" or "bug" (such as "fixtures") no longer classify a goal as a
   focused bugfix.

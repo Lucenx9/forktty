@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 const TASK_PLAN_HELP: &str = "\
 usage: forktty task-plan <goal> [options] [--json]
-options: --workspace-id <id>, --workspace-name <name>, --worktree-name <name>, --surface-id <id>, --cwd <repo>, --strategy <strategy>, --profile balanced|fast|conservative|parallel|review_heavy, --last-known-good-json <json>, --harness-signals-json <json>, --repo-dirty[=true|false], --parallel[=true|false], --review[=true|false], --user-visible[=true|false]
+options: --workspace-id <id>, --workspace-name <name>, --worktree-name <name>, --surface-id <id>, --cwd <repo>, --strategy <strategy>, --task-kind <kind>, --profile balanced|fast|conservative|parallel|review_heavy, --last-known-good-json <json>, --harness-signals-json <json>, --repo-dirty[=true|false], --parallel[=true|false], --review[=true|false], --user-visible[=true|false]
 ";
 
 const TASK_APPLY_HELP: &str = "\
@@ -32,6 +32,7 @@ pub(super) fn handle_task_plan(context: &CliContext, args: Vec<String>) -> CliRe
             "surface-id",
             "cwd",
             "strategy",
+            "task-kind",
             "profile",
             "last-known-good-json",
             "harness-signals-json",
@@ -89,6 +90,12 @@ pub(super) fn handle_task_plan(context: &CliContext, args: Vec<String>) -> CliRe
         params.insert(
             "strategy".to_string(),
             Value::String(strategy.trim().to_string()),
+        );
+    }
+    if let Some(task_kind) = non_blank_string_option(&parsed.options, "task-kind", "--task-kind")? {
+        params.insert(
+            "task_kind".to_string(),
+            Value::String(task_kind.trim().to_string()),
         );
     }
     if let Some(profile) = non_blank_string_option(&parsed.options, "profile", "--profile")? {

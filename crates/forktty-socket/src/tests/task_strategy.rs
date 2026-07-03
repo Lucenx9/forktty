@@ -99,6 +99,53 @@ async fn task_strategy_plan_accepts_explicit_router_profile() {
 }
 
 #[tokio::test]
+async fn task_strategy_plan_accepts_explicit_task_kind_hint() {
+    let (state, _backend) = test_state();
+    let result = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "goal": "Bitte diese Änderung umsetzen",
+            "task_kind": "feature_implementation",
+            "repo_dirty": false,
+            "likely_user_visible_change": true
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["task_class"], "feature_implementation");
+    assert_eq!(result["strategy"], "solo_with_verify_loop");
+    assert!(result["reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|reason| reason
+            .as_str()
+            .unwrap_or_default()
+            .contains("caller-provided task kind")));
+}
+
+#[tokio::test]
+async fn task_strategy_plan_rejects_conflicting_task_kind_aliases() {
+    let (state, _backend) = test_state();
+    let err = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "goal": "Inspect repo",
+            "task_kind": "repo_inspection",
+            "task_class_hint": "feature_implementation"
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("task_kind and task_class_hint"));
+}
+
+#[tokio::test]
 async fn task_strategy_plan_accepts_last_known_good_context() {
     let (state, _backend) = test_state();
     let result = dispatch(
@@ -635,6 +682,7 @@ fn task_strategy_real_provider_shape_reuses_single_launchable_harness_for_review
         goal: "Implement the task router".to_string(),
         explicit_mode: None,
         router_profile: None,
+        task_class_hint: None,
         last_known_good: None,
         repo_dirty: false,
         user_requested_parallelism: false,
@@ -740,6 +788,47 @@ async fn task_strategy_apply_forces_dirty_editing_worktree_approval() {
 }
 
 #[tokio::test]
+async fn task_strategy_apply_uses_plan_task_class_for_dirty_isolation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    std::fs::write(repo_dir.path().join("dirty.txt"), "dirty\n").unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        model.create_worktree_workspace("feature", repo_dir.path(), "feature", "feature-x");
+    };
+
+    let mut plan = staged_team_plan_json();
+    plan["task_class"] = json!("feature_implementation");
+    plan["layers"]["worktree"] = json!(false);
+    plan["approvals"] = json!(["start_run"]);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "worktree_name": "feature-x",
+            "goal": "Bitte diese Änderung umsetzen",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "precondition_failed");
+    assert!(err.to_string().contains("create_worktree"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_apply_forces_dirty_isolation_for_common_editing_verbs() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();
@@ -808,9 +897,29 @@ async fn task_strategy_apply_does_not_force_dirty_isolation_for_edit_prefix_fals
         let mut model = state.model.lock().unwrap();
         model.create_worktree_workspace("feature", repo_dir.path(), "feature", "feature-x");
     };
-    let mut plan = staged_team_plan_json();
-    plan["layers"]["worktree"] = json!(false);
-    plan["approvals"] = json!(["start_run"]);
+    let plan = json!({
+        "task_class": "repo_inspection",
+        "strategy": "solo_tracked",
+        "layers": {
+            "workflow": true,
+            "team": false,
+            "loop_metadata": false,
+            "worktree": false,
+            "feed": true,
+            "mcp": true,
+            "hooks": true
+        },
+        "assignments": [
+            {
+                "role": "implementer",
+                "harness_id": "codex",
+                "reason": "inspection harness"
+            }
+        ],
+        "approvals": ["start_run"],
+        "reasons": ["classified task as RepoInspection"],
+        "safety_notes": ["visible setup only"]
+    });
 
     let applied = dispatch(
         &state,

@@ -151,6 +151,8 @@ pub struct TaskStrategyInput {
     pub explicit_mode: Option<TaskStrategy>,
     pub router_profile: Option<TaskRouterProfile>,
     #[serde(default)]
+    pub task_class_hint: Option<TaskClass>,
+    #[serde(default)]
     pub last_known_good: Option<TaskStrategyLastKnownGood>,
     pub repo_dirty: bool,
     pub user_requested_parallelism: bool,
@@ -180,7 +182,10 @@ pub fn plan_task_strategy(input: TaskStrategyInput) -> Result<TaskStrategyPlan, 
         return Err("goal must not be empty".to_string());
     }
 
-    let task_class = classify_task(goal, &input);
+    let task_class = input
+        .task_class_hint
+        .clone()
+        .unwrap_or_else(|| classify_task(goal, &input));
     let router_profile = input
         .router_profile
         .clone()
@@ -225,6 +230,9 @@ pub fn plan_task_strategy(input: TaskStrategyInput) -> Result<TaskStrategyPlan, 
     }
     if input.user_requested_review {
         reasons.push("user requested review coverage".to_string());
+    }
+    if input.task_class_hint.is_some() {
+        reasons.push("caller-provided task kind guided classification".to_string());
     }
     if let Some(profile) = input.router_profile.as_ref() {
         reasons.push(format!("explicit router profile {profile:?}"));
@@ -619,17 +627,12 @@ fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
     }
     if contains_token(
         &lower,
-        &[
-            "test", "tests", "testing", "verify", "verifies", "verified", "testa", "testare",
-        ],
-    ) || contains_token_prefix(&lower, &["verific"])
+        &["test", "tests", "testing", "verify", "verifies", "verified"],
+    ) || contains_token_prefix(&lower, &["verif"])
     {
         return TaskClass::FocusedBugfix;
     }
-    if contains_token(
-        &lower,
-        &["review", "reviews", "rivedi", "revisiona", "revisione"],
-    ) {
+    if contains_token(&lower, &["review", "reviews"]) {
         return TaskClass::ReviewOnly;
     }
     TaskClass::RepoInspection
@@ -638,39 +641,32 @@ fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
 fn contains_bugfix_intent(lower: &str) -> bool {
     // Exact tokens plus explicit inflection prefixes: a bare "fix"/"bug" prefix
     // would also match unrelated words such as "fixtures".
-    contains_token(lower, &["fix", "bug", "bugs", "baco", "bachi"])
-        || contains_token_prefix(lower, &["fixe", "fixi", "bugfix", "corregg", "risolv"])
+    contains_token(lower, &["fix", "bug", "bugs"])
+        || contains_token_prefix(lower, &["fixe", "fixi", "bugfix"])
 }
 
 fn contains_parallel_research_intent(lower: &str) -> bool {
-    contains_token_prefix(lower, &["parallel", "paralle"])
+    contains_token_prefix(lower, &["parallel"])
 }
 
 fn contains_comparison_research_intent(lower: &str) -> bool {
     contains_token(lower, &["compare", "alternatives", "approaches"])
-        || contains_token_prefix(lower, &["alternative", "confront"])
+        || contains_token_prefix(lower, &["alternative"])
 }
 
 fn contains_implementation_intent(lower: &str) -> bool {
-    // Italian additions use inflection prefixes with no English collisions
-    // ("aggiung*", "costru*", ...); "implement" as a prefix covers both the
-    // English forms and Italian "implementa"/"implementare".
     contains_token(
         lower,
         &[
-            "add", "adds", "added", "adding", "build", "builds", "built", "building", "crea",
-            "creare",
+            "add", "adds", "added", "adding", "build", "builds", "built", "building",
         ],
-    ) || contains_token_prefix(
-        lower,
-        &["implement", "aggiung", "costru", "svilupp", "realizz"],
-    )
+    ) || contains_token_prefix(lower, &["implement"])
 }
 
 /// Returns true when the goal reads as a review-first request (the first
 /// meaningful token is a review verb), as opposed to an editing goal that
 /// merely mentions a review.
-pub fn is_review_primary_goal(goal: &str) -> bool {
+fn is_review_primary_goal(goal: &str) -> bool {
     let lower = goal.to_lowercase();
     let skip = [
         "the",
@@ -680,19 +676,6 @@ pub fn is_review_primary_goal(goal: &str) -> bool {
         "quickly",
         "carefully",
         "thoroughly",
-        "per",
-        "favore",
-        "fai",
-        "una",
-        "un",
-        "uno",
-        "il",
-        "lo",
-        "la",
-        "le",
-        "gli",
-        "i",
-        "di",
     ];
     let mut tokens = lower
         .split(|ch: char| !ch.is_ascii_alphanumeric())
@@ -701,10 +684,7 @@ pub fn is_review_primary_goal(goal: &str) -> bool {
     if first == Some("read") && tokens.next() == Some("only") {
         return true;
     }
-    matches!(
-        first,
-        Some("review" | "reviews" | "rivedi" | "revisiona" | "revisione")
-    )
+    matches!(first, Some("review" | "reviews"))
 }
 
 fn infer_router_profile(
@@ -727,10 +707,7 @@ fn infer_router_profile(
     let lower = goal.to_lowercase();
     if contains_token_prefix(
         &lower,
-        &[
-            "quick", "fast", "asap", "urgent", "small", "simple", "veloc", "rapid", "piccol",
-            "semplic",
-        ],
+        &["quick", "fast", "asap", "urgent", "small", "simple"],
     ) {
         return TaskRouterProfile::Fast;
     }
@@ -743,12 +720,6 @@ fn infer_router_profile(
             "conservative",
             "risk",
             "thorough",
-            "sicur",
-            "attent",
-            "attenz",
-            "prudent",
-            "accurat",
-            "cautel",
         ],
     ) {
         return TaskRouterProfile::Conservative;
@@ -1335,6 +1306,7 @@ mod tests {
             goal: goal.to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -1366,14 +1338,7 @@ mod tests {
                 strategy: TaskStrategy::SoloWithVerifyLoop,
             },
             Case {
-                goal: "Correggi il bug nel router dei task",
-                editing: true,
-                class: TaskClass::FocusedBugfix,
-                profile: TaskRouterProfile::Balanced,
-                strategy: TaskStrategy::SoloWithVerifyLoop,
-            },
-            Case {
-                goal: "Risolvi velocemente il problema di avvio",
+                goal: "Quickly fix the startup bug",
                 editing: true,
                 class: TaskClass::FocusedBugfix,
                 profile: TaskRouterProfile::Fast,
@@ -1387,13 +1352,6 @@ mod tests {
                 strategy: TaskStrategy::SoloWithVerifyLoop,
             },
             Case {
-                goal: "Procedi con attenzione: correggi il parsing degli argomenti",
-                editing: true,
-                class: TaskClass::FocusedBugfix,
-                profile: TaskRouterProfile::Conservative,
-                strategy: TaskStrategy::SoloWithVerifyLoop,
-            },
-            Case {
                 goal: "Implement retry logic for the socket client",
                 editing: true,
                 class: TaskClass::FeatureImplementation,
@@ -1401,14 +1359,7 @@ mod tests {
                 strategy: TaskStrategy::SoloWithVerifyLoop,
             },
             Case {
-                goal: "Implementa la logica di retry nel client",
-                editing: true,
-                class: TaskClass::FeatureImplementation,
-                profile: TaskRouterProfile::Balanced,
-                strategy: TaskStrategy::SoloWithVerifyLoop,
-            },
-            Case {
-                goal: "Aggiungi un flag di configurazione al CLI",
+                goal: "Add a configuration flag to the CLI",
                 editing: true,
                 class: TaskClass::FeatureImplementation,
                 profile: TaskRouterProfile::Balanced,
@@ -1422,14 +1373,7 @@ mod tests {
                 strategy: TaskStrategy::ReviewOnly,
             },
             Case {
-                goal: "Fai la review delle modifiche al router",
-                editing: false,
-                class: TaskClass::ReviewOnly,
-                profile: TaskRouterProfile::ReviewHeavy,
-                strategy: TaskStrategy::ReviewOnly,
-            },
-            Case {
-                goal: "Rivedi le modifiche al worktree layer",
+                goal: "Please review the worktree layer changes",
                 editing: false,
                 class: TaskClass::ReviewOnly,
                 profile: TaskRouterProfile::ReviewHeavy,
@@ -1437,13 +1381,6 @@ mod tests {
             },
             Case {
                 goal: "Compare caching approaches for the renderer",
-                editing: false,
-                class: TaskClass::ParallelResearch,
-                profile: TaskRouterProfile::Parallel,
-                strategy: TaskStrategy::ParallelResearch,
-            },
-            Case {
-                goal: "Confronta due approcci per la cache",
                 editing: false,
                 class: TaskClass::ParallelResearch,
                 profile: TaskRouterProfile::Parallel,
@@ -1477,11 +1414,36 @@ mod tests {
     }
 
     #[test]
+    fn task_class_hint_routes_non_english_goals_without_language_keywords() {
+        let plan = plan_task_strategy(TaskStrategyInput {
+            goal: "Bitte diese Änderung umsetzen".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            task_class_hint: Some(TaskClass::FeatureImplementation),
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: false,
+            user_requested_review: false,
+            likely_user_visible_change: true,
+            harness_registry: HarnessRegistry::default(),
+        })
+        .unwrap();
+
+        assert_eq!(plan.task_class, TaskClass::FeatureImplementation);
+        assert_eq!(plan.strategy, TaskStrategy::SoloWithVerifyLoop);
+        assert!(plan
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("caller-provided task kind")));
+    }
+
+    #[test]
     fn focused_bugfix_routes_to_verify_loop_without_team() {
         let plan = plan_task_strategy(TaskStrategyInput {
             goal: "Fix the browser feature test failure and run the relevant tests".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -1506,6 +1468,7 @@ mod tests {
             goal: "Fix the browser feature test failure and run the relevant tests".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -1542,6 +1505,7 @@ mod tests {
             goal: "Implement the task router".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -1573,6 +1537,7 @@ mod tests {
                 .to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -1592,6 +1557,7 @@ mod tests {
             goal: "Review the bug fix in the task router".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -1604,6 +1570,7 @@ mod tests {
             goal: "Fix the bug using one of the approaches discussed".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -1633,6 +1600,7 @@ mod tests {
                 goal: goal.to_string(),
                 explicit_mode: None,
                 router_profile: None,
+                task_class_hint: None,
                 last_known_good: None,
                 repo_dirty: false,
                 user_requested_parallelism: false,
@@ -1653,6 +1621,7 @@ mod tests {
             goal: "Review the bug fix in the task router".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: true,
             user_requested_parallelism: false,
@@ -1676,6 +1645,7 @@ mod tests {
             goal: "Review task strategy test coverage".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -1695,6 +1665,7 @@ mod tests {
             goal: "Implement the task router".to_string(),
             explicit_mode: None,
             router_profile: Some(TaskRouterProfile::ReviewHeavy),
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -1722,6 +1693,7 @@ mod tests {
             goal: "Research the task router architecture".to_string(),
             explicit_mode: None,
             router_profile: Some(TaskRouterProfile::Parallel),
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -1745,6 +1717,7 @@ mod tests {
             goal: "Quickly inspect the task router state".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -1767,6 +1740,7 @@ mod tests {
             goal: "Compare three approaches for a multi-harness router".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: true,
@@ -1794,11 +1768,12 @@ mod tests {
     }
 
     #[test]
-    fn parallel_review_wording_routes_to_parallel_research() {
+    fn parallel_review_hint_routes_to_parallel_research() {
         let plan = plan_task_strategy(TaskStrategyInput {
             goal: "Fai una review parallela nel repo".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: Some(TaskClass::ParallelResearch),
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -1820,6 +1795,7 @@ mod tests {
             goal: "Implement the task router".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -1864,6 +1840,7 @@ mod tests {
             goal: "Implement the task router".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -1889,6 +1866,7 @@ mod tests {
             goal: "Compare three approaches for a multi-harness router".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: true,
@@ -1916,6 +1894,7 @@ mod tests {
             goal: "Compare three approaches for a multi-harness router".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: true,
@@ -1951,6 +1930,7 @@ mod tests {
             goal: "Inspect the task router state".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -1974,6 +1954,7 @@ mod tests {
             goal: "Implement the latest feature".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -1988,6 +1969,7 @@ mod tests {
             goal: "Fix the comparison logic bug".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -2002,6 +1984,7 @@ mod tests {
             goal: "Inspect preview rendering state".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -2016,6 +1999,7 @@ mod tests {
             goal: "Read only review of the router state".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -2033,6 +2017,7 @@ mod tests {
             goal: "Implement the task router".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -2071,6 +2056,7 @@ mod tests {
             goal: "Fix the task router bug and run tests".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: true,
             user_requested_parallelism: false,
@@ -2110,6 +2096,7 @@ mod tests {
             goal: "Inspect the task router state".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -2149,6 +2136,7 @@ mod tests {
             goal: "Inspect the task router state".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -2185,6 +2173,7 @@ mod tests {
             goal: "Fix the task router bug and run tests".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -2226,6 +2215,7 @@ mod tests {
             goal: "Inspect the task router state".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: Some(TaskStrategyLastKnownGood {
                 strategy: None,
                 harness_id: Some("claude".to_string()),
@@ -2260,6 +2250,7 @@ mod tests {
             goal: "Inspect the task router state".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: Some(TaskStrategyLastKnownGood {
                 strategy: None,
                 harness_id: Some("claude".to_string()),
@@ -2299,6 +2290,7 @@ mod tests {
             goal: "Fix the task router bug and run tests".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: Some(TaskStrategyLastKnownGood {
                 strategy: Some(TaskStrategy::ParallelExperiment),
                 harness_id: None,
@@ -2331,6 +2323,7 @@ mod tests {
             goal: "Implement the task router".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: true,
             user_requested_parallelism: false,
@@ -2356,6 +2349,7 @@ mod tests {
             goal: "Implement the code review workflow".to_string(),
             explicit_mode: None,
             router_profile: None,
+            task_class_hint: None,
             last_known_good: None,
             repo_dirty: false,
             user_requested_parallelism: false,
@@ -2380,6 +2374,7 @@ mod tests {
                 goal: goal.to_string(),
                 explicit_mode: None,
                 router_profile: None,
+                task_class_hint: None,
                 last_known_good: None,
                 repo_dirty: false,
                 user_requested_parallelism: false,

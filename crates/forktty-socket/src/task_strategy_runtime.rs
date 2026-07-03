@@ -11,11 +11,11 @@ use crate::{
     workspace_selector_params, DispatchError, SocketAppState, WorkspaceSelectorKind,
 };
 use forktty_core::{
-    is_review_primary_goal, plan_task_strategy, validate_worktree_name, worktree,
-    FeedApprovalState, FeedEntry, FeedEntryType, HarnessAssignment, HarnessCapability,
-    HarnessHealth, HarnessRegistry, HarnessRole, HarnessRoutingSignals, TaskRouterProfile,
-    TaskStrategy, TaskStrategyApproval, TaskStrategyInput, TaskStrategyLastKnownGood,
-    TaskStrategyPlan, WorkflowQuery, WorkflowState, WorkspaceSelector,
+    plan_task_strategy, validate_worktree_name, worktree, FeedApprovalState, FeedEntry,
+    FeedEntryType, HarnessAssignment, HarnessCapability, HarnessHealth, HarnessRegistry,
+    HarnessRole, HarnessRoutingSignals, TaskClass, TaskRouterProfile, TaskStrategy,
+    TaskStrategyApproval, TaskStrategyInput, TaskStrategyLastKnownGood, TaskStrategyPlan,
+    WorkflowQuery, WorkflowState, WorkspaceSelector,
 };
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -39,6 +39,11 @@ pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value
         .as_deref()
         .map(task_router_profile_from_str)
         .transpose()?;
+    let task_class_hint = plan_params
+        .task_class_hint
+        .as_deref()
+        .map(task_class_from_str)
+        .transpose()?;
     let explicit_last_known_good = plan_params
         .last_known_good
         .as_ref()
@@ -59,7 +64,10 @@ pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value
         None => infer_repo_dirty(target.cwd.as_deref()),
     };
     let inferred_user_visible_change = plan_params.likely_user_visible_change.is_none()
-        && infer_likely_user_visible_change(&plan_params.goal);
+        && (task_class_hint
+            .as_ref()
+            .is_some_and(task_class_likely_user_visible_change)
+            || infer_likely_user_visible_change(&plan_params.goal));
     let likely_user_visible_change = plan_params
         .likely_user_visible_change
         .unwrap_or(inferred_user_visible_change);
@@ -67,6 +75,7 @@ pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value
         goal: plan_params.goal,
         explicit_mode,
         router_profile,
+        task_class_hint,
         last_known_good,
         repo_dirty,
         user_requested_parallelism: plan_params.user_requested_parallelism,
@@ -93,11 +102,20 @@ pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value
         .map_err(|err| DispatchError::Other(format!("serialize task strategy plan: {err}")))
 }
 
+fn task_class_likely_user_visible_change(task_class: &TaskClass) -> bool {
+    matches!(
+        task_class,
+        TaskClass::FocusedBugfix
+            | TaskClass::FeatureImplementation
+            | TaskClass::ParallelExperiment
+            | TaskClass::VerifyFixLoop
+            | TaskClass::LongRunningTeamRun
+    )
+}
+
 fn infer_likely_user_visible_change(goal: &str) -> bool {
     let lower = goal.to_lowercase();
-    let edit_tokens = [
-        "fix", "bug", "bugs", "add", "drop", "port", "crea", "creare",
-    ];
+    let edit_tokens = ["fix", "bug", "bugs", "add", "drop", "port"];
     let edit_prefixes = [
         "fixe",
         "fixi",
@@ -124,21 +142,6 @@ fn infer_likely_user_visible_change(goal: &str) -> bool {
         "renam",
         "writ",
         "creat",
-        // Italian inflection prefixes, kept in sync with the classifier in
-        // forktty-core::task_strategy.
-        "corregg",
-        "risolv",
-        "aggiung",
-        "costru",
-        "svilupp",
-        "realizz",
-        "aggiorn",
-        "rimuov",
-        "elimin",
-        "riscriv",
-        "rinomin",
-        "scriv",
-        "cancell",
     ];
     if contains_token(&lower, &edit_tokens) || contains_token_prefix(&lower, &edit_prefixes) {
         return true;
@@ -723,6 +726,23 @@ fn task_strategy_from_str(value: &str) -> Result<TaskStrategy, DispatchError> {
     }
 }
 
+fn task_class_from_str(value: &str) -> Result<TaskClass, DispatchError> {
+    match value {
+        "tiny_answer" => Ok(TaskClass::TinyAnswer),
+        "repo_inspection" => Ok(TaskClass::RepoInspection),
+        "focused_bugfix" => Ok(TaskClass::FocusedBugfix),
+        "feature_implementation" => Ok(TaskClass::FeatureImplementation),
+        "review_only" => Ok(TaskClass::ReviewOnly),
+        "parallel_research" => Ok(TaskClass::ParallelResearch),
+        "parallel_experiment" => Ok(TaskClass::ParallelExperiment),
+        "verify_fix_loop" => Ok(TaskClass::VerifyFixLoop),
+        "long_running_team_run" => Ok(TaskClass::LongRunningTeamRun),
+        other => Err(DispatchError::InvalidParam(format!(
+            "unsupported task kind: {other}"
+        ))),
+    }
+}
+
 fn task_router_profile_from_str(value: &str) -> Result<TaskRouterProfile, DispatchError> {
     match value {
         "balanced" => Ok(TaskRouterProfile::Balanced),
@@ -1062,11 +1082,13 @@ impl TaskStrategyApplyRequest {
             Err(err) if self.worktree_name.is_some() && err.code() == "not_found" => false,
             Err(err) => return Err(err),
         };
-        let review_only_goal = matches!(self.plan.strategy, TaskStrategy::ReviewOnly)
-            && is_review_primary_goal(&self.goal);
+        let review_only_strategy = matches!(self.plan.strategy, TaskStrategy::ReviewOnly);
+        let likely_user_visible_change =
+            task_class_likely_user_visible_change(&self.plan.task_class)
+                || infer_likely_user_visible_change(&self.goal);
         if (explicit_target_dirty || selected_target_dirty)
-            && infer_likely_user_visible_change(&self.goal)
-            && !review_only_goal
+            && likely_user_visible_change
+            && !review_only_strategy
         {
             if !self.plan.layers.worktree {
                 self.plan.layers.worktree = true;

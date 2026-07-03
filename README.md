@@ -328,10 +328,16 @@ from the selected surface/workspace cwd when `repo_dirty`/`--repo-dirty` is
 omitted, or from an explicit absolute `--cwd` / MCP `cwd` inside a Git
 repository already represented by an open ForkTTY workspace, surface, or
 effective project cwd. It also infers likely user-visible edit
-intent and clear router profiles from the goal when omitted,
+intent and clear router profiles from mutating `task_kind` hints and
+high-confidence goal wording when omitted,
 infers advisory last-known-good strategy/harness evidence from completed
 task-strategy workflows when available, and keeps reviewer strategies honest by
 including a reviewer assignment. Pass
+`--task-kind <kind>` or MCP/socket `task_kind` when an agent has already
+normalized clear user intent (for example from a non-English request) into
+`focused_bugfix`, `feature_implementation`, `review_only`, or
+`parallel_research`; ForkTTY still scores strategy, harnesses, layers, and
+approvals from that structured hint. Pass
 `--profile <profile>` or MCP/socket `router_profile` only when you want to bias
 the automatic scorer explicitly. Scripts and MCP agents with real runtime
 evidence can pass `--last-known-good-json`/`last_known_good` to override or
