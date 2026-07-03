@@ -22,7 +22,12 @@ pub(crate) async fn cleanup(
             "orchestration.cleanup: cannot combine apply=true with dry_run=true".to_string(),
         ));
     }
-    let mutate = apply || !dry_run;
+    if !apply && !dry_run {
+        return Err(DispatchError::InvalidParam(
+            "orchestration.cleanup: apply=true is required when dry_run=false".to_string(),
+        ));
+    }
+    let mutate = apply;
     let workspace_id = optional_non_blank_string_param(params, "workspace_id")?.map(str::to_string);
     let live_surface_ids = live_surface_ids(state)?;
 
@@ -128,7 +133,7 @@ enum TeamCleanupAction {
     ManualReview {
         team_id: String,
         worker_id: String,
-        surface_id: String,
+        surface_id: Option<String>,
         reason: &'static str,
     },
 }
@@ -217,16 +222,25 @@ fn plan_team_cleanup(
                     actions.push(TeamCleanupAction::ManualReview {
                         team_id: team.id.clone(),
                         worker_id: worker.id.clone(),
-                        surface_id: surface_id.to_string(),
+                        surface_id: Some(surface_id.to_string()),
                         reason: "worker_surface_still_exists",
                     });
                 }
-                Some(_) | None => {
+                Some(_) => {
                     stale_workers.insert(worker.id.clone());
                     actions.push(TeamCleanupAction::CloseWorker {
                         team_id: team.id.clone(),
                         worker_id: worker.id.clone(),
                         reason: "worker_surface_missing",
+                    });
+                }
+                None => {
+                    live_worker_blockers = true;
+                    actions.push(TeamCleanupAction::ManualReview {
+                        team_id: team.id.clone(),
+                        worker_id: worker.id.clone(),
+                        surface_id: None,
+                        reason: "worker_surface_not_recorded",
                     });
                 }
             }

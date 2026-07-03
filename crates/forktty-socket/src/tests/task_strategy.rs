@@ -1354,6 +1354,48 @@ async fn task_strategy_apply_requires_parallel_approval_even_if_plan_omits_it() 
 }
 
 #[tokio::test]
+async fn task_strategy_parallel_research_prompts_include_distinct_lanes() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+
+    dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Review the router in parallel",
+            "approved": ["start_run"],
+            "plan": parallel_research_two_researchers_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+
+    let team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
+        .await
+        .unwrap();
+    let messages = team["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 2);
+    let first_body = messages[0]["body"].as_str().unwrap();
+    let second_body = messages[1]["body"].as_str().unwrap();
+    assert_ne!(first_body, second_body);
+    assert!(first_body.contains("Lane: correctness and regressions"));
+    assert!(second_body.contains("Lane: tests, edge cases, and missing coverage"));
+
+    let tasks = team["tasks"].as_array().unwrap();
+    assert!(tasks[0]["detail"]
+        .as_str()
+        .unwrap()
+        .contains("Lane: correctness and regressions"));
+    assert!(tasks[1]["detail"]
+        .as_str()
+        .unwrap()
+        .contains("Lane: tests, edge cases, and missing coverage"));
+}
+
+#[tokio::test]
 async fn task_strategy_apply_can_request_missing_approval_without_workflow_mutation() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();
@@ -3501,6 +3543,37 @@ fn parallel_research_plan_json() -> Value {
                 "role": "synthesizer",
                 "harness_id": "codex",
                 "reason": "synthesizer role"
+            }
+        ],
+        "approvals": ["start_run", "launch_parallel_workers"],
+        "reasons": ["classified task as ParallelResearch"],
+        "safety_notes": ["visible setup only"]
+    })
+}
+
+fn parallel_research_two_researchers_plan_json() -> Value {
+    json!({
+        "task_class": "parallel_research",
+        "strategy": "parallel_research",
+        "layers": {
+            "workflow": true,
+            "team": true,
+            "loop_metadata": false,
+            "worktree": false,
+            "feed": true,
+            "mcp": true,
+            "hooks": true
+        },
+        "assignments": [
+            {
+                "role": "researcher",
+                "harness_id": "claude",
+                "reason": "primary research harness"
+            },
+            {
+                "role": "researcher",
+                "harness_id": "claude",
+                "reason": "second research lane"
             }
         ],
         "approvals": ["start_run", "launch_parallel_workers"],

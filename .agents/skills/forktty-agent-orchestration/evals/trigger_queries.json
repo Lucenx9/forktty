@@ -59,7 +59,7 @@
     },
     {
       "query": "Review the diff for bugs and missing tests.",
-      "should_trigger": false
+      "should_trigger": true
     },
     {
       "query": "Add a CHANGELOG entry for this CLI fix.",

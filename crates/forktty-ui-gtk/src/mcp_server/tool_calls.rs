@@ -250,6 +250,17 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                 params,
             }
         }
+        "orchestration_cleanup" => {
+            reject_unexpected(args, &["workspace_id", "apply", "dry_run"], name)?;
+            let mut params = Map::new();
+            insert_optional_non_blank_param(args, &mut params, "workspace_id")?;
+            insert_optional_bool_param(args, &mut params, "apply")?;
+            insert_optional_bool_param(args, &mut params, "dry_run")?;
+            SocketCall {
+                method: "orchestration.cleanup",
+                params,
+            }
+        }
         "identify" => {
             reject_unexpected(
                 args,
@@ -1304,6 +1315,7 @@ fn success_text(name: &str, result: &Value) -> String {
         "context_snapshot" => "Built ForkTTY context snapshot.".to_string(),
         "task_strategy_plan" => "Planned ForkTTY task strategy.".to_string(),
         "task_strategy_apply" => "Processed ForkTTY task strategy request.".to_string(),
+        "orchestration_cleanup" => "Processed ForkTTY orchestration cleanup request.".to_string(),
         "identify" => "Identified current ForkTTY workspace and surface context.".to_string(),
         "topology_tree" => "Built ForkTTY topology tree.".to_string(),
         "remote_list" => "Listed ForkTTY SSH remotes.".to_string(),

@@ -5,14 +5,26 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
-- Added dry-run-first `orchestration.cleanup` over socket and
-  `forktty cleanup orchestration` so stale team/workflow records can be
-  inspected and conservatively closed without touching live worker surfaces.
+- Added dry-run-first `orchestration.cleanup` over socket, MCP
+  `orchestration_cleanup`, and `forktty cleanup orchestration` so stale
+  team/workflow records can be inspected and conservatively closed without
+  touching live worker surfaces.
 
 ### Changed
 - `forktty skills setup` and `forktty skills remove` now retain only the three
   newest ForkTTY-managed skill backups per target and report pruned backups,
   while leaving unmanaged `.bak-*` directories untouched.
+- Task strategy routing now treats explicit parallel-review wording such as
+  "review parallela" as parallel research even when callers omit the boolean
+  parallel hint.
+
+### Fixed
+- Fixed `orchestration.cleanup` so `dry_run=false` without `apply=true` is
+  rejected instead of mutating stale orchestration records.
+- Fixed `orchestration.cleanup` so non-terminal workers without a recorded
+  surface are reported for manual review instead of being closed as stale.
+- Fixed task strategy parallel worker prompts so repeated researcher lanes get
+  deterministic, distinct scopes instead of duplicate broad instructions.
 
 ## [0.2.0-alpha.17] - 2026-07-03
 

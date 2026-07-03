@@ -596,6 +596,9 @@ fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
     if input.user_requested_parallelism {
         return TaskClass::ParallelResearch;
     }
+    if contains_parallel_research_intent(&lower) {
+        return TaskClass::ParallelResearch;
+    }
     if is_review_primary_goal(&lower) {
         return TaskClass::ReviewOnly;
     }
@@ -605,9 +608,7 @@ fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
     if contains_token_prefix(&lower, &["fix", "bug"]) {
         return TaskClass::FocusedBugfix;
     }
-    if contains_token(&lower, &["compare", "alternatives", "approaches"])
-        || contains_token_prefix(&lower, &["alternative"])
-    {
+    if contains_comparison_research_intent(&lower) {
         return TaskClass::ParallelResearch;
     }
     if contains_token(
@@ -620,6 +621,15 @@ fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
         return TaskClass::ReviewOnly;
     }
     TaskClass::RepoInspection
+}
+
+fn contains_parallel_research_intent(lower: &str) -> bool {
+    contains_token_prefix(lower, &["parallel", "paralle"])
+}
+
+fn contains_comparison_research_intent(lower: &str) -> bool {
+    contains_token(lower, &["compare", "alternatives", "approaches"])
+        || contains_token_prefix(lower, &["alternative", "confront"])
 }
 
 fn contains_implementation_intent(lower: &str) -> bool {
@@ -1443,6 +1453,7 @@ mod tests {
         for goal in [
             "Review the change that adds retry logic",
             "Review the PR that implements the settings dialog",
+            "Review the current findings and independently verify the evidence",
         ] {
             let plan = plan_task_strategy(TaskStrategyInput {
                 goal: goal.to_string(),
@@ -1606,6 +1617,27 @@ mod tests {
             .assignments
             .iter()
             .any(|assignment| assignment.role == HarnessRole::Synthesizer));
+    }
+
+    #[test]
+    fn parallel_review_wording_routes_to_parallel_research() {
+        let plan = plan_task_strategy(TaskStrategyInput {
+            goal: "Fai una review parallela nel repo".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: false,
+            user_requested_review: false,
+            likely_user_visible_change: false,
+            harness_registry: caps(),
+        })
+        .unwrap();
+
+        assert_eq!(plan.task_class, TaskClass::ParallelResearch);
+        assert_eq!(plan.strategy, TaskStrategy::ParallelResearch);
+        assert_eq!(plan.router_profile, TaskRouterProfile::Parallel);
+        assert!(plan.layers.team);
     }
 
     #[test]

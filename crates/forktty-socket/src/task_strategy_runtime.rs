@@ -608,6 +608,8 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
             let base_message_id = format!("{task_id}-msg-1");
             let expected_body = assignment_prompt(
                 &request.goal,
+                &request.plan.strategy,
+                index,
                 assignment,
                 request.assignment_target_context(),
             );
@@ -1463,7 +1465,7 @@ impl TaskStrategyApplyRequest {
                     "id": format!("{}-step-{role}-{}", self.run_id, index + 1),
                     "title": assignment_title(assignment),
                     "status": "pending",
-                    "detail": assignment_detail(&self.goal, assignment, self.assignment_target_context()),
+                    "detail": assignment_detail(&self.goal, &self.plan.strategy, index, assignment, self.assignment_target_context()),
                 })
             })
             .collect::<Vec<_>>();
@@ -1524,7 +1526,7 @@ impl TaskStrategyApplyRequest {
 
     fn team_task_params(
         &self,
-        _index: usize,
+        index: usize,
         assignment: &HarnessAssignment,
         task_id: &str,
     ) -> Value {
@@ -1533,7 +1535,7 @@ impl TaskStrategyApplyRequest {
             "task_id": task_id,
             "title": assignment_title(assignment),
             "status": "open",
-            "detail": assignment_detail(&self.goal, assignment, self.assignment_target_context()),
+            "detail": assignment_detail(&self.goal, &self.plan.strategy, index, assignment, self.assignment_target_context()),
         })
     }
 
@@ -1565,7 +1567,7 @@ impl TaskStrategyApplyRequest {
 
     fn team_message_params(
         &self,
-        _index: usize,
+        index: usize,
         assignment: &HarnessAssignment,
         task_id: &str,
         message_id: &str,
@@ -1576,7 +1578,7 @@ impl TaskStrategyApplyRequest {
             "message_id": message_id,
             "from": "leader",
             "task_id": task_id,
-            "body": assignment_prompt(&self.goal, assignment, self.assignment_target_context()),
+            "body": assignment_prompt(&self.goal, &self.plan.strategy, index, assignment, self.assignment_target_context()),
         });
         if let Some(worker_id) = worker_id {
             params["to_worker_id"] = json!(worker_id);
@@ -1836,12 +1838,15 @@ struct AssignmentTargetContext<'a> {
 
 fn assignment_detail(
     goal: &str,
+    strategy: &TaskStrategy,
+    index: usize,
     assignment: &HarnessAssignment,
     target: AssignmentTargetContext<'_>,
 ) -> String {
+    let lane = assignment_lane_lines(strategy, index, assignment);
     let target = assignment_target_context_lines(target);
     format!(
-        "Goal: {goal}\nRole: {}\nHarness: {}\nReason: {}{target}\nScope: managed by task.strategy.apply; do not subdelegate.",
+        "Goal: {goal}\nRole: {}\nHarness: {}\nReason: {}{lane}{target}\nScope: managed by task.strategy.apply; do not subdelegate.",
         role_id(&assignment.role),
         assignment.harness_id,
         assignment.reason
@@ -1850,16 +1855,51 @@ fn assignment_detail(
 
 fn assignment_prompt(
     goal: &str,
+    strategy: &TaskStrategy,
+    index: usize,
     assignment: &HarnessAssignment,
     target: AssignmentTargetContext<'_>,
 ) -> String {
+    let lane = assignment_lane_lines(strategy, index, assignment);
     let target = assignment_target_context_lines(target);
     format!(
-        "ForkTTY task assignment.\nGoal: {goal}\nRole: {}\nHarness: {}\nReason: {}{target}\nThe leader already applied this task strategy and launched this worker pane; do not call task.strategy.apply, team.worker.launch, worktree_create, or launch nested workers unless the leader sends a separate explicit instruction.\nStay within this role, do not subdelegate, and report verification evidence before completion.",
+        "ForkTTY task assignment.\nGoal: {goal}\nRole: {}\nHarness: {}\nReason: {}{lane}{target}\nThe leader already applied this task strategy and launched this worker pane; do not call task.strategy.apply, team.worker.launch, worktree_create, or launch nested workers unless the leader sends a separate explicit instruction.\nStay within this role, do not subdelegate, and report verification evidence before completion.",
         role_id(&assignment.role),
         assignment.harness_id,
         assignment.reason
     )
+}
+
+fn assignment_lane_lines(
+    strategy: &TaskStrategy,
+    index: usize,
+    assignment: &HarnessAssignment,
+) -> String {
+    if !matches!(
+        strategy,
+        TaskStrategy::ParallelResearch | TaskStrategy::ParallelExperiment
+    ) {
+        return String::new();
+    }
+    let lane = match assignment.role {
+        HarnessRole::Researcher => parallel_research_lane(index),
+        HarnessRole::Synthesizer => {
+            "synthesis of prior lanes; wait for available researcher evidence before concluding"
+        }
+        HarnessRole::Reviewer => "independent review of researcher findings and missed risks",
+        HarnessRole::Verifier => "verification lane for reproduced behavior and test evidence",
+        HarnessRole::Implementer => "prototype or implementation lane for the assigned approach",
+    };
+    format!("\nLane: {lane}")
+}
+
+fn parallel_research_lane(index: usize) -> &'static str {
+    match index {
+        0 => "correctness and regressions",
+        1 => "tests, edge cases, and missing coverage",
+        2 => "security, concurrency, and robustness",
+        _ => "integration, documentation, and product fit",
+    }
 }
 
 fn assignment_target_context_lines(target: AssignmentTargetContext<'_>) -> String {

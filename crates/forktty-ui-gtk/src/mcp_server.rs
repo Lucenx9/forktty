@@ -751,6 +751,31 @@ mod tests {
     }
 
     #[test]
+    fn orchestration_cleanup_tool_maps_to_socket_method() {
+        let names = tool_specs()
+            .iter()
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"orchestration_cleanup"));
+        assert_eq!(annotation("orchestration_cleanup")["readOnlyHint"], false);
+        assert_eq!(annotation("orchestration_cleanup")["destructiveHint"], true);
+
+        let (method, params) = build_socket_call_for_test(
+            "orchestration_cleanup",
+            json!({
+                "workspace_id": "workspace-1",
+                "apply": true
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(method, "orchestration.cleanup");
+        assert_eq!(params["workspace_id"], "workspace-1");
+        assert_eq!(params["apply"], true);
+        assert!(params.get("dry_run").is_none());
+    }
+
+    #[test]
     fn task_strategy_apply_tool_defaults_to_env_workspace_and_surface() {
         let plan = json!({
             "task_class": "feature_implementation",

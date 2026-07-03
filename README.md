@@ -388,11 +388,12 @@ otherwise apply returns `conflict` before dispatching a prompt to the wrong
 pane.
 Worktree creation, push, merge, destructive commands, and out-of-scope edits
 require later explicit approval.
-`forktty cleanup orchestration` is a dry-run-first maintenance command for
-stale team/workflow records left after interrupted agent runs. It only marks
-records whose worker surfaces no longer exist, supersedes their pending prompts,
-and reports live surfaces for manual review; `--apply` is required before it
-writes.
+`forktty cleanup orchestration` and MCP `orchestration_cleanup` are
+dry-run-first maintenance entry points for stale team/workflow records left
+after interrupted agent runs. They only mark records whose worker surfaces no
+longer exist, supersede their pending prompts, and report live or unrecorded
+worker surfaces for manual review; `--apply`/`apply=true` is required before
+they write.
 
 `forktty team ask` and `forktty team review` compose the existing team socket
 methods for common coordination flows: create/update the team, create the task,

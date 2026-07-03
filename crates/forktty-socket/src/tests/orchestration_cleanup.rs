@@ -8,6 +8,16 @@ async fn orchestration_cleanup_dry_run_then_apply_closes_missing_surface_records
     let dir = tempfile::tempdir().unwrap();
     state.team_store_path = Some(dir.path().join("team-v1.json"));
     state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let base_surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    let stale_surface = dispatch(
+        &state,
+        "pane.new_tab",
+        json!({"surface_id": base_surface_id}),
+    )
+    .await
+    .unwrap();
+    let stale_surface_id = stale_surface["id"].as_str().unwrap().to_string();
 
     dispatch(
         &state,
@@ -22,11 +32,16 @@ async fn orchestration_cleanup_dry_run_then_apply_closes_missing_surface_records
         json!({
             "team_id": "team-1",
             "worker_id": "worker-1",
-            "status": "running"
+            "status": "running",
+            "surface_id": stale_surface_id
         }),
     )
     .await
     .unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.close_surface(&stale_surface_id).is_some());
+    }
     dispatch(
         &state,
         "team.task.upsert",
@@ -123,6 +138,90 @@ async fn orchestration_cleanup_dry_run_then_apply_closes_missing_surface_records
         .await
         .unwrap();
     assert_eq!(workflow["status"], "done");
+}
+
+#[tokio::test]
+async fn orchestration_cleanup_does_not_close_worker_without_recorded_surface() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({"team_id": "team-1", "status": "active"}),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "status": "running"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let result = dispatch(&state, "orchestration.cleanup", json!({"apply": true}))
+        .await
+        .unwrap();
+
+    assert!(result["teamActions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| {
+            action["kind"] == "team.worker.manual_review"
+                && action["workerId"] == "worker-1"
+                && action["reason"] == "worker_surface_not_recorded"
+                && action["applied"] == false
+        }));
+    let team = dispatch(&state, "team.get", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    assert_eq!(team["status"], "active");
+    assert_eq!(team["workers"][0]["status"], "running");
+}
+
+#[tokio::test]
+async fn orchestration_cleanup_rejects_dry_run_false_without_apply() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({"team_id": "team-1", "status": "active"}),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "status": "running"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let err = dispatch(&state, "orchestration.cleanup", json!({"dry_run": false}))
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("apply=true"));
+    let team = dispatch(&state, "team.get", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    assert_eq!(team["status"], "active");
+    assert_eq!(team["workers"][0]["status"], "running");
 }
 
 #[tokio::test]

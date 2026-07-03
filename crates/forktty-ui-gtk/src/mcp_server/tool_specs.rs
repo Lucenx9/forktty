@@ -148,6 +148,19 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
             ),
         },
         ToolSpec {
+            name: "orchestration_cleanup",
+            annotations: mutating_annotations(true, false),
+            description: "Plan or apply conservative cleanup for stale ForkTTY team/workflow orchestration records. Dry-run is the default; apply=true is required for writes. Cleanup never sends terminal input, closes panes, launches workers, creates worktrees, pushes, merges, or edits files.",
+            input_schema: object_schema(
+                &[],
+                json!({
+                    "workspace_id": string_prop("Optional workspace id filter."),
+                    "apply": boolean_prop("Apply safe cleanup actions. Required for mutation."),
+                    "dry_run": boolean_prop("Return planned actions without mutation. Defaults to true unless apply=true."),
+                }),
+            ),
+        },
+        ToolSpec {
             name: "identify",
             annotations: read_only_annotations(),
             description: "Return the canonical ForkTTY workspace/surface context for the caller or selected target, including effective_project_cwd, caller id validation, and current agent binding when present.",

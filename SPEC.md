@@ -624,17 +624,20 @@ team/workflow coordination records. It accepts optional `workspace_id`,
 `apply`, and `dry_run` fields. Dry-run is the default and returns planned
 `teamActions` and `workflowActions` without mutation; passing `apply: true`
 applies only actions that are safe from current ForkTTY model state. Cleanup
+rejects `dry_run: false` unless `apply: true` is also present, so callers
+cannot write by disabling dry-run alone. Cleanup
 may mark non-terminal workers whose recorded surface no longer exists as
 `closed`, cancel open tasks assigned to those stale workers, supersede
 undelivered messages targeting those workers/tasks, mark teams with no live
 workers, open tasks, or pending messages as `done`, mark active workflows with
 all-terminal plan steps as `done`, and close open plan steps on already
 terminal workflows. If a non-terminal worker still references an existing
-surface, cleanup reports a `team.worker.manual_review` action and does not
-mutate that worker, task, surface, or terminal. The method never sends terminal
-input, closes panes, launches workers, creates worktrees, or rebases/merges
-code. The CLI wrapper is `forktty cleanup orchestration`, with `--apply`
-required for writes.
+surface or has no recorded surface, cleanup reports a
+`team.worker.manual_review` action and does not mutate that worker, task,
+surface, or terminal. The method never sends terminal input, closes panes,
+launches workers, creates worktrees, or rebases/merges code. The CLI wrapper is
+`forktty cleanup orchestration`, and the MCP tool is
+`orchestration_cleanup`; `--apply`/`apply: true` is required for writes.
 
 Example request:
 
@@ -813,7 +816,7 @@ not listen on a network port; each MCP tool call is validated and then bridged
 to the same owner-only Unix socket described above. Oversized, invalid JSON,
 and invalid UTF-8 stdio messages return JSON-RPC `-32700` parse errors and do
 not end the stdio session. The server exposes
-`identify`, `workspace_list`, `workspace_create`, `surface_list`, `context_snapshot`, `task_strategy_plan`, `task_strategy_apply`, `topology_tree`, `remote_list`, `remote_status`, `surface_read_text`, `surface_capture_tail`, `agent_list`, `agent_health`, `agent_reclaim_plan`, `agent_hibernate`, `agent_reclaim`, `agent_resume`, `status_summary`, `workflow_list`, `workflow_get`, `workflow_upsert`, `workflow_loop_set`, `workflow_plan_set`, `workflow_evidence_add`, `workflow_replay`, `team_list`, `team_get`, `team_upsert`, `team_finish`, `team_worker_upsert`, `team_worker_heartbeat`, `team_worker_launch`, `team_worker_health`, `team_worker_nudge`, `team_worker_shutdown`, `team_task_upsert`, `team_message_send`, `team_message_dispatch`, `team_message_ack`, `team_inbox`, `team_summary`, `team_events`, `surface_split`, `surface_send_text`,
+`identify`, `workspace_list`, `workspace_create`, `surface_list`, `context_snapshot`, `task_strategy_plan`, `task_strategy_apply`, `orchestration_cleanup`, `topology_tree`, `remote_list`, `remote_status`, `surface_read_text`, `surface_capture_tail`, `agent_list`, `agent_health`, `agent_reclaim_plan`, `agent_hibernate`, `agent_reclaim`, `agent_resume`, `status_summary`, `workflow_list`, `workflow_get`, `workflow_upsert`, `workflow_loop_set`, `workflow_plan_set`, `workflow_evidence_add`, `workflow_replay`, `team_list`, `team_get`, `team_upsert`, `team_finish`, `team_worker_upsert`, `team_worker_heartbeat`, `team_worker_launch`, `team_worker_health`, `team_worker_nudge`, `team_worker_shutdown`, `team_task_upsert`, `team_message_send`, `team_message_dispatch`, `team_message_ack`, `team_inbox`, `team_summary`, `team_events`, `surface_split`, `surface_send_text`,
 `surface_focus`, `worktree_list`, `worktree_status`, `worktree_create`,
 `worktree_attach`, `worktree_remove`, `worktree_merge`,
 `notification_create`, and `status_set`. `FORKTTY_SOCKET_PATH` chooses the
