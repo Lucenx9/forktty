@@ -383,6 +383,14 @@ a soft assignment penalty and can still be selected when no better ready
 harness exists. Lockout is a hard task/mode exclusion for assignment. These
 signals are separate from provider capability health/readiness and should only
 be supplied by callers that have concrete runtime evidence.
+For harnesses without caller-supplied signals, ForkTTY also infers an advisory
+cooldown from its own workflow history: at least two failed task-strategy
+workflows naming that harness within the last 30 minutes, with no newer
+successful task-strategy workflow for the same harness. An inferred cooldown
+stays a soft, explainable penalty — the plan names the failed workflows in
+`reasons` and in the `session_cooldown` factor — and never locks a harness
+out. Explicit `harness_signals` for a harness always replace inference for
+that harness.
 Optional `last_known_good` is advisory evidence from a previous successful run.
 It can include `strategy`, `harness_id`, and `reason`; matching candidates get
 a small explainable score factor named `last_known_good_strategy` or

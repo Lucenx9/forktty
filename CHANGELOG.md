@@ -5,6 +5,11 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- Task strategy planning now infers an advisory soft cooldown for a harness
+  from ForkTTY's own workflow history (at least two recent failed
+  task-strategy workflows naming that harness, cleared by a newer success),
+  named in plan reasons and score factors; explicit `harness_signals` still
+  replace inference for the harnesses they name.
 - Added dry-run-first `orchestration.cleanup` over socket, MCP
   `orchestration_cleanup`, and `forktty cleanup orchestration` so stale
   team/workflow records can be inspected and conservatively closed without

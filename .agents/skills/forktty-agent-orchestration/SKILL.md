@@ -51,7 +51,9 @@ work. For small local code changes, read and edit the repo directly.
    small strategy/harness stickiness score; it is not an override. If you have
    concrete runtime evidence for a harness, pass
    `harness_signals`: `cooldown` is a soft penalty, while `locked_out`
-   excludes that harness for the current task/mode. Multi-role parallel plans
+   excludes that harness for the current task/mode. For harnesses you do not
+   name, ForkTTY infers an advisory soft cooldown from recent failed
+   task-strategy workflows; your explicit signals replace that inference. Multi-role parallel plans
    also respect the harness parallel-session capacity reported by ForkTTY. Do
    not invent signals from preference alone; treat the
    returned strategy and harness assignments as the default operating plan

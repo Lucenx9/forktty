@@ -18,6 +18,7 @@ use forktty_core::{
     TaskStrategyScoreFactor, WorkflowQuery, WorkflowState, WorkspaceSelector,
 };
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_PROVIDER_MAX_PARALLEL_SESSIONS: u32 = 4;
@@ -55,15 +56,28 @@ pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value
         .map(last_known_good_from_value)
         .transpose()?;
     let target = task_strategy_target_context(state, params, true)?;
+    let recent_workflows =
+        recent_workflows_for_planning(state, target.workspace_id.as_deref()).await;
     let (last_known_good, inferred_last_known_good_reason) =
         if let Some(last_known_good) = explicit_last_known_good {
             (Some(last_known_good), None)
         } else {
-            let inferred =
-                infer_last_known_good_from_workflows(state, target.workspace_id.as_deref()).await;
+            let inferred = infer_last_known_good_from_workflows(&recent_workflows);
             let reason = inferred.as_ref().and_then(|value| value.reason.clone());
             (inferred, reason)
         };
+    let caller_signal_harness_ids: HashSet<String> = plan_params
+        .harness_signals
+        .as_ref()
+        .and_then(Value::as_object)
+        .map(|signals| signals.keys().cloned().collect())
+        .unwrap_or_default();
+    let inferred_cooldown_reasons = apply_inferred_harness_cooldowns(
+        &mut registry,
+        &recent_workflows,
+        &caller_signal_harness_ids,
+        crate::current_unix_epoch_ms(),
+    );
     let repo_dirty = match plan_params.repo_dirty {
         Some(repo_dirty) => repo_dirty,
         None => infer_repo_dirty(target.cwd.as_deref()),
@@ -102,6 +116,7 @@ pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value
             "inferred last-known-good routing evidence from {reason}"
         ));
     }
+    plan.reasons.extend(inferred_cooldown_reasons);
 
     serde_json::to_value(plan)
         .map_err(|err| DispatchError::Other(format!("serialize task strategy plan: {err}")))
@@ -468,22 +483,118 @@ fn open_task_strategy_repo_context_dirs(
     Ok(dirs)
 }
 
-async fn infer_last_known_good_from_workflows(
+/// Recent workflow history for read-only routing inference (last-known-good
+/// stickiness and advisory cooldowns). Newest-first per `WorkflowStore::list`.
+async fn recent_workflows_for_planning(
     state: &SocketAppState,
     workspace_id: Option<&str>,
-) -> Option<TaskStrategyLastKnownGood> {
-    let access = store_access::optional_workflow_store_access(state)?;
-    let store = access.load().await.ok()?;
-    let workflows = store.list(&WorkflowQuery {
+) -> Vec<WorkflowState> {
+    let Some(access) = store_access::optional_workflow_store_access(state) else {
+        return Vec::new();
+    };
+    let Ok(store) = access.load().await else {
+        return Vec::new();
+    };
+    store.list(&WorkflowQuery {
         workspace_id: workspace_id.map(str::to_string),
         limit: Some(200),
         ..WorkflowQuery::default()
-    });
+    })
+}
 
+fn infer_last_known_good_from_workflows(
+    workflows: &[WorkflowState],
+) -> Option<TaskStrategyLastKnownGood> {
     workflows
-        .into_iter()
-        .filter(is_last_known_good_workflow)
-        .find_map(last_known_good_from_workflow)
+        .iter()
+        .filter(|workflow| is_last_known_good_workflow(workflow))
+        .find_map(|workflow| last_known_good_from_workflow(workflow.clone()))
+}
+
+/// Advisory cooldown evidence bounds. Only fresh failures count, a minimum
+/// failure count avoids cooling a harness down over one flake, and a newer
+/// success clears older failure evidence — the same discipline mature
+/// request routers apply to error-rate cooldowns.
+const INFERRED_COOLDOWN_WINDOW_MS: u64 = 30 * 60 * 1000;
+const INFERRED_COOLDOWN_MIN_RECENT_FAILURES: usize = 2;
+
+fn workflow_status_is_failure(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "failed" | "fail" | "error" | "errored"
+    )
+}
+
+/// Sets an advisory cooldown on harnesses with enough recent failed
+/// task-strategy workflow evidence. Explicit caller `harness_signals` win:
+/// harnesses named there are never touched. Returns plan reason lines for
+/// each inferred cooldown; the cooldown itself stays a soft score penalty.
+pub(crate) fn apply_inferred_harness_cooldowns(
+    registry: &mut HarnessRegistry,
+    workflows: &[WorkflowState],
+    caller_signal_harness_ids: &HashSet<String>,
+    now_ms: u64,
+) -> Vec<String> {
+    let mut reasons = Vec::new();
+    for harness in &mut registry.harnesses {
+        if caller_signal_harness_ids.contains(&harness.id) {
+            continue;
+        }
+        if harness.routing_signals.cooldown || harness.routing_signals.locked_out {
+            continue;
+        }
+        let Some(reason) = inferred_harness_cooldown_reason(workflows, &harness.id, now_ms) else {
+            continue;
+        };
+        reasons.push(format!(
+            "inferred advisory cooldown for harness {}: {reason}",
+            harness.id
+        ));
+        harness.routing_signals.cooldown = true;
+        harness.routing_signals.cooldown_reason = Some(reason);
+    }
+    reasons
+}
+
+/// `workflows` must be newest-first (`WorkflowStore::list` order): a success
+/// encountered before enough failures clears the older failure evidence.
+fn inferred_harness_cooldown_reason(
+    workflows: &[WorkflowState],
+    harness_id: &str,
+    now_ms: u64,
+) -> Option<String> {
+    let mut recent_failures: Vec<&str> = Vec::new();
+    for workflow in workflows {
+        if workflow.mode != "task_strategy" {
+            continue;
+        }
+        if now_ms.saturating_sub(workflow.updated_at_ms) > INFERRED_COOLDOWN_WINDOW_MS {
+            continue;
+        }
+        if harness_id_from_workflow_plan(workflow).as_deref() != Some(harness_id) {
+            continue;
+        }
+        if is_last_known_good_workflow(workflow) {
+            break;
+        }
+        if workflow_status_is_failure(&workflow.status) {
+            recent_failures.push(workflow.id.as_str());
+        }
+    }
+    if recent_failures.len() < INFERRED_COOLDOWN_MIN_RECENT_FAILURES {
+        return None;
+    }
+    let listed = recent_failures
+        .iter()
+        .take(3)
+        .copied()
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "{} failed task_strategy workflows in the last {} minutes ({listed})",
+        recent_failures.len(),
+        INFERRED_COOLDOWN_WINDOW_MS / 60_000
+    ))
 }
 
 fn is_last_known_good_workflow(workflow: &WorkflowState) -> bool {

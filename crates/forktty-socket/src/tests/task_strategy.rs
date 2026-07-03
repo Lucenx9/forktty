@@ -2372,6 +2372,175 @@ fn task_strategy_harness_signals_apply_cooldown_and_lockout_separately() {
     assert!(!claude.routing_signals.cooldown);
 }
 
+fn cooldown_inference_registry() -> forktty_core::HarnessRegistry {
+    crate::task_strategy_runtime::harness_registry_from_capabilities(&json!({
+        "provider_capabilities": {
+            "codex": {
+                "team_worker_launch": true,
+                "launchable": true,
+                "safe_resume": true,
+                "cwd_resume_flag": true,
+                "available_on_path": true,
+                "executable": "/usr/bin/codex",
+                "disabled_by_config": false
+            },
+            "claude": {
+                "team_worker_launch": true,
+                "launchable": true,
+                "safe_resume": true,
+                "cwd_resume_flag": true,
+                "available_on_path": true,
+                "executable": "/usr/bin/claude",
+                "disabled_by_config": false
+            }
+        }
+    }))
+}
+
+fn task_strategy_workflow_fixture(
+    id: &str,
+    status: &str,
+    harness: &str,
+    updated_at_ms: u64,
+) -> forktty_core::WorkflowState {
+    serde_json::from_value(json!({
+        "id": id,
+        "mode": "task_strategy",
+        "status": status,
+        "created_at_ms": updated_at_ms,
+        "updated_at_ms": updated_at_ms,
+        "plan": [{
+            "id": "implement",
+            "title": format!("Implementer: {harness}"),
+            "status": status,
+            "detail": format!("Role: implementer\nHarness: {harness}"),
+            "updated_at_ms": updated_at_ms
+        }]
+    }))
+    .unwrap()
+}
+
+#[test]
+fn inferred_cooldown_requires_minimum_recent_failures() {
+    let now_ms = 10 * 60 * 60 * 1000;
+    let mut registry = cooldown_inference_registry();
+    // Newest-first, matching WorkflowStore::list ordering.
+    let workflows = vec![
+        task_strategy_workflow_fixture("wf-fail-2", "failed", "codex", now_ms - 60_000),
+        task_strategy_workflow_fixture("wf-fail-1", "error", "codex", now_ms - 120_000),
+    ];
+
+    let reasons = crate::task_strategy_runtime::apply_inferred_harness_cooldowns(
+        &mut registry,
+        &workflows,
+        &Default::default(),
+        now_ms,
+    );
+
+    let codex = registry
+        .harnesses
+        .iter()
+        .find(|harness| harness.id == "codex")
+        .unwrap();
+    assert!(codex.routing_signals.cooldown);
+    let reason = codex.routing_signals.cooldown_reason.as_deref().unwrap();
+    assert!(reason.contains("wf-fail-2"), "{reason}");
+    assert!(reason.contains("wf-fail-1"), "{reason}");
+    assert!(!codex.routing_signals.locked_out);
+    let claude = registry
+        .harnesses
+        .iter()
+        .find(|harness| harness.id == "claude")
+        .unwrap();
+    assert!(!claude.routing_signals.cooldown);
+    assert!(reasons.iter().any(|reason| reason.contains("codex")));
+
+    let mut single_failure_registry = cooldown_inference_registry();
+    let single_failure = vec![task_strategy_workflow_fixture(
+        "wf-fail-only",
+        "failed",
+        "codex",
+        now_ms - 60_000,
+    )];
+    let reasons = crate::task_strategy_runtime::apply_inferred_harness_cooldowns(
+        &mut single_failure_registry,
+        &single_failure,
+        &Default::default(),
+        now_ms,
+    );
+    assert!(reasons.is_empty());
+    assert!(single_failure_registry
+        .harnesses
+        .iter()
+        .all(|harness| !harness.routing_signals.cooldown));
+}
+
+#[test]
+fn inferred_cooldown_ignores_stale_failures_and_clears_after_success() {
+    let now_ms = 10 * 60 * 60 * 1000;
+    let stale_ms = now_ms - 2 * 60 * 60 * 1000;
+    let mut stale_registry = cooldown_inference_registry();
+    let stale = vec![
+        task_strategy_workflow_fixture("wf-old-2", "failed", "codex", stale_ms),
+        task_strategy_workflow_fixture("wf-old-1", "failed", "codex", stale_ms - 60_000),
+    ];
+    let reasons = crate::task_strategy_runtime::apply_inferred_harness_cooldowns(
+        &mut stale_registry,
+        &stale,
+        &Default::default(),
+        now_ms,
+    );
+    assert!(reasons.is_empty());
+    assert!(stale_registry
+        .harnesses
+        .iter()
+        .all(|harness| !harness.routing_signals.cooldown));
+
+    let mut recovered_registry = cooldown_inference_registry();
+    let recovered = vec![
+        task_strategy_workflow_fixture("wf-success", "done", "codex", now_ms - 30_000),
+        task_strategy_workflow_fixture("wf-fail-2", "failed", "codex", now_ms - 60_000),
+        task_strategy_workflow_fixture("wf-fail-1", "failed", "codex", now_ms - 120_000),
+    ];
+    let reasons = crate::task_strategy_runtime::apply_inferred_harness_cooldowns(
+        &mut recovered_registry,
+        &recovered,
+        &Default::default(),
+        now_ms,
+    );
+    assert!(reasons.is_empty());
+    assert!(recovered_registry
+        .harnesses
+        .iter()
+        .all(|harness| !harness.routing_signals.cooldown));
+}
+
+#[test]
+fn explicit_caller_signals_take_precedence_over_inferred_cooldown() {
+    let now_ms = 10 * 60 * 60 * 1000;
+    let mut registry = cooldown_inference_registry();
+    let workflows = vec![
+        task_strategy_workflow_fixture("wf-fail-2", "failed", "codex", now_ms - 60_000),
+        task_strategy_workflow_fixture("wf-fail-1", "failed", "codex", now_ms - 120_000),
+    ];
+    let caller_signal_ids = std::collections::HashSet::from(["codex".to_string()]);
+
+    let reasons = crate::task_strategy_runtime::apply_inferred_harness_cooldowns(
+        &mut registry,
+        &workflows,
+        &caller_signal_ids,
+        now_ms,
+    );
+
+    assert!(reasons.is_empty());
+    let codex = registry
+        .harnesses
+        .iter()
+        .find(|harness| harness.id == "codex")
+        .unwrap();
+    assert!(!codex.routing_signals.cooldown);
+}
+
 #[tokio::test]
 async fn task_strategy_plan_rejects_malformed_harness_signals() {
     let (state, _backend) = test_state();
