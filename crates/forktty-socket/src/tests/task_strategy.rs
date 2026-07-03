@@ -692,6 +692,36 @@ async fn task_strategy_apply_rejects_empty_assignments_without_mutation() {
 }
 
 #[tokio::test]
+async fn task_strategy_apply_rejects_team_layer_for_non_team_strategy_without_mutation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let mut plan = solo_verify_plan_json();
+    plan["layers"]["team"] = json!(true);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Fix the router",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err.to_string().contains("does not support a team layer"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_plan_infers_dirty_repo_from_active_surface_cwd() {
     let (state, _backend) = test_state();
     let repo_dir = tempfile::tempdir().unwrap();
@@ -1166,11 +1196,29 @@ async fn task_strategy_apply_review_only_strategy_cannot_bypass_dirty_mutating_t
         model.create_worktree_workspace("feature", repo_dir.path(), "feature", "feature-x");
     };
 
-    let mut plan = staged_team_plan_json();
-    plan["task_class"] = json!("feature_implementation");
-    plan["strategy"] = json!("review_only");
-    plan["layers"]["worktree"] = json!(false);
-    plan["approvals"] = json!(["start_run"]);
+    let plan = json!({
+        "task_class": "feature_implementation",
+        "strategy": "review_only",
+        "layers": {
+            "workflow": true,
+            "team": false,
+            "loop_metadata": false,
+            "worktree": false,
+            "feed": true,
+            "mcp": true,
+            "hooks": true
+        },
+        "assignments": [
+            {
+                "role": "reviewer",
+                "harness_id": "claude",
+                "reason": "client supplied review strategy with mutating task class"
+            }
+        ],
+        "approvals": ["start_run"],
+        "reasons": ["client supplied review strategy"],
+        "safety_notes": ["visible setup only"]
+    });
 
     let err = dispatch(
         &state,

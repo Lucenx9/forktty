@@ -541,7 +541,9 @@ characters or oversized strings into workflow steps, team task details,
 approval fingerprints, or worker prompts. It also rejects plans with more
 than 64 assignments, or with no assignments at all, before creating
 workflow/team state, matching the visible team worker cap used by submit runs
-and avoiding empty workflow plans.
+and avoiding empty workflow plans. A submitted plan cannot force
+`layers.team: true` onto a strategy that the planner does not treat as a team
+strategy.
 When both surface aliases are provided, `leader_surface_id` and `surface_id`
 must refer to the same surface. The MCP `task_strategy_apply` tool forwards
 the current `FORKTTY_WORKSPACE_ID` and `FORKTTY_SURFACE_ID` as the default

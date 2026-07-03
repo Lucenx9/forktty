@@ -136,6 +136,16 @@ fn task_strategy_plan_is_read_only_review(plan: &TaskStrategyPlan) -> bool {
             .all(|assignment| matches!(assignment.role, HarnessRole::Reviewer))
 }
 
+fn task_strategy_supports_team_layer(strategy: &TaskStrategy) -> bool {
+    matches!(
+        strategy,
+        TaskStrategy::ImplementerPlusReviewer
+            | TaskStrategy::ParallelResearch
+            | TaskStrategy::ParallelExperiment
+            | TaskStrategy::TeamPipeline
+    )
+}
+
 fn infer_likely_user_visible_change(goal: &str) -> bool {
     let lower = goal.to_lowercase();
     let edit_tokens = ["fix", "bug", "bugs", "add", "drop", "port"];
@@ -1007,6 +1017,12 @@ fn optional_signal_reason(
 }
 
 fn validate_submitted_task_strategy_plan(plan: &TaskStrategyPlan) -> Result<(), DispatchError> {
+    if plan.layers.team && !task_strategy_supports_team_layer(&plan.strategy) {
+        return Err(DispatchError::InvalidParam(format!(
+            "task.strategy.apply strategy {} does not support a team layer",
+            task_strategy_wire_value(&plan.strategy)
+        )));
+    }
     if plan.assignments.is_empty() {
         return Err(DispatchError::InvalidParam(
             "task.strategy.apply plan requires at least one assignment; team layer requires at least one team assignment"

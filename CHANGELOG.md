@@ -45,6 +45,8 @@ All notable changes to ForkTTY are documented here.
   workflow/team state.
 - Fixed task strategy apply so submitted plans with no assignments are rejected
   before creating empty workflow plans or loop metadata.
+- Fixed task strategy apply so client-submitted plans cannot force team state
+  onto strategies that do not support team orchestration.
 - Fixed `orchestration.cleanup` so `dry_run=false` without `apply=true` is
   rejected instead of mutating stale orchestration records.
 - Fixed `orchestration.cleanup` so non-terminal workers without a recorded
