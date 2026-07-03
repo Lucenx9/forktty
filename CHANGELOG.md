@@ -90,6 +90,13 @@ All notable changes to ForkTTY are documented here.
 - Fixed task strategy apply so client-submitted plans cannot inflate assignment
   counts beyond the selected strategy shape, preventing orphan solo/review steps
   and over-wide parallel research runs.
+- Fixed team worker recovery so a worker that resumes with an active status
+  after `team.worker.shutdown` clears stale shutdown metadata, and health
+  reports persisted `shutdown_requested` workers consistently even when older
+  state lacks the shutdown timestamp.
+- Fixed `team.worker.launch` so teams with a stale recorded leader surface can
+  still launch workers from their valid workspace focus instead of failing with
+  `not_found`.
 - Fixed `orchestration.cleanup` so `dry_run=false` without `apply=true` is
   rejected instead of mutating stale orchestration records.
 - Fixed `orchestration.cleanup` so non-terminal workers without a recorded

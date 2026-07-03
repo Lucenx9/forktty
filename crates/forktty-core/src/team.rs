@@ -473,6 +473,9 @@ impl TeamStoreData {
         }
         if let Some(status) = status {
             worker.status = status;
+            if worker_status_is_active(&worker.status) {
+                worker.shutdown_requested_at_ms = 0;
+            }
         }
         if assigned_task_id.is_some() {
             worker.assigned_task_id = assigned_task_id;
@@ -598,6 +601,9 @@ impl TeamStoreData {
             .ok_or_else(|| TeamError::WorkerNotFound(worker_id.clone()))?;
         if let Some(status) = status {
             worker.status = status;
+            if worker_status_is_active(&worker.status) {
+                worker.shutdown_requested_at_ms = 0;
+            }
         }
         if assigned_task_id.is_some() {
             worker.assigned_task_id = assigned_task_id;
@@ -1486,6 +1492,10 @@ fn oldest_terminal_team_index(teams: &[TeamState]) -> Option<usize> {
 
 fn is_terminal_team_status(status: &str) -> bool {
     matches!(status, "done" | "closed" | "cancelled" | "finished")
+}
+
+fn worker_status_is_active(status: &str) -> bool {
+    matches!(status, "running" | "busy" | "active" | "working")
 }
 
 fn clean_optional_id(field: &str, value: Option<&str>) -> Result<Option<String>, TeamError> {
@@ -2408,6 +2418,124 @@ mod tests {
             summary.consistency_warnings,
             vec!["active_without_open_work".to_string()]
         );
+    }
+
+    #[test]
+    fn heartbeat_active_status_clears_shutdown_request() {
+        let mut store = TeamStoreData::default();
+        store
+            .upsert_team(
+                TeamUpsert {
+                    team_id: "team-1".to_string(),
+                    workspace_id: None,
+                    leader_surface_id: None,
+                    name: None,
+                    status: Some("active".to_string()),
+                    goal: None,
+                },
+                1,
+            )
+            .unwrap();
+        store
+            .upsert_worker(
+                TeamWorkerUpsert {
+                    team_id: "team-1".to_string(),
+                    worker_id: "worker-1".to_string(),
+                    role: None,
+                    agent: Some("codex".to_string()),
+                    surface_id: Some("surface-1".to_string()),
+                    worktree_name: None,
+                    status: Some("running".to_string()),
+                    assigned_task_id: None,
+                },
+                2,
+            )
+            .unwrap();
+        store
+            .request_worker_shutdown(
+                TeamWorkerAction {
+                    team_id: "team-1".to_string(),
+                    worker_id: "worker-1".to_string(),
+                },
+                3,
+            )
+            .unwrap();
+
+        let worker = store
+            .heartbeat(
+                TeamHeartbeat {
+                    team_id: "team-1".to_string(),
+                    worker_id: "worker-1".to_string(),
+                    status: Some("running".to_string()),
+                    assigned_task_id: None,
+                },
+                4,
+            )
+            .unwrap();
+
+        assert_eq!(worker.status, "running");
+        assert_eq!(worker.shutdown_requested_at_ms, 0);
+    }
+
+    #[test]
+    fn upsert_active_status_clears_shutdown_request() {
+        let mut store = TeamStoreData::default();
+        store
+            .upsert_team(
+                TeamUpsert {
+                    team_id: "team-1".to_string(),
+                    workspace_id: None,
+                    leader_surface_id: None,
+                    name: None,
+                    status: Some("active".to_string()),
+                    goal: None,
+                },
+                1,
+            )
+            .unwrap();
+        store
+            .upsert_worker(
+                TeamWorkerUpsert {
+                    team_id: "team-1".to_string(),
+                    worker_id: "worker-1".to_string(),
+                    role: None,
+                    agent: Some("codex".to_string()),
+                    surface_id: Some("surface-1".to_string()),
+                    worktree_name: None,
+                    status: Some("running".to_string()),
+                    assigned_task_id: None,
+                },
+                2,
+            )
+            .unwrap();
+        store
+            .request_worker_shutdown(
+                TeamWorkerAction {
+                    team_id: "team-1".to_string(),
+                    worker_id: "worker-1".to_string(),
+                },
+                3,
+            )
+            .unwrap();
+
+        let worker = store
+            .upsert_worker(
+                TeamWorkerUpsert {
+                    team_id: "team-1".to_string(),
+                    worker_id: "worker-1".to_string(),
+                    role: None,
+                    agent: None,
+                    surface_id: None,
+                    worktree_name: None,
+                    status: Some("running".to_string()),
+                    assigned_task_id: None,
+                },
+                4,
+            )
+            .unwrap();
+
+        assert_eq!(worker.status, "running");
+        assert_eq!(worker.shutdown_requested_at_ms, 0);
     }
 
     #[test]

@@ -57,6 +57,53 @@ async fn team_worker_health_reports_active_status_as_running_final_state() {
 }
 
 #[tokio::test]
+async fn team_worker_health_reports_shutdown_status_without_timestamp() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": surface_id,
+            "status": "active"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex",
+            "surface_id": surface_id,
+            "status": "shutdown_requested"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let health = dispatch(
+        &state,
+        "team.worker.health",
+        json!({"team_id": "team-1", "stale_after_ms": 1_000_000}),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(health["workers"][0]["lifecycle"], "shutdown_requested");
+    assert_eq!(health["workers"][0]["final_state"], "shutdown_requested");
+}
+
+#[tokio::test]
 async fn team_summary_excludes_active_workers_with_missing_surfaces() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();

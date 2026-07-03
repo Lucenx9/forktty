@@ -42,28 +42,29 @@ pub(crate) async fn create_team_worker_surface(
                 .find(|workspace| workspace.worktree_name.as_deref() == Some(worktree_name))
                 .map(|workspace| workspace.focused_surface_id)
                 .ok_or(DispatchError::NotFound("workspace".to_string()))?
+        } else if let Some(surface_id) = team
+            .leader_surface_id
+            .as_deref()
+            .filter(|surface_id| model.surface(surface_id).is_some())
+        {
+            surface_id.to_string()
+        } else if let Some(workspace_id) = team.workspace_id.as_deref() {
+            model
+                .list_workspaces()
+                .into_iter()
+                .find(|workspace| workspace.id == workspace_id)
+                .map(|workspace| workspace.focused_surface_id)
+                .ok_or(DispatchError::NotFound("workspace".to_string()))?
         } else {
-            match team.leader_surface_id.as_deref() {
-                Some(surface_id) if model.surface(surface_id).is_some() => surface_id.to_string(),
-                Some(_) => return Err(DispatchError::NotFound("surface".to_string())),
-                None => match team.workspace_id.as_deref() {
-                    Some(workspace_id) => model
-                        .list_workspaces()
-                        .into_iter()
-                        .find(|workspace| workspace.id == workspace_id)
-                        .map(|workspace| workspace.focused_surface_id)
-                        .ok_or(DispatchError::NotFound("workspace".to_string()))?,
-                    None => model
-                        .active_workspace()
-                        .map(|workspace| workspace.focused_surface_id)
-                        .ok_or_else(|| {
-                            DispatchError::PreconditionFailed(
-                                "team.worker.launch requires a team workspace, leader surface, or active workspace"
-                                    .to_string(),
-                            )
-                        })?,
-                },
-            }
+            model
+                .active_workspace()
+                .map(|workspace| workspace.focused_surface_id)
+                .ok_or_else(|| {
+                    DispatchError::PreconditionFailed(
+                        "team.worker.launch requires a team workspace, leader surface, or active workspace"
+                            .to_string(),
+                    )
+                })?
         };
         near_surface_id
     };
@@ -565,6 +566,8 @@ fn team_worker_final_state(
         return "stale";
     }
     match worker.status.as_str() {
+        "shutdown_requested" if surface_alive => "shutdown_requested",
+        "shutdown_requested" => "idle",
         "done" | "closed" | "idle" => "idle",
         "running" | "busy" | "active" | "working" => "running",
         "blocked" | "needs_input" => "needs_input",

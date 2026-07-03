@@ -903,6 +903,57 @@ async fn team_worker_launch_uses_requested_worktree_workspace() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
+async fn team_worker_launch_falls_back_to_workspace_when_leader_surface_is_stale() {
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let (mut state, backend) = test_state();
+    let team_store = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(team_store.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let leader_surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": leader_surface_id,
+            "name": "Launch",
+        }),
+    )
+    .await
+    .unwrap();
+    let replacement_surface_id = {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.close_surface(leader_surface_id).is_some());
+        let replacement = model.active_workspace().unwrap().focused_surface_id;
+        assert_ne!(replacement, leader_surface_id);
+        replacement
+    };
+
+    let launched = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex",
+        }),
+    )
+    .await
+    .unwrap();
+
+    let launched_surface_id = launched["surface"]["id"].as_str().unwrap();
+    assert_eq!(launched["surface"]["workspace_id"], workspace_id);
+    assert_ne!(launched_surface_id, replacement_surface_id);
+    assert_eq!(backend.spawn_shell(launched_surface_id).unwrap(), "codex");
+}
+
+#[tokio::test]
 async fn team_worker_launch_rejects_invalid_worktree_name() {
     let (mut state, _backend) = test_state();
     let team_store = tempfile::tempdir().unwrap();
