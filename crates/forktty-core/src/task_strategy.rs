@@ -19,6 +19,30 @@ pub enum TaskClass {
     LongRunningTeamRun,
 }
 
+/// Parse a caller-normalized task kind hint.
+///
+/// This deliberately accepts a small set of stable category aliases instead of
+/// trying to infer natural-language intent across every possible user language.
+pub fn task_class_from_hint(value: &str) -> Option<TaskClass> {
+    let normalized = value.trim().to_ascii_lowercase().replace(['-', ' '], "_");
+    match normalized.as_str() {
+        "tiny" | "answer" | "tiny_answer" => Some(TaskClass::TinyAnswer),
+        "inspect" | "inspection" | "repo" | "repo_inspection" => Some(TaskClass::RepoInspection),
+        "fix" | "bugfix" | "bug_fix" | "focused_bugfix" => Some(TaskClass::FocusedBugfix),
+        "feature" | "implement" | "implementation" | "feature_implementation" => {
+            Some(TaskClass::FeatureImplementation)
+        }
+        "review" | "read_only" | "readonly" | "review_only" => Some(TaskClass::ReviewOnly),
+        "parallel" | "research" | "parallel_research" => Some(TaskClass::ParallelResearch),
+        "experiment" | "parallel_experiment" => Some(TaskClass::ParallelExperiment),
+        "verify" | "verification" | "verify_fix_loop" => Some(TaskClass::VerifyFixLoop),
+        "team" | "team_run" | "long_running" | "long_running_team_run" => {
+            Some(TaskClass::LongRunningTeamRun)
+        }
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStrategy {
@@ -1435,6 +1459,23 @@ mod tests {
             .reasons
             .iter()
             .any(|reason| reason.contains("caller-provided task kind")));
+    }
+
+    #[test]
+    fn task_class_hint_parser_accepts_stable_category_aliases() {
+        for (hint, task_class) in [
+            ("bugfix", TaskClass::FocusedBugfix),
+            ("bug-fix", TaskClass::FocusedBugfix),
+            ("feature", TaskClass::FeatureImplementation),
+            ("review", TaskClass::ReviewOnly),
+            ("research", TaskClass::ParallelResearch),
+            ("parallel", TaskClass::ParallelResearch),
+            ("verify", TaskClass::VerifyFixLoop),
+            ("team", TaskClass::LongRunningTeamRun),
+        ] {
+            assert_eq!(task_class_from_hint(hint), Some(task_class), "{hint}");
+        }
+        assert_eq!(task_class_from_hint("correggi"), None);
     }
 
     #[test]

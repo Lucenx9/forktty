@@ -99,7 +99,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
                         protocol_limits::SOCKET_TASK_STRATEGY_GOAL_MAX_BYTES
                     )),
                     "strategy": string_prop("Optional explicit strategy override, for example solo_with_verify_loop, implementer_plus_reviewer, parallel_research, or review_only."),
-                    "task_kind": string_prop("Optional normalized task kind hint, for example focused_bugfix, feature_implementation, review_only, or parallel_research. Use for clear multilingual intent instead of keyword guessing."),
+                    "task_kind": string_prop("Optional normalized task kind hint, for example bugfix/focused_bugfix, feature/feature_implementation, review/review_only, or research/parallel_research. Use for clear multilingual intent instead of keyword guessing."),
                     "router_profile": string_prop("Optional router profile: balanced, fast, conservative, parallel, or review_heavy."),
                     "last_known_good": {
                         "type": "object",

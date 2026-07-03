@@ -211,6 +211,60 @@ async fn task_strategy_plan_accepts_explicit_task_kind_hint() {
 }
 
 #[tokio::test]
+async fn task_strategy_plan_accepts_normalized_task_kind_aliases() {
+    let (state, _backend) = test_state();
+    for (task_kind, expected_class) in [
+        ("bugfix", "focused_bugfix"),
+        ("feature", "feature_implementation"),
+        ("review", "review_only"),
+        ("research", "parallel_research"),
+    ] {
+        let result = dispatch(
+            &state,
+            "task.strategy.plan",
+            json!({
+                "goal": "Intent normalized by caller",
+                "task_kind": task_kind,
+                "repo_dirty": false,
+                "likely_user_visible_change": expected_class != "review_only"
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result["task_class"], expected_class, "{task_kind}");
+        assert!(result["reasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reason| reason
+                .as_str()
+                .unwrap_or_default()
+                .contains("caller-provided task kind")));
+    }
+}
+
+#[tokio::test]
+async fn task_strategy_plan_accepts_matching_task_kind_alias_and_class_hint() {
+    let (state, _backend) = test_state();
+    let result = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "goal": "Caller normalized a bug fix request",
+            "task_kind": "bugfix",
+            "task_class_hint": "focused_bugfix",
+            "repo_dirty": false,
+            "likely_user_visible_change": true
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["task_class"], "focused_bugfix");
+}
+
+#[tokio::test]
 async fn task_strategy_plan_rejects_conflicting_task_kind_aliases() {
     let (state, _backend) = test_state();
     let err = dispatch(

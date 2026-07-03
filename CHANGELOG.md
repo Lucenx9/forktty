@@ -18,9 +18,10 @@ All notable changes to ForkTTY are documented here.
 - `forktty skills setup` and `forktty skills remove` now retain only the three
   newest ForkTTY-managed skill backups per target and report pruned backups,
   while leaving unmanaged `.bak-*` directories untouched.
-- Task strategy planning now accepts a normalized `task_kind` /
-  `task_class_hint` so agents can pass clear user intent across languages
-  without relying on ForkTTY keyword guessing.
+- Task strategy planning now accepts normalized `task_kind` / `task_class_hint`
+  aliases such as `bugfix`, `feature`, `review`, and `research`, so agents can
+  pass clear user intent across languages without relying on ForkTTY keyword
+  guessing or exact internal enum names.
 
 ### Fixed
 - Fixed task strategy plan/apply input validation so oversized goals are

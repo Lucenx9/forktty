@@ -357,11 +357,14 @@ workspace effective project cwd, or from `cwd` when the caller passes one
 because its real repo differs from the selected ForkTTY pane. `cwd` must be an
 absolute existing directory and is used only for planning context; an explicit
 `repo_dirty` value overrides that inference. `task_kind` is a caller-normalized
-task class hint (`tiny_answer`, `repo_inspection`, `focused_bugfix`,
-`feature_implementation`, `review_only`, `parallel_research`,
-`parallel_experiment`, `verify_fix_loop`, or `long_running_team_run`) for
-clear intent that may be expressed in any language; `task_class_hint` is an
-equivalent socket alias and conflicts if both values differ. When
+task class hint for clear intent that may be expressed in any language. It
+accepts the canonical task classes (`tiny_answer`, `repo_inspection`,
+`focused_bugfix`, `feature_implementation`, `review_only`,
+`parallel_research`, `parallel_experiment`, `verify_fix_loop`, or
+`long_running_team_run`) plus short aliases such as `bugfix`, `feature`,
+`review`, `research`, `parallel`, `experiment`, `verify`, and `team`;
+`task_class_hint` is an equivalent socket alias and conflicts only if both
+values normalize to different task classes. When
 `likely_user_visible_change` is omitted, ForkTTY infers likely
 editing/user-visible intent from mutating task-kind hints and high-confidence
 goal wording; an explicit false value overrides that inference. Primary review

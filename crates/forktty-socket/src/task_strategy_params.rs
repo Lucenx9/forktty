@@ -1,6 +1,6 @@
 use crate::DispatchError;
 use crate::{optional_bool_param, optional_non_blank_string_param, required_string};
-use forktty_core::protocol_limits;
+use forktty_core::{protocol_limits, task_class_from_hint, TaskClass};
 use serde_json::Value;
 
 pub(crate) const MAX_TASK_STRATEGY_GOAL_BYTES: usize =
@@ -10,7 +10,7 @@ pub(crate) struct TaskStrategyPlanParams {
     pub(crate) goal: String,
     pub(crate) explicit_strategy: Option<String>,
     pub(crate) router_profile: Option<String>,
-    pub(crate) task_class_hint: Option<String>,
+    pub(crate) task_class_hint: Option<TaskClass>,
     pub(crate) last_known_good: Option<Value>,
     pub(crate) harness_signals: Option<Value>,
     pub(crate) repo_dirty: Option<bool>,
@@ -27,15 +27,19 @@ pub(crate) fn task_strategy_plan_params(
         optional_non_blank_string_param(params, "strategy")?.map(str::to_string);
     let router_profile =
         optional_non_blank_string_param(params, "router_profile")?.map(str::to_string);
-    let task_kind = optional_non_blank_string_param(params, "task_kind")?;
-    let task_class_hint_param = optional_non_blank_string_param(params, "task_class_hint")?;
+    let task_kind = optional_non_blank_string_param(params, "task_kind")?
+        .map(parse_task_class_hint)
+        .transpose()?;
+    let task_class_hint_param = optional_non_blank_string_param(params, "task_class_hint")?
+        .map(parse_task_class_hint)
+        .transpose()?;
     let task_class_hint = match (task_kind, task_class_hint_param) {
         (Some(task_kind), Some(task_class_hint)) if task_kind != task_class_hint => {
             return Err(DispatchError::InvalidParam(
                 "task_kind and task_class_hint must match when both are provided".to_string(),
             ));
         }
-        (Some(value), _) | (_, Some(value)) => Some(value.to_string()),
+        (Some(value), _) | (_, Some(value)) => Some(value),
         (None, None) => None,
     };
     let last_known_good = match params.get("last_known_good") {
@@ -75,6 +79,11 @@ pub(crate) fn task_strategy_plan_params(
         user_requested_review,
         likely_user_visible_change,
     })
+}
+
+fn parse_task_class_hint(value: &str) -> Result<TaskClass, DispatchError> {
+    task_class_from_hint(value)
+        .ok_or_else(|| DispatchError::InvalidParam("unsupported task kind".to_string()))
 }
 
 pub(crate) fn task_strategy_goal_param(params: &Value) -> Result<String, DispatchError> {

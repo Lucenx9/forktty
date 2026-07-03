@@ -335,9 +335,11 @@ task-strategy workflows when available, and keeps reviewer strategies honest by
 including a reviewer assignment. Pass
 `--task-kind <kind>` or MCP/socket `task_kind` when an agent has already
 normalized clear user intent (for example from a non-English request) into
-`focused_bugfix`, `feature_implementation`, `review_only`, or
+stable categories such as `bugfix` / `focused_bugfix`, `feature` /
+`feature_implementation`, `review` / `review_only`, or `research` /
 `parallel_research`; ForkTTY still scores strategy, harnesses, layers, and
-approvals from that structured hint. Pass
+approvals from that structured hint instead of keyword guessing across
+languages. Pass
 `--profile <profile>` or MCP/socket `router_profile` only when you want to bias
 the automatic scorer explicitly. Scripts and MCP agents with real runtime
 evidence can pass `--last-known-good-json`/`last_known_good` to override or

@@ -48,11 +48,7 @@ pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value
         .as_deref()
         .map(task_router_profile_from_str)
         .transpose()?;
-    let task_class_hint = plan_params
-        .task_class_hint
-        .as_deref()
-        .map(task_class_from_str)
-        .transpose()?;
+    let task_class_hint = plan_params.task_class_hint.clone();
     let explicit_last_known_good = plan_params
         .last_known_good
         .as_ref()
@@ -794,23 +790,6 @@ fn task_strategy_from_str(value: &str) -> Result<TaskStrategy, DispatchError> {
         "review_only" => Ok(TaskStrategy::ReviewOnly),
         _ => Err(DispatchError::InvalidParam(
             "unsupported task strategy".to_string(),
-        )),
-    }
-}
-
-fn task_class_from_str(value: &str) -> Result<TaskClass, DispatchError> {
-    match value {
-        "tiny_answer" => Ok(TaskClass::TinyAnswer),
-        "repo_inspection" => Ok(TaskClass::RepoInspection),
-        "focused_bugfix" => Ok(TaskClass::FocusedBugfix),
-        "feature_implementation" => Ok(TaskClass::FeatureImplementation),
-        "review_only" => Ok(TaskClass::ReviewOnly),
-        "parallel_research" => Ok(TaskClass::ParallelResearch),
-        "parallel_experiment" => Ok(TaskClass::ParallelExperiment),
-        "verify_fix_loop" => Ok(TaskClass::VerifyFixLoop),
-        "long_running_team_run" => Ok(TaskClass::LongRunningTeamRun),
-        _ => Err(DispatchError::InvalidParam(
-            "unsupported task kind".to_string(),
         )),
     }
 }
