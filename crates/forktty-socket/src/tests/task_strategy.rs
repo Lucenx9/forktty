@@ -110,6 +110,50 @@ async fn task_strategy_plan_response_stays_compact() {
 }
 
 #[tokio::test]
+async fn task_strategy_plan_response_stays_compact_with_max_reason_hints() {
+    let (state, _backend) = test_state();
+    let reason = "r".repeat(forktty_core::protocol_limits::SOCKET_TASK_STRATEGY_REASON_MAX_BYTES);
+    let result = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "goal": "Fix the task strategy router bug, review the result, and run focused verification",
+            "task_kind": "focused_bugfix",
+            "router_profile": "review_heavy",
+            "repo_dirty": true,
+            "likely_user_visible_change": true,
+            "last_known_good": {
+                "strategy": "implementer_plus_reviewer",
+                "harness_id": "codex",
+                "reason": reason
+            },
+            "harness_signals": {
+                "codex": {
+                    "cooldown": true,
+                    "cooldown_reason": reason
+                },
+                "claude": {
+                    "cooldown": true,
+                    "cooldown_reason": reason
+                },
+                "grok": {
+                    "cooldown": true,
+                    "cooldown_reason": reason
+                }
+            }
+        }),
+    )
+    .await
+    .unwrap();
+
+    let bytes = serde_json::to_vec(&result).unwrap().len();
+    assert!(
+        bytes <= 16_000,
+        "task.strategy.plan response is {bytes} bytes with max-size routing reasons"
+    );
+}
+
+#[tokio::test]
 async fn task_strategy_plan_accepts_explicit_router_profile() {
     let (state, _backend) = test_state();
     let result = dispatch(
