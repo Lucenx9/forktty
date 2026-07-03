@@ -2372,6 +2372,56 @@ fn task_strategy_harness_signals_apply_cooldown_and_lockout_separately() {
     assert!(!claude.routing_signals.cooldown);
 }
 
+#[test]
+fn harness_signals_parse_and_validate_cooldown_kind() {
+    let mut registry = cooldown_inference_registry();
+    crate::task_strategy_runtime::apply_harness_routing_signals(
+        &mut registry,
+        &json!({
+            "codex": {
+                "cooldown": true,
+                "cooldown_kind": "auth",
+                "cooldown_reason": "credentials expired"
+            }
+        }),
+    )
+    .unwrap();
+    let codex = registry
+        .harnesses
+        .iter()
+        .find(|harness| harness.id == "codex")
+        .unwrap();
+    assert_eq!(
+        codex.routing_signals.cooldown_kind,
+        Some(forktty_core::HarnessCooldownKind::Auth)
+    );
+
+    let mut registry = cooldown_inference_registry();
+    let err = crate::task_strategy_runtime::apply_harness_routing_signals(
+        &mut registry,
+        &json!({
+            "codex": {
+                "cooldown": true,
+                "cooldown_kind": "weather"
+            }
+        }),
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("cooldown_kind"), "{err}");
+
+    let mut registry = cooldown_inference_registry();
+    let err = crate::task_strategy_runtime::apply_harness_routing_signals(
+        &mut registry,
+        &json!({
+            "codex": {
+                "cooldown_kind": "quota"
+            }
+        }),
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("requires cooldown"), "{err}");
+}
+
 fn cooldown_inference_registry() -> forktty_core::HarnessRegistry {
     crate::task_strategy_runtime::harness_registry_from_capabilities(&json!({
         "provider_capabilities": {

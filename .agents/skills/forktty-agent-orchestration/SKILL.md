@@ -50,7 +50,9 @@ work. For small local code changes, read and edit the repo directly.
    have stronger concrete prior-success evidence, pass `last_known_good` for a
    small strategy/harness stickiness score; it is not an override. If you have
    concrete runtime evidence for a harness, pass
-   `harness_signals`: `cooldown` is a soft penalty, while `locked_out`
+   `harness_signals`: `cooldown` is a soft penalty (optionally classify the
+   cause with `cooldown_kind`: `quota`, `auth`, `crash`, or `timeout`, so the
+   penalty scales with it), while `locked_out`
    excludes that harness for the current task/mode. For harnesses you do not
    name, ForkTTY infers an advisory soft cooldown from recent failed
    task-strategy workflows; your explicit signals replace that inference. Multi-role parallel plans

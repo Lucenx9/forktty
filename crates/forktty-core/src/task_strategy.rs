@@ -87,9 +87,43 @@ pub enum HarnessHealth {
     Error,
 }
 
+/// Structured cooldown cause. Different causes get different soft penalties:
+/// an auth failure will not heal on its own, while a timeout usually will.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HarnessCooldownKind {
+    Quota,
+    Auth,
+    Crash,
+    Timeout,
+}
+
+/// Parse a caller-provided cooldown kind. Accepts the canonical snake_case
+/// category names only; unknown categories are the caller's error.
+pub fn harness_cooldown_kind_from_str(value: &str) -> Option<HarnessCooldownKind> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "quota" => Some(HarnessCooldownKind::Quota),
+        "auth" => Some(HarnessCooldownKind::Auth),
+        "crash" => Some(HarnessCooldownKind::Crash),
+        "timeout" => Some(HarnessCooldownKind::Timeout),
+        _ => None,
+    }
+}
+
+fn harness_cooldown_kind_id(kind: &HarnessCooldownKind) -> &'static str {
+    match kind {
+        HarnessCooldownKind::Quota => "quota",
+        HarnessCooldownKind::Auth => "auth",
+        HarnessCooldownKind::Crash => "crash",
+        HarnessCooldownKind::Timeout => "timeout",
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct HarnessRoutingSignals {
     pub cooldown: bool,
+    #[serde(default)]
+    pub cooldown_kind: Option<HarnessCooldownKind>,
     pub cooldown_reason: Option<String>,
     pub locked_out: bool,
     pub lockout_reason: Option<String>,
@@ -1113,7 +1147,14 @@ fn score_harness_for_role(
         "harness has no active task or mode lockout".to_string(),
     );
     let cooldown_points = if harness.routing_signals.cooldown {
-        -35
+        // Auth failures do not heal without user action, crashes are worse
+        // than capacity pressure, and timeouts are usually transient.
+        match harness.routing_signals.cooldown_kind.as_ref() {
+            Some(HarnessCooldownKind::Auth) => -60,
+            Some(HarnessCooldownKind::Crash) => -45,
+            Some(HarnessCooldownKind::Quota) | None => -35,
+            Some(HarnessCooldownKind::Timeout) => -25,
+        }
     } else {
         0
     };
@@ -1122,13 +1163,19 @@ fn score_harness_for_role(
         "session_cooldown",
         cooldown_points,
         if harness.routing_signals.cooldown {
+            let kind_label = harness
+                .routing_signals
+                .cooldown_kind
+                .as_ref()
+                .map(harness_cooldown_kind_id)
+                .unwrap_or("session");
             harness
                 .routing_signals
                 .cooldown_reason
                 .as_deref()
-                .map(|reason| format!("harness is on cooldown: {reason}"))
+                .map(|reason| format!("harness is on {kind_label} cooldown: {reason}"))
                 .unwrap_or_else(|| {
-                    "harness is on cooldown after a recent runtime signal".to_string()
+                    format!("harness is on {kind_label} cooldown after a recent runtime signal")
                 })
         } else {
             "harness has no active session cooldown".to_string()
@@ -2208,6 +2255,57 @@ mod tests {
             .factors
             .iter()
             .any(|factor| factor.name == "session_cooldown" && factor.points == 0));
+    }
+
+    #[test]
+    fn cooldown_kind_differentiates_session_cooldown_penalty() {
+        for (kind, expected_points) in [
+            (Some(HarnessCooldownKind::Auth), -60),
+            (Some(HarnessCooldownKind::Crash), -45),
+            (Some(HarnessCooldownKind::Quota), -35),
+            (Some(HarnessCooldownKind::Timeout), -25),
+            (None, -35),
+        ] {
+            let plan = plan_task_strategy(TaskStrategyInput {
+                goal: "Inspect the task router state".to_string(),
+                explicit_mode: None,
+                router_profile: None,
+                task_class_hint: None,
+                last_known_good: None,
+                repo_dirty: false,
+                user_requested_parallelism: false,
+                user_requested_review: false,
+                likely_user_visible_change: false,
+                harness_registry: HarnessRegistry {
+                    harnesses: vec![harness_with_signals(
+                        "codex",
+                        HarnessRoutingSignals {
+                            cooldown: true,
+                            cooldown_kind: kind.clone(),
+                            cooldown_reason: Some("recent runtime signal".to_string()),
+                            ..HarnessRoutingSignals::default()
+                        },
+                    )],
+                },
+            })
+            .unwrap();
+
+            let factor = plan.assignments[0]
+                .factors
+                .iter()
+                .find(|factor| factor.name == "session_cooldown")
+                .unwrap();
+            assert_eq!(factor.points, expected_points, "{kind:?}");
+            if let Some(kind) = kind {
+                let kind_id = match kind {
+                    HarnessCooldownKind::Quota => "quota",
+                    HarnessCooldownKind::Auth => "auth",
+                    HarnessCooldownKind::Crash => "crash",
+                    HarnessCooldownKind::Timeout => "timeout",
+                };
+                assert!(factor.reason.contains(kind_id), "{}", factor.reason);
+            }
+        }
     }
 
     #[test]

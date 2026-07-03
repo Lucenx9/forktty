@@ -56,11 +56,11 @@ pub use project_actions::{
 };
 pub use protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 pub use task_strategy::{
-    phase_one_classifier_reachable_classes, plan_task_strategy, task_class_from_hint,
-    HarnessAssignment, HarnessCapability, HarnessHealth, HarnessRegistry, HarnessRole,
-    HarnessRoutingSignals, TaskClass, TaskRouterProfile, TaskStrategy, TaskStrategyApproval,
-    TaskStrategyCandidateScore, TaskStrategyInput, TaskStrategyLastKnownGood, TaskStrategyLayers,
-    TaskStrategyPlan, TaskStrategyScoreFactor,
+    harness_cooldown_kind_from_str, phase_one_classifier_reachable_classes, plan_task_strategy,
+    task_class_from_hint, HarnessAssignment, HarnessCapability, HarnessCooldownKind, HarnessHealth,
+    HarnessRegistry, HarnessRole, HarnessRoutingSignals, TaskClass, TaskRouterProfile,
+    TaskStrategy, TaskStrategyApproval, TaskStrategyCandidateScore, TaskStrategyInput,
+    TaskStrategyLastKnownGood, TaskStrategyLayers, TaskStrategyPlan, TaskStrategyScoreFactor,
 };
 pub use team::{
     load_teams, load_teams_from_path, now_ms as team_now_ms, save_teams_to_path, team_store_path,

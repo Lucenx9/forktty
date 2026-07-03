@@ -5,6 +5,10 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- Task strategy `harness_signals` now accept an optional `cooldown_kind`
+  (`quota`, `auth`, `crash`, or `timeout`) so the soft cooldown penalty scales
+  with the cause instead of weighing every reason the same; unknown kinds and
+  kinds without `cooldown: true` are rejected.
 - Task strategy planning now infers an advisory soft cooldown for a harness
   from ForkTTY's own workflow history (at least two recent failed
   task-strategy workflows naming that harness, cleared by a newer success),

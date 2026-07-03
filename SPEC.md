@@ -378,9 +378,13 @@ explainable scorer without changing approval or visibility rules. It never
 launches processes, mutates workflow/team/feed state, creates worktrees, sends
 terminal input, or schedules background work.
 Optional `harness_signals` is an object keyed by harness id. Each value can set
-`cooldown`, `cooldown_reason`, `locked_out`, and `lockout_reason`. Cooldown is
-a soft assignment penalty and can still be selected when no better ready
-harness exists. Lockout is a hard task/mode exclusion for assignment. These
+`cooldown`, `cooldown_kind`, `cooldown_reason`, `locked_out`, and
+`lockout_reason`. Cooldown is a soft assignment penalty and can still be
+selected when no better ready harness exists. `cooldown_kind` classifies the
+cause and requires `cooldown` to be true; it must be one of `quota`, `auth`,
+`crash`, or `timeout`, and the penalty scales with the cause (`auth` strongest,
+then `crash`, then `quota` — the default weight when no kind is given — then
+`timeout`). Lockout is a hard task/mode exclusion for assignment. These
 signals are separate from provider capability health/readiness and should only
 be supplied by callers that have concrete runtime evidence.
 For harnesses without caller-supplied signals, ForkTTY also infers an advisory

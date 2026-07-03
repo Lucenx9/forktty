@@ -11,11 +11,12 @@ use crate::{
     workspace_selector_params, DispatchError, SocketAppState, WorkspaceSelectorKind,
 };
 use forktty_core::{
-    plan_task_strategy, protocol_limits, validate_worktree_name, worktree, FeedApprovalState,
-    FeedEntry, FeedEntryType, HarnessAssignment, HarnessCapability, HarnessHealth, HarnessRegistry,
-    HarnessRole, HarnessRoutingSignals, TaskClass, TaskRouterProfile, TaskStrategy,
-    TaskStrategyApproval, TaskStrategyInput, TaskStrategyLastKnownGood, TaskStrategyPlan,
-    TaskStrategyScoreFactor, WorkflowQuery, WorkflowState, WorkspaceSelector,
+    harness_cooldown_kind_from_str, plan_task_strategy, protocol_limits, validate_worktree_name,
+    worktree, FeedApprovalState, FeedEntry, FeedEntryType, HarnessAssignment, HarnessCapability,
+    HarnessCooldownKind, HarnessHealth, HarnessRegistry, HarnessRole, HarnessRoutingSignals,
+    TaskClass, TaskRouterProfile, TaskStrategy, TaskStrategyApproval, TaskStrategyInput,
+    TaskStrategyLastKnownGood, TaskStrategyPlan, TaskStrategyScoreFactor, WorkflowQuery,
+    WorkflowState, WorkspaceSelector,
 };
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -1087,8 +1088,16 @@ pub(crate) fn apply_harness_routing_signals(
                 "{path} references an unknown harness"
             )));
         };
+        let cooldown = optional_signal_bool(signal, "cooldown", &path)?;
+        let cooldown_kind = optional_signal_cooldown_kind(signal, &path)?;
+        if cooldown_kind.is_some() && !cooldown {
+            return Err(DispatchError::InvalidParam(format!(
+                "{path}.cooldown_kind requires cooldown to be true"
+            )));
+        }
         harness.routing_signals = HarnessRoutingSignals {
-            cooldown: optional_signal_bool(signal, "cooldown", &path)?,
+            cooldown,
+            cooldown_kind,
             cooldown_reason: optional_signal_reason(signal, "cooldown_reason", &path)?,
             locked_out: optional_signal_bool(signal, "locked_out", &path)?,
             lockout_reason: optional_signal_reason(signal, "lockout_reason", &path)?,
@@ -1108,6 +1117,27 @@ fn optional_signal_bool(
         Some(Value::Bool(value)) => Ok(*value),
         Some(_) => Err(DispatchError::InvalidParam(format!(
             "{path}.{key} must be a boolean"
+        ))),
+    }
+}
+
+fn optional_signal_cooldown_kind(
+    signal: &serde_json::Map<String, Value>,
+    path: &str,
+) -> Result<Option<HarnessCooldownKind>, DispatchError> {
+    match signal.get("cooldown_kind") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => {
+            harness_cooldown_kind_from_str(value)
+                .map(Some)
+                .ok_or_else(|| {
+                    DispatchError::InvalidParam(format!(
+                        "{path}.cooldown_kind must be one of quota, auth, crash, timeout"
+                    ))
+                })
+        }
+        Some(_) => Err(DispatchError::InvalidParam(format!(
+            "{path}.cooldown_kind must be a string"
         ))),
     }
 }
