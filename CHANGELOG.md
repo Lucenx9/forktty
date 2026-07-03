@@ -4,6 +4,8 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.17] - 2026-07-03
+
 ### Added
 - Added app actions exposed in the Command Palette for moving the active
   workspace up or down, with toast feedback when the workspace moves or is
