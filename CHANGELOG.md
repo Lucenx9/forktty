@@ -4,6 +4,11 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Security
+- Fixed GNU `env` shell-trampoline detection so environment assignment tokens
+  that start with `=` cannot hide a later `sh -c` command from project-action
+  and team-provider command validation.
+
 ## [0.2.0-alpha.17] - 2026-07-03
 
 ### Added
