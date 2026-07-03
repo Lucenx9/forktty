@@ -548,7 +548,10 @@ workspace and leader surface when the caller omits explicit target selectors.
 Before any workflow/team/worker mutation it recomputes server-side dirty
 repo/edit-intent worktree isolation from the selected surface/workspace cwd,
 any explicit `cwd`, the normalized plan `task_class`, mutating strategy shape,
-and high-confidence goal wording, then recomputes required approvals from the
+and high-confidence goal wording. A `review_only` strategy suppresses this
+dirty-editing isolation only when the submitted plan is coherently read-only:
+`task_class: review_only`, `strategy: review_only`, and reviewer-only
+assignments. ForkTTY then recomputes required approvals from the
 requested operation and effective plan shape (`start_run` always,
 `create_worktree` when the effective layers require worktree isolation, and
 `launch_parallel_workers` when `submit: true` would launch more than one

@@ -127,6 +127,15 @@ fn task_strategy_likely_user_visible_change(strategy: &TaskStrategy) -> bool {
     )
 }
 
+fn task_strategy_plan_is_read_only_review(plan: &TaskStrategyPlan) -> bool {
+    matches!(plan.task_class, TaskClass::ReviewOnly)
+        && matches!(plan.strategy, TaskStrategy::ReviewOnly)
+        && plan
+            .assignments
+            .iter()
+            .all(|assignment| matches!(assignment.role, HarnessRole::Reviewer))
+}
+
 fn infer_likely_user_visible_change(goal: &str) -> bool {
     let lower = goal.to_lowercase();
     let edit_tokens = ["fix", "bug", "bugs", "add", "drop", "port"];
@@ -1206,14 +1215,14 @@ impl TaskStrategyApplyRequest {
             Err(err) if self.worktree_name.is_some() && err.code() == "not_found" => false,
             Err(err) => return Err(err),
         };
-        let review_only_strategy = matches!(self.plan.strategy, TaskStrategy::ReviewOnly);
+        let read_only_review_plan = task_strategy_plan_is_read_only_review(&self.plan);
         let likely_user_visible_change =
             task_class_likely_user_visible_change(&self.plan.task_class)
                 || task_strategy_likely_user_visible_change(&self.plan.strategy)
                 || infer_likely_user_visible_change(&self.goal);
         if (explicit_target_dirty || selected_target_dirty)
             && likely_user_visible_change
-            && !review_only_strategy
+            && !read_only_review_plan
         {
             if !self.plan.layers.worktree {
                 self.plan.layers.worktree = true;

@@ -1123,6 +1123,104 @@ async fn task_strategy_apply_uses_plan_task_class_for_dirty_isolation() {
 }
 
 #[tokio::test]
+async fn task_strategy_apply_review_only_strategy_cannot_bypass_dirty_mutating_task_class() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    std::fs::write(repo_dir.path().join("dirty.txt"), "dirty\n").unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        model.create_worktree_workspace("feature", repo_dir.path(), "feature", "feature-x");
+    };
+
+    let mut plan = staged_team_plan_json();
+    plan["task_class"] = json!("feature_implementation");
+    plan["strategy"] = json!("review_only");
+    plan["layers"]["worktree"] = json!(false);
+    plan["approvals"] = json!(["start_run"]);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "worktree_name": "feature-x",
+            "goal": "Bitte diese Änderung umsetzen",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "precondition_failed");
+    assert!(err.to_string().contains("create_worktree"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn task_strategy_apply_read_only_review_does_not_force_dirty_worktree_for_fix_words() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    std::fs::write(repo_dir.path().join("dirty.txt"), "dirty\n").unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        model.create_worktree_workspace("feature", repo_dir.path(), "feature", "feature-x");
+    };
+
+    let plan = json!({
+        "task_class": "review_only",
+        "strategy": "review_only",
+        "layers": {
+            "workflow": true,
+            "team": false,
+            "loop_metadata": false,
+            "worktree": false,
+            "feed": true,
+            "mcp": true,
+            "hooks": true
+        },
+        "assignments": [
+            {
+                "role": "reviewer",
+                "harness_id": "claude",
+                "reason": "read-only review"
+            }
+        ],
+        "approvals": ["start_run"],
+        "reasons": ["classified task as ReviewOnly"],
+        "safety_notes": ["visible setup only"]
+    });
+
+    let result = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "worktree_name": "feature-x",
+            "goal": "Review the bug fix in the task router",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["status"], "staged");
+    assert_eq!(result["blocked_approvals"], json!([]));
+}
+
+#[tokio::test]
 async fn task_strategy_apply_uses_mutating_strategy_for_dirty_isolation() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();
