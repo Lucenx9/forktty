@@ -116,6 +116,13 @@ All notable changes to ForkTTY are documented here.
 - Fixed task strategy goal classification so unrelated words that merely start
   with "fix" or "bug" (such as "fixtures") no longer classify a goal as a
   focused bugfix.
+- Fixed GTK/Ghostty team message dispatch so socket `send_text`/submit calls
+  wait for the GTK controller's actual send result before acknowledging
+  delivered/submitted messages, instead of succeeding after only queueing the
+  command.
+- Fixed `forktty hooks doctor claude` so legacy ForkTTY-managed Claude hook
+  entries without an explicit installer tag are still recognized when checking
+  the installed launcher.
 
 ## [0.2.0-alpha.17] - 2026-07-03
 

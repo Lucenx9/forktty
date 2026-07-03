@@ -46,6 +46,51 @@ fn test_spawn_request() -> SpawnRequest {
     }
 }
 
+fn drive_backend_send_text(
+    backend: &GtkTerminalBackend,
+    rx: &mpsc::Receiver<GtkTerminalCommand>,
+    expected_surface_id: &str,
+    expected_text: &str,
+    reply_result: Result<(), TerminalError>,
+) -> Result<(), String> {
+    let backend = backend.clone();
+    let surface_id = expected_surface_id.to_string();
+    let text = expected_text.to_string();
+    let (result_tx, result_rx) = mpsc::channel();
+    let sender = std::thread::spawn(move || {
+        let result = backend
+            .send_text(&surface_id, &text)
+            .map_err(|err| err.to_string());
+        result_tx.send(result).unwrap();
+    });
+
+    let command = rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("send-text command should be queued");
+    match command {
+        GtkTerminalCommand::SendText {
+            surface_id,
+            text,
+            reply,
+        } => {
+            assert_eq!(surface_id, expected_surface_id);
+            assert_eq!(text, expected_text);
+            assert!(
+                result_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+                "send_text returned before the GTK controller replied"
+            );
+            reply.send(reply_result).unwrap();
+        }
+        _ => panic!("expected send-text command"),
+    }
+
+    let result = result_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("send_text should return after controller reply");
+    sender.join().unwrap();
+    result
+}
+
 #[derive(Debug, Default)]
 struct SecondSpawnFailsBackend {
     surfaces: Mutex<BTreeMap<String, TerminalSurfaceState>>,
@@ -326,9 +371,10 @@ fn gtk_backend_rolls_back_close_when_ui_channel_is_closed() {
 
 #[test]
 fn gtk_terminal_backend_blocks_send_until_ready() {
-    let (tx, _rx) = mpsc::channel();
+    let (tx, rx) = mpsc::channel();
     let backend = GtkTerminalBackend::new(tx);
     backend.spawn(test_spawn_request()).unwrap();
+    assert!(matches!(rx.recv().unwrap(), GtkTerminalCommand::Spawn(_)));
 
     assert!(matches!(
         backend.send_text("surface-1", "echo before-ready\n"),
@@ -336,7 +382,29 @@ fn gtk_terminal_backend_blocks_send_until_ready() {
     ));
 
     backend.mark_surface_ready("surface-1").unwrap();
-    backend.send_text("surface-1", "echo ready\n").unwrap();
+    drive_backend_send_text(&backend, &rx, "surface-1", "echo ready\n", Ok(())).unwrap();
+}
+
+#[test]
+fn gtk_terminal_backend_propagates_controller_send_text_failure() {
+    let (tx, rx) = mpsc::channel();
+    let backend = GtkTerminalBackend::new(tx);
+    backend.spawn(test_spawn_request()).unwrap();
+    assert!(matches!(rx.recv().unwrap(), GtkTerminalCommand::Spawn(_)));
+    backend.mark_surface_ready("surface-1").unwrap();
+
+    let err = drive_backend_send_text(
+        &backend,
+        &rx,
+        "surface-1",
+        "echo rejected\n",
+        Err(TerminalError::Backend(
+            "ghostty rejected send-text".to_string(),
+        )),
+    )
+    .unwrap_err();
+
+    assert!(err.contains("ghostty rejected send-text"));
 }
 
 #[test]
@@ -350,14 +418,7 @@ fn gtk_terminal_backend_rejects_duplicate_spawn_without_clearing_ready() {
     let err = backend.spawn(test_spawn_request()).unwrap_err();
 
     assert!(err.to_string().contains("surface already exists"));
-    backend
-        .send_text("surface-1", "echo still-ready\n")
-        .unwrap();
-    assert!(matches!(
-        rx.recv().unwrap(),
-        GtkTerminalCommand::SendText { surface_id, text }
-            if surface_id == "surface-1" && text == "echo still-ready\n"
-    ));
+    drive_backend_send_text(&backend, &rx, "surface-1", "echo still-ready\n", Ok(())).unwrap();
 }
 
 #[test]
@@ -521,12 +582,13 @@ fn pending_spawn_command_reaps_backend_if_model_commit_is_lost() {
 
 #[test]
 fn gtk_backend_rejects_send_text_after_surface_exits() {
-    let (tx, _rx) = mpsc::channel();
+    let (tx, rx) = mpsc::channel();
     let backend = GtkTerminalBackend::new(tx);
     backend.spawn(test_spawn_request()).unwrap();
+    assert!(matches!(rx.recv().unwrap(), GtkTerminalCommand::Spawn(_)));
     backend.mark_surface_ready("surface-1").unwrap();
     assert!(backend.surface_ready("surface-1").unwrap());
-    backend.send_text("surface-1", "echo ok\n").unwrap();
+    drive_backend_send_text(&backend, &rx, "surface-1", "echo ok\n", Ok(())).unwrap();
 
     backend.mark_surface_pid("surface-1", 4242).unwrap();
     assert_eq!(backend.surfaces().unwrap()[0].pid, Some(4242));

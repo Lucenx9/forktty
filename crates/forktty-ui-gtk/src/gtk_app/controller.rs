@@ -117,24 +117,26 @@ impl TerminalController {
                 }
                 self.sync_model_focus_to_ui();
             }
-            GtkTerminalCommand::SendText { surface_id, text } => {
-                if let Some(widget) = self.widgets.get(&surface_id) {
+            GtkTerminalCommand::SendText {
+                surface_id,
+                text,
+                reply,
+            } => {
+                let result = if let Some(widget) = self.widgets.get(&surface_id) {
                     widget.send_text(&text);
+                    Ok(())
                 } else if let Some(pane) = self.embedded_ghostty_panes.get(&surface_id) {
-                    if let Some(embedder) = &self.embedded_ghostty {
-                        if let Err(err) = unsafe { embedder.send_text(&pane.surface, &text) } {
-                            eprintln!(
-                                "Failed to send text to embedded Ghostty GTK surface {surface_id}: {err}"
-                            );
-                        }
-                    } else {
-                        eprintln!(
-                            "Dropped send-text for embedded Ghostty GTK surface without embedder: {surface_id}"
-                        );
+                    match &self.embedded_ghostty {
+                        Some(embedder) => unsafe { embedder.send_text(&pane.surface, &text) }
+                            .map_err(TerminalError::Backend),
+                        None => Err(TerminalError::Backend(
+                            "embedded Ghostty GTK surface has no embedder".to_string(),
+                        )),
                     }
                 } else {
-                    eprintln!("Dropped send-text for unready terminal surface: {surface_id}");
-                }
+                    Err(TerminalError::NotReady(surface_id.clone()))
+                };
+                let _ = reply.send(result);
             }
             GtkTerminalCommand::ReadText {
                 surface_id,

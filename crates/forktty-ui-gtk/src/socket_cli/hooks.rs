@@ -641,9 +641,6 @@ pub(super) fn extract_managed_launcher_from_config(
             continue;
         };
         for entry in entries {
-            if !is_forktty_managed_entry(entry) {
-                continue;
-            }
             let Some(commands) = entry.get("hooks").and_then(Value::as_array) else {
                 continue;
             };
@@ -651,6 +648,11 @@ pub(super) fn extract_managed_launcher_from_config(
                 let Some(command) = hook.get("command").and_then(Value::as_str) else {
                     continue;
                 };
+                if !is_forktty_managed_entry(entry)
+                    && !is_legacy_forktty_hook_command(command, spec)
+                {
+                    continue;
+                }
                 if let Some(launcher) = parse_launcher_from_managed_command(command, spec) {
                     return Some(launcher);
                 }
@@ -658,6 +660,11 @@ pub(super) fn extract_managed_launcher_from_config(
         }
     }
     None
+}
+
+fn is_legacy_forktty_hook_command(command: &str, spec: &AgentSpec) -> bool {
+    let suffix = format!(" hooks {} ", spec.key);
+    command.contains(&suffix)
 }
 
 pub(super) fn parse_launcher_from_managed_command(

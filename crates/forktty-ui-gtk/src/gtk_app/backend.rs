@@ -8,6 +8,7 @@ pub(super) enum GtkTerminalCommand {
     SendText {
         surface_id: String,
         text: String,
+        reply: mpsc::Sender<Result<(), TerminalError>>,
     },
     ReadText {
         surface_id: String,
@@ -45,6 +46,25 @@ impl GtkTerminalBackend {
         self.sender
             .send(command)
             .map_err(|err| TerminalError::Backend(err.to_string()))
+    }
+}
+
+fn wait_for_gtk_command_reply<T>(
+    receiver: mpsc::Receiver<Result<T, TerminalError>>,
+    operation: &str,
+) -> Result<T, TerminalError> {
+    // Socket calls run on a multi-threaded tokio runtime. Offload the blocking
+    // GTK reply wait so concurrent hook/status reads cannot pin every worker.
+    let wait = move || -> Result<T, TerminalError> {
+        receiver
+            .recv_timeout(Duration::from_secs(2))
+            .map_err(|err| TerminalError::Backend(format!("{operation} reply failed: {err}")))?
+    };
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(wait)
+        }
+        _ => wait(),
     }
 }
 
@@ -124,10 +144,13 @@ impl TerminalBackend for GtkTerminalBackend {
         {
             return Err(TerminalError::NotReady(surface_id.to_string()));
         }
+        let (reply, receiver) = mpsc::channel();
         self.send_command(GtkTerminalCommand::SendText {
             surface_id: surface_id.to_string(),
             text: text.to_string(),
-        })
+            reply,
+        })?;
+        wait_for_gtk_command_reply(receiver, "send-text")
     }
 
     fn show_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
@@ -175,25 +198,7 @@ impl TerminalBackend for GtkTerminalBackend {
             max_bytes,
             reply,
         })?;
-        // Blocks until the GTK main loop services the command. The socket
-        // server calls this from its multi-threaded tokio runtime, where a bare
-        // blocking wait pins a worker thread — N concurrent read_text calls
-        // (agent hooks issue them constantly) would starve every other socket
-        // task, including accept(). Offload the wait via block_in_place so tokio
-        // can keep those workers busy. Off a multi-thread runtime (GTK thread or
-        // a current-thread runtime) there is no worker pool to protect and
-        // block_in_place would panic, so wait directly.
-        let wait = move || -> Result<TerminalTextSnapshot, TerminalError> {
-            receiver
-                .recv_timeout(Duration::from_secs(2))
-                .map_err(|err| TerminalError::Backend(format!("read-text reply failed: {err}")))?
-        };
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
-                tokio::task::block_in_place(wait)
-            }
-            _ => wait(),
-        }
+        wait_for_gtk_command_reply(receiver, "read-text")
     }
 
     fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {

@@ -507,7 +507,7 @@ impl TestTerminalRuntimeHarness {
     }
 
     pub(super) fn backend_ready(&self, surface_id: &str) -> bool {
-        self.backend.send_text(surface_id, "").is_ok()
+        self.backend.surface_ready(surface_id).unwrap_or(false)
     }
 
     pub(super) fn child_pid(&self, surface_id: &str) -> Option<i32> {

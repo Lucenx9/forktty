@@ -494,6 +494,30 @@ fn extract_managed_launcher_returns_first_forktty_entry() {
 }
 
 #[test]
+fn extract_managed_launcher_accepts_legacy_forktty_entries() {
+    let spec = agent_spec("claude").unwrap();
+    let command = build_hook_shell_command(Path::new("/usr/bin/forktty"), spec, "session-start");
+    let config = json!({
+        "hooks": {
+            "SessionStart": [{
+                "matcher": "*",
+                "hooks": [{
+                    "type": "command",
+                    "command": command,
+                    "timeout": 30,
+                    "statusMessage": "ForkTTY Claude hooks"
+                }]
+            }]
+        }
+    });
+
+    assert_eq!(
+        extract_managed_launcher_from_config(spec, &config).as_deref(),
+        Some("/usr/bin/forktty")
+    );
+}
+
+#[test]
 fn extract_managed_launcher_skips_unmanaged_entries() {
     let spec = agent_spec("codex").unwrap();
     let config = json!({
