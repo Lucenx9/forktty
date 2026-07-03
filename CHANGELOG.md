@@ -37,6 +37,12 @@ All notable changes to ForkTTY are documented here.
   guessing or exact internal enum names.
 
 ### Fixed
+- Fixed `surface.focus` over the socket/MCP boundary so focusing a surface in
+  an inactive workspace also selects that workspace and rolls back to the
+  previous workspace if terminal startup fails.
+- Fixed MCP `task_strategy_apply` ambient targeting so fallback
+  `FORKTTY_SURFACE_ID` overrides the ambient workspace target like the socket
+  CLI, avoiding accidental over-constrained workspace/surface pairs.
 - Fixed restored multi-tab panes so the workspace focused surface is also made
   the active tab in its leaf, preventing hidden-tab focus after loading or
   repairing a session.

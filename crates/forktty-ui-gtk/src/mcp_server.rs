@@ -832,7 +832,7 @@ mod tests {
     }
 
     #[test]
-    fn task_strategy_apply_tool_defaults_to_env_workspace_and_surface() {
+    fn task_strategy_apply_env_surface_overrides_implicit_workspace_env_target() {
         let plan = json!({
             "task_class": "feature_implementation",
             "strategy": "implementer_plus_reviewer",
@@ -871,8 +871,8 @@ mod tests {
         );
 
         assert_eq!(method, "task.strategy.apply");
-        assert_eq!(params["workspace_id"], "workspace-env");
         assert_eq!(params["leader_surface_id"], "surface-env");
+        assert!(params.get("workspace_id").is_none());
     }
 
     #[test]

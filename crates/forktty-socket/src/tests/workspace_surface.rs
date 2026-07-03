@@ -73,6 +73,101 @@ async fn workspace_select_spawns_missing_terminal_for_selected_workspace() {
 }
 
 #[tokio::test]
+async fn surface_focus_selects_workspace_for_inactive_surface() {
+    let (state, _backend) = test_state();
+    let main = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let main_id = main[0]["id"].as_str().unwrap().to_string();
+    let feature = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "feature", "workingDir": "/tmp"}),
+    )
+    .await
+    .unwrap();
+    let feature_id = feature["id"].as_str().unwrap().to_string();
+    let feature_surface_id = feature["focused_surface_id"].as_str().unwrap().to_string();
+    dispatch(&state, "workspace.select", json!({"id": main_id}))
+        .await
+        .unwrap();
+
+    let focused = dispatch(
+        &state,
+        "surface.focus",
+        json!({"surface_id": feature_surface_id}),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(focused["focused"], true);
+    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    assert_eq!(
+        workspaces
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|workspace| workspace["id"] == feature_id)
+            .unwrap()["active"],
+        true
+    );
+    assert_eq!(
+        workspaces
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|workspace| workspace["id"] == main_id)
+            .unwrap()["active"],
+        false
+    );
+}
+
+#[tokio::test]
+async fn surface_focus_keeps_previous_workspace_when_spawn_fails() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let (first, second) = {
+        let mut model = model.lock().unwrap();
+        let first = model.create_workspace("first", "/tmp");
+        let second = model.create_workspace("second", "/tmp");
+        (first, second)
+    };
+    let backend = Arc::new(SpawnFailsCloseSucceedsBackend::new(TerminalSurfaceState {
+        surface_id: second.focused_surface_id.clone(),
+        workspace_id: second.id.clone(),
+        cwd: PathBuf::from("/tmp"),
+        shell: "/bin/sh".to_string(),
+        cols: 80,
+        rows: 24,
+        pid: None,
+    }));
+    let state = SocketAppState::new(
+        model,
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+
+    let error = dispatch(
+        &state,
+        "surface.focus",
+        json!({"surface_id": first.focused_surface_id}),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("spawn failed"));
+    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    assert_eq!(workspaces.as_array().unwrap().len(), 2);
+    assert_eq!(workspaces[0]["id"], first.id);
+    assert_eq!(workspaces[0]["active"], false);
+    assert_eq!(workspaces[1]["id"], second.id);
+    assert_eq!(workspaces[1]["active"], true);
+    let backend_surfaces = backend.surfaces().unwrap();
+    assert_eq!(backend_surfaces.len(), 1);
+    assert_eq!(backend_surfaces[0].surface_id, second.focused_surface_id);
+}
+
+#[tokio::test]
 async fn workspace_select_keeps_previous_workspace_when_spawn_fails() {
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let (first, second) = {

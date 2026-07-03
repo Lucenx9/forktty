@@ -108,7 +108,7 @@ pub async fn dispatch(
         "browser.import.run" => browser_import::browser_import_run(state, &params).await,
         "pane.new_tab" => surface_runtime::new_tab(state, &params).await,
         "pane.select_tab" => surface_runtime::select_tab(state, &params),
-        "surface.focus" => surface_runtime::focus(state, &params),
+        "surface.focus" => surface_runtime::focus(state, &params).await,
         "surface.close" => surface_runtime::close(state, &params).await,
         "notification.create" => metadata_runtime::notification_create(state, &params),
         "notification.list" => metadata_runtime::notification_list(state),
