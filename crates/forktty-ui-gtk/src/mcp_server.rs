@@ -603,6 +603,10 @@ mod tests {
 
     #[test]
     fn agent_guide_pins_structured_task_kind_routing_guidance() {
+        assert!(
+            agent_guide::mcp_server_instructions().len() <= 1_600,
+            "MCP initialize instructions should stay compact; put long guidance in the operating guide resource/prompt"
+        );
         for text in [
             agent_guide::mcp_server_instructions(),
             agent_guide::operating_guide_text(),

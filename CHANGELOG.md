@@ -11,6 +11,9 @@ All notable changes to ForkTTY are documented here.
   touching live worker surfaces.
 
 ### Changed
+- Reduced the always-sent ForkTTY MCP initialize instructions so agents get the
+  routing essentials without duplicating the full operating guide; the complete
+  guide remains available through the MCP resource and prompt.
 - `forktty skills setup` and `forktty skills remove` now retain only the three
   newest ForkTTY-managed skill backups per target and report pruned backups,
   while leaving unmanaged `.bak-*` directories untouched.
