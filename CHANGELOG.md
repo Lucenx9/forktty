@@ -45,6 +45,9 @@ All notable changes to ForkTTY are documented here.
   factor lists, and approval lists are count-bounded before mutation, avoiding
   token-heavy approval fingerprints from oversized but individually valid plan
   details.
+- Fixed task strategy apply so duplicate approval entries in a submitted plan
+  are rejected before mutation instead of inflating approval fingerprints with
+  redundant state.
 - Fixed task strategy apply so submitted plans with more assignments than
   visible team worker capacity are rejected before creating partial
   workflow/team state.

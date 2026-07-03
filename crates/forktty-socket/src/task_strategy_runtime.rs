@@ -1107,6 +1107,7 @@ fn validate_submitted_task_strategy_plan(plan: &TaskStrategyPlan) -> Result<(), 
         plan.approvals.len(),
         MAX_TASK_STRATEGY_APPROVALS,
     )?;
+    validate_submitted_task_strategy_approvals(&plan.approvals)?;
     for reason in &plan.reasons {
         validate_submitted_task_strategy_text("plan.reasons", reason)?;
     }
@@ -1127,6 +1128,23 @@ fn validate_submitted_task_strategy_plan(plan: &TaskStrategyPlan) -> Result<(), 
     }
     for candidate in &plan.candidate_scores {
         validate_submitted_score_factors("plan.candidate_scores.factors", &candidate.factors)?;
+    }
+    Ok(())
+}
+
+fn validate_submitted_task_strategy_approvals(
+    approvals: &[TaskStrategyApproval],
+) -> Result<(), DispatchError> {
+    for (index, approval) in approvals.iter().enumerate() {
+        if approvals
+            .iter()
+            .skip(index + 1)
+            .any(|other| other == approval)
+        {
+            return Err(DispatchError::InvalidParam(
+                "plan.approvals has duplicate items".to_string(),
+            ));
+        }
     }
     Ok(())
 }
