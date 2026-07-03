@@ -796,6 +796,47 @@ async fn task_strategy_apply_forces_dirty_isolation_for_common_editing_verbs() {
 }
 
 #[tokio::test]
+async fn task_strategy_apply_forces_dirty_isolation_for_review_prefixed_editing_goal() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    std::fs::write(repo_dir.path().join("dirty.txt"), "dirty\n").unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        model.create_worktree_workspace("feature", repo_dir.path(), "feature", "feature-x");
+    };
+
+    let mut plan = staged_team_plan_json();
+    plan["strategy"] = json!("review_only");
+    plan["layers"]["worktree"] = json!(false);
+    plan["approvals"] = json!(["start_run"]);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-review-edit",
+            "worktree_name": "feature-x",
+            "goal": "Review and implement the router fix",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "precondition_failed");
+    assert!(err.to_string().contains("create_worktree"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_apply_does_not_force_dirty_isolation_for_edit_prefix_false_positives() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();

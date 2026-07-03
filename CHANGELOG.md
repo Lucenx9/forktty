@@ -14,6 +14,11 @@ All notable changes to ForkTTY are documented here.
   newest ForkTTY-managed skill backups per target and report pruned backups,
   while leaving unmanaged `.bak-*` directories untouched.
 
+### Security
+- Fixed `task.strategy.apply` so review-prefixed goals that also contain edit
+  intent still require dirty-repository worktree isolation instead of trusting a
+  caller-supplied `review_only` plan.
+
 ## [0.2.0-alpha.17] - 2026-07-03
 
 ### Added

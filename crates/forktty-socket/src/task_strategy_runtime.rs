@@ -95,6 +95,33 @@ pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value
 
 fn infer_likely_user_visible_change(goal: &str) -> bool {
     let lower = goal.to_lowercase();
+    if infer_likely_editing_intent_from_lower(&lower) {
+        return true;
+    }
+
+    let visible_surface_terms = [
+        "doc",
+        "readme",
+        "ui",
+        "cli",
+        "mcp",
+        "socket",
+        "hook",
+        "skill",
+        "site",
+        "packaging",
+        "release",
+        "changelog",
+        "spec",
+    ];
+    contains_token_prefix(&lower, &visible_surface_terms)
+}
+
+fn infer_likely_editing_intent(goal: &str) -> bool {
+    infer_likely_editing_intent_from_lower(&goal.to_lowercase())
+}
+
+fn infer_likely_editing_intent_from_lower(lower: &str) -> bool {
     let edit_tokens = ["fix", "bug", "bugs", "add", "drop", "port"];
     let edit_prefixes = [
         "fixe",
@@ -123,26 +150,7 @@ fn infer_likely_user_visible_change(goal: &str) -> bool {
         "writ",
         "creat",
     ];
-    if contains_token(&lower, &edit_tokens) || contains_token_prefix(&lower, &edit_prefixes) {
-        return true;
-    }
-
-    let visible_surface_terms = [
-        "doc",
-        "readme",
-        "ui",
-        "cli",
-        "mcp",
-        "socket",
-        "hook",
-        "skill",
-        "site",
-        "packaging",
-        "release",
-        "changelog",
-        "spec",
-    ];
-    contains_token_prefix(&lower, &visible_surface_terms)
+    contains_token(lower, &edit_tokens) || contains_token_prefix(lower, &edit_prefixes)
 }
 
 fn infer_review_primary_goal(goal: &str) -> bool {
@@ -1065,7 +1073,8 @@ impl TaskStrategyApplyRequest {
             Err(err) => return Err(err),
         };
         let review_only_goal = matches!(self.plan.strategy, TaskStrategy::ReviewOnly)
-            && infer_review_primary_goal(&self.goal);
+            && infer_review_primary_goal(&self.goal)
+            && !infer_likely_editing_intent(&self.goal);
         if (explicit_target_dirty || selected_target_dirty)
             && infer_likely_user_visible_change(&self.goal)
             && !review_only_goal
