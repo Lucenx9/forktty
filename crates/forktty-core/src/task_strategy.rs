@@ -631,10 +631,12 @@ fn strategy_order(strategy: &TaskStrategy) -> u8 {
 
 fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
     let lower = goal.to_lowercase();
-    if input.user_requested_parallelism {
-        return TaskClass::ParallelResearch;
-    }
-    if contains_parallel_research_intent(&lower) {
+    if input.user_requested_parallelism || contains_parallel_research_intent(&lower) {
+        // Parallel lanes over an editing goal are competing experiment
+        // attempts, not read-only research.
+        if contains_implementation_intent(&lower) || contains_bugfix_intent(&lower) {
+            return TaskClass::ParallelExperiment;
+        }
         return TaskClass::ParallelResearch;
     }
     if is_review_primary_goal(goal) {
@@ -771,6 +773,7 @@ pub fn phase_one_classifier_reachable_classes() -> &'static [TaskClass] {
         TaskClass::FeatureImplementation,
         TaskClass::ReviewOnly,
         TaskClass::ParallelResearch,
+        TaskClass::ParallelExperiment,
     ]
 }
 
@@ -1809,6 +1812,42 @@ mod tests {
     }
 
     #[test]
+    fn requested_parallelism_with_editing_intent_routes_to_parallel_experiment() {
+        let requested = plan_task_strategy(TaskStrategyInput {
+            goal: "Fix the task router bug trying two approaches".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            task_class_hint: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: true,
+            user_requested_review: false,
+            likely_user_visible_change: true,
+            harness_registry: caps(),
+        })
+        .unwrap();
+        let goal_worded = plan_task_strategy(TaskStrategyInput {
+            goal: "Implement the cache layer in parallel variants".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            task_class_hint: None,
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: false,
+            user_requested_review: false,
+            likely_user_visible_change: true,
+            harness_registry: caps(),
+        })
+        .unwrap();
+
+        assert_eq!(requested.task_class, TaskClass::ParallelExperiment);
+        assert_eq!(requested.strategy, TaskStrategy::ParallelExperiment);
+        assert_eq!(requested.router_profile, TaskRouterProfile::Parallel);
+        assert_eq!(goal_worded.task_class, TaskClass::ParallelExperiment);
+        assert_eq!(goal_worded.strategy, TaskStrategy::ParallelExperiment);
+    }
+
+    #[test]
     fn parallel_review_hint_routes_to_parallel_research() {
         let plan = plan_task_strategy(TaskStrategyInput {
             goal: "Fai una review parallela nel repo".to_string(),
@@ -2440,6 +2479,7 @@ mod tests {
                 TaskClass::FeatureImplementation,
                 TaskClass::ReviewOnly,
                 TaskClass::ParallelResearch,
+                TaskClass::ParallelExperiment,
             ]
         );
     }

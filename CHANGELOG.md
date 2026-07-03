@@ -24,6 +24,9 @@ All notable changes to ForkTTY are documented here.
   guessing or exact internal enum names.
 
 ### Fixed
+- Fixed task strategy classification so parallelism requests over an editing
+  goal (bugfix or implementation wording) route to `parallel_experiment`
+  instead of read-only `parallel_research`.
 - Fixed task strategy plan/apply input validation so oversized goals are
   rejected before they can be copied into workflow/team state or worker
   prompts.
