@@ -37,6 +37,9 @@ All notable changes to ForkTTY are documented here.
   string edges are rejected instead of silently dropped.
 - Fixed task strategy last-known-good inference so invalid harness ids in old
   workflow plan text are ignored instead of inflating router explanations.
+- Fixed task strategy apply so submitted plan reasons and score details are
+  revalidated before they can inflate workflow/team state, approval
+  fingerprints, or worker prompts.
 - Fixed `orchestration.cleanup` so `dry_run=false` without `apply=true` is
   rejected instead of mutating stale orchestration records.
 - Fixed `orchestration.cleanup` so non-terminal workers without a recorded

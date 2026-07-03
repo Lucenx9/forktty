@@ -15,7 +15,7 @@ use forktty_core::{
     FeedEntry, FeedEntryType, HarnessAssignment, HarnessCapability, HarnessHealth, HarnessRegistry,
     HarnessRole, HarnessRoutingSignals, TaskClass, TaskRouterProfile, TaskStrategy,
     TaskStrategyApproval, TaskStrategyInput, TaskStrategyLastKnownGood, TaskStrategyPlan,
-    WorkflowQuery, WorkflowState, WorkspaceSelector,
+    TaskStrategyScoreFactor, WorkflowQuery, WorkflowState, WorkspaceSelector,
 };
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -995,6 +995,54 @@ fn optional_signal_reason(
     }
 }
 
+fn validate_submitted_task_strategy_plan(plan: &TaskStrategyPlan) -> Result<(), DispatchError> {
+    for reason in &plan.reasons {
+        validate_submitted_task_strategy_text("plan.reasons", reason)?;
+    }
+    for safety_note in &plan.safety_notes {
+        validate_submitted_task_strategy_text("plan.safety_notes", safety_note)?;
+    }
+    for assignment in &plan.assignments {
+        validate_task_strategy_id("plan.assignments.harness_id", &assignment.harness_id)?;
+        validate_submitted_task_strategy_text("plan.assignments.reason", &assignment.reason)?;
+        validate_submitted_score_factors("plan.assignments.factors", &assignment.factors)?;
+    }
+    for candidate in &plan.candidate_scores {
+        validate_submitted_score_factors("plan.candidate_scores.factors", &candidate.factors)?;
+    }
+    Ok(())
+}
+
+fn validate_submitted_score_factors(
+    field: &'static str,
+    factors: &[TaskStrategyScoreFactor],
+) -> Result<(), DispatchError> {
+    for factor in factors {
+        validate_submitted_task_strategy_text(field, &factor.name)?;
+        validate_submitted_task_strategy_text(field, &factor.reason)?;
+    }
+    Ok(())
+}
+
+fn validate_submitted_task_strategy_text(
+    field: &'static str,
+    value: &str,
+) -> Result<(), DispatchError> {
+    if value.len() > MAX_TASK_STRATEGY_REASON_BYTES {
+        return Err(DispatchError::PayloadTooLarge {
+            field,
+            limit: MAX_TASK_STRATEGY_REASON_BYTES,
+            actual: value.len(),
+        });
+    }
+    if value.chars().any(char::is_control) {
+        return Err(DispatchError::InvalidParam(format!(
+            "Invalid parameter {field}: must not contain control characters"
+        )));
+    }
+    Ok(())
+}
+
 struct TaskStrategyApplyRequest {
     run_id: String,
     workflow_id: String,
@@ -1032,6 +1080,7 @@ impl TaskStrategyApplyRequest {
             .clone();
         let plan = serde_json::from_value::<TaskStrategyPlan>(plan_value)
             .map_err(|_| DispatchError::InvalidParam("Invalid parameter plan".to_string()))?;
+        validate_submitted_task_strategy_plan(&plan)?;
         let approved = optional_string_array_param(params, "approved")?.unwrap_or_default();
         let submit = optional_bool_param(params, "submit")?.unwrap_or(false);
         let approval_id =
