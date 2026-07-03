@@ -408,6 +408,88 @@ async fn task_strategy_plan_rejects_unknown_router_profile() {
 }
 
 #[tokio::test]
+async fn task_strategy_plan_rejects_oversized_enum_values_with_compact_errors() {
+    let (state, _backend) = test_state();
+    let oversized = "x".repeat(16_000);
+
+    for (field, expected) in [
+        ("strategy", "unsupported task strategy"),
+        ("task_kind", "unsupported task kind"),
+        ("router_profile", "unsupported router profile"),
+    ] {
+        let mut params = json!({"goal": "Inspect router state"});
+        params[field] = json!(oversized.clone());
+        let err = dispatch(&state, "task.strategy.plan", params)
+            .await
+            .unwrap_err();
+
+        let message = err.to_string();
+        assert_eq!(err.code(), "invalid_param");
+        assert!(message.contains(expected));
+        assert!(
+            message.len() < 128,
+            "{field} error should stay compact, got {} bytes",
+            message.len()
+        );
+    }
+}
+
+#[tokio::test]
+async fn task_strategy_plan_rejects_oversized_last_known_good_strategy_with_compact_error() {
+    let (state, _backend) = test_state();
+    let oversized = "x".repeat(16_000);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "goal": "Fix the task router bug",
+            "last_known_good": {
+                "strategy": oversized
+            }
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    let message = err.to_string();
+    assert_eq!(err.code(), "invalid_param");
+    assert!(message.contains("unsupported task strategy"));
+    assert!(message.len() < 128, "error should stay compact: {message}");
+}
+
+#[tokio::test]
+async fn task_strategy_apply_rejects_invalid_plan_with_compact_error_without_mutation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let mut plan = staged_team_plan_json();
+    plan["strategy"] = json!("x".repeat(16_000));
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    let message = err.to_string();
+    assert_eq!(err.code(), "invalid_param");
+    assert_eq!(message, "Invalid parameter plan");
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_plan_infers_dirty_repo_from_active_surface_cwd() {
     let (state, _backend) = test_state();
     let repo_dir = tempfile::tempdir().unwrap();

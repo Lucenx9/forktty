@@ -28,6 +28,8 @@ All notable changes to ForkTTY are documented here.
   prompts.
 - Fixed task strategy planning input validation so oversized routing reason
   hints are rejected before they can inflate plan score explanations.
+- Fixed task strategy error reporting so unsupported routing enum values and
+  malformed submitted plans cannot echo oversized caller-controlled strings.
 - Fixed `orchestration.cleanup` so `dry_run=false` without `apply=true` is
   rejected instead of mutating stale orchestration records.
 - Fixed `orchestration.cleanup` so non-terminal workers without a recorded

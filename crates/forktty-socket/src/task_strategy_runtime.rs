@@ -732,9 +732,9 @@ fn task_strategy_from_str(value: &str) -> Result<TaskStrategy, DispatchError> {
         "parallel_experiment" => Ok(TaskStrategy::ParallelExperiment),
         "team_pipeline" => Ok(TaskStrategy::TeamPipeline),
         "review_only" => Ok(TaskStrategy::ReviewOnly),
-        other => Err(DispatchError::InvalidParam(format!(
-            "unsupported task strategy: {other}"
-        ))),
+        _ => Err(DispatchError::InvalidParam(
+            "unsupported task strategy".to_string(),
+        )),
     }
 }
 
@@ -749,9 +749,9 @@ fn task_class_from_str(value: &str) -> Result<TaskClass, DispatchError> {
         "parallel_experiment" => Ok(TaskClass::ParallelExperiment),
         "verify_fix_loop" => Ok(TaskClass::VerifyFixLoop),
         "long_running_team_run" => Ok(TaskClass::LongRunningTeamRun),
-        other => Err(DispatchError::InvalidParam(format!(
-            "unsupported task kind: {other}"
-        ))),
+        _ => Err(DispatchError::InvalidParam(
+            "unsupported task kind".to_string(),
+        )),
     }
 }
 
@@ -762,9 +762,9 @@ fn task_router_profile_from_str(value: &str) -> Result<TaskRouterProfile, Dispat
         "conservative" => Ok(TaskRouterProfile::Conservative),
         "parallel" => Ok(TaskRouterProfile::Parallel),
         "review_heavy" => Ok(TaskRouterProfile::ReviewHeavy),
-        other => Err(DispatchError::InvalidParam(format!(
-            "unsupported router profile: {other}"
-        ))),
+        _ => Err(DispatchError::InvalidParam(
+            "unsupported router profile".to_string(),
+        )),
     }
 }
 
@@ -1011,7 +1011,7 @@ impl TaskStrategyApplyRequest {
             .ok_or(DispatchError::MissingParam("plan"))?
             .clone();
         let plan = serde_json::from_value::<TaskStrategyPlan>(plan_value)
-            .map_err(|err| DispatchError::InvalidParam(format!("Invalid parameter plan: {err}")))?;
+            .map_err(|_| DispatchError::InvalidParam("Invalid parameter plan".to_string()))?;
         let approved = optional_string_array_param(params, "approved")?.unwrap_or_default();
         let submit = optional_bool_param(params, "submit")?.unwrap_or(false);
         let approval_id =
