@@ -538,11 +538,11 @@ The submitted plan is treated as untrusted client input: before mutation,
 ForkTTY revalidates assignment harness ids and compact plan text fields such
 as reasons, safety notes, and score factors so they cannot inject control
 characters or oversized strings into workflow steps, team task details,
-approval fingerprints, or worker prompts. Client-supplied explanation arrays
-and score factor lists are count-bounded as compact routing metadata before
-mutation, so they cannot inflate approval fingerprints or server work. It also
-rejects plans with more than 64 assignments, or with no assignments at all,
-before creating
+approval fingerprints, or worker prompts. Client-supplied explanation arrays,
+score factor lists, and approval lists are count-bounded as compact routing
+metadata before mutation, so they cannot inflate approval fingerprints or
+server work. It also rejects plans with more than 64 assignments, or with no
+assignments at all, before creating
 workflow/team state, matching the visible team worker cap used by submit runs
 and avoiding empty workflow plans. It also rejects assignment counts that the
 selected strategy would not produce, such as multiple solo/review assignments

@@ -29,6 +29,7 @@ const MAX_TASK_STRATEGY_PLAN_REASONS: usize = 32;
 const MAX_TASK_STRATEGY_SAFETY_NOTES: usize = 16;
 const MAX_TASK_STRATEGY_CANDIDATE_SCORES: usize = 8;
 const MAX_TASK_STRATEGY_SCORE_FACTORS: usize = 32;
+const MAX_TASK_STRATEGY_APPROVALS: usize = 4;
 
 pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let plan_params = task_strategy_plan_params(params)?;
@@ -1121,6 +1122,11 @@ fn validate_submitted_task_strategy_plan(plan: &TaskStrategyPlan) -> Result<(), 
         "plan.candidate_scores",
         plan.candidate_scores.len(),
         MAX_TASK_STRATEGY_CANDIDATE_SCORES,
+    )?;
+    validate_submitted_task_strategy_item_count(
+        "plan.approvals",
+        plan.approvals.len(),
+        MAX_TASK_STRATEGY_APPROVALS,
     )?;
     for reason in &plan.reasons {
         validate_submitted_task_strategy_text("plan.reasons", reason)?;

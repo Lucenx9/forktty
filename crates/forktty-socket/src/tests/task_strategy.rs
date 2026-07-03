@@ -735,6 +735,44 @@ async fn task_strategy_apply_rejects_too_many_candidate_scores_without_mutation(
 }
 
 #[tokio::test]
+async fn task_strategy_apply_rejects_too_many_plan_approvals_without_mutation() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let mut plan = staged_team_plan_json();
+    plan["approvals"] = json!([
+        "start_run",
+        "create_worktree",
+        "launch_parallel_workers",
+        "increase_risk",
+        "start_run"
+    ]);
+
+    let err = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement the router",
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "invalid_param");
+    assert!(err
+        .to_string()
+        .contains("plan.approvals has too many items"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn task_strategy_apply_rejects_too_many_assignments_without_mutation() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();
