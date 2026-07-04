@@ -585,10 +585,10 @@ tracks through durable workflow state, cannot omit `layers.team: true` from
 strategies that require visible team orchestration, cannot force
 `layers.team: true` onto a strategy that the planner does not treat as a team
 strategy, cannot force `layers.loop_metadata: true` onto a strategy that the
-planner does not treat as a verify-loop strategy, or attach assignment roles
-that the planner would not assign for that strategy. `team` or `loop_metadata`
-layers require the `workflow` layer so ForkTTY does not create orphan team
-state or no-op loop metadata.
+planner does not treat as a verify-loop or iterative-review strategy, or attach
+assignment roles that the planner would not assign for that strategy. `team` or
+`loop_metadata` layers require the `workflow` layer so ForkTTY does not create
+orphan team state or no-op loop metadata.
 When both surface aliases are provided, `leader_surface_id` and `surface_id`
 must refer to the same surface. The MCP `task_strategy_apply` tool forwards
 the current `FORKTTY_WORKSPACE_ID` and `FORKTTY_SURFACE_ID` as the default
@@ -666,6 +666,9 @@ has `layers.loop_metadata: true`, apply seeds an initial workflow loop record
 only if the workflow does not already have loop state: recipe is the strategy
 wire id (for example `solo_with_verify_loop`), stage is `planned`, iteration is
 `0`, max iterations defaults to `3`, gates are empty, and no stop reason is set.
+Explicitly iterative read-only review goals may keep the `review_only` strategy
+while carrying `layers.loop_metadata: true`, so agents can record repeated
+audit passes without launching team workers or changing the review role.
 Retries with the same run id preserve any existing loop state recorded by an
 agent or user. With `submit: true`, a
 supported team plan becomes an active visible run: ForkTTY upserts the workflow

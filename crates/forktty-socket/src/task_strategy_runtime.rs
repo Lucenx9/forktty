@@ -175,7 +175,9 @@ fn task_strategy_supports_team_layer(strategy: &TaskStrategy) -> bool {
 fn task_strategy_supports_loop_metadata_layer(strategy: &TaskStrategy) -> bool {
     matches!(
         strategy,
-        TaskStrategy::SoloWithVerifyLoop | TaskStrategy::ImplementerPlusReviewer
+        TaskStrategy::SoloWithVerifyLoop
+            | TaskStrategy::ImplementerPlusReviewer
+            | TaskStrategy::ReviewOnly
     )
 }
 

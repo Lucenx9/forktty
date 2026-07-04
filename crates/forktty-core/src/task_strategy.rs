@@ -1001,6 +1001,9 @@ fn effective_layers_for_strategy(
     input: &TaskStrategyInput,
 ) -> TaskStrategyLayers {
     let mut layers = layers_for_strategy(strategy);
+    if matches!(strategy, TaskStrategy::ReviewOnly) && contains_iterative_loop_intent(&input.goal) {
+        layers.loop_metadata = true;
+    }
     let read_only_parallel_research =
         matches!(strategy, TaskStrategy::ParallelResearch) && input.user_requested_review;
     if !matches!(strategy, TaskStrategy::ReviewOnly)
@@ -1885,6 +1888,29 @@ mod tests {
             .factors
             .iter()
             .any(|factor| factor.name == "iterative_loop_intent"));
+    }
+
+    #[test]
+    fn explicit_iterative_review_keeps_review_strategy_but_records_loop_metadata() {
+        let plan = plan_task_strategy(TaskStrategyInput {
+            goal: "Continue iterative bug sweep until the router workspace UI is clean".to_string(),
+            explicit_mode: None,
+            router_profile: None,
+            task_class_hint: Some(TaskClass::ReviewOnly),
+            last_known_good: None,
+            repo_dirty: false,
+            user_requested_parallelism: false,
+            user_requested_review: true,
+            likely_user_visible_change: false,
+            harness_registry: caps(),
+        })
+        .unwrap();
+
+        assert_eq!(plan.task_class, TaskClass::ReviewOnly);
+        assert_eq!(plan.strategy, TaskStrategy::ReviewOnly);
+        assert!(plan.layers.workflow);
+        assert!(plan.layers.loop_metadata);
+        assert_eq!(plan.assignments[0].role, HarnessRole::Reviewer);
     }
 
     #[test]

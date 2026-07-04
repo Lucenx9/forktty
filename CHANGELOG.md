@@ -90,12 +90,17 @@ All notable changes to ForkTTY are documented here.
   guessing or exact internal enum names.
 - Task strategy planning now treats explicit iterative goals such as repeat
   verification, iterative audits, and "keep checking until clean" as
-  verify-loop work, biasing plans toward `layers.loop_metadata: true` without
-  starting any hidden scheduler.
+  verify-loop work, and preserves `review_only` strategy for explicit review
+  hints while still setting `layers.loop_metadata: true`; no hidden scheduler
+  is started.
 - The Router rail loop row now shows stage plus iteration budget and compact
   passed/failed/running gate counts when loop metadata exists.
 
 ### Fixed
+- Fixed top-level CLI routing for the ergonomic workflow-loop wrappers so
+  `forktty workflow-loop-gate`, `workflow-loop-step-done`, and
+  `workflow-loop-publish` reach the socket CLI instead of failing as unknown
+  arguments.
 - Fixed task strategy worktree isolation so dirty-repo read-only parallel
   reviews can remain `parallel_research` without requiring worktree isolation,
   while mutating `parallel_experiment` plans still require isolation.
