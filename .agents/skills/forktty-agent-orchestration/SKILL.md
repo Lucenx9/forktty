@@ -59,7 +59,10 @@ work. For small local code changes, read and edit the repo directly.
    also respect the harness parallel-session capacity reported by ForkTTY. Do
    not invent signals from preference alone; treat the
    returned strategy and harness assignments as the default operating plan
-   unless the user explicitly overrides them. Do not launch team workers or create
+   unless the user explicitly overrides them. When the effective plan sets
+   `layers.loop_metadata: true`, recording verify-loop state with
+   `workflow_loop_set` is part of executing that strategy (see Workflow
+   Memory). Do not launch team workers or create
    worktrees merely because those tools exist. Use
    `task_strategy_apply` only after explicit approvals; apply stages visible
    workflow/team/task/message state by default, and with `submit=true` may
@@ -409,7 +412,14 @@ For long tasks, multi-agent work, or work that may survive context compaction:
 - Record goal, status, and durable memory with `workflow_upsert`.
 - Store a short plan with `workflow_plan_set` when there are multiple steps.
 - For closed loops, record the loop recipe, stage, iteration/max-iteration
-  budget, stop reason, and verification gates with `workflow_loop_set`.
+  budget, stop reason, and verification gates with `workflow_loop_set`. When
+  the applied task-strategy plan sets `layers.loop_metadata: true` (for
+  example `solo_with_verify_loop` or `implementer_plus_reviewer`), this
+  recording is part of the strategy contract, not optional: set the recipe,
+  iteration budget, and stop condition before the first verify pass, update
+  stage/iteration/gates at each pass, and record the stop reason when the
+  loop ends, so `loop_summaries` can restore the loop position after context
+  compaction.
   Keep gate labels/summaries compact and treat `loop_gate_failed`,
   `loop_needs_human`, `loop_blocked`, `loop_budget_exhausted`, and
   `loop_stale_binding` risk flags as prompts to inspect state before

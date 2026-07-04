@@ -24,6 +24,12 @@ All notable changes to ForkTTY are documented here.
   touching live worker surfaces.
 
 ### Changed
+- The agent skill and operating guide now make verify-loop state recording
+  part of the strategy contract: when an applied task-strategy plan sets
+  `layers.loop_metadata: true`, agents must call `workflow_loop_set` before
+  the first verify pass (recipe, iteration budget, stop condition), update
+  stage/iteration/gates each pass, and record the stop reason at the end, so
+  `loop_summaries` can restore loop position after context compaction.
 - Reduced the always-sent ForkTTY MCP initialize instructions and task-strategy
   tool descriptions so agents get the routing essentials without duplicating
   the full operating guide; the complete guide remains available through the
