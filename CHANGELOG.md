@@ -142,6 +142,9 @@ All notable changes to ForkTTY are documented here.
   events.
 - Fixed the workflow feed `Clear` action so clearing one tab only hides rows in
   that tab instead of also hiding older rows from the other feed filters.
+- Fixed the Router rail so active workflow/team records stay selected over
+  newer terminal records in the same workspace, preventing old completed runs
+  from hiding current worker health or loop state after cleanup/evidence churn.
 - Fixed the Router rail worker reports and approvals so five-worker review
   teams show all five report/health rows, pending approvals whose target
   surface has closed are hidden from the rail, and prompt notifications whose

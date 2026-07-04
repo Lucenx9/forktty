@@ -890,7 +890,12 @@ fn latest_workflow_snapshot_for_workspace(
         .workflows
         .iter()
         .filter(|workflow| record_matches_workspace(workflow.workspace_id.as_deref(), workspace_id))
-        .max_by_key(|workflow| workflow.updated_at_ms)
+        .max_by_key(|workflow| {
+            (
+                !workflow_is_closed(&workflow.status),
+                workflow.updated_at_ms,
+            )
+        })
     else {
         return workflow_fallback("idle", "No workflow staged");
     };
@@ -956,6 +961,10 @@ fn workflow_fallback(strategy: &str, detail: &str) -> WorkflowRailSnapshot {
     }
 }
 
+fn workflow_is_closed(status: &str) -> bool {
+    matches!(status, "done" | "closed" | "cancelled" | "finished")
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct TeamRailSnapshot {
     fanout: String,
@@ -980,7 +989,7 @@ fn latest_team_snapshot_for_workspace(
         .teams
         .iter()
         .filter(|team| record_matches_workspace(team.workspace_id.as_deref(), workspace_id))
-        .max_by_key(|team| team.updated_at_ms)
+        .max_by_key(|team| (!team_is_closed(&team.status), team.updated_at_ms))
     else {
         return team_fallback("no team");
     };
@@ -1590,6 +1599,107 @@ mod tests {
             &live_statuses,
         );
         assert!(chips.is_empty());
+    }
+
+    #[test]
+    fn rail_workflow_prefers_open_record_over_newer_terminal_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let workflow_path = dir.path().join("workflow-v1.json");
+        let mut workflow_store = forktty_core::WorkflowStoreData::default();
+        workflow_store
+            .upsert(
+                forktty_core::WorkflowUpsert {
+                    workflow_id: Some("active-router".to_string()),
+                    workspace_id: Some("workspace-1".to_string()),
+                    mode: Some("review".to_string()),
+                    status: Some("running".to_string()),
+                    goal: Some("Active router audit".to_string()),
+                    ..forktty_core::WorkflowUpsert::default()
+                },
+                10,
+            )
+            .unwrap();
+        workflow_store
+            .upsert(
+                forktty_core::WorkflowUpsert {
+                    workflow_id: Some("newer-done-router".to_string()),
+                    workspace_id: Some("workspace-1".to_string()),
+                    mode: Some("review".to_string()),
+                    status: Some("done".to_string()),
+                    goal: Some("Older completed router audit".to_string()),
+                    ..forktty_core::WorkflowUpsert::default()
+                },
+                20,
+            )
+            .unwrap();
+        forktty_core::save_workflows_to_path(&workflow_path, &workflow_store).unwrap();
+
+        let workflow =
+            latest_workflow_snapshot_for_workspace(Some(&workflow_path), Some("workspace-1"));
+
+        assert_eq!(workflow.workflow, "running");
+        assert_eq!(workflow.strategy_detail, "Active router audit");
+    }
+
+    #[test]
+    fn rail_team_prefers_open_record_over_newer_terminal_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let team_path = dir.path().join("team-v1.json");
+        let mut team_store = forktty_core::TeamStoreData::default();
+        team_store
+            .upsert_team(
+                forktty_core::TeamUpsert {
+                    team_id: "active-team".to_string(),
+                    workspace_id: Some("workspace-1".to_string()),
+                    leader_surface_id: None,
+                    name: Some("Active Team".to_string()),
+                    status: Some("active".to_string()),
+                    goal: None,
+                },
+                10,
+            )
+            .unwrap();
+        team_store
+            .upsert_worker(
+                forktty_core::TeamWorkerUpsert {
+                    team_id: "active-team".to_string(),
+                    worker_id: "active-worker".to_string(),
+                    role: Some("reviewer".to_string()),
+                    agent: Some("codex".to_string()),
+                    surface_id: None,
+                    worktree_name: None,
+                    report: None,
+                    status: Some("running".to_string()),
+                    assigned_task_id: None,
+                },
+                11,
+            )
+            .unwrap();
+        team_store
+            .upsert_team(
+                forktty_core::TeamUpsert {
+                    team_id: "newer-done-team".to_string(),
+                    workspace_id: Some("workspace-1".to_string()),
+                    leader_surface_id: None,
+                    name: Some("Done Team".to_string()),
+                    status: Some("done".to_string()),
+                    goal: None,
+                },
+                20,
+            )
+            .unwrap();
+        forktty_core::save_teams_to_path(&team_path, &team_store).unwrap();
+
+        let live_statuses = std::collections::HashMap::new();
+        let team = latest_team_snapshot_for_workspace(
+            Some(&team_path),
+            Some("workspace-1"),
+            &live_statuses,
+        );
+
+        assert_eq!(team.fanout, "1");
+        assert_eq!(team.workers, "1/1 active");
+        assert_eq!(team.health_items[0].primary, "Codex");
     }
 
     #[test]
