@@ -1273,6 +1273,7 @@ pub(super) fn restore_or_bootstrap_workspaces(
                 // an inconsistent UI.
                 let _ = model.repair_session_invariants();
             }
+            reserve_orchestration_record_ids(state);
             if repaired_paths > 0 {
                 create_global_notification(
                     state,
@@ -1294,6 +1295,7 @@ pub(super) fn restore_or_bootstrap_workspaces(
                 "Opened your home directory as the main workspace. Use Ctrl+Shift+P for commands, F9 to toggle the sidebar, and New Worktree for isolated git work.",
                 NotificationKind::Info,
             );
+            reserve_orchestration_record_ids(state);
             bootstrap_default_workspace(state, cwd)
         }
         Err(err) => {
@@ -1304,8 +1306,74 @@ pub(super) fn restore_or_bootstrap_workspaces(
                 &format!("Could not restore the saved session; starting a new workspace. {err}"),
                 NotificationKind::Error,
             );
+            reserve_orchestration_record_ids(state);
             bootstrap_default_workspace(state, cwd)
         }
+    }
+}
+
+fn reserve_orchestration_record_ids(state: &SocketAppState) {
+    let mut workspace_ids = Vec::new();
+    let mut surface_ids = Vec::new();
+
+    if let Some(path) = state.workflow_store_path.as_deref() {
+        match forktty_core::load_workflows_from_path(path) {
+            Ok(store) => {
+                for workflow in store.workflows {
+                    if let Some(workspace_id) = workflow.workspace_id {
+                        workspace_ids.push(workspace_id);
+                    }
+                    if let Some(surface_id) = workflow.surface_id {
+                        surface_ids.push(surface_id);
+                    }
+                }
+            }
+            Err(err) => eprintln!(
+                "ForkTTY: failed to reserve workflow orchestration ids from {}: {err}",
+                path.display()
+            ),
+        }
+    }
+
+    if let Some(path) = state.team_store_path.as_deref() {
+        match forktty_core::load_teams_from_path(path) {
+            Ok(store) => {
+                for team in store.teams {
+                    if let Some(workspace_id) = team.workspace_id {
+                        workspace_ids.push(workspace_id);
+                    }
+                    if let Some(surface_id) = team.leader_surface_id {
+                        surface_ids.push(surface_id);
+                    }
+                    for worker in team.workers {
+                        if let Some(surface_id) = worker.surface_id {
+                            surface_ids.push(surface_id);
+                        }
+                        if let Some(surface_id) = worker.launched_surface_id {
+                            surface_ids.push(surface_id);
+                        }
+                    }
+                }
+            }
+            Err(err) => eprintln!(
+                "ForkTTY: failed to reserve team orchestration ids from {}: {err}",
+                path.display()
+            ),
+        }
+    }
+
+    if workspace_ids.is_empty() && surface_ids.is_empty() {
+        return;
+    }
+
+    let Ok(mut model) = state.model.lock() else {
+        return;
+    };
+    for workspace_id in workspace_ids {
+        model.reserve_workspace_id(&workspace_id);
+    }
+    for surface_id in surface_ids {
+        model.reserve_surface_id(&surface_id);
     }
 }
 

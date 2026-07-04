@@ -4,6 +4,7 @@
 use super::*;
 
 const FEED_ROW_COUNT: usize = 5;
+const FEED_LOG_ROWS_WHEN_EVENTS_EXIST: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FeedFilter {
@@ -255,20 +256,37 @@ fn orchestration_feed_lines(state: &SocketAppState) -> Vec<FeedLine> {
                 }),
         );
         if let Some(workspace_id) = active_workspace_id.as_deref() {
-            lines.extend(
-                model
-                    .list_logs(workspace_id)
-                    .iter()
-                    .take(5)
-                    .map(|log| FeedLine {
-                        at_ms: log.timestamp_ms,
-                        source: FeedSource::Log,
-                        body: format!("Log: {}", log.message.trim()),
-                        status: feed_log_level(log.level).to_string(),
-                    }),
-            );
+            append_log_lines(&mut lines, &model.list_logs(workspace_id));
         }
     }
+    finalize_feed_lines(lines)
+}
+
+fn combined_feed_log_limit(has_non_log_rows: bool) -> usize {
+    if has_non_log_rows {
+        FEED_LOG_ROWS_WHEN_EVENTS_EXIST
+    } else {
+        FEED_ROW_COUNT
+    }
+}
+
+fn append_log_lines(lines: &mut Vec<FeedLine>, logs: &[forktty_core::LogEntry]) {
+    let has_non_log_rows = lines.iter().any(|line| {
+        matches!(
+            line.source,
+            FeedSource::Workflow | FeedSource::Team | FeedSource::Notification
+        )
+    });
+    let log_limit = combined_feed_log_limit(has_non_log_rows);
+    lines.extend(logs.iter().take(log_limit).map(|log| FeedLine {
+        at_ms: log.timestamp_ms,
+        source: FeedSource::Log,
+        body: format!("Log: {}", log.message.trim()),
+        status: feed_log_level(log.level).to_string(),
+    }));
+}
+
+fn finalize_feed_lines(mut lines: Vec<FeedLine>) -> Vec<FeedLine> {
     lines.sort_by_key(|line| std::cmp::Reverse(line.at_ms));
     lines.truncate(FEED_ROW_COUNT);
     lines
@@ -338,9 +356,7 @@ fn orchestration_feed_lines_for_workspace(
             );
         }
     }
-    lines.sort_by_key(|line| std::cmp::Reverse(line.at_ms));
-    lines.truncate(FEED_ROW_COUNT);
-    lines
+    finalize_feed_lines(lines)
 }
 
 fn active_workspace_id_for_state(state: &SocketAppState) -> Option<String> {
@@ -505,6 +521,42 @@ mod tests {
         assert!(feed_line_matches(&notification, FeedFilter::All));
         assert!(!feed_line_matches(&notification, FeedFilter::Events));
         assert!(!feed_line_matches(&notification, FeedFilter::Logs));
+    }
+
+    #[test]
+    fn combined_feed_caps_logs_when_events_or_notifications_exist() {
+        assert_eq!(combined_feed_log_limit(false), FEED_ROW_COUNT);
+        assert_eq!(
+            combined_feed_log_limit(true),
+            FEED_LOG_ROWS_WHEN_EVENTS_EXIST
+        );
+
+        let mut lines = vec![FeedLine {
+            at_ms: 1,
+            source: FeedSource::Workflow,
+            body: "Router: running".to_string(),
+            status: "workflow".to_string(),
+        }];
+        let logs = (0..FEED_ROW_COUNT)
+            .map(|index| forktty_core::LogEntry {
+                id: format!("log-{index}"),
+                timestamp_ms: 100 + index as u128,
+                level: forktty_core::LogLevel::Info,
+                message: format!("Antigravity request {index}"),
+            })
+            .collect::<Vec<_>>();
+
+        append_log_lines(&mut lines, &logs);
+        let lines = finalize_feed_lines(lines);
+
+        assert!(lines.iter().any(|line| line.source == FeedSource::Workflow));
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.source == FeedSource::Log)
+                .count(),
+            FEED_LOG_ROWS_WHEN_EVENTS_EXIST
+        );
     }
 
     #[test]

@@ -118,6 +118,16 @@ All notable changes to ForkTTY are documented here.
 - Fixed the Router rail, header chips, status summary, and workflow feed so
   they scope workflow/team state to the active workspace instead of continuing
   to show the most recently updated router task after its workspace was closed.
+- Fixed orchestration UI state after restarts so closed or prior-session
+  workspace/surface ids referenced by durable workflow/team records are
+  reserved before new GTK workspaces are created, preventing old router/team
+  records from being adopted by an unrelated fresh workspace.
+- Fixed the workflow feed combined view so bursts of metadata logs, especially
+  Antigravity tool logs, cannot push workflow, team, approval, or notification
+  rows out of the visible five-line summary.
+- Fixed the Router rail worker reports count so it reports the total number of
+  available worker reports even when only the first four rows are shown, and
+  hides prompt notifications whose target surface has already been closed.
 - Fixed Feed approval responses so pending approvals whose workspace or surface
   target went stale are persisted as `stale` and rejected instead of being
   approved through the socket after `feed.list` already showed them stale.

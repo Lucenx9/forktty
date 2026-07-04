@@ -309,6 +309,8 @@ impl WorkspaceModel {
 
     pub fn restore_session(&mut self, data: SessionData) {
         *self = WorkspaceModel::new();
+        self.next_workspace = data.next_workspace;
+        self.next_surface = data.next_surface;
         // Persisted per-surface state (kind/url). Surfaces absent here — e.g.
         // every surface in a pre-browser session — default to Terminal below.
         let mut persisted_surfaces: BTreeMap<SurfaceId, Surface> = data
@@ -413,6 +415,8 @@ impl WorkspaceModel {
             workspaces,
             active_workspace_id: self.active_workspace_id(),
             surfaces,
+            next_workspace: self.next_workspace,
+            next_surface: self.next_surface,
         }
     }
 
@@ -646,6 +650,25 @@ impl WorkspaceModel {
             })
             .cloned()
             .collect()
+    }
+
+    /// Reserve a generated workspace id that may still be referenced outside
+    /// the GTK session, such as durable workflow/team orchestration records.
+    ///
+    /// This does not create a workspace. It only advances the monotonic id
+    /// high-water mark so a later `create_workspace` cannot recycle the same
+    /// `workspace-N` id for an unrelated workspace.
+    pub fn reserve_workspace_id(&mut self, workspace_id: &str) {
+        self.next_workspace = self.next_workspace.max(numeric_suffix(workspace_id));
+    }
+
+    /// Reserve a generated surface id that may still be referenced outside the
+    /// GTK session.
+    ///
+    /// See [`WorkspaceModel::reserve_workspace_id`] for the durable-record
+    /// collision this avoids.
+    pub fn reserve_surface_id(&mut self, surface_id: &str) {
+        self.next_surface = self.next_surface.max(numeric_suffix(surface_id));
     }
 
     pub fn surface(&self, id: &str) -> Option<&Surface> {

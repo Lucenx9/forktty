@@ -724,7 +724,7 @@ fn orchestration_rail_snapshot(state: &SocketAppState) -> RailSnapshot {
         .lock()
         .ok()
         .map(|model| {
-            let notifications = model.list_notifications();
+            let notifications = current_rail_notifications(&model, active_workspace_id.as_deref());
             let unread = notifications.iter().any(|notification| !notification.read);
             (
                 format_notification_counts(&notifications),
@@ -929,11 +929,16 @@ fn latest_team_snapshot_for_workspace(
         format!("{active}/{} active", team.workers.len())
     };
     let report_items = report_list_items(&team.workers);
+    let report_count = team
+        .workers
+        .iter()
+        .filter(|worker| worker_has_report(worker))
+        .count();
     TeamRailSnapshot {
         fanout: team.workers.len().to_string(),
         workers,
         health_items: health_list_items_with_live_statuses(&team.workers, live_statuses),
-        reports: count_label(report_items.len(), "report", "reports"),
+        reports: count_label(report_count, "report", "reports"),
         report_items,
     }
 }
@@ -1166,12 +1171,7 @@ fn health_list_items_with_live_statuses(
 fn report_list_items(workers: &[forktty_core::TeamWorker]) -> Vec<RailListItem> {
     workers
         .iter()
-        .filter(|worker| {
-            worker
-                .report
-                .as_deref()
-                .is_some_and(|report| !report.trim().is_empty())
-        })
+        .filter(|worker| worker_has_report(worker))
         .take(RAIL_REPORT_SLOTS)
         .map(|worker| {
             let agent = team_agent_label(worker.agent.as_deref().unwrap_or("worker"));
@@ -1183,6 +1183,43 @@ fn report_list_items(workers: &[forktty_core::TeamWorker]) -> Vec<RailListItem> 
             }
         })
         .collect()
+}
+
+fn worker_has_report(worker: &forktty_core::TeamWorker) -> bool {
+    worker
+        .report
+        .as_deref()
+        .is_some_and(|report| !report.trim().is_empty())
+}
+
+fn current_rail_notifications(
+    model: &forktty_core::WorkspaceModel,
+    workspace_id: Option<&str>,
+) -> Vec<NotificationItem> {
+    model
+        .list_notifications()
+        .into_iter()
+        .filter(|notification| rail_notification_matches_workspace(notification, workspace_id))
+        .filter(|notification| {
+            notification
+                .surface_id
+                .as_deref()
+                .is_none_or(|surface_id| model.surface(surface_id).is_some())
+        })
+        .collect()
+}
+
+fn rail_notification_matches_workspace(
+    notification: &NotificationItem,
+    workspace_id: Option<&str>,
+) -> bool {
+    match workspace_id {
+        Some(workspace_id) => notification
+            .workspace_id
+            .as_deref()
+            .is_none_or(|record_workspace_id| record_workspace_id == workspace_id),
+        None => notification.workspace_id.is_none(),
+    }
 }
 
 fn notification_list_items(notifications: &[NotificationItem], now_ms: u128) -> Vec<RailListItem> {
@@ -1448,6 +1485,87 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].primary, "Codex \u{00b7} main");
         assert_eq!(items[0].secondary, "ready");
+    }
+
+    #[test]
+    fn report_count_uses_total_reports_even_when_rows_are_capped() {
+        let dir = tempfile::tempdir().unwrap();
+        let team_path = dir.path().join("team-v1.json");
+        let mut team_store = forktty_core::TeamStoreData::default();
+        team_store
+            .upsert_team(
+                forktty_core::TeamUpsert {
+                    team_id: "team-1".to_string(),
+                    workspace_id: Some("workspace-1".to_string()),
+                    leader_surface_id: None,
+                    name: Some("Team".to_string()),
+                    status: Some("done".to_string()),
+                    goal: None,
+                },
+                10,
+            )
+            .unwrap();
+        for index in 0..5 {
+            team_store
+                .upsert_worker(
+                    forktty_core::TeamWorkerUpsert {
+                        team_id: "team-1".to_string(),
+                        worker_id: format!("worker-{index}"),
+                        role: Some("reviewer".to_string()),
+                        agent: Some(format!("agent-{index}")),
+                        surface_id: None,
+                        worktree_name: None,
+                        report: Some(format!("report {index}")),
+                        status: Some("done".to_string()),
+                        assigned_task_id: None,
+                    },
+                    11 + index,
+                )
+                .unwrap();
+        }
+        forktty_core::save_teams_to_path(&team_path, &team_store).unwrap();
+
+        let live_statuses = std::collections::HashMap::new();
+        let team = latest_team_snapshot_for_workspace(
+            Some(&team_path),
+            Some("workspace-1"),
+            &live_statuses,
+        );
+
+        assert_eq!(team.reports, "5 reports");
+        assert_eq!(team.report_items.len(), RAIL_REPORT_SLOTS);
+    }
+
+    #[test]
+    fn rail_notifications_ignore_closed_surface_prompts() {
+        let mut model = forktty_core::WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let prompt_surface = model
+            .split_surface(
+                &workspace.focused_surface_id,
+                forktty_core::SplitAxis::Horizontal,
+            )
+            .unwrap();
+        model.create_notification(
+            "Claude needs input",
+            "Turn complete",
+            NotificationKind::Prompt,
+            Some(workspace.id.clone()),
+            Some(prompt_surface.id.clone()),
+        );
+        model.create_notification(
+            "Workspace info",
+            "Still relevant",
+            NotificationKind::Info,
+            Some(workspace.id.clone()),
+            None,
+        );
+        model.close_surface(&prompt_surface.id).unwrap();
+
+        let notifications = current_rail_notifications(&model, Some(&workspace.id));
+
+        assert_eq!(format_notification_counts(&notifications), "1 new");
+        assert_eq!(notifications[0].title, "Workspace info");
     }
 
     #[test]
