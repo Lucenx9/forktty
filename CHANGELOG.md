@@ -114,6 +114,9 @@ All notable changes to ForkTTY are documented here.
   notification rows read while still keeping them in history, preventing the
   new Router rail and workflow feed from showing cleared notifications as
   still unread.
+- Fixed the Router rail notification Clear-all action so it only clears the
+  notifications visible in the active workspace instead of deleting hidden
+  notifications from other workspaces.
 - Fixed the new Router rail and workflow feed live state so worker health uses
   live pane lifecycle such as `needs_input` instead of raw persisted worker
   status, and the workflow feed `LOGS` tab shows metadata logs instead of

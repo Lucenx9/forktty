@@ -288,7 +288,10 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
         let notifications = state_for_clear
             .model
             .lock()
-            .map(|mut model| clear_rail_notifications_from_model(&mut model))
+            .map(|mut model| {
+                let workspace_id = model.active_workspace_id();
+                clear_rail_notifications_from_model(&mut model, workspace_id.as_deref())
+            })
             .unwrap_or_default();
         state_for_clear.mark_notification_feed_entries_cleared(&notifications);
     });
@@ -1314,9 +1317,12 @@ fn current_rail_notifications(
 
 fn clear_rail_notifications_from_model(
     model: &mut forktty_core::WorkspaceModel,
+    workspace_id: Option<&str>,
 ) -> Vec<NotificationItem> {
-    let notifications = model.list_notifications();
-    model.clear_notifications();
+    let notifications = current_rail_notifications(model, workspace_id);
+    for notification in &notifications {
+        model.dismiss_notification(&notification.id);
+    }
     notifications
 }
 
@@ -1761,10 +1767,42 @@ mod tests {
             None,
         );
 
-        let cleared = clear_rail_notifications_from_model(&mut model);
+        let cleared = clear_rail_notifications_from_model(&mut model, None);
 
         assert_eq!(cleared.len(), 2);
         assert!(model.list_notifications().is_empty());
+    }
+
+    #[test]
+    fn clear_rail_notifications_preserves_inactive_workspace_notifications() {
+        let mut model = forktty_core::WorkspaceModel::new();
+        let active = model.create_workspace("main", "/tmp/main");
+        let active_surface_id = active.focused_surface_id.clone();
+        let inactive = model.create_workspace("other", "/tmp/other");
+        let inactive_surface_id = inactive.focused_surface_id.clone();
+        model.focus_surface_and_select_workspace(&active_surface_id);
+        model.create_notification(
+            "Active notice",
+            "",
+            NotificationKind::Prompt,
+            Some(active.id.clone()),
+            Some(active_surface_id),
+        );
+        model.create_notification(
+            "Inactive notice",
+            "",
+            NotificationKind::Prompt,
+            Some(inactive.id),
+            Some(inactive_surface_id),
+        );
+
+        let cleared = clear_rail_notifications_from_model(&mut model, Some(&active.id));
+        let remaining = model.list_notifications();
+
+        assert_eq!(cleared.len(), 1);
+        assert_eq!(cleared[0].title, "Active notice");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].title, "Inactive notice");
     }
 
     #[test]
