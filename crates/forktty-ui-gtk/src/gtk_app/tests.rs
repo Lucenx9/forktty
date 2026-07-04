@@ -2659,7 +2659,26 @@ fn settings_dialog_exposes_pty_persistence_toggle() {
     assert!(source.contains("Persist terminal processes"));
     assert!(source.contains("config.general.persist_terminal_processes = is_enabled"));
     assert!(source.contains("cleanup_pty_persistence_sessions(&state, true)"));
+    assert!(source.contains("was_persisting_before_reset"));
+    assert!(source.contains("cleanup_pty_persistence_sessions(&state_for_reset, true)"));
     assert!(source.contains("PTY process persistence updated."));
+}
+
+#[test]
+fn settings_dialog_setup_buttons_wait_for_status_poll() {
+    let source = include_str!("settings_dialog.rs");
+
+    assert!(source.contains("button.set_sensitive(false);"));
+    assert!(source.contains("button.set_sensitive(true);"));
+    assert!(source.contains("button.set_label(\"...\");"));
+}
+
+#[test]
+fn settings_apply_refreshes_pr_lookup_when_enabled() {
+    let source = include_str!("app.rs");
+
+    assert!(source.contains("spawn_pr_refresh(pr_model.clone(), pr_in_flight.clone())"));
+    assert!(source.contains("clear_pr_hints(&model);"));
 }
 
 #[test]

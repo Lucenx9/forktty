@@ -621,6 +621,8 @@ pub(super) fn build_ui(app: &adw::Application) {
         &sidebar_shell,
         &terminal_stack_for_settings,
         &controller,
+        pr_model.clone(),
+        pr_in_flight.clone(),
     );
 
     let palette_parent = window.clone();
@@ -933,11 +935,15 @@ pub(super) fn settings_apply_callback(
     sidebar_shell: &gtk::Box,
     terminal_stack: &gtk::Box,
     controller: &Rc<RefCell<TerminalController>>,
+    pr_model: Arc<Mutex<WorkspaceModel>>,
+    pr_in_flight: Arc<AtomicBool>,
 ) -> SettingsApplyCallback {
     let paned = paned.clone();
     let sidebar_shell = sidebar_shell.clone();
     let terminal_stack = terminal_stack.clone();
     let controller = controller.clone();
+    let pr_model = pr_model.clone();
+    let pr_in_flight = pr_in_flight.clone();
     Rc::new(move |config| {
         apply_color_scheme(config);
         apply_sidebar_position(
@@ -956,6 +962,8 @@ pub(super) fn settings_apply_callback(
         };
         if !config.general.enable_pr_lookup {
             clear_pr_hints(&model);
+        } else {
+            spawn_pr_refresh(pr_model.clone(), pr_in_flight.clone());
         }
     })
 }

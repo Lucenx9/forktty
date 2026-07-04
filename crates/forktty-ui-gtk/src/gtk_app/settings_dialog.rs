@@ -131,7 +131,7 @@ pub(super) fn show_settings_dialog_page(
 
     let (sidebar_section, sidebar_list) = settings_section("Sidebar", "");
     let sidebar_visible = adw::SwitchRow::builder()
-        .title("Show sidebar on startup")
+        .title("Show sidebar")
         .subtitle("You can still toggle it with Ctrl+B or F9.")
         .active(loaded.appearance.sidebar_visible)
         .build();
@@ -798,12 +798,14 @@ pub(super) fn show_settings_dialog_page(
         let current = current.clone();
         let on_apply = on_apply.clone();
         let suppress_updates = suppress_updates.clone();
+        let state = state.clone();
         move |_| {
             let confirmation_parent = window.clone();
             let dialog_for_reset = dialog.clone();
             let current_for_reset = current.clone();
             let on_apply_for_reset = on_apply.clone();
             let suppress_updates_for_reset = suppress_updates.clone();
+            let state_for_reset = state.clone();
             let window_mode_for_reset = window_mode.clone();
             let sidebar_position_for_reset = sidebar_position.clone();
             let sidebar_visible_for_reset = sidebar_visible.clone();
@@ -827,6 +829,14 @@ pub(super) fn show_settings_dialog_page(
                 "Reset Settings",
                 move || {
                     let defaults = config::AppConfig::default();
+                    let was_persisting_before_reset = config::load_config()
+                        .map(|config| config.general.persist_terminal_processes)
+                        .unwrap_or_else(|_| {
+                            current_for_reset
+                                .borrow()
+                                .general
+                                .persist_terminal_processes
+                        });
                     let saved = persist_settings_change(
                         &dialog_for_reset,
                         &current_for_reset,
@@ -839,6 +849,14 @@ pub(super) fn show_settings_dialog_page(
                     );
                     if !saved {
                         return;
+                    }
+                    if was_persisting_before_reset && !defaults.general.persist_terminal_processes {
+                        let summary = cleanup_pty_persistence_sessions(&state_for_reset, true);
+                        if summary.sockets_removed > 0 || summary.processes_signaled > 0 {
+                            dialog_for_reset.add_toast(adw::Toast::new(
+                                "Detached terminal persistence sessions cleaned up.",
+                            ));
+                        }
                     }
                     suppress_updates_for_reset.set(true);
                     window_mode_for_reset.set_selected(settings_choice_index(
@@ -1141,6 +1159,7 @@ fn apply_pending_setup_status(label: &gtk::Label, button: &gtk::Button) {
     set_setup_status_class(label, "checking");
     set_setup_button_class(button, "subtle");
     button.set_label("...");
+    button.set_sensitive(false);
 }
 
 fn apply_setup_status(label: &gtk::Label, button: &gtk::Button, status: &AgentSetupStatus) {
@@ -1163,6 +1182,7 @@ fn apply_setup_status(label: &gtk::Label, button: &gtk::Button, status: &AgentSe
         },
     );
     button.set_label(status.action_label());
+    button.set_sensitive(true);
 }
 
 fn set_setup_status_class(label: &gtk::Label, class_name: &str) {

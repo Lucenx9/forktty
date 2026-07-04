@@ -37,6 +37,10 @@ All notable changes to ForkTTY are documented here.
   guessing or exact internal enum names.
 
 ### Fixed
+- Fixed Settings dialog live behavior so Reset also cleans previously enabled
+  detached PTY persistence sessions, enabling GitHub PR lookup triggers an
+  immediate refresh instead of waiting for the next timer tick, and agent setup
+  buttons cannot be clicked while their initial status check is still pending.
 - Fixed Antigravity `PreToolUse` hook responses so ForkTTY returns the current
   `{"decision":"allow"}` gating decision instead of the older `approve` value
   that `agy` 1.0.16 rejects before tool execution.
