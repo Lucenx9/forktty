@@ -16,8 +16,10 @@ enum FeedFilter {
 #[derive(Clone)]
 pub(super) struct OrchestrationFeedUi {
     pub(super) shell: gtk::Box,
-    rows_shell: gtk::Box,
+    rows_revealer: gtk::Revealer,
     collapse_button: gtk::Button,
+    clear_button: gtk::Button,
+    live_chip: gtk::Label,
     rows: Vec<FeedRowUi>,
     tabs: Vec<gtk::Button>,
     filter: Rc<Cell<u8>>,
@@ -52,7 +54,6 @@ enum FeedSource {
 pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationFeedUi {
     let shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
     shell.add_css_class("orchestration-feed");
-    shell.set_height_request(156);
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     header.add_css_class("orchestration-feed-header");
@@ -87,7 +88,7 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
     set_accessible_button_text(&clear, "Hide current feed rows", None);
     header.append(&clear);
     let collapse = gtk::Button::builder()
-        .label("v")
+        .icon_name("forktty-chevron-down-symbolic")
         .has_frame(false)
         .tooltip_text("Collapse workflow feed")
         .build();
@@ -100,6 +101,8 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
     let rows_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
     rows_box.add_css_class("orchestration-feed-rows");
     rows_box.add_css_class("orchestration-feed-rows-shell");
+    // Fixed rows-area height keeps the dock from jumping as rows appear/disappear.
+    rows_box.set_height_request(122);
     let rows = (0..FEED_ROW_COUNT)
         .map(|_| {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
@@ -138,12 +141,20 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
             }
         })
         .collect::<Vec<_>>();
-    shell.append(&rows_box);
+    let rows_revealer = gtk::Revealer::builder()
+        .transition_type(gtk::RevealerTransitionType::SlideUp)
+        .transition_duration(160)
+        .reveal_child(true)
+        .child(&rows_box)
+        .build();
+    shell.append(&rows_revealer);
 
     let ui = OrchestrationFeedUi {
         shell,
-        rows_shell: rows_box,
+        rows_revealer,
         collapse_button: collapse,
+        clear_button: clear.clone(),
+        live_chip: live,
         rows,
         tabs,
         filter: Rc::new(Cell::new(0)),
@@ -155,6 +166,9 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
         let ui_for_tab = ui.clone();
         let state_for_tab = state.clone();
         tab.connect_clicked(move |_| {
+            if ui_for_tab.collapsed.get() {
+                set_workflow_feed_collapsed(&ui_for_tab, false);
+            }
             ui_for_tab.filter.set(index as u8);
             for (tab_index, tab) in ui_for_tab.tabs.iter().enumerate() {
                 if tab_index == index {
@@ -184,16 +198,19 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
 
 fn set_workflow_feed_collapsed(ui: &OrchestrationFeedUi, collapsed: bool) {
     ui.collapsed.set(collapsed);
-    ui.rows_shell.set_visible(!collapsed);
-    ui.shell
-        .set_height_request(if collapsed { 34 } else { 156 });
+    ui.rows_revealer.set_reveal_child(!collapsed);
+    ui.clear_button.set_visible(!collapsed);
+    ui.live_chip.set_visible(!collapsed);
     if collapsed {
         ui.shell.add_css_class("collapsed");
     } else {
         ui.shell.remove_css_class("collapsed");
     }
-    ui.collapse_button
-        .set_label(if collapsed { "^" } else { "v" });
+    ui.collapse_button.set_icon_name(if collapsed {
+        "forktty-chevron-up-symbolic"
+    } else {
+        "forktty-chevron-down-symbolic"
+    });
     ui.collapse_button.set_tooltip_text(Some(if collapsed {
         "Expand workflow feed"
     } else {
@@ -288,7 +305,7 @@ fn set_feed_label(label: &gtk::Label, value: &str) {
 }
 
 /// Maps a feed status word to the chip color class used by style.css.
-fn feed_status_class(status: &str) -> &'static str {
+pub(super) fn feed_status_class(status: &str) -> &'static str {
     let status = status.to_ascii_lowercase();
     if status.contains("fail") || status.contains("error") || status.contains("no_heartbeat") {
         "err"

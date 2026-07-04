@@ -7,13 +7,19 @@ const RAIL_APPROVAL_SLOTS: usize = 2;
 const RAIL_HEALTH_SLOTS: usize = 5;
 const RAIL_REPORT_SLOTS: usize = 5;
 const RAIL_NOTIFICATION_SLOTS: usize = 4;
+const RAIL_EXPANDED_MIN_WIDTH: i32 = 320;
+const RAIL_COLLAPSED_WIDTH: i32 = 48;
 
 #[derive(Clone)]
 pub(super) struct OrchestrationRailUi {
     pub(super) shell: gtk::Box,
+    expanded_header: gtk::Box,
     expanded_body: gtk::ScrolledWindow,
     collapsed_strip: gtk::Button,
+    collapsed_approvals_badge: gtk::Label,
+    collapsed_notifications_badge: gtk::Label,
     collapse_button: gtk::Button,
+    expanded_width: Rc<Cell<i32>>,
     status_value: gtk::Label,
     strategy_value: gtk::Label,
     strategy_detail_value: gtk::Label,
@@ -78,6 +84,7 @@ struct RailSnapshot {
     loop_planned: bool,
     approvals: String,
     approvals_attention: bool,
+    approvals_pending: usize,
     approvals_overflow: usize,
     approval_items: Vec<RailApprovalItem>,
     workers: String,
@@ -86,6 +93,7 @@ struct RailSnapshot {
     report_items: Vec<RailListItem>,
     notifications: String,
     notifications_attention: bool,
+    notifications_unread: usize,
     notification_items: Vec<RailListItem>,
 }
 
@@ -113,19 +121,7 @@ pub(super) struct TeamChip {
 pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationRailUi {
     let shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
     shell.add_css_class("orchestration-rail");
-    shell.set_width_request(320);
-
-    let scroller = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .build();
-    scroller.add_css_class("orchestration-rail-scroll");
-    scroller.set_vexpand(true);
-
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    body.add_css_class("orchestration-rail-body");
-    body.set_vexpand(true);
-    scroller.set_child(Some(&body));
+    shell.set_width_request(RAIL_EXPANDED_MIN_WIDTH);
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     header.add_css_class("orchestration-panel-header");
@@ -142,7 +138,7 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
         .build();
     status_value.add_css_class("orchestration-status-chip");
     let collapse_button = gtk::Button::builder()
-        .label("<")
+        .icon_name("forktty-chevron-right-symbolic")
         .has_frame(false)
         .tooltip_text("Collapse Router rail")
         .build();
@@ -152,7 +148,20 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
     header.append(&title);
     header.append(&status_value);
     header.append(&collapse_button);
-    body.append(&header);
+    // Header stays outside the scroller so the collapse control never scrolls away.
+    shell.append(&header);
+
+    let scroller = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .build();
+    scroller.add_css_class("orchestration-rail-scroll");
+    scroller.set_vexpand(true);
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    body.add_css_class("orchestration-rail-body");
+    body.set_vexpand(true);
+    scroller.set_child(Some(&body));
 
     let strategy_section = rail_section(&body);
     let strategy_header = rail_section_header(&strategy_section, "STRATEGY");
@@ -299,8 +308,18 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
 
     shell.append(&scroller);
 
+    let strip_content = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    strip_content.add_css_class("orchestration-rail-strip-content");
+    strip_content.set_valign(gtk::Align::Start);
+    strip_content.set_halign(gtk::Align::Center);
+    let strip_icon = gtk::Image::from_icon_name("forktty-chevron-left-symbolic");
+    strip_content.append(&strip_icon);
+    let collapsed_approvals_badge = rail_strip_badge("warn");
+    strip_content.append(&collapsed_approvals_badge);
+    let collapsed_notifications_badge = rail_strip_badge("info");
+    strip_content.append(&collapsed_notifications_badge);
     let collapsed_strip = gtk::Button::builder()
-        .label("Router")
+        .child(&strip_content)
         .has_frame(false)
         .tooltip_text("Expand Router rail")
         .build();
@@ -313,9 +332,13 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
 
     let ui = OrchestrationRailUi {
         shell,
+        expanded_header: header,
         expanded_body: scroller,
         collapsed_strip,
+        collapsed_approvals_badge,
+        collapsed_notifications_badge,
         collapse_button,
+        expanded_width: Rc::new(Cell::new(RAIL_EXPANDED_MIN_WIDTH)),
         status_value,
         strategy_value,
         strategy_detail_value,
@@ -353,28 +376,55 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
 }
 
 fn set_orchestration_rail_collapsed(ui: &OrchestrationRailUi, collapsed: bool) {
+    ui.expanded_header.set_visible(!collapsed);
     ui.expanded_body.set_visible(!collapsed);
     ui.collapsed_strip.set_visible(collapsed);
-    ui.shell.set_width_request(if collapsed { 48 } else { 320 });
+    ui.shell.set_width_request(if collapsed {
+        RAIL_COLLAPSED_WIDTH
+    } else {
+        RAIL_EXPANDED_MIN_WIDTH
+    });
     if collapsed {
         ui.shell.add_css_class("collapsed");
     } else {
         ui.shell.remove_css_class("collapsed");
     }
-    ui.collapse_button.set_tooltip_text(Some(if collapsed {
-        "Expand Router rail"
-    } else {
-        "Collapse Router rail"
-    }));
-    set_accessible_button_text(
-        &ui.collapse_button,
+    // width_request is only a minimum: once the user drags the surrounding
+    // paned's divider its position sticks, so move it explicitly or the rail
+    // keeps its old width and collapses into an empty column.
+    let paned = ui
+        .shell
+        .parent()
+        .and_then(|parent| parent.downcast::<gtk::Paned>().ok());
+    if let Some(paned) = paned.filter(|paned| paned.width() > 0) {
         if collapsed {
-            "Expand Router rail"
+            ui.expanded_width
+                .set(ui.shell.width().max(RAIL_EXPANDED_MIN_WIDTH));
+            // Clamped by the rail's minimum width, so this pins it collapsed.
+            paned.set_position(paned.width());
         } else {
-            "Collapse Router rail"
-        },
-        None,
-    );
+            paned.set_position(paned.width() - ui.expanded_width.get());
+        }
+    }
+}
+
+fn rail_strip_badge(kind: &'static str) -> gtk::Label {
+    let badge = gtk::Label::builder()
+        .label("")
+        .single_line_mode(true)
+        .visible(false)
+        .build();
+    badge.add_css_class("orchestration-rail-strip-badge");
+    badge.add_css_class(kind);
+    badge
+}
+
+fn set_rail_strip_badge(badge: &gtk::Label, count: usize, tooltip: &str) {
+    badge.set_visible(count > 0);
+    if count > 0 {
+        badge.set_label(&count.to_string());
+        badge.set_tooltip_text(Some(tooltip));
+    }
 }
 
 fn build_approval_row(parent: &gtk::Box, state: &SocketAppState) -> RailApprovalRow {
@@ -531,7 +581,18 @@ pub(super) fn refresh_orchestration_rail(ui: &OrchestrationRailUi, state: &Socke
     let snapshot = orchestration_rail_snapshot(state);
     ui.collapsed_strip
         .set_tooltip_text(Some(&format!("Expand Router rail: {}", snapshot.status)));
+    set_rail_strip_badge(
+        &ui.collapsed_approvals_badge,
+        snapshot.approvals_pending,
+        "Pending approvals",
+    );
+    set_rail_strip_badge(
+        &ui.collapsed_notifications_badge,
+        snapshot.notifications_unread,
+        "Unread notifications",
+    );
     set_rail_value(&ui.status_value, &snapshot.status);
+    set_status_chip_class(&ui.status_value, &snapshot.status);
     set_rail_value(&ui.strategy_value, &snapshot.strategy);
     set_rail_value(&ui.strategy_detail_value, &snapshot.strategy_detail);
     set_rail_value(&ui.fanout_value, &snapshot.fanout);
@@ -595,6 +656,13 @@ fn set_count_attention(label: &gtk::Label, attention: bool) {
     } else {
         label.remove_css_class("attention");
     }
+}
+
+fn set_status_chip_class(label: &gtk::Label, status: &str) {
+    for class_name in ["ok", "run", "warn", "err", "info", "idle"] {
+        label.remove_css_class(class_name);
+    }
+    label.add_css_class(feed_status_class(status));
 }
 
 pub(super) fn build_orchestration_header_chips(
@@ -783,20 +851,24 @@ fn orchestration_rail_snapshot(state: &SocketAppState) -> RailSnapshot {
     let now_ms = now_unix_ms();
     let active_workspace_id = active_workspace_id_for_state(state);
     let live_statuses = live_surface_statuses(state);
-    let (notifications, notifications_attention, notification_items) = state
+    let (notifications, notifications_unread, notification_items) = state
         .model
         .lock()
         .ok()
         .map(|model| {
             let notifications = current_rail_notifications(&model, active_workspace_id.as_deref());
-            let unread = notifications.iter().any(|notification| !notification.read);
+            let unread = notifications
+                .iter()
+                .filter(|notification| !notification.read)
+                .count();
             (
                 format_notification_counts(&notifications),
                 unread,
                 notification_list_items(&notifications, now_ms),
             )
         })
-        .unwrap_or_else(|| ("unavailable".to_string(), false, Vec::new()));
+        .unwrap_or_else(|| ("unavailable".to_string(), 0, Vec::new()));
+    let notifications_attention = notifications_unread > 0;
     let visible_approvals = current_pending_feed_approvals(state, active_workspace_id.as_deref());
     let approval_count = visible_approvals.as_ref().map(Vec::len);
     let approval_items = visible_approvals
@@ -847,6 +919,7 @@ fn orchestration_rail_snapshot(state: &SocketAppState) -> RailSnapshot {
         loop_planned: workflow.loop_planned,
         approvals,
         approvals_attention,
+        approvals_pending: approval_count.unwrap_or(0),
         approvals_overflow,
         approval_items,
         workers: team.workers,
@@ -855,6 +928,7 @@ fn orchestration_rail_snapshot(state: &SocketAppState) -> RailSnapshot {
         report_items: team.report_items,
         notifications,
         notifications_attention,
+        notifications_unread,
         notification_items,
     }
 }

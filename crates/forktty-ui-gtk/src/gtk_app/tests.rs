@@ -2807,13 +2807,13 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(css.contains("button.flat.header-team-chip {"));
     assert!(css.contains(".rail-dot.ok {"));
     assert!(css.contains(".orchestration-feed {"));
-    assert!(css.contains(".orchestration-feed.collapsed {"));
     assert!(css.contains("button.flat.orchestration-feed-collapse"));
     assert!(css.contains(".orchestration-feed-tab.active"));
     assert!(css.contains(".orchestration-feed-status.err {"));
     assert!(css.contains(".orchestration-panel-header {"));
-    assert!(css.contains(".orchestration-rail.collapsed {"));
+    assert!(css.contains(".orchestration-status-chip.err {"));
     assert!(css.contains(".orchestration-rail-collapsed-strip"));
+    assert!(css.contains(".orchestration-rail-strip-badge.warn {"));
     assert!(css.contains("button.flat.orchestration-collapse-button"));
     assert!(css.contains(".orchestration-section {"));
     assert!(css.contains(".orchestration-loop-progress"));

@@ -47,6 +47,14 @@ All notable changes to ForkTTY are documented here.
 - The Router rail and bottom workflow feed can now be collapsed from their
   headers for temporary workspace space recovery while the Settings toggles
   remain the persistent show/hide controls.
+- Reworked both collapsed states: the collapsed Router rail is a slim strip
+  with an expand chevron plus pending-approval and unread-notification badges
+  (and now stays collapsed even after the divider has been dragged), the rail
+  header no longer scrolls away with the rail body, the workflow feed
+  collapses with a slide animation and re-expands when a feed tab is clicked,
+  collapse controls use chevron icons instead of ASCII arrows, and the rail
+  status and feed "live" pills were restyled (status pill now colored by
+  state instead of always green).
 - Settings follows the same agent-workspace pass: Interface gains live "Show
   orchestration rail" and "Show workflow feed" toggles (new
   `appearance.show_orchestration_rail` / `appearance.show_workflow_feed`
