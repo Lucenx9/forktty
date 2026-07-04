@@ -357,6 +357,7 @@ fn apply_team_cleanup(
                         agent: None,
                         surface_id: None,
                         worktree_name: None,
+                        report: None,
                         status: Some("closed".to_string()),
                         assigned_task_id: None,
                     },

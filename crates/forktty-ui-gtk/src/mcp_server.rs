@@ -787,7 +787,8 @@ mod tests {
                 "plan": plan,
                 "approved": ["start_run"],
                 "approval_id": "task-strategy:abcdef0123456789:approvals:start_run",
-                "request_approval": false
+                "request_approval": false,
+                "review": true
             }),
         )
         .unwrap();
@@ -803,6 +804,7 @@ mod tests {
             "task-strategy:abcdef0123456789:approvals:start_run"
         );
         assert_eq!(params["request_approval"], false);
+        assert_eq!(params["user_requested_review"], true);
         assert_eq!(params["plan"], plan);
     }
 
@@ -1065,6 +1067,21 @@ mod tests {
         assert!(params.get("workspace_id").is_none());
 
         let (method, params) = build_socket_call_for_test(
+            "team_worker_upsert",
+            json!({
+                "team_id": "team-1",
+                "worker_id": "worker-1",
+                "agent": "grok",
+                "status": "done",
+                "report": "final report"
+            }),
+        )
+        .unwrap();
+        assert_eq!(method, "team.worker.upsert");
+        assert_eq!(params["worker_id"], "worker-1");
+        assert_eq!(params["report"], "final report");
+
+        let (method, params) = build_socket_call_for_test(
             "team_worker_heartbeat",
             json!({
                 "team_id": "team-1",
@@ -1116,6 +1133,7 @@ mod tests {
                 "dry_run": true,
                 "close_workers": true,
                 "force": true,
+                "compact": true,
             }),
         )
         .unwrap();
@@ -1124,6 +1142,7 @@ mod tests {
         assert_eq!(params["dry_run"], true);
         assert_eq!(params["close_workers"], true);
         assert_eq!(params["force"], true);
+        assert_eq!(params["compact"], true);
 
         let (method, params) = build_socket_call_for_test(
             "team_worker_shutdown",

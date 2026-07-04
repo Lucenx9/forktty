@@ -1,6 +1,7 @@
 //! Socket CLI team command regression tests for list, task, worker, message, and finish flows.
 
 use super::*;
+use crate::socket_cli::team::handle_team_worker_upsert;
 
 #[test]
 fn teams_requests_team_list_with_filters() {
@@ -68,6 +69,42 @@ fn team_upsert_requests_team_upsert() {
     assert_eq!(request["params"]["name"], "Launch");
     assert_eq!(request["params"]["status"], "active");
     assert_eq!(request["params"]["goal"], "ship runtime");
+}
+
+#[test]
+fn team_worker_upsert_passes_report() {
+    let request = with_socket_response(
+        |req| {
+            json!({
+                "id": req["id"],
+                "ok": true,
+                "result": {"id": "worker-1", "status": "done", "report": "final report"},
+            })
+            .to_string()
+        },
+        |socket_path| {
+            handle_team_worker_upsert(
+                &ctx_for(socket_path),
+                strings(&[
+                    "team-1",
+                    "worker-1",
+                    "--agent",
+                    "grok",
+                    "--status",
+                    "done",
+                    "--report",
+                    "final report",
+                ]),
+            )
+            .unwrap();
+        },
+    );
+    assert_eq!(request["method"], "team.worker.upsert");
+    assert_eq!(request["params"]["team_id"], "team-1");
+    assert_eq!(request["params"]["worker_id"], "worker-1");
+    assert_eq!(request["params"]["agent"], "grok");
+    assert_eq!(request["params"]["status"], "done");
+    assert_eq!(request["params"]["report"], "final report");
 }
 
 #[test]
@@ -952,6 +989,7 @@ fn team_finish_passes_cleanup_options() {
                     "--dry-run",
                     "--close-workers",
                     "--force",
+                    "--compact",
                 ]),
             )
             .unwrap();
@@ -962,6 +1000,7 @@ fn team_finish_passes_cleanup_options() {
     assert_eq!(request["params"]["dry_run"], true);
     assert_eq!(request["params"]["close_workers"], true);
     assert_eq!(request["params"]["force"], true);
+    assert_eq!(request["params"]["compact"], true);
 }
 
 #[test]

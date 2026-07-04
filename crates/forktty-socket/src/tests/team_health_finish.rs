@@ -236,6 +236,78 @@ async fn team_finish_marks_quiescent_active_team_done() {
 }
 
 #[tokio::test]
+async fn team_finish_compact_omits_full_team_record_and_message_bodies() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "workspace_id": workspace_id,
+            "status": "active"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex",
+            "status": "shutdown_requested"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.message.send",
+        json!({
+            "team_id": "team-1",
+            "message_id": "msg-1",
+            "from": "leader",
+            "to_worker_id": "worker-1",
+            "body": "large prompt body that should not be echoed by compact finish"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.message.ack",
+        json!({
+            "team_id": "team-1",
+            "message_id": "msg-1",
+            "worker_id": "worker-1"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let finished = dispatch(
+        &state,
+        "team.finish",
+        json!({"team_id": "team-1", "compact": true}),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(finished["compact"], true);
+    assert!(finished.get("team").is_none());
+    assert_eq!(finished["summary_after"]["status"], "done");
+    assert!(!finished
+        .to_string()
+        .contains("large prompt body that should not be echoed"));
+}
+
+#[tokio::test]
 async fn team_finish_dry_run_reports_blockers_without_mutating() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();

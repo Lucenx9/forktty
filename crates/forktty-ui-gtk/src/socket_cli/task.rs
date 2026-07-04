@@ -15,7 +15,7 @@ options: --workspace-id <id>, --workspace-name <name>, --worktree-name <name>, -
 
 const TASK_APPLY_HELP: &str = "\
 usage: forktty task-apply --run-id <id> --plan-json <json> [options] <goal> [--json]
-options: --workspace-id <id>, --workspace-name <name>, --worktree-name <name>, --cwd <repo>, --leader-surface-id <id>, --surface-id <id>, --workflow-id <id>, --team-id <id>, --approved <ids>, --approval-id <id>, --request-approval[=true|false], --submit[=true|false]
+options: --workspace-id <id>, --workspace-name <name>, --worktree-name <name>, --cwd <repo>, --leader-surface-id <id>, --surface-id <id>, --workflow-id <id>, --team-id <id>, --approved <ids>, --approval-id <id>, --request-approval[=true|false], --submit[=true|false], --review[=true|false]
 ";
 
 pub(super) fn handle_task_plan(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -150,7 +150,7 @@ fn insert_optional_json_object_param(
 }
 
 pub(super) fn handle_task_apply(context: &CliContext, args: Vec<String>) -> CliResult<()> {
-    let parsed = parse_flags(args, &["submit", "request-approval"]);
+    let parsed = parse_flags(args, &["submit", "request-approval", "review"]);
     if parsed.options.contains_key("help") {
         return Err(help_error(TASK_APPLY_HELP));
     }
@@ -171,6 +171,7 @@ pub(super) fn handle_task_apply(context: &CliContext, args: Vec<String>) -> CliR
             "approval-id",
             "request-approval",
             "submit",
+            "review",
         ],
         "task-apply",
     )?;
@@ -261,6 +262,12 @@ pub(super) fn handle_task_apply(context: &CliContext, args: Vec<String>) -> CliR
         "request_approval",
     )?;
     insert_optional_bool_param(&parsed.options, &mut params, "submit", "submit")?;
+    insert_optional_bool_param(
+        &parsed.options,
+        &mut params,
+        "review",
+        "user_requested_review",
+    )?;
 
     let result = send_socket_request(
         &context.socket_path,

@@ -5,6 +5,12 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- Team workers can now persist a bounded final `report` through
+  `team.worker.upsert`, CLI, and MCP; the report is returned by `team.get`,
+  counted in `team.summary`, and surfaced in `team.worker.health`.
+- `task.strategy.plan` and `task.strategy.apply` responses now include
+  `planner_version` so agents can record which ForkTTY planner produced or
+  applied a routing decision.
 - Task strategy apply now bootstraps an initial `planned` workflow loop record
   for plans with `layers.loop_metadata: true` and context snapshots warn with
   `loop_never_recorded` when such workflows are finished without loop
@@ -28,6 +34,11 @@ All notable changes to ForkTTY are documented here.
   touching live worker surfaces.
 
 ### Changed
+- `team.finish` now accepts `compact`/`--compact` to finalize teams without
+  echoing the full team record and mailbox bodies in the response.
+- Team worker health now distinguishes workers that have no heartbeat plumbing
+  from stale workers and uses persisted agent-session lifecycle evidence to
+  report `idle`, `needs_input`, or `done` when hooks already recorded it.
 - The agent skill and operating guide now make verify-loop state recording
   part of the strategy contract: when an applied task-strategy plan sets
   `layers.loop_metadata: true`, apply seeds the initial planned loop record,
@@ -47,6 +58,9 @@ All notable changes to ForkTTY are documented here.
   guessing or exact internal enum names.
 
 ### Fixed
+- Fixed task strategy worktree isolation so dirty-repo read-only parallel
+  reviews can remain `parallel_research` without requiring worktree isolation,
+  while mutating `parallel_experiment` plans still require isolation.
 - Fixed task strategy goal keyword false positives: artifact words such as
   "quickstart" or "smaller" no longer trigger the fast profile, "parallelize
   ..." editing goals no longer route to parallel research lanes, and refactor

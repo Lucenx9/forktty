@@ -120,8 +120,10 @@ pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value
     }
     plan.reasons.extend(inferred_cooldown_reasons);
 
-    serde_json::to_value(plan)
-        .map_err(|err| DispatchError::Other(format!("serialize task strategy plan: {err}")))
+    let mut value = serde_json::to_value(plan)
+        .map_err(|err| DispatchError::Other(format!("serialize task strategy plan: {err}")))?;
+    value["planner_version"] = json!(env!("CARGO_PKG_VERSION"));
+    Ok(value)
 }
 
 fn task_class_likely_user_visible_change(task_class: &TaskClass) -> bool {
@@ -145,13 +147,19 @@ fn task_strategy_likely_user_visible_change(strategy: &TaskStrategy) -> bool {
     )
 }
 
-fn task_strategy_plan_is_read_only_review(plan: &TaskStrategyPlan) -> bool {
-    matches!(plan.task_class, TaskClass::ReviewOnly)
-        && matches!(plan.strategy, TaskStrategy::ReviewOnly)
-        && plan
-            .assignments
-            .iter()
-            .all(|assignment| matches!(assignment.role, HarnessRole::Reviewer))
+fn task_strategy_plan_is_read_only_review(plan: &TaskStrategyPlan, review_requested: bool) -> bool {
+    let review_only = matches!(plan.task_class, TaskClass::ReviewOnly)
+        && matches!(plan.strategy, TaskStrategy::ReviewOnly);
+    let parallel_review = review_requested
+        && matches!(plan.task_class, TaskClass::ParallelResearch)
+        && matches!(plan.strategy, TaskStrategy::ParallelResearch);
+    (review_only || parallel_review)
+        && plan.assignments.iter().all(|assignment| {
+            matches!(
+                assignment.role,
+                HarnessRole::Reviewer | HarnessRole::Researcher
+            )
+        })
 }
 
 fn task_strategy_supports_team_layer(strategy: &TaskStrategy) -> bool {
@@ -884,6 +892,7 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
 
     Ok(json!({
         "run_id": request.run_id,
+        "planner_version": env!("CARGO_PKG_VERSION"),
         "status": run_status,
         "workflow_id": if request.plan.layers.workflow { Value::String(request.workflow_id) } else { Value::Null },
         "team_id": if request.plan.layers.team { Value::String(request.team_id) } else { Value::Null },
@@ -1471,6 +1480,7 @@ struct TaskStrategyApplyRequest {
     approved: Vec<String>,
     approval_id: Option<String>,
     request_approval: bool,
+    user_requested_review: bool,
     submit: bool,
 }
 
@@ -1502,6 +1512,15 @@ impl TaskStrategyApplyRequest {
             validate_task_strategy_id("approval_id", approval_id)?;
         }
         let request_approval = optional_bool_param(params, "request_approval")?.unwrap_or(false);
+        let review_alias = optional_bool_param(params, "review")?;
+        let user_requested_review = optional_bool_param(params, "user_requested_review")?;
+        if matches!((review_alias, user_requested_review), (Some(left), Some(right)) if left != right)
+        {
+            return Err(DispatchError::InvalidParam(
+                "review and user_requested_review must match when both are provided".to_string(),
+            ));
+        }
+        let user_requested_review = user_requested_review.or(review_alias).unwrap_or(false);
         let leader_surface_id = optional_task_strategy_surface_alias_param(params)?;
         let workspace_selector = task_strategy_workspace_selector_params(params)?;
         let workspace_id = workspace_selector.workspace_id;
@@ -1542,6 +1561,7 @@ impl TaskStrategyApplyRequest {
             approved,
             approval_id,
             request_approval,
+            user_requested_review,
             submit,
         })
     }
@@ -1612,7 +1632,8 @@ impl TaskStrategyApplyRequest {
             Err(err) if self.worktree_name.is_some() && err.code() == "not_found" => false,
             Err(err) => return Err(err),
         };
-        let read_only_review_plan = task_strategy_plan_is_read_only_review(&self.plan);
+        let read_only_review_plan =
+            task_strategy_plan_is_read_only_review(&self.plan, self.user_requested_review);
         let likely_user_visible_change =
             task_class_likely_user_visible_change(&self.plan.task_class)
                 || task_strategy_likely_user_visible_change(&self.plan.strategy)
@@ -1686,6 +1707,15 @@ impl TaskStrategyApplyRequest {
         for approval in missing_approvals {
             feed_hash(&mut hash, approval);
         }
+        feed_hash(&mut hash, "user_requested_review");
+        feed_hash(
+            &mut hash,
+            if self.user_requested_review {
+                "true"
+            } else {
+                "false"
+            },
+        );
         feed_hash(&mut hash, "submit");
         feed_hash(&mut hash, if self.submit { "true" } else { "false" });
         format!("{hash:016x}")
@@ -1891,6 +1921,7 @@ impl TaskStrategyApplyRequest {
     ) -> Value {
         json!({
             "run_id": self.run_id,
+            "planner_version": env!("CARGO_PKG_VERSION"),
             "status": "blocked",
             "workflow_id": Value::Null,
             "team_id": Value::Null,

@@ -20,7 +20,7 @@ Usage:
   forktty teams [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--status <status>] [--query <text>] [--limit <n>] [--json]
   forktty team-get <team-id> [--json]
   forktty team-upsert <team-id> [--workspace-id <id>] [--leader-surface-id <id>] [--name <name>] [--status <status>] [--goal <text>] [--json]
-  forktty team-worker-upsert <team-id> <worker-id> [--role <role>] [--agent <agent>] [--surface-id <id>] [--worktree-name <name>] [--status <status>] [--assigned-task-id <id>] [--json]
+  forktty team-worker-upsert <team-id> <worker-id> [--role <role>] [--agent <agent>] [--surface-id <id>] [--worktree-name <name>] [--status <status>] [--assigned-task-id <id>] [--report <text>] [--json]
   forktty team-worker-heartbeat <team-id> <worker-id> [--status <status>] [--assigned-task-id <id>] [--json]
   forktty team-worker-launch <team-id> <worker-id> [--agent <agent>] [--role <role>] [--assigned-task-id <id>] [--worktree-name <name>] [--cwd <repo>] [--args <comma-list>] [--json]
   forktty team-worker-health <team-id> [--stale-after-ms <ms>] [--json]
@@ -37,7 +37,7 @@ Usage:
   forktty team ask <team-id> <worker-id> [--agent <agent>] --task-id <id> --prompt <text>
   forktty team review <team-id> <worker-id> [--agent <agent>] --task-id <id> [--commit <rev>]
   forktty team watch <team-id> [--stale-after-ms <ms>] [--limit <n>] [--json]
-  forktty team finish <team-id> [--dry-run] [--close-workers] [--force] [--json]
+  forktty team finish <team-id> [--dry-run] [--close-workers] [--force] [--compact] [--json]
   forktty split-surface [--surface-id <id>] [--axis horizontal|vertical]
   forktty focus-surface <surface-id>
   forktty close-surface <surface-id>
@@ -70,7 +70,7 @@ Usage:
   forktty context-snapshot [workspace selectors] [--surface-id <id>] [--tail-lines <n>] [--include-team-details] [--include-workflow-details] [--include-feed-trace]
   forktty task-plan <goal> [workspace selectors] [--surface-id <id>] [--cwd <repo>] [--strategy <strategy>] [--task-kind <kind>] [--profile balanced|fast|conservative|parallel|review_heavy] [--last-known-good-json <json>] [--harness-signals-json <json>] [--repo-dirty] [--parallel] [--review] [--user-visible] [--json]
       Ask ForkTTY to choose a read-only strategy for a task before selecting team, loop, worktree, or harnesses. The goal is capped at 4096 UTF-8 bytes and rejects terminal control characters other than newline or tab before it is copied into workflow/team state or worker prompts. If --profile is omitted, ForkTTY infers a router profile when the goal clearly asks for speed, caution, parallel work, or review. ForkTTY can infer last-known-good stickiness from completed task-strategy workflows; --last-known-good-json may override or enrich it. --harness-signals-json may pass per-harness cooldown/lockout signals for scripts, optionally classifying the cause with cooldown_kind (quota|auth|crash|timeout) so the soft penalty scales with it; for harnesses it does not name, ForkTTY infers an advisory soft cooldown from recent failed task-strategy workflows. If --repo-dirty or --user-visible is omitted, ForkTTY infers dirty state from --cwd inside an open ForkTTY workspace/surface repo or the selected surface/workspace cwd, and edit intent from --task-kind plus high-confidence goal wording when possible.
-  forktty task-apply --run-id <id> --plan-json <json> [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--cwd <repo>] [--leader-surface-id <id>|--surface-id <id>] [--workflow-id <id>] [--team-id <id>] [--approved <ids>|--request-approval|--approval-id <id>] [--submit] <goal> [--json]
+  forktty task-apply --run-id <id> --plan-json <json> [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--cwd <repo>] [--leader-surface-id <id>|--surface-id <id>] [--workflow-id <id>] [--team-id <id>] [--approved <ids>|--request-approval|--approval-id <id>] [--submit] [--review] <goal> [--json]
       Apply an approved strategy. The goal uses the same 4096-byte and terminal-control validation as task-plan. Defaults to staged workflow/team state; --request-approval creates a Feed approval without starting, --approval-id consumes an approved request, and --submit launches visible workers for supported team plans. Pass --cwd when the repo target differs from the selected ForkTTY pane and is already represented by an open ForkTTY workspace/surface repo; worktree-layer apply requires an already-open worktree workspace.
   forktty cleanup orchestration [--dry-run|--apply] [--workspace-id <id>] [--json]
       Inspect or apply conservative cleanup for stale team/workflow orchestration records; dry-run is the default and live worker surfaces are reported for manual review.
@@ -137,13 +137,16 @@ High-level wrappers:
   forktty team watch <team-id> [--stale-after-ms <ms>] [--limit <n>] [--include-delivered]
       Read team.summary, team.worker.health, team.inbox, and team.events together.
 
-  forktty team finish <team-id> [--dry-run] [--close-workers] [--force]
+  forktty team finish <team-id> [--dry-run] [--close-workers] [--force] [--compact]
       Verify team state, optionally close current-runtime launch-owned workers, and mark the team done.
+      Use --compact to omit the full team record and mailbox bodies from the success response.
 
 Low-level aliases still exist:
   forktty teams | team-list | team:list | team.list
   forktty team-get | team:get | team.get
   forktty team-worker-launch | team.worker.launch
+  forktty team-worker-upsert | team.worker.upsert
+      Accepts --report <text> for a bounded worker final report.
   forktty team-worker-shutdown --close closes current-runtime launch-owned disposable worker panes
   forktty team-message-send | team.message.send
   forktty team-message-dispatch | team.message.dispatch

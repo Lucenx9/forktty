@@ -235,6 +235,7 @@ pub(crate) struct TeamFinishRequest {
     pub(crate) dry_run: bool,
     pub(crate) close_workers: bool,
     pub(crate) force: bool,
+    pub(crate) compact: bool,
 }
 
 impl TeamFinishRequest {
@@ -244,6 +245,7 @@ impl TeamFinishRequest {
             dry_run: optional_bool_param(params, "dry_run")?.unwrap_or(false),
             close_workers: optional_bool_param(params, "close_workers")?.unwrap_or(false),
             force: optional_bool_param(params, "force")?.unwrap_or(false),
+            compact: optional_bool_param(params, "compact")?.unwrap_or(false),
         })
     }
 }
@@ -266,6 +268,7 @@ impl TeamWorkerUpsertRequest {
                     .map(str::to_string),
                 worktree_name: optional_non_blank_string_param(params, "worktree_name")?
                     .map(str::to_string),
+                report: optional_string_param(params, "report")?.map(str::to_string),
                 status: optional_non_blank_string_param(params, "status")?.map(str::to_string),
                 assigned_task_id: optional_non_blank_string_param(params, "assigned_task_id")?
                     .map(str::to_string),

@@ -203,6 +203,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                     "workflow_id",
                     "team_id",
                     "submit",
+                    "review",
                 ],
                 name,
             )?;
@@ -250,6 +251,12 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             insert_optional_non_blank_param(args, &mut params, "workflow_id")?;
             insert_optional_non_blank_param(args, &mut params, "team_id")?;
             insert_optional_bool_param(args, &mut params, "submit")?;
+            insert_optional_renamed_bool_param(
+                args,
+                &mut params,
+                "review",
+                "user_requested_review",
+            )?;
             SocketCall {
                 method: "task.strategy.apply",
                 params,
@@ -507,13 +514,14 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
         "team_finish" => {
             reject_unexpected(
                 args,
-                &["team_id", "dry_run", "close_workers", "force"],
+                &["team_id", "dry_run", "close_workers", "force", "compact"],
                 name,
             )?;
             let mut params = map_from_pairs([("team_id", required_non_blank(args, "team_id")?)]);
             insert_optional_bool_param(args, &mut params, "dry_run")?;
             insert_optional_bool_param(args, &mut params, "close_workers")?;
             insert_optional_bool_param(args, &mut params, "force")?;
+            insert_optional_bool_param(args, &mut params, "compact")?;
             SocketCall {
                 method: "team.finish",
                 params,
@@ -529,6 +537,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
                     "agent",
                     "surface_id",
                     "worktree_name",
+                    "report",
                     "status",
                     "assigned_task_id",
                 ],
@@ -542,6 +551,7 @@ fn build_socket_call(name: &str, args: &Map<String, Value>) -> Result<SocketCall
             insert_optional_non_blank_param(args, &mut params, "agent")?;
             insert_optional_non_blank_param(args, &mut params, "surface_id")?;
             insert_optional_non_blank_param(args, &mut params, "worktree_name")?;
+            insert_optional_string_param(args, &mut params, "report")?;
             insert_optional_non_blank_param(args, &mut params, "status")?;
             insert_optional_non_blank_param(args, &mut params, "assigned_task_id")?;
             SocketCall {

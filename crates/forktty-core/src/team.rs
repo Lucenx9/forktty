@@ -98,6 +98,8 @@ pub struct TeamWorker {
     pub worktree_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub report: Option<String>,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assigned_task_id: Option<String>,
@@ -181,6 +183,7 @@ pub struct TeamWorkerUpsert {
     pub agent: Option<String>,
     pub surface_id: Option<String>,
     pub worktree_name: Option<String>,
+    pub report: Option<String>,
     pub status: Option<String>,
     pub assigned_task_id: Option<String>,
 }
@@ -266,6 +269,8 @@ pub struct TeamSummary {
     pub status: String,
     pub workers_total: usize,
     pub workers_active: usize,
+    #[serde(default)]
+    pub workers_with_reports: usize,
     pub tasks_total: usize,
     pub tasks_open: usize,
     pub messages_pending: usize,
@@ -414,6 +419,7 @@ impl TeamStoreData {
         let agent = clean_optional_short("agent", input.agent.as_deref())?;
         let surface_id = clean_optional_id("surface_id", input.surface_id.as_deref())?;
         let worktree_name = clean_optional_id("worktree_name", input.worktree_name.as_deref())?;
+        let report = clean_optional_long("report", input.report.as_deref())?;
         let status = clean_optional_short("status", input.status.as_deref())?;
         let assigned_task_id =
             clean_optional_id("assigned_task_id", input.assigned_task_id.as_deref())?;
@@ -446,6 +452,7 @@ impl TeamStoreData {
                     launched_surface_id: None,
                     worktree_name: None,
                     cwd: None,
+                    report: None,
                     status: "idle".to_string(),
                     assigned_task_id: None,
                     last_heartbeat_ms: 0,
@@ -470,6 +477,9 @@ impl TeamStoreData {
         }
         if worktree_name.is_some() {
             worker.worktree_name = worktree_name;
+        }
+        if report.is_some() {
+            worker.report = report;
         }
         if let Some(status) = status {
             worker.status = status;
@@ -535,6 +545,7 @@ impl TeamStoreData {
                     launched_surface_id: None,
                     worktree_name: None,
                     cwd: None,
+                    report: None,
                     status: "idle".to_string(),
                     assigned_task_id: None,
                     last_heartbeat_ms: 0,
@@ -556,12 +567,13 @@ impl TeamStoreData {
             worker.worktree_name = worktree_name;
         }
         worker.cwd = cwd;
+        worker.report = None;
         if assigned_task_id.is_some() {
             worker.assigned_task_id = assigned_task_id;
         }
         worker.status = "running".to_string();
         worker.launched_at_ms = now_ms;
-        worker.last_heartbeat_ms = now_ms;
+        worker.last_heartbeat_ms = 0;
         worker.shutdown_requested_at_ms = 0;
         updated.updated_at_ms = now_ms;
         let worker = worker.clone();
@@ -980,6 +992,16 @@ impl TeamStoreData {
                 )
             })
             .count();
+        let workers_with_reports = team
+            .workers
+            .iter()
+            .filter(|worker| {
+                worker
+                    .report
+                    .as_deref()
+                    .is_some_and(|report| !report.is_empty())
+            })
+            .count();
         let tasks_open = team
             .tasks
             .iter()
@@ -1021,6 +1043,7 @@ impl TeamStoreData {
             status: team.status.clone(),
             workers_total: team.workers.len(),
             workers_active,
+            workers_with_reports,
             tasks_total: team.tasks.len(),
             tasks_open,
             messages_pending,
@@ -1338,6 +1361,9 @@ fn validate_team_references(team: &TeamState) -> Result<(), TeamError> {
         if let Some(worktree_name) = &worker.worktree_name {
             clean_id("worker.worktree_name", worktree_name)?;
         }
+        if let Some(report) = &worker.report {
+            clean_long("worker.report", report)?;
+        }
         clean_short("worker.status", &worker.status)?;
         if let Some(task_id) = worker.assigned_task_id.as_deref() {
             if !task_ids.contains(task_id) {
@@ -1585,6 +1611,7 @@ mod tests {
                     agent: Some("codex".to_string()),
                     surface_id: Some("surface-2".to_string()),
                     worktree_name: Some("feature/team".to_string()),
+                    report: None,
                     status: Some("idle".to_string()),
                     assigned_task_id: None,
                 },
@@ -1729,6 +1756,7 @@ mod tests {
                     agent: Some("codex".to_string()),
                     surface_id: Some("surface-2".to_string()),
                     worktree_name: None,
+                    report: None,
                     status: Some("running".to_string()),
                     assigned_task_id: None,
                 },
@@ -1803,6 +1831,7 @@ mod tests {
                     agent: Some("codex".to_string()),
                     surface_id: Some("surface-2".to_string()),
                     worktree_name: None,
+                    report: None,
                     status: Some("running".to_string()),
                     assigned_task_id: None,
                 },
@@ -1882,6 +1911,7 @@ mod tests {
                     agent: Some("codex".to_string()),
                     surface_id: Some("surface-2".to_string()),
                     worktree_name: None,
+                    report: None,
                     status: Some("running".to_string()),
                     assigned_task_id: None,
                 },
@@ -2044,6 +2074,7 @@ mod tests {
                     agent: Some("codex".to_string()),
                     surface_id: Some("surface-1".to_string()),
                     worktree_name: None,
+                    report: None,
                     status: Some("running".to_string()),
                     assigned_task_id: None,
                 },
@@ -2402,6 +2433,7 @@ mod tests {
                     agent: Some("codex".to_string()),
                     surface_id: None,
                     worktree_name: None,
+                    report: None,
                     status: Some("shutdown_requested".to_string()),
                     assigned_task_id: Some("task-1".to_string()),
                 },
@@ -2445,6 +2477,7 @@ mod tests {
                     agent: Some("codex".to_string()),
                     surface_id: Some("surface-1".to_string()),
                     worktree_name: None,
+                    report: None,
                     status: Some("running".to_string()),
                     assigned_task_id: None,
                 },
@@ -2502,6 +2535,7 @@ mod tests {
                     agent: Some("codex".to_string()),
                     surface_id: Some("surface-1".to_string()),
                     worktree_name: None,
+                    report: None,
                     status: Some("running".to_string()),
                     assigned_task_id: None,
                 },
@@ -2527,6 +2561,7 @@ mod tests {
                     agent: None,
                     surface_id: None,
                     worktree_name: None,
+                    report: None,
                     status: Some("running".to_string()),
                     assigned_task_id: None,
                 },
@@ -2639,6 +2674,7 @@ mod tests {
                     agent: None,
                     surface_id: None,
                     worktree_name: None,
+                    report: None,
                     status: None,
                     assigned_task_id: None,
                 },

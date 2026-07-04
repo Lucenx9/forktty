@@ -187,7 +187,10 @@ Use mutating tools only for visible coordination:
 - `surface_send_text`, `surface_focus`, and `surface_split` affect panes the
   user can see.
 - `team_upsert`, `team_task_upsert`, `team_worker_upsert`, and
-  `team_worker_heartbeat` update the team control plane.
+  `team_worker_heartbeat` update the team control plane. Use
+  `team_worker_upsert.report` for a worker's compact final report when the
+  worker has reconciled its assigned task; use `team_message_send` when the
+  final report should also remain a mailbox item for the leader.
 - `team_worker_launch` opens a provider worker pane.
 - `team_message_send` queues a message; `team_message_dispatch` sends a
   non-superseded message to the worker pane and acknowledges only after delivery
@@ -259,17 +262,22 @@ or parallel workers:
    pane.
 5. Monitor with `team_worker_health`, `team_events`, and bounded terminal tail
    reads. Use each worker's derived `final_state` (`shutdown_requested`,
-   `closed`, `starting`, `surface_missing`, `stale`, `idle`, `running`, or
-   `needs_input`) plus `surface_present`/`surface_runtime_present`/
-   `surface_ready` for cleanup decisions. Nudge only for stale or blocked
-   workers, not while coherent work is active.
-6. Mark tasks done/blocked with evidence. When all work is reconciled, run
+   `closed`, `starting`, `surface_missing`, `stale`, `idle`, `running`,
+   `done`, or `needs_input`), `heartbeat_state` (`no_heartbeat`, `fresh`, or
+   `stale`), and `surface_present`/`surface_runtime_present`/`surface_ready`
+   for cleanup decisions. Nudge only for stale or blocked workers, not while
+   coherent work is active.
+6. Mark tasks done/blocked with evidence. Persist each worker's final report
+   either as a team mailbox message or with `team_worker_upsert.report` before
+   finishing the team, especially when the result must survive context
+   compaction. When all work is reconciled, run
    `team_finish` or `forktty team finish --dry-run` first; then finalize with
    `--close-workers` only for disposable workers launched by the current ForkTTY
-   runtime's team tools. Use `--force` only after reviewing `team_summary` and
-   `team_worker_health`. For stale records left by interrupted or restarted
-   runs, use `forktty cleanup orchestration --dry-run` first; apply it only
-   after confirming no live worker surface should continue.
+   runtime's team tools. Use `--compact` when you only need ids, summaries, and
+   statuses back from the finalization call. Use `--force` only after reviewing
+   `team_summary` and `team_worker_health`. For stale records left by
+   interrupted or restarted runs, use `forktty cleanup orchestration --dry-run`
+   first; apply it only after confirming no live worker surface should continue.
 
 Workers must not create, fork, steer, rename, archive, or delegate to other
 workers unless the user explicitly grants that permission.
@@ -323,7 +331,8 @@ Use explicit role contracts instead of generic "help me" prompts:
 
 Every worker prompt should include repository path, target cwd or worktree,
 permissions, no-subdelegation rule, scope boundaries, expected output format,
-and the verification evidence required before the worker can be marked done.
+the exact `team_id` and `worker_id` for final reporting when available, and the
+verification evidence required before the worker can be marked done.
 
 ## Worktree Policy
 

@@ -23,6 +23,7 @@ pub(in crate::socket_cli) fn handle_team_worker_upsert(
             "agent",
             "surface-id",
             "worktree-name",
+            "report",
             "status",
             "assigned-task-id",
         ],
@@ -48,6 +49,7 @@ pub(in crate::socket_cli) fn handle_team_worker_upsert(
         "worktree-name",
         "worktree_name",
     )?;
+    insert_optional_cli_raw_string_param(&mut params, &parsed.options, "report", "report")?;
     insert_optional_cli_string_param(&mut params, &parsed.options, "status", "status")?;
     insert_optional_cli_string_param(
         &mut params,

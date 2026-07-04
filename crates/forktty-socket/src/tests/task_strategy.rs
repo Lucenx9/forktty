@@ -29,6 +29,7 @@ async fn task_strategy_plan_returns_read_only_strategy() {
     .unwrap();
 
     assert_eq!(result["strategy"], "solo_with_verify_loop");
+    assert_eq!(result["planner_version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(result["layers"]["workflow"], true);
     assert_eq!(result["layers"]["loop_metadata"], true);
     assert_eq!(result["layers"]["team"], false);
@@ -67,6 +68,30 @@ async fn task_strategy_plan_returns_read_only_strategy() {
         .unwrap()
         .iter()
         .any(|note| { note.as_str().unwrap_or_default().contains("read-only") }));
+}
+
+#[tokio::test]
+async fn task_strategy_apply_response_includes_planner_version() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+
+    let result = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Fix the router loop state",
+            "approved": ["start_run"],
+            "plan": solo_verify_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["planner_version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(result["status"], "staged");
 }
 
 #[tokio::test]
@@ -1675,6 +1700,49 @@ async fn task_strategy_apply_forces_dirty_editing_worktree_approval() {
     let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
     assert!(workflows.as_array().unwrap().is_empty());
     assert!(teams.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn task_strategy_apply_review_flag_exempts_parallel_research_from_dirty_worktree() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let repo_dir = tempfile::tempdir().unwrap();
+    git2::Repository::init(repo_dir.path()).unwrap();
+    std::fs::write(repo_dir.path().join("dirty.txt"), "dirty\n").unwrap();
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.set_surface_cwd(surface_id, repo_dir.path().to_path_buf()));
+    }
+
+    let mut plan = parallel_research_plan_json();
+    plan["approvals"] = json!(["start_run"]);
+
+    let result = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "leader_surface_id": surface_id,
+            "goal": "Review this implementation in parallel and identify fixes",
+            "user_requested_review": true,
+            "approved": ["start_run"],
+            "plan": plan
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["status"], "staged");
+    assert_eq!(result["blocked_approvals"], json!([]));
+    assert!(result["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action["method"] == "team.upsert"));
 }
 
 #[tokio::test]

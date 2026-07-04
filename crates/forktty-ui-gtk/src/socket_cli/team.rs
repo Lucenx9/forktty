@@ -137,10 +137,10 @@ pub(super) fn handle_team_watch(context: &CliContext, args: Vec<String>) -> CliR
 }
 
 pub(super) fn handle_team_finish(context: &CliContext, args: Vec<String>) -> CliResult<()> {
-    let parsed = parse_flags(args, &["dry-run", "close-workers", "force"]);
+    let parsed = parse_flags(args, &["dry-run", "close-workers", "force", "compact"]);
     reject_unknown_options(
         &parsed.options,
-        &["dry-run", "close-workers", "force"],
+        &["dry-run", "close-workers", "force", "compact"],
         "team finish",
     )?;
     let positionals = required_positionals(&parsed.positionals, "team finish", &["team-id"])?;
@@ -174,6 +174,17 @@ pub(super) fn handle_team_finish(context: &CliContext, args: Vec<String>) -> Cli
         }
         Some(false) => {}
         None => return Err(CliError::new("team finish: --force expects true or false")),
+    }
+    match bool_option(&parsed.options, "compact") {
+        Some(true) => {
+            params.insert("compact".to_string(), Value::Bool(true));
+        }
+        Some(false) => {}
+        None => {
+            return Err(CliError::new(
+                "team finish: --compact expects true or false",
+            ))
+        }
     }
     let result = send_socket_request(&context.socket_path, "team.finish", Value::Object(params))?;
     print_result_or_json(context, format_team_finish_line(&result), result)

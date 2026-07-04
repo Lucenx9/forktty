@@ -246,6 +246,151 @@ async fn dispatches_team_orchestration_runtime_methods() {
 }
 
 #[tokio::test]
+async fn team_worker_upsert_persists_report_for_get_summary_and_health() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    let report =
+        "Findings\n- P1: router report persisted\nVerification: cargo test team_worker_report\n";
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "leader_surface_id": surface_id,
+            "name": "Report capture"
+        }),
+    )
+    .await
+    .unwrap();
+    let worker = dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "grok",
+            "surface_id": surface_id,
+            "role": "reviewer",
+            "status": "done",
+            "report": report
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(worker["report"], report);
+
+    let fetched = dispatch(&state, "team.get", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    assert_eq!(fetched["workers"][0]["report"], report);
+    let summary = dispatch(&state, "team.summary", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    assert_eq!(summary["workers_with_reports"], 1);
+    let health = dispatch(&state, "team.worker.health", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    assert_eq!(health["workers"][0]["report_present"], true);
+    assert_eq!(health["workers"][0]["report"], report);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn team_worker_health_reports_no_heartbeat_for_launched_worker_without_heartbeat() {
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_program(bin_dir.path(), "codex");
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "name": "Health"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex",
+            "role": "reviewer"
+        }),
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(5)).await;
+
+    let health = dispatch(
+        &state,
+        "team.worker.health",
+        json!({"team_id": "team-1", "stale_after_ms": 0}),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(health["workers"][0]["heartbeat_state"], "no_heartbeat");
+    assert_eq!(health["workers"][0]["lifecycle"], "running");
+    assert_eq!(health["workers"][0]["final_state"], "running");
+    assert_eq!(health["workers"][0]["heartbeat_age_ms"], Value::Null);
+}
+
+#[tokio::test]
+async fn team_worker_health_reflects_surface_agent_session_completion() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.set_surface_agent_session(surface_id, AgentKind::Grok, "grok-session-1"));
+        assert!(model.set_surface_agent_session_lifecycle(surface_id, AgentSessionLifecycle::Ended));
+    }
+
+    dispatch(&state, "team.upsert", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "grok",
+            "surface_id": surface_id,
+            "status": "running"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let health = dispatch(
+        &state,
+        "team.worker.health",
+        json!({"team_id": "team-1", "stale_after_ms": 0}),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(health["workers"][0]["agent_session"]["agent"], "grok");
+    assert_eq!(health["workers"][0]["agent_session"]["lifecycle"], "ended");
+    assert_eq!(health["workers"][0]["lifecycle"], "done");
+    assert_eq!(health["workers"][0]["final_state"], "done");
+}
+
+#[tokio::test]
 #[serial_test::serial]
 async fn team_worker_launch_allows_relaunch_when_record_surface_runtime_is_missing() {
     let bin_dir = tempfile::tempdir().unwrap();

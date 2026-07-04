@@ -2,7 +2,9 @@ use crate::{
     coordinator::TeamTerminalDispatchedMessage, ensure_model_surface_exists, store_access,
     DispatchError, SocketAppState,
 };
-use forktty_core::{Surface, TeamState, TeamSummary, TeamWorker};
+use forktty_core::{
+    AgentSession, AgentSessionLifecycle, Surface, TeamState, TeamSummary, TeamWorker,
+};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -436,10 +438,11 @@ pub(crate) fn team_worker_health_rows(
             let heartbeat_age_ms = (worker.last_heartbeat_ms > 0)
                 .then(|| now.saturating_sub(worker.last_heartbeat_ms));
             let stale = heartbeat_age_ms.is_some_and(|age| age > stale_after_ms);
-            let surface_present = worker
+            let surface = worker
                 .surface_id
                 .as_deref()
-                .is_some_and(|surface_id| model.surface(surface_id).is_some());
+                .and_then(|surface_id| model.surface(surface_id));
+            let surface_present = surface.is_some();
             let surface_runtime_present = worker
                 .surface_id
                 .as_deref()
@@ -454,6 +457,16 @@ pub(crate) fn team_worker_health_rows(
             let surface_alive = surface_present && surface_ready;
             let surface_starting =
                 surface_present && surface_runtime_present && !surface_ready && !stale;
+            let agent_session = surface.and_then(|surface| surface.agent_session.as_ref());
+            let agent_lifecycle = agent_session.map(|session| session.lifecycle);
+            let agent_lifecycle_label = agent_lifecycle.and_then(worker_agent_lifecycle_label);
+            let heartbeat_state = if worker.last_heartbeat_ms == 0 {
+                "no_heartbeat"
+            } else if stale {
+                "stale"
+            } else {
+                "fresh"
+            };
             let lifecycle = if worker.shutdown_requested_at_ms > 0 {
                 "shutdown_requested"
             } else if worker.surface_id.is_none() {
@@ -462,6 +475,8 @@ pub(crate) fn team_worker_health_rows(
                 "starting"
             } else if surface_missing {
                 "surface_missing"
+            } else if let Some(lifecycle) = agent_lifecycle_label {
+                lifecycle
             } else if stale {
                 "stale"
             } else {
@@ -473,6 +488,7 @@ pub(crate) fn team_worker_health_rows(
                 surface_missing,
                 surface_starting,
                 stale,
+                agent_lifecycle,
             );
             json!({
                 "worker_id": worker.id,
@@ -480,6 +496,8 @@ pub(crate) fn team_worker_health_rows(
                 "status": worker.status,
                 "lifecycle": lifecycle,
                 "final_state": final_state,
+                "heartbeat_state": heartbeat_state,
+                "agent_session": agent_session.map(agent_session_worker_health_value),
                 "surface_id": worker.surface_id,
                 "surface_present": surface_present,
                 "surface_runtime_present": surface_runtime_present,
@@ -490,6 +508,8 @@ pub(crate) fn team_worker_health_rows(
                 "last_heartbeat_ms": worker.last_heartbeat_ms,
                 "last_nudge_ms": worker.last_nudge_ms,
                 "shutdown_requested_at_ms": worker.shutdown_requested_at_ms,
+                "report_present": worker.report.as_ref().is_some_and(|report| !report.is_empty()),
+                "report": worker.report.clone(),
             })
         })
         .collect::<Vec<_>>();
@@ -545,6 +565,7 @@ fn team_worker_final_state(
     surface_missing: bool,
     surface_starting: bool,
     stale: bool,
+    agent_lifecycle: Option<AgentSessionLifecycle>,
 ) -> &'static str {
     if worker.shutdown_requested_at_ms > 0 {
         return if surface_alive {
@@ -562,6 +583,9 @@ fn team_worker_final_state(
     if surface_missing {
         return "surface_missing";
     }
+    if let Some(label) = agent_lifecycle.and_then(worker_agent_final_state_label) {
+        return label;
+    }
     if stale {
         return "stale";
     }
@@ -573,4 +597,35 @@ fn team_worker_final_state(
         "blocked" | "needs_input" => "needs_input",
         _ => "idle",
     }
+}
+
+fn worker_agent_lifecycle_label(lifecycle: AgentSessionLifecycle) -> Option<&'static str> {
+    match lifecycle {
+        AgentSessionLifecycle::Running => Some("running"),
+        AgentSessionLifecycle::Idle => Some("idle"),
+        AgentSessionLifecycle::NeedsInput => Some("needs_input"),
+        AgentSessionLifecycle::Ended => Some("done"),
+        AgentSessionLifecycle::Suspended | AgentSessionLifecycle::Unknown => None,
+    }
+}
+
+fn worker_agent_final_state_label(lifecycle: AgentSessionLifecycle) -> Option<&'static str> {
+    match lifecycle {
+        AgentSessionLifecycle::Running => Some("running"),
+        AgentSessionLifecycle::Idle => Some("idle"),
+        AgentSessionLifecycle::NeedsInput => Some("needs_input"),
+        AgentSessionLifecycle::Ended => Some("done"),
+        AgentSessionLifecycle::Suspended | AgentSessionLifecycle::Unknown => None,
+    }
+}
+
+fn agent_session_worker_health_value(agent_session: &AgentSession) -> Value {
+    json!({
+        "agent": agent_session.agent,
+        "session_id": agent_session.session_id,
+        "lifecycle": agent_session.lifecycle,
+        "last_activity_ms": agent_session.last_activity_ms,
+        "resume_cwd": agent_session.resume_cwd,
+        "permission_mode": agent_session.permission_mode,
+    })
 }

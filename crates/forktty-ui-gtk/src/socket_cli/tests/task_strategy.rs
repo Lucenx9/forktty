@@ -369,6 +369,7 @@ fn task_apply_requests_task_strategy_apply() {
                     "--approval-id".to_string(),
                     "task-strategy:abcdef0123456789:approvals:start_run".to_string(),
                     "--request-approval=false".to_string(),
+                    "--review".to_string(),
                     "Implement".to_string(),
                     "router".to_string(),
                 ],
@@ -389,6 +390,7 @@ fn task_apply_requests_task_strategy_apply() {
         "task-strategy:abcdef0123456789:approvals:start_run"
     );
     assert_eq!(request["params"]["request_approval"], false);
+    assert_eq!(request["params"]["user_requested_review"], true);
     assert_eq!(request["params"]["plan"], plan);
 }
 

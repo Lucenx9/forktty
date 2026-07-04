@@ -937,7 +937,10 @@ fn effective_layers_for_strategy(
     input: &TaskStrategyInput,
 ) -> TaskStrategyLayers {
     let mut layers = layers_for_strategy(strategy);
+    let read_only_parallel_research =
+        matches!(strategy, TaskStrategy::ParallelResearch) && input.user_requested_review;
     if !matches!(strategy, TaskStrategy::ReviewOnly)
+        && !read_only_parallel_research
         && input.repo_dirty
         && input.likely_user_visible_change
     {
@@ -2185,6 +2188,52 @@ mod tests {
         assert_eq!(plan.strategy, TaskStrategy::ParallelResearch);
         assert_eq!(plan.router_profile, TaskRouterProfile::Parallel);
         assert!(plan.layers.team);
+    }
+
+    #[test]
+    fn dirty_parallel_review_research_does_not_require_worktree_isolation() {
+        let plan = plan_task_strategy(TaskStrategyInput {
+            goal: "Review the router implementation in parallel and note fixes".to_string(),
+            explicit_mode: None,
+            router_profile: Some(TaskRouterProfile::Parallel),
+            task_class_hint: Some(TaskClass::ParallelResearch),
+            last_known_good: None,
+            repo_dirty: true,
+            user_requested_parallelism: true,
+            user_requested_review: true,
+            likely_user_visible_change: true,
+            harness_registry: caps(),
+        })
+        .unwrap();
+
+        assert_eq!(plan.strategy, TaskStrategy::ParallelResearch);
+        assert!(!plan.layers.worktree);
+        assert!(!plan
+            .approvals
+            .contains(&TaskStrategyApproval::CreateWorktree));
+    }
+
+    #[test]
+    fn dirty_parallel_experiment_still_requires_worktree_isolation() {
+        let plan = plan_task_strategy(TaskStrategyInput {
+            goal: "Try two parallel fixes for the renderer flicker".to_string(),
+            explicit_mode: None,
+            router_profile: Some(TaskRouterProfile::Parallel),
+            task_class_hint: Some(TaskClass::ParallelExperiment),
+            last_known_good: None,
+            repo_dirty: true,
+            user_requested_parallelism: true,
+            user_requested_review: false,
+            likely_user_visible_change: true,
+            harness_registry: caps(),
+        })
+        .unwrap();
+
+        assert_eq!(plan.strategy, TaskStrategy::ParallelExperiment);
+        assert!(plan.layers.worktree);
+        assert!(plan
+            .approvals
+            .contains(&TaskStrategyApproval::CreateWorktree));
     }
 
     #[test]

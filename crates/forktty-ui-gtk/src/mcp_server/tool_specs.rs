@@ -152,6 +152,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
                     "workflow_id": string_prop("Optional explicit workflow id; defaults to run_id."),
                     "team_id": string_prop("Optional explicit team id; defaults to run_id."),
                     "submit": boolean_prop("When true, launch visible team workers and dispatch prompts for supported team plans; defaults to false staging."),
+                    "review": boolean_prop("True when this apply is explicitly a read-only review flow; lets dirty ParallelResearch plans avoid worktree isolation while mutating strategies still require it."),
                 }),
             ),
         },
@@ -358,6 +359,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
                     "dry_run": boolean_prop("Return the finish plan without mutating team state or closing panes."),
                     "close_workers": boolean_prop("Request shutdown and close current-runtime launch-owned worker panes before marking the team done."),
                     "force": boolean_prop("Proceed despite open tasks, pending messages, active workers, or cleanup errors after explicit review."),
+                    "compact": boolean_prop("Return compact ids, counts, statuses, summaries, and health without echoing the full team record or mailbox bodies."),
                 }),
             ),
         },
@@ -374,6 +376,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
                     "agent": string_prop("Agent/provider name."),
                     "surface_id": string_prop("Surface id used by this worker."),
                     "worktree_name": string_prop("Worktree name assigned to this worker."),
+                    "report": string_prop("Bounded final report text persisted on the worker record for leader recovery when terminal scrollback is not enough."),
                     "status": string_prop("Worker status, for example idle, running, busy, or blocked."),
                     "assigned_task_id": string_prop("Task id currently assigned to this worker."),
                 }),
@@ -414,7 +417,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "team_worker_health",
             annotations: read_only_annotations(),
-            description: "Read per-worker team health including final_state, surface_present, surface_runtime_present, surface_ready, stale heartbeat, nudge, launch, and shutdown-request timestamps.",
+            description: "Read per-worker team health including final_state, heartbeat_state, agent-session lifecycle evidence, report presence, surface presence/runtime/readiness, stale heartbeat, nudge, launch, and shutdown-request timestamps.",
             input_schema: object_schema(
                 &["team_id"],
                 json!({

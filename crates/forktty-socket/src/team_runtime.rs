@@ -71,6 +71,7 @@ pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Val
     let dry_run = request.dry_run;
     let close_workers = request.close_workers;
     let force = request.force;
+    let compact = request.compact;
     let store = store_access::team_store_access(state)?
         .load()
         .await
@@ -143,6 +144,7 @@ pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Val
         return Ok(json!({
             "team_id": team_id,
             "dry_run": true,
+            "compact": compact,
             "finished": false,
             "close_workers": close_workers,
             "force": force,
@@ -196,6 +198,7 @@ pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Val
                         agent: None,
                         surface_id: None,
                         worktree_name: None,
+                        report: None,
                         status: Some("closed".to_string()),
                         assigned_task_id: None,
                     },
@@ -258,9 +261,10 @@ pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Val
         DEFAULT_TEAM_WORKER_STALE_MS,
     )?;
     let health_after = team_worker_health_rows(state, &team_after, DEFAULT_TEAM_WORKER_STALE_MS)?;
-    Ok(json!({
+    let mut result = json!({
         "team_id": team_id,
         "dry_run": false,
+        "compact": compact,
         "finished": true,
         "close_workers": close_workers,
         "force": force,
@@ -270,10 +274,13 @@ pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Val
         "blockers": blockers,
         "cleanup_errors": cleanup_errors,
         "closed": closed,
-        "team": team,
         "summary_after": summary_after,
         "worker_health_after": health_after,
-    }))
+    });
+    if !compact {
+        result["team"] = json!(team);
+    }
+    Ok(result)
 }
 
 fn summary_u64(summary: &Value, key: &str) -> u64 {

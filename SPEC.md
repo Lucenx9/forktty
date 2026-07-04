@@ -415,7 +415,9 @@ does not mutate workflow/team state and planning remains read-only.
 Strategies that name a reviewer role include an explicit reviewer assignment,
 using a separate ready harness when available and a separate role on the
 primary harness otherwise. Applying a returned strategy is a separate visible
-coordination step and risky actions still require later approval.
+coordination step and risky actions still require later approval. Plan
+responses include `planner_version`, the ForkTTY app version that produced the
+plan, so agents can persist planner provenance with workflow evidence.
 
 Example request:
 
@@ -445,6 +447,7 @@ Example response:
 
 ```json
 {
+  "planner_version": "0.2.0-alpha.17",
   "task_class": "focused_bugfix",
   "strategy": "solo_with_verify_loop",
   "router_profile": "balanced",
@@ -552,7 +555,10 @@ Example response:
 task strategy plan. It accepts required `run_id`, `goal` capped at 4096 UTF-8 bytes and rejected when it contains terminal control characters other than newline or tab, and `plan` fields
 plus optional `approved`, `approval_id`, `request_approval`, `workflow_id`,
 `team_id`, `workspace_id` or other workspace selector including
-`worktree_name`, `cwd`, `leader_surface_id`/`surface_id`, and `submit`.
+`worktree_name`, `cwd`, `leader_surface_id`/`surface_id`,
+`user_requested_review`/`review`, and `submit`. Apply responses include
+`planner_version`, the ForkTTY app version that performed the server-side
+validation and mutation.
 The submitted plan is treated as untrusted client input: before mutation,
 ForkTTY revalidates assignment harness ids and compact plan text fields such
 as reasons, safety notes, and score factors so they cannot inject control
@@ -587,7 +593,11 @@ any explicit `cwd`, the normalized plan `task_class`, mutating strategy shape,
 and high-confidence goal wording. A `review_only` strategy suppresses this
 dirty-editing isolation only when the submitted plan is coherently read-only:
 `task_class: review_only`, `strategy: review_only`, and reviewer-only
-assignments. ForkTTY then recomputes required approvals from the
+assignments. A caller-explicit read-only parallel review can also suppress
+dirty-editing isolation when the submitted plan is coherent
+`parallel_research` with only reviewer/researcher roles and
+`user_requested_review`/`review: true`; mutating `parallel_experiment` plans do
+not get this exemption. ForkTTY then recomputes required approvals from the
 requested operation and effective plan shape (`start_run` always,
 `create_worktree` when the effective layers require worktree isolation, and
 `launch_parallel_workers` when `submit: true` would launch more than one
@@ -638,9 +648,11 @@ actual repository differs from the selected ForkTTY pane avoid launching
 provider trust prompts or work in the broader pane cwd without making retries
 sensitive to symlink or `..` path spelling. It does not create a workspace or
 worktree and does not override worktree-layer dirty-isolation enforcement.
-Review-primary goals with an effective `review_only` strategy remain read-only
-for apply-time dirty-repo isolation, but non-review editing goals still force
-worktree isolation even if a client submits a mismatched `review_only` plan.
+Review-primary goals with an effective `review_only` strategy, and explicit
+read-only parallel reviews with an effective `parallel_research` strategy,
+remain read-only for apply-time dirty-repo isolation, but non-review editing
+goals still force worktree isolation even if a client submits a mismatched
+read-only-looking plan.
 With `submit` omitted or `false`, apply performs staged setup only: it can
 upsert a workflow, write workflow plan steps, bootstrap loop metadata, upsert a
 team, create team tasks, and queue team-wide messages. When the effective plan
@@ -752,6 +764,7 @@ Example response:
 ```json
 {
   "run_id": "router-run-1",
+  "planner_version": "0.2.0-alpha.17",
   "status": "staged",
   "workflow_id": "router-run-1",
   "team_id": "router-run-1",
@@ -769,10 +782,10 @@ Example response:
 ```
 
 `team.finish` verifies and finalizes one team record. It accepts required
-`team_id` plus optional `dry_run`, `close_workers`, and `force`; dry-run returns
-the planned actions, blockers, and cleanup errors without mutation or
-precondition rejection. Non-dry-run finalization without force rejects open
-tasks, pending messages, or live-looking worker final states. With
+`team_id` plus optional `dry_run`, `close_workers`, `force`, and `compact`;
+dry-run returns the planned actions, blockers, and cleanup errors without
+mutation or precondition rejection. Non-dry-run finalization without force
+rejects open tasks, pending messages, or live-looking worker final states. With
 `close_workers`, it only closes disposable worker surfaces created by
 `team.worker.launch` in the current ForkTTY runtime; missing worker surfaces
 are normalized to closed before the team is marked done. If a disposable worker
@@ -783,9 +796,24 @@ closed runtime surfaces before returning the error. Closing launch-owned worker
 surfaces preserves normal `surface.close` replacement behavior, including
 replacement terminals for root panes in inactive workspaces; if that
 replacement terminal cannot be spawned, ForkTTY returns an error before closing
-the worker surface.
+the worker surface. With `compact: true`, non-dry-run success still returns
+ids, status fields, blockers, summaries, worker health, cleanup errors, and
+closed-worker records, but omits the full team record and mailbox bodies.
+`team.worker.upsert` accepts an optional bounded `report` string. A report is
+intended for the worker's final compact findings or verification summary; it is
+stored on the worker record, returned by `team.get`, counted as
+`workers_with_reports` in `team.summary`, and exposed by
+`team.worker.health` as `report_present` plus `report`. Launching a worker
+clears any previous report on that worker id so stale final reports do not
+describe a new task.
 `team.summary` and `context.snapshot` team summaries flag active teams with no
 active workers, open tasks, or pending messages as `active_without_open_work`.
+`team.worker.health` reports `heartbeat_state: "no_heartbeat"` for workers
+whose provider path has no heartbeat yet, reserving `"stale"` for workers with
+a recorded heartbeat older than the stale threshold. When the attached surface
+already has persisted agent-session lifecycle metadata, health rows include an
+`agent_session` object and derive `running`, `idle`, `needs_input`, or `done`
+from that lifecycle before falling back to heartbeat age.
 
 `workflow.loop.set` records bounded closed-loop progress on an existing
 workflow: optional recipe, stage, iteration, maximum iterations, stop reason,
