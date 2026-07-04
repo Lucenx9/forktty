@@ -988,10 +988,7 @@ fn latest_workflow_snapshot_for_workspace(
         .loop_max_iterations
         .map(|max| max.to_string())
         .unwrap_or_else(|| "-".to_string());
-    let loop_iteration_display = match (workflow.loop_iteration, workflow.loop_max_iterations) {
-        (Some(iteration), Some(max)) => Some(format!("Loop {iteration}/{max}")),
-        _ => None,
-    };
+    let loop_iteration_display = loop_iteration_display(workflow);
     WorkflowRailSnapshot {
         strategy: strategy.clone(),
         strategy_detail: workflow
@@ -1012,7 +1009,7 @@ fn latest_workflow_snapshot_for_workspace(
             .map(|at_ms| relative_time_label(now_ms, u128::from(at_ms)))
             .unwrap_or_default(),
         loop_fraction: loop_fraction(workflow),
-        loop_planned: workflow.loop_stage.is_some(),
+        loop_planned: workflow_has_loop_state(workflow),
         loop_iteration_display,
     }
 }
@@ -1463,21 +1460,50 @@ fn format_notification_counts(notifications: &[NotificationItem]) -> String {
 }
 
 fn format_loop_state(workflow: &forktty_core::WorkflowState) -> String {
-    let Some(stage) = workflow.loop_stage.as_deref() else {
-        return "not planned".to_string();
-    };
-    match (workflow.loop_iteration, workflow.loop_max_iterations) {
-        (Some(iteration), Some(max)) => format!("Loop {iteration} of {max}"),
-        (Some(iteration), None) => format!("{stage} {iteration}"),
-        _ => stage.to_string(),
+    let stage = workflow.loop_stage.as_deref();
+    match (loop_iteration_display(workflow), stage) {
+        (Some(iteration), Some(stage)) => format!("{iteration} - {stage}"),
+        (Some(iteration), None) => iteration,
+        (None, Some(stage)) => stage.to_string(),
+        (None, None) => "not planned".to_string(),
     }
 }
 
 fn format_loop_caption(workflow: &forktty_core::WorkflowState) -> String {
     if workflow.loop_gates.is_empty() {
-        return "No gates recorded".to_string();
+        return if workflow_has_loop_state(workflow) {
+            "0 gates".to_string()
+        } else {
+            "No loop metadata".to_string()
+        };
     }
-    count_label(workflow.loop_gates.len(), "gate recorded", "gates recorded")
+    let (passed, failed, running) = loop_gate_counts(&workflow.loop_gates);
+    let open = workflow
+        .loop_gates
+        .len()
+        .saturating_sub(passed + failed + running);
+    let mut parts = Vec::new();
+    if passed > 0 {
+        parts.push(count_label(passed, "passed", "passed"));
+    }
+    if failed > 0 {
+        parts.push(count_label(failed, "failed", "failed"));
+    }
+    if running > 0 {
+        parts.push(count_label(running, "running", "running"));
+    }
+    if open > 0 {
+        parts.push(count_label(open, "open", "open"));
+    }
+    if parts.is_empty() {
+        count_label(workflow.loop_gates.len(), "gate", "gates")
+    } else {
+        format!(
+            "{}: {}",
+            count_label(workflow.loop_gates.len(), "gate", "gates"),
+            parts.join(", ")
+        )
+    }
 }
 
 fn loop_fraction(workflow: &forktty_core::WorkflowState) -> f64 {
@@ -1485,6 +1511,62 @@ fn loop_fraction(workflow: &forktty_core::WorkflowState) -> f64 {
         (Some(iteration), Some(max)) if max > 0 => f64::from(iteration) / f64::from(max),
         _ => 0.0,
     }
+}
+
+fn loop_iteration_display(workflow: &forktty_core::WorkflowState) -> Option<String> {
+    match (workflow.loop_iteration, workflow.loop_max_iterations) {
+        (Some(iteration), Some(max)) => Some(format!("Loop {iteration}/{max}")),
+        (Some(iteration), None) => Some(format!("Loop {iteration}")),
+        _ => None,
+    }
+}
+
+fn workflow_has_loop_state(workflow: &forktty_core::WorkflowState) -> bool {
+    workflow.loop_recipe.is_some()
+        || workflow.loop_stage.is_some()
+        || workflow.loop_iteration.is_some()
+        || workflow.loop_max_iterations.is_some()
+        || workflow.loop_stop_reason.is_some()
+        || !workflow.loop_gates.is_empty()
+}
+
+fn loop_gate_counts(gates: &[forktty_core::WorkflowLoopGate]) -> (usize, usize, usize) {
+    let passed = gates
+        .iter()
+        .filter(|gate| loop_gate_status_is_passed(&gate.status))
+        .count();
+    let failed = gates
+        .iter()
+        .filter(|gate| loop_gate_status_is_failed(&gate.status))
+        .count();
+    let running = gates
+        .iter()
+        .filter(|gate| loop_gate_status_is_running(&gate.status))
+        .count();
+    (passed, failed, running)
+}
+
+fn loop_gate_status_is_passed(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "passed" | "pass" | "ok" | "success" | "succeeded" | "done"
+    )
+}
+
+fn loop_gate_status_is_failed(status: &str) -> bool {
+    let status = status.trim().to_ascii_lowercase();
+    status == "failed"
+        || status == "fail"
+        || status == "error"
+        || status == "errored"
+        || status == "blocked"
+}
+
+fn loop_gate_status_is_running(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "running" | "active" | "working" | "pending" | "in_progress"
+    )
 }
 
 fn count_label(count: usize, singular: &str, plural: &str) -> String {
@@ -1713,6 +1795,73 @@ mod tests {
 
         assert_eq!(workflow.workflow, "running");
         assert_eq!(workflow.strategy_detail, "Active router audit");
+    }
+
+    #[test]
+    fn rail_loop_snapshot_shows_stage_iteration_and_gate_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let workflow_path = dir.path().join("workflow-v1.json");
+        let mut workflow_store = forktty_core::WorkflowStoreData::default();
+        workflow_store
+            .upsert(
+                forktty_core::WorkflowUpsert {
+                    workflow_id: Some("loop-router".to_string()),
+                    workspace_id: Some("workspace-1".to_string()),
+                    mode: Some("task_strategy".to_string()),
+                    status: Some("running".to_string()),
+                    goal: Some("Keep checking until clean".to_string()),
+                    ..forktty_core::WorkflowUpsert::default()
+                },
+                10,
+            )
+            .unwrap();
+        workflow_store
+            .set_loop_state(
+                "loop-router",
+                forktty_core::WorkflowLoopStateInput {
+                    recipe: Some("solo_with_verify_loop".to_string()),
+                    stage: Some("verify".to_string()),
+                    iteration: Some(2),
+                    max_iterations: Some(4),
+                    gates: Some(vec![
+                        forktty_core::WorkflowLoopGateInput {
+                            id: "fmt".to_string(),
+                            kind: "command".to_string(),
+                            label: "cargo fmt".to_string(),
+                            status: "passed".to_string(),
+                            summary: None,
+                        },
+                        forktty_core::WorkflowLoopGateInput {
+                            id: "test".to_string(),
+                            kind: "command".to_string(),
+                            label: "cargo test".to_string(),
+                            status: "failed".to_string(),
+                            summary: None,
+                        },
+                        forktty_core::WorkflowLoopGateInput {
+                            id: "clippy".to_string(),
+                            kind: "command".to_string(),
+                            label: "cargo clippy".to_string(),
+                            status: "running".to_string(),
+                            summary: None,
+                        },
+                    ]),
+                    ..forktty_core::WorkflowLoopStateInput::default()
+                },
+                20,
+            )
+            .unwrap();
+        forktty_core::save_workflows_to_path(&workflow_path, &workflow_store).unwrap();
+
+        let workflow =
+            latest_workflow_snapshot_for_workspace(Some(&workflow_path), Some("workspace-1"));
+
+        assert_eq!(workflow.loop_state, "Loop 2/4 - verify");
+        assert_eq!(
+            workflow.loop_caption,
+            "3 gates: 1 passed, 1 failed, 1 running"
+        );
+        assert_eq!(workflow.loop_iteration_display.as_deref(), Some("Loop 2/4"));
     }
 
     #[test]

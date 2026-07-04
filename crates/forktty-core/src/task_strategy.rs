@@ -248,6 +248,7 @@ pub fn plan_task_strategy(input: TaskStrategyInput) -> Result<TaskStrategyPlan, 
     if goal.is_empty() {
         return Err("goal must not be empty".to_string());
     }
+    let iterative_loop_intent = contains_iterative_loop_intent(goal);
 
     let task_class = input
         .task_class_hint
@@ -300,6 +301,9 @@ pub fn plan_task_strategy(input: TaskStrategyInput) -> Result<TaskStrategyPlan, 
     }
     if input.task_class_hint.is_some() {
         reasons.push("caller-provided task kind guided classification".to_string());
+    }
+    if iterative_loop_intent {
+        reasons.push("inferred iterative loop intent from goal wording".to_string());
     }
     if let Some(profile) = input.router_profile.as_ref() {
         reasons.push(format!("explicit router profile {profile:?}"));
@@ -481,6 +485,19 @@ fn score_strategy_candidate(
     }
 
     let layers = effective_layers_for_strategy(&strategy, input);
+    if contains_iterative_loop_intent(&input.goal) {
+        let points = if layers.loop_metadata { 25 } else { -5 };
+        push_score_factor(
+            &mut factors,
+            "iterative_loop_intent",
+            points,
+            if points > 0 {
+                "explicit iterative goal benefits from loop metadata".to_string()
+            } else {
+                "explicit iterative goal prefers a loop-capable strategy".to_string()
+            },
+        );
+    }
     if layers.loop_metadata
         && matches!(
             task_class,
@@ -682,6 +699,9 @@ fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
         }
         return TaskClass::ParallelResearch;
     }
+    if contains_iterative_loop_intent(goal) {
+        return TaskClass::VerifyFixLoop;
+    }
     if is_review_primary_goal(goal) {
         return TaskClass::ReviewOnly;
     }
@@ -699,11 +719,10 @@ fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
     // repo inspection. Exact tokens only: a bare "verif" prefix would also
     // match documentation nouns such as "verification".
     //
-    // Deliberate asymmetry with task_class_from_hint: the hint "verify" maps
-    // to VerifyFixLoop while goal wording maps to FocusedBugfix. Both classes
-    // share the same strategy fit table, so routing is identical; the phase
-    // one classifier keeps VerifyFixLoop unreachable on purpose (see
-    // phase_one_classifier_reachable_classes).
+    // Deliberate asymmetry with task_class_from_hint: a general "verify" hint
+    // maps to VerifyFixLoop, while non-iterative goal wording maps to
+    // FocusedBugfix. Both classes share the same strategy fit table; explicit
+    // iterative wording above is the only goal-derived VerifyFixLoop path.
     if !is_inspection_primary_goal(goal)
         && contains_token(
             &lower,
@@ -756,6 +775,50 @@ fn contains_implementation_intent(lower: &str) -> bool {
         lower,
         &["implement", "refactor", "paralleliz", "parallelis"],
     )
+}
+
+fn contains_iterative_loop_intent(goal: &str) -> bool {
+    let lower = goal.to_lowercase();
+    if lower.contains("iterative audit")
+        || lower.contains("use loop")
+        || lower.contains("with loop")
+        || lower.contains("repeat verification")
+        || lower.contains("repeat verify")
+        || lower.contains("keep checking")
+        || lower.contains("until clean")
+        || lower.contains("another pass")
+        || lower.contains("altra passata")
+        || lower.contains("continua a cercare bug")
+    {
+        return true;
+    }
+
+    let tokens = lower
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    let has_repeat = tokens.iter().any(|token| {
+        matches!(
+            *token,
+            "repeat" | "repeated" | "repeating" | "iterate" | "iterating" | "iteration"
+        ) || token.starts_with("iterativ")
+    });
+    let has_verification_target = tokens.iter().any(|token| {
+        matches!(
+            *token,
+            "audit"
+                | "audits"
+                | "check"
+                | "checking"
+                | "clean"
+                | "test"
+                | "tests"
+                | "verify"
+                | "verification"
+                | "verifying"
+        )
+    });
+    has_repeat && has_verification_target
 }
 
 /// Lead-in words skipped when deciding what the first meaningful goal token
@@ -879,6 +942,7 @@ pub fn phase_one_classifier_reachable_classes() -> &'static [TaskClass] {
         TaskClass::ReviewOnly,
         TaskClass::ParallelResearch,
         TaskClass::ParallelExperiment,
+        TaskClass::VerifyFixLoop,
     ]
 }
 
@@ -1696,6 +1760,27 @@ mod tests {
                 profile: TaskRouterProfile::Balanced,
                 strategy: TaskStrategy::SoloWithVerifyLoop,
             },
+            Case {
+                goal: "Keep checking until clean",
+                editing: false,
+                class: TaskClass::VerifyFixLoop,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
+            Case {
+                goal: "Use loop for repeat verification",
+                editing: false,
+                class: TaskClass::VerifyFixLoop,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
+            Case {
+                goal: "Altra passata sui bug",
+                editing: false,
+                class: TaskClass::VerifyFixLoop,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
         ];
 
         for case in cases {
@@ -1783,6 +1868,23 @@ mod tests {
             .reasons
             .iter()
             .any(|reason| reason.contains("caller-provided task kind")));
+    }
+
+    #[test]
+    fn explicit_iterative_goals_explain_loop_metadata_bias() {
+        let plan = plan_for_goal("iterative audit: keep checking until clean", false);
+
+        assert_eq!(plan.task_class, TaskClass::VerifyFixLoop);
+        assert_eq!(plan.strategy, TaskStrategy::SoloWithVerifyLoop);
+        assert!(plan.layers.loop_metadata);
+        assert!(plan
+            .reasons
+            .iter()
+            .any(|reason| reason.contains("iterative loop intent")));
+        assert!(plan.candidate_scores[0]
+            .factors
+            .iter()
+            .any(|factor| factor.name == "iterative_loop_intent"));
     }
 
     #[test]
@@ -2944,6 +3046,7 @@ mod tests {
                 TaskClass::ReviewOnly,
                 TaskClass::ParallelResearch,
                 TaskClass::ParallelExperiment,
+                TaskClass::VerifyFixLoop,
             ]
         );
     }

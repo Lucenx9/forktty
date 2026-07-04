@@ -376,9 +376,13 @@ work, so dirty-repo state alone does not force worktree isolation for a
 `router_profile` is omitted, it uses `balanced`
 unless the goal or request hints clearly imply `fast`, `conservative`,
 `parallel`, or `review_heavy`; an explicit profile reweights the same
-explainable scorer without changing approval or visibility rules. Goal-based
-task class and router profile inference recognizes English keywords only;
-goals written in other languages fall back to `repo_inspection` with the
+explainable scorer without changing approval or visibility rules. Explicit
+iterative goals such as "use loop", "iterative audit", "repeat verification",
+"keep checking until clean", "altra passata", or "continua a cercare bug"
+classify as `verify_fix_loop` and bias the selected strategy toward
+`layers.loop_metadata: true`; this remains planning metadata only. Other
+goal-based task class and router profile inference recognizes English keywords
+only; goals written in other languages fall back to `repo_inspection` with the
 `balanced` profile unless the caller passes normalized `task_kind`,
 `router_profile`, or the other explicit hints. It never
 launches processes, mutates workflow/team/feed state, creates worktrees, sends
@@ -824,6 +828,10 @@ scheduler, run commands, send terminal input, push, merge, or grant approval.
 When a request advances to a different iteration without supplying replacement
 gates or a replacement stop reason, ForkTTY clears the previous gate rows and
 stop reason so stale failed checks do not describe the new pass.
+CLI `workflow-loop-gate`, `workflow-loop-step-done`, and
+`workflow-loop-publish` are ergonomic wrappers over the same socket method:
+they read the current workflow, merge one compact gate update, and then submit
+an ordinary `workflow.loop.set` payload so existing gate rows are preserved.
 Agents use it to make a visible loop such as discover/plan/execute/verify
 auditable across context compaction. `context.snapshot` exposes stale
 workflow surface bindings on workflow summary/detail rows through

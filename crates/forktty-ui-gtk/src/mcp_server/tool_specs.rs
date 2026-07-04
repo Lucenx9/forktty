@@ -90,7 +90,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "task_strategy_plan",
             annotations: read_only_annotations(),
-            description: "Ask ForkTTY to choose a read-only task strategy before selecting team, workflow, loop, worktree, MCP, or harnesses. Uses capabilities, provider policy, cwd/dirty context, task_kind hints, routing signals, last-known-good evidence, and parallel-session capacity; returns ranked strategy and harness assignment scores. Use for non-trivial tasks instead of guessing a mode.",
+            description: "Ask ForkTTY to choose a read-only task strategy before selecting team, workflow, loop, worktree, MCP, or harnesses. Uses capabilities, provider policy, cwd/dirty context, task_kind hints, explicit iterative-goal hints, routing signals, last-known-good evidence, and parallel-session capacity; returns ranked strategy and harness assignment scores. Use for non-trivial tasks instead of guessing a mode.",
             input_schema: object_schema(
                 &["goal"],
                 json!({

@@ -32,6 +32,10 @@ All notable changes to ForkTTY are documented here.
   `orchestration_cleanup`, and `forktty cleanup orchestration` so stale
   team/workflow records can be inspected and conservatively closed without
   touching live worker surfaces.
+- Added ergonomic workflow-loop CLI wrappers: `workflow-loop-gate` to merge one
+  gate update, `workflow-loop-step-done` to mark a stage complete, and
+  `workflow-loop-publish` to record a published commit stop reason without
+  hand-writing the full gates array.
 
 ### Changed
 - The GTK workbench now follows the agent-workspace layout end to end: the
@@ -84,6 +88,12 @@ All notable changes to ForkTTY are documented here.
   aliases such as `bugfix`, `feature`, `review`, and `research`, so agents can
   pass clear user intent across languages without relying on ForkTTY keyword
   guessing or exact internal enum names.
+- Task strategy planning now treats explicit iterative goals such as repeat
+  verification, iterative audits, and "keep checking until clean" as
+  verify-loop work, biasing plans toward `layers.loop_metadata: true` without
+  starting any hidden scheduler.
+- The Router rail loop row now shows stage plus iteration budget and compact
+  passed/failed/running gate counts when loop metadata exists.
 
 ### Fixed
 - Fixed task strategy worktree isolation so dirty-repo read-only parallel

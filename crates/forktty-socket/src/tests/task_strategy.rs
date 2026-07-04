@@ -236,6 +236,34 @@ async fn task_strategy_plan_accepts_explicit_task_kind_hint() {
 }
 
 #[tokio::test]
+async fn task_strategy_plan_sets_loop_metadata_for_explicit_iterative_goal() {
+    let (state, _backend) = test_state();
+    let result = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "goal": "Use loop for repeat verification until clean",
+            "repo_dirty": false,
+            "likely_user_visible_change": false
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["task_class"], "verify_fix_loop");
+    assert_eq!(result["strategy"], "solo_with_verify_loop");
+    assert_eq!(result["layers"]["loop_metadata"], true);
+    assert!(result["reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|reason| reason
+            .as_str()
+            .unwrap_or_default()
+            .contains("iterative loop intent")));
+}
+
+#[tokio::test]
 async fn task_strategy_plan_accepts_normalized_task_kind_aliases() {
     let (state, _backend) = test_state();
     for (task_kind, expected_class) in [
