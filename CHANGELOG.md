@@ -40,6 +40,13 @@ All notable changes to ForkTTY are documented here.
 - Fixed Antigravity `PreToolUse` hook responses so ForkTTY returns the current
   `{"decision":"allow"}` gating decision instead of the older `approve` value
   that `agy` 1.0.16 rejects before tool execution.
+- Fixed notification attention tracking so reading, dismissing, or clearing
+  notifications no longer clears a pane's unrelated unread-output badge; the
+  notification panel also refreshes header state immediately and no longer
+  renders freshly-read rows as unread.
+- Fixed Feed approval responses so pending approvals whose workspace or surface
+  target went stale are persisted as `stale` and rejected instead of being
+  approved through the socket after `feed.list` already showed them stale.
 - Fixed `orchestration.cleanup` so team workers whose surface remains in the
   workspace model but no longer has a terminal runtime are treated as stale
   instead of blocking cleanup as manual-review live workers.

@@ -55,11 +55,22 @@ pub(super) fn agent_session_lifecycle_keeps_metadata(lifecycle: AgentSessionLife
 
 impl WorkspaceModel {
     pub fn mark_surface_unread(&mut self, surface_id: &str, unread: bool) -> bool {
-        let Some(surface) = self.surfaces.get_mut(surface_id) else {
+        if !self.surfaces.contains_key(surface_id) {
             return false;
         };
-        surface.unread = unread;
-        surface.needs_attention = unread;
+        if unread {
+            self.output_unread_surface_ids
+                .insert(surface_id.to_string());
+        } else {
+            self.output_unread_surface_ids.remove(surface_id);
+        }
+        let notification_unread = self.notification_unread_surface_ids.contains(surface_id);
+        let surface = self
+            .surfaces
+            .get_mut(surface_id)
+            .expect("surface existence checked above");
+        surface.unread = unread || notification_unread;
+        surface.needs_attention = surface.unread;
         let workspace_id = surface.workspace_id.clone();
         self.recompute_workspace_attention(&workspace_id);
         true
@@ -494,6 +505,8 @@ impl WorkspaceModel {
     }
 
     pub(super) fn clear_removed_surface_metadata(&mut self, surface: &Surface) {
+        self.output_unread_surface_ids.remove(&surface.id);
+        self.notification_unread_surface_ids.remove(&surface.id);
         let surface_prefix = format!("surface:{}:", surface.id);
         self.clear_status_keys_matching(&surface.workspace_id, |key| {
             key.starts_with(&surface_prefix)
@@ -632,7 +645,18 @@ impl WorkspaceModel {
         surface_id: Option<&str>,
     ) {
         if let Some(surface_id) = surface_id {
-            if !self.mark_surface_unread(surface_id, true) {
+            if self.surfaces.contains_key(surface_id) {
+                self.notification_unread_surface_ids
+                    .insert(surface_id.to_string());
+                let surface = self
+                    .surfaces
+                    .get_mut(surface_id)
+                    .expect("surface existence checked above");
+                surface.unread = true;
+                surface.needs_attention = true;
+                let workspace_id = surface.workspace_id.clone();
+                self.recompute_workspace_attention(&workspace_id);
+            } else {
                 if let Some(workspace_id) = workspace_id {
                     if let Some(workspace) = self.workspaces.get_mut(workspace_id) {
                         workspace.needs_attention = true;
@@ -662,7 +686,7 @@ impl WorkspaceModel {
     }
 
     fn recompute_notification_attention(&mut self) {
-        let unread_surface_ids = self
+        self.notification_unread_surface_ids = self
             .notifications
             .iter()
             .filter(|notification| !notification.read)
@@ -678,7 +702,8 @@ impl WorkspaceModel {
             .cloned()
             .collect::<BTreeSet<_>>();
         for surface in self.surfaces.values_mut() {
-            let unread = unread_surface_ids.contains(&surface.id);
+            let unread = self.output_unread_surface_ids.contains(&surface.id)
+                || self.notification_unread_surface_ids.contains(&surface.id);
             surface.unread = unread;
             surface.needs_attention = unread;
         }

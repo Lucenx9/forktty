@@ -215,6 +215,8 @@ pub struct WorkspaceModel {
     status_hooks: BTreeMap<WorkspaceId, BTreeMap<String, StatusHookMetadata>>,
     progress: BTreeMap<WorkspaceId, Vec<ProgressEntry>>,
     logs: BTreeMap<WorkspaceId, Vec<LogEntry>>,
+    output_unread_surface_ids: BTreeSet<SurfaceId>,
+    notification_unread_surface_ids: BTreeSet<SurfaceId>,
     next_workspace: u64,
     next_surface: u64,
     next_notification: u64,

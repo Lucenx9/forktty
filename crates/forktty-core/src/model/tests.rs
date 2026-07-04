@@ -639,6 +639,50 @@ fn mark_notifications_read_keeps_items_and_clears_attention() {
 }
 
 #[test]
+fn mark_notifications_read_preserves_output_unread_surface_attention() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    assert!(model.mark_surface_unread(&workspace.focused_surface_id, true));
+    model.create_notification(
+        "Prompt",
+        "Ready",
+        NotificationKind::Prompt,
+        Some(workspace.id.clone()),
+        Some(workspace.focused_surface_id.clone()),
+    );
+
+    model.mark_notifications_read();
+
+    assert_eq!(model.unread_notification_count(), 0);
+    assert!(model.surface(&workspace.focused_surface_id).unwrap().unread);
+    assert!(model.list_workspaces()[0].needs_attention);
+
+    assert!(model.mark_surface_unread(&workspace.focused_surface_id, false));
+    assert!(!model.surface(&workspace.focused_surface_id).unwrap().unread);
+    assert!(!model.list_workspaces()[0].needs_attention);
+}
+
+#[test]
+fn clear_notifications_preserves_output_unread_surface_attention() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    assert!(model.mark_surface_unread(&workspace.focused_surface_id, true));
+    model.create_notification(
+        "Prompt",
+        "Ready",
+        NotificationKind::Prompt,
+        Some(workspace.id.clone()),
+        Some(workspace.focused_surface_id.clone()),
+    );
+
+    model.clear_notifications();
+
+    assert!(model.list_notifications().is_empty());
+    assert!(model.surface(&workspace.focused_surface_id).unwrap().unread);
+    assert!(model.list_workspaces()[0].needs_attention);
+}
+
+#[test]
 fn dismiss_notification_keeps_attention_when_unread_target_remains() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");
@@ -661,6 +705,26 @@ fn dismiss_notification_keeps_attention_when_unread_target_remains() {
 
     assert_eq!(model.list_notifications().len(), 1);
     assert_eq!(model.unread_notification_count(), 1);
+    assert!(model.surface(&workspace.focused_surface_id).unwrap().unread);
+    assert!(model.list_workspaces()[0].needs_attention);
+}
+
+#[test]
+fn dismiss_notification_preserves_output_unread_surface_attention() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    assert!(model.mark_surface_unread(&workspace.focused_surface_id, true));
+    let notification = model.create_notification(
+        "Prompt",
+        "Ready",
+        NotificationKind::Prompt,
+        Some(workspace.id.clone()),
+        Some(workspace.focused_surface_id.clone()),
+    );
+
+    assert!(model.dismiss_notification(&notification.id));
+
+    assert_eq!(model.unread_notification_count(), 0);
     assert!(model.surface(&workspace.focused_surface_id).unwrap().unread);
     assert!(model.list_workspaces()[0].needs_attention);
 }

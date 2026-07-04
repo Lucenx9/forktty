@@ -637,12 +637,13 @@ pub(super) fn build_ui(app: &adw::Application) {
     let notifications_parent = window.clone();
     let notifications_state = state.clone();
     let notifications_controller = controller.clone();
-    notifications.connect_clicked(move |_| {
+    notifications.connect_clicked(move |button| {
         show_notification_panel(
             &notifications_parent,
             &notifications_state,
             Some(notifications_controller.clone()),
         );
+        refresh_notification_indicator(button, &notifications_state);
     });
     let agents_parent = window.clone();
     let agents_state = state.clone();

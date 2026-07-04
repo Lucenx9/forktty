@@ -213,6 +213,15 @@ pub(super) fn notification_panel_section_should_hide_after_dismiss(
     }
 }
 
+fn notifications_for_panel_open(model: &mut WorkspaceModel) -> Vec<NotificationItem> {
+    let mut notifications = model.list_notifications();
+    model.mark_notifications_read();
+    for notification in &mut notifications {
+        notification.read = true;
+    }
+    notifications
+}
+
 pub(super) fn notification_target_label(
     state: &SocketAppState,
     notification: &NotificationItem,
@@ -487,11 +496,7 @@ pub(super) fn show_notification_panel(
         .model
         .lock()
         .ok()
-        .map(|mut model| {
-            let notifications = model.list_notifications();
-            model.mark_notifications_read();
-            notifications
-        })
+        .map(|mut model| notifications_for_panel_open(&mut model))
         .unwrap_or_default();
     let has_notifications = !notifications.is_empty();
 
@@ -870,6 +875,25 @@ pub(super) fn show_notification_panel(
 mod tests {
     use super::*;
     use base64::Engine;
+
+    #[test]
+    fn panel_open_snapshot_marks_rows_read_after_model_update() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        model.create_notification(
+            "Prompt",
+            "Ready",
+            NotificationKind::Prompt,
+            Some(workspace.id),
+            None,
+        );
+
+        let notifications = notifications_for_panel_open(&mut model);
+
+        assert_eq!(model.unread_notification_count(), 0);
+        assert!(model.list_notifications().iter().all(|item| item.read));
+        assert!(notifications.iter().all(|item| item.read));
+    }
 
     #[test]
     fn terminal_notification_reports_use_osc99_reply_sequences() {

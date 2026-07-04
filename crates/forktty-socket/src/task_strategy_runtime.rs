@@ -1,5 +1,5 @@
 use crate::{
-    current_unix_epoch_ms, format_param_names, optional_bool_param,
+    current_unix_epoch_ms, feed_view, format_param_names, optional_bool_param,
     optional_non_blank_string_param, optional_string_array_param, optional_surface_id_param,
     path_resolver::{canonical_existing_dir, canonical_repo_common_dir},
     required_trimmed_string, store_access, surface_effective_project_cwd, system_runtime,
@@ -1712,24 +1712,38 @@ impl TaskStrategyApplyRequest {
                 "task.strategy.apply approval_id {approval_id} does not match required approval request {expected}"
             )));
         }
-        let store = state
-            .feed_store
-            .lock()
-            .map_err(|_| "Lock poisoned".to_string())?;
-        let Some(store) = store.as_ref() else {
-            return Err(DispatchError::NotReady(
-                "Feed history is not available".to_string(),
-            ));
+        let entry = {
+            let store = state
+                .feed_store
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            let Some(store) = store.as_ref() else {
+                return Err(DispatchError::NotReady(
+                    "Feed history is not available".to_string(),
+                ));
+            };
+            store
+                .list(None, usize::MAX)
+                .into_iter()
+                .find(|entry| entry.id == approval_id)
         };
-        let Some(entry) = store
-            .list(None, usize::MAX)
-            .into_iter()
-            .find(|entry| entry.id == approval_id)
-        else {
+        let Some(entry) = entry else {
             return Err(DispatchError::PreconditionFailed(format!(
                 "task.strategy.apply approval request {approval_id} was not found"
             )));
         };
+        let approval_target_stale = {
+            let model = state
+                .model
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?;
+            feed_view::feed_entry_target_is_stale(&model, &entry)
+        };
+        if approval_target_stale {
+            return Err(DispatchError::PreconditionFailed(format!(
+                "task.strategy.apply approval request {approval_id} is no longer active"
+            )));
+        }
         match entry.approval_state {
             Some(FeedApprovalState::Approved) => Ok(true),
             Some(FeedApprovalState::Denied) => Err(DispatchError::PreconditionFailed(format!(

@@ -115,14 +115,18 @@ pub(crate) fn entries_for_model(model: &WorkspaceModel, entries: Vec<FeedEntry>)
 fn normalize_feed_entry_for_model(model: &WorkspaceModel, entry: &mut FeedEntry) {
     if entry.entry_type == FeedEntryType::Approval
         && entry.approval_state == Some(FeedApprovalState::Pending)
-        && feed_target_is_stale(
-            model,
-            entry.workspace_id.as_deref(),
-            entry.surface_id.as_deref(),
-        )
+        && feed_entry_target_is_stale(model, entry)
     {
         entry.approval_state = Some(FeedApprovalState::Stale);
     }
+}
+
+pub(crate) fn feed_entry_target_is_stale(model: &WorkspaceModel, entry: &FeedEntry) -> bool {
+    feed_target_is_stale(
+        model,
+        entry.workspace_id.as_deref(),
+        entry.surface_id.as_deref(),
+    )
 }
 
 fn feed_target_is_stale(

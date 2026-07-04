@@ -261,6 +261,66 @@ async fn context_snapshot_marks_missing_surface_approvals_stale() {
 }
 
 #[tokio::test]
+async fn feed_approval_respond_rejects_stale_surface_approval() {
+    let dir = tempfile::tempdir().unwrap();
+    let feed_path = dir.path().join("feed.json");
+    let (state, _) = test_state();
+    let state = state.with_feed_store_path(&feed_path).unwrap();
+    let (workspace_id, stale_surface_id) = {
+        let mut model = state.model.lock().unwrap();
+        let workspace = model.active_workspace().unwrap();
+        let split = model
+            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+            .unwrap();
+        (workspace.id, split.id)
+    };
+    {
+        let prev = current_snapshot(&state.model);
+        let mut model = state.model.lock().unwrap();
+        model.create_notification(
+            "Permission",
+            "Run stale command?",
+            NotificationKind::Prompt,
+            Some(workspace_id.clone()),
+            Some(stale_surface_id.clone()),
+        );
+        drop(model);
+        let next = current_snapshot(&state.model);
+        feed_events::record_feed_events(&state, &events::diff(&prev, &next)).unwrap();
+        let mut model = state.model.lock().unwrap();
+        model.close_surface(&stale_surface_id).unwrap();
+    }
+
+    let feed = dispatch(
+        &state,
+        "feed.list",
+        json!({"workspace_id": workspace_id, "limit": 10}),
+    )
+    .await
+    .unwrap();
+    let approval_id = feed[0]["id"].as_str().unwrap();
+    assert_eq!(feed[0]["approval_state"], "stale");
+
+    let err = dispatch(
+        &state,
+        "feed.approval.respond",
+        json!({"id": approval_id, "decision": "approved"}),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "precondition_failed");
+    assert!(err.to_string().contains("no longer active"));
+    assert_eq!(
+        forktty_core::FeedStore::open_at(&feed_path)
+            .unwrap()
+            .list(None, 10)[0]
+            .approval_state,
+        Some(forktty_core::FeedApprovalState::Stale)
+    );
+}
+
+#[tokio::test]
 async fn dispatches_minimal_feed_list() {
     let (state, _) = test_state();
     let (workspace_id, surface_id) = {
