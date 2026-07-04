@@ -393,14 +393,7 @@ pub(super) fn show_settings_dialog_page(
         let state = state.clone();
         let dialog = dialog.clone();
         move |_| {
-            let notifications = if let Ok(mut model) = state.model.lock() {
-                let notifications = model.list_notifications();
-                model.clear_notifications();
-                notifications
-            } else {
-                Vec::new()
-            };
-            state.mark_notification_feed_entries_cleared(&notifications);
+            clear_notification_history_from_settings(&state);
             dialog.add_toast(adw::Toast::new("Notification history cleared."));
         }
     });
@@ -1565,6 +1558,39 @@ fn append_team_provider_detection_rows(list: &gtk::ListBox, team: &config::TeamC
     }
 }
 
+fn clear_notification_history_from_settings(state: &SocketAppState) -> usize {
+    let notifications = if let Ok(mut model) = state.model.lock() {
+        let notifications = model.list_notifications();
+        model.clear_notifications();
+        notifications
+    } else {
+        Vec::new()
+    };
+    state.mark_notification_feed_entries_cleared(&notifications);
+    for notification in &notifications {
+        close_desktop_notification(&notification.id);
+        send_settings_terminal_notification_close_report(state, notification);
+    }
+    notifications.len()
+}
+
+fn send_settings_terminal_notification_close_report(
+    state: &SocketAppState,
+    notification: &NotificationItem,
+) {
+    let Some(metadata) = notification.terminal_metadata.as_ref() else {
+        return;
+    };
+    if !metadata.report_close {
+        return;
+    }
+    let Some(surface_id) = notification.surface_id.as_deref() else {
+        return;
+    };
+    let report = super::notifications_panel::terminal_notification_close_report(metadata);
+    let _ = state.terminal.send_text(surface_id, &report);
+}
+
 pub(super) fn settings_choice_index(items: &[(&str, &str)], value: &str) -> u32 {
     items.iter().position(|(id, _)| *id == value).unwrap_or(0) as u32
 }
@@ -1615,5 +1641,64 @@ pub(super) fn persist_settings_change<F: FnOnce(&mut config::AppConfig)>(
             dialog.add_toast(adw::Toast::new(&err.to_string()));
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use forktty_core::{NotificationKind, TerminalNotificationMetadata};
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn settings_notification_history_clear_sends_terminal_close_report() {
+        let model = Arc::new(Mutex::new(forktty_core::WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal.clone(),
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        );
+        let surface_id = {
+            let mut model = model.lock().unwrap();
+            let surface_id = model.create_workspace("main", "/tmp").focused_surface_id;
+            let notification = model.create_notification(
+                "Build",
+                "Done",
+                NotificationKind::Prompt,
+                None,
+                Some(surface_id.clone()),
+            );
+            model.set_notification_terminal_metadata(
+                &notification.id,
+                Some(TerminalNotificationMetadata {
+                    id: "build".to_string(),
+                    report_activation: false,
+                    report_close: true,
+                    buttons: Vec::new(),
+                    icon_names: Vec::new(),
+                    icon_data: None,
+                    icon_cache_id: None,
+                    urgency: None,
+                    sound_name: None,
+                    expires_after_ms: None,
+                    app_name: None,
+                    notification_types: Vec::new(),
+                }),
+            );
+            surface_id
+        };
+        spawn_focused_surface_if_needed(&state).unwrap();
+
+        let cleared = clear_notification_history_from_settings(&state);
+
+        assert_eq!(cleared, 1);
+        assert!(model.lock().unwrap().list_notifications().is_empty());
+        assert_eq!(
+            terminal.sent_text(&surface_id).unwrap(),
+            vec!["\x1b]99;i=build:p=close;\x1b\\"]
+        );
     }
 }

@@ -378,7 +378,7 @@ unless the goal or request hints clearly imply `fast`, `conservative`,
 `parallel`, or `review_heavy`; an explicit profile reweights the same
 explainable scorer without changing approval or visibility rules. Explicit
 iterative goals such as "use loop", "iterative audit", "repeat verification",
-"keep checking until clean", "altra passata", or "continua a cercare bug"
+or "keep checking until clean"
 classify as `verify_fix_loop` and bias the selected strategy toward
 `layers.loop_metadata: true`; this remains planning metadata only. Other
 goal-based task class and router profile inference recognizes English keywords

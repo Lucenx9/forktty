@@ -143,6 +143,9 @@ All notable changes to ForkTTY are documented here.
 - Fixed the Router rail notification Clear-all action so it also closes
   matching desktop notifications and sends OSC 99 close reports for terminal
   notifications that requested close reporting.
+- Fixed the Settings notification-history Clear action so it also closes
+  matching desktop notifications and sends OSC 99 close reports for terminal
+  notifications that requested close reporting.
 - Fixed the new Router rail and workflow feed live state so worker health uses
   live pane lifecycle such as `needs_input` instead of raw persisted worker
   status, and the workflow feed `LOGS` tab shows metadata logs instead of
@@ -164,6 +167,8 @@ All notable changes to ForkTTY are documented here.
   their referenced workspace/surface ids before fresh GTK workspaces are
   created, preventing stale approval prompts from reattaching to unrelated
   panes after restart.
+- Fixed task-router loop intent inference so non-English loop phrases no
+  longer bypass the structured `task_kind` / `router_profile` hint contract.
 - Fixed the workflow feed combined view so bursts of metadata logs, especially
   Antigravity tool logs, cannot push workflow, team, approval, or notification
   rows out of the visible five-line summary.

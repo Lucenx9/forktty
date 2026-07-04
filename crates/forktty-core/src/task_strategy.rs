@@ -787,8 +787,6 @@ fn contains_iterative_loop_intent(goal: &str) -> bool {
         || lower.contains("keep checking")
         || lower.contains("until clean")
         || lower.contains("another pass")
-        || lower.contains("altra passata")
-        || lower.contains("continua a cercare bug")
     {
         return true;
     }
@@ -1778,11 +1776,18 @@ mod tests {
                 strategy: TaskStrategy::SoloWithVerifyLoop,
             },
             Case {
-                goal: "Altra passata sui bug",
+                goal: "Altra passata sui problemi",
                 editing: false,
-                class: TaskClass::VerifyFixLoop,
+                class: TaskClass::RepoInspection,
                 profile: TaskRouterProfile::Balanced,
-                strategy: TaskStrategy::SoloWithVerifyLoop,
+                strategy: TaskStrategy::SoloTracked,
+            },
+            Case {
+                goal: "Continua a cercare problemi",
+                editing: false,
+                class: TaskClass::RepoInspection,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloTracked,
             },
         ];
 
