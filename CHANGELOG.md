@@ -5,6 +5,10 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Added
+- Task strategy apply now bootstraps an initial `planned` workflow loop record
+  for plans with `layers.loop_metadata: true` and context snapshots warn with
+  `loop_never_recorded` when such workflows are finished without loop
+  adoption evidence.
 - Task strategy apply now appends an advisory next-best-harness hint to
   assignment launchability and worker launch failures, naming the highest
   scored other ready harness for the same role so callers can retry without
@@ -26,10 +30,10 @@ All notable changes to ForkTTY are documented here.
 ### Changed
 - The agent skill and operating guide now make verify-loop state recording
   part of the strategy contract: when an applied task-strategy plan sets
-  `layers.loop_metadata: true`, agents must call `workflow_loop_set` before
-  the first verify pass (recipe, iteration budget, stop condition), update
-  stage/iteration/gates each pass, and record the stop reason at the end, so
-  `loop_summaries` can restore loop position after context compaction.
+  `layers.loop_metadata: true`, apply seeds the initial planned loop record,
+  and agents must update stage/iteration/gates each pass and record the stop
+  reason at the end so `loop_summaries` can restore loop position after
+  context compaction.
 - Reduced the always-sent ForkTTY MCP initialize instructions and task-strategy
   tool descriptions so agents get the routing essentials without duplicating
   the full operating guide; the complete guide remains available through the

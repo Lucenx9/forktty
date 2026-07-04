@@ -420,6 +420,17 @@ fn workflow_consistency_warnings(
     if workflow_status_is_active(&workflow.status) && stale_binding {
         warnings.push("active_with_missing_surface");
     }
+    if workflow_status_is_terminal(&workflow.status)
+        && workflow
+            .loop_recipe
+            .as_deref()
+            .is_some_and(workflow_loop_recipe_requires_adoption)
+        && workflow.loop_iteration == Some(0)
+        && workflow.loop_gates.is_empty()
+        && workflow.loop_stop_reason.is_none()
+    {
+        warnings.push("loop_never_recorded");
+    }
     if workflow.plan.is_empty() {
         return warnings;
     }
@@ -443,6 +454,13 @@ fn workflow_status_is_terminal(status: &str) -> bool {
     matches!(
         status.trim().to_ascii_lowercase().as_str(),
         "done" | "closed" | "cancelled" | "canceled" | "failed"
+    )
+}
+
+fn workflow_loop_recipe_requires_adoption(recipe: &str) -> bool {
+    matches!(
+        recipe,
+        "solo_with_verify_loop" | "implementer_plus_reviewer"
     )
 }
 

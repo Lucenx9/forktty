@@ -3767,7 +3767,14 @@ async fn task_strategy_apply_stages_workflow_team_tasks_and_messages() {
         "workflow memory should persist the stable task strategy wire value"
     );
     assert_eq!(workflow["plan"].as_array().unwrap().len(), 2);
-    assert_eq!(workflow["loop_stage"], "staged");
+    assert_eq!(workflow["loop_recipe"], "implementer_plus_reviewer");
+    assert_eq!(workflow["loop_stage"], "planned");
+    assert_eq!(workflow["loop_iteration"], 0);
+    assert_eq!(workflow["loop_max_iterations"], 3);
+    assert!(workflow
+        .get("loop_gates")
+        .and_then(Value::as_array)
+        .is_none_or(Vec::is_empty));
 
     let team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
         .await
@@ -3781,6 +3788,195 @@ async fn task_strategy_apply_stages_workflow_team_tasks_and_messages() {
     );
     assert_eq!(team["messages"][0]["to_worker_id"], Value::Null);
     assert_eq!(team["messages"][0]["delivered"], false);
+}
+
+#[tokio::test]
+async fn task_strategy_apply_bootstraps_loop_metadata_without_overwriting_existing_loop() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    let params = json!({
+        "run_id": "router-run-1",
+        "workspace_id": workspace_id,
+        "leader_surface_id": surface_id,
+        "goal": "Fix the router",
+        "approved": ["start_run"],
+        "plan": solo_verify_plan_json()
+    });
+
+    let result = dispatch(&state, "task.strategy.apply", params.clone())
+        .await
+        .unwrap();
+
+    assert!(result["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| { action["method"] == "workflow.loop.set" && action["stage"] == "planned" }));
+    let workflow = dispatch(
+        &state,
+        "workflow.get",
+        json!({"workflow_id": "router-run-1"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(workflow["loop_recipe"], "solo_with_verify_loop");
+    assert_eq!(workflow["loop_stage"], "planned");
+    assert_eq!(workflow["loop_iteration"], 0);
+    assert_eq!(workflow["loop_max_iterations"], 3);
+    assert!(workflow
+        .get("loop_gates")
+        .and_then(Value::as_array)
+        .is_none_or(Vec::is_empty));
+    assert_eq!(workflow["loop_stop_reason"], Value::Null);
+
+    dispatch(
+        &state,
+        "workflow.loop.set",
+        json!({
+            "workflow_id": "router-run-1",
+            "recipe": "manual-follow-up",
+            "stage": "verify",
+            "iteration": 1,
+            "max_iterations": 5,
+            "gates": [
+                {
+                    "id": "manual-check",
+                    "kind": "verification",
+                    "label": "Manual check",
+                    "status": "passed",
+                    "summary": "recorded by agent"
+                }
+            ]
+        }),
+    )
+    .await
+    .unwrap();
+
+    let retry = dispatch(&state, "task.strategy.apply", params)
+        .await
+        .unwrap();
+
+    assert!(retry["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|action| action["method"] != "workflow.loop.set"));
+    let workflow = dispatch(
+        &state,
+        "workflow.get",
+        json!({"workflow_id": "router-run-1"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(workflow["loop_recipe"], "manual-follow-up");
+    assert_eq!(workflow["loop_stage"], "verify");
+    assert_eq!(workflow["loop_iteration"], 1);
+    assert_eq!(workflow["loop_max_iterations"], 5);
+    assert_eq!(workflow["loop_gates"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn task_strategy_done_with_bootstrapped_loop_warns_when_loop_was_never_recorded() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "workspace_id": workspace_id,
+            "leader_surface_id": surface_id,
+            "goal": "Fix the router",
+            "approved": ["start_run"],
+            "plan": solo_verify_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+    let workflow = dispatch(
+        &state,
+        "workflow.get",
+        json!({"workflow_id": "router-run-1"}),
+    )
+    .await
+    .unwrap();
+    let completed_steps = workflow["plan"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|step| {
+            json!({
+                "id": step["id"],
+                "title": step["title"],
+                "status": "done",
+                "detail": step["detail"]
+            })
+        })
+        .collect::<Vec<_>>();
+    dispatch(
+        &state,
+        "workflow.plan.set",
+        json!({
+            "workflow_id": "router-run-1",
+            "steps": completed_steps
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "workflow.upsert",
+        json!({
+            "workflow_id": "router-run-1",
+            "status": "done"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let snapshot = dispatch(
+        &state,
+        "context.snapshot",
+        json!({"workspace_id": workspace_id, "tail_lines": 0, "include_workflow_details": true}),
+    )
+    .await
+    .unwrap();
+
+    let workflow_summary = snapshot["workflow_summaries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|workflow| workflow["id"] == "router-run-1")
+        .unwrap();
+    assert_eq!(
+        workflow_summary["consistency_warnings"],
+        json!(["loop_never_recorded"])
+    );
+    assert!(snapshot["risk_flags"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("workflow_consistency_warning")));
+    let workflow_detail = snapshot["workflows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|workflow| workflow["id"] == "router-run-1")
+        .unwrap();
+    assert_eq!(
+        workflow_detail["consistency_warnings"],
+        json!(["loop_never_recorded"])
+    );
 }
 
 #[tokio::test]
@@ -4046,7 +4242,7 @@ async fn task_strategy_apply_submit_launches_visible_workers_and_dispatches_prom
     .await
     .unwrap();
     assert_eq!(workflow["status"], "running");
-    assert_eq!(workflow["loop_stage"], "running");
+    assert_eq!(workflow["loop_stage"], "planned");
 
     let team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
         .await

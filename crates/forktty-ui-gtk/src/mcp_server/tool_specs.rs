@@ -126,7 +126,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "task_strategy_apply",
             annotations: mutating_annotations_with_open_world(true, false, true),
-            description: "Apply a planned task strategy as visible workflow/team/task/message state. Stages by default; submit=true may launch visible workers. ForkTTY recomputes dirty-repo isolation and required approvals server-side, requires explicit cwd to be in an open ForkTTY repo context, supports Feed approval requests, and rejects stale worker reuse. Requires approvals; never launches hidden background work.",
+            description: "Apply a planned task strategy as visible workflow/team/task/message state. Stages by default; loop_metadata plans bootstrap an initial planned workflow loop record without starting a scheduler, and submit=true may launch visible workers. ForkTTY recomputes dirty-repo isolation and required approvals server-side, requires explicit cwd to be in an open ForkTTY repo context, supports Feed approval requests, and rejects stale worker reuse. Requires approvals; never launches hidden background work.",
             input_schema: object_schema(
                 &["run_id", "goal", "plan"],
                 json!({

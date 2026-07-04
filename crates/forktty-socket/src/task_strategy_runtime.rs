@@ -32,6 +32,7 @@ const MAX_TASK_STRATEGY_SAFETY_NOTES: usize = 16;
 const MAX_TASK_STRATEGY_CANDIDATE_SCORES: usize = 8;
 const MAX_TASK_STRATEGY_SCORE_FACTORS: usize = 32;
 const MAX_TASK_STRATEGY_APPROVALS: usize = 4;
+const DEFAULT_TASK_STRATEGY_LOOP_MAX_ITERATIONS: u32 = 3;
 
 pub(crate) async fn plan(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let plan_params = task_strategy_plan_params(params)?;
@@ -707,10 +708,8 @@ pub(crate) async fn apply(state: &SocketAppState, params: &Value) -> Result<Valu
             "steps": planned["plan"].as_array().map(Vec::len).unwrap_or_default(),
         }));
 
-        if request.plan.layers.loop_metadata {
-            let looped =
-                workflow_runtime::loop_set(state, &request.workflow_loop_params(run_status))
-                    .await?;
+        if request.plan.layers.loop_metadata && !request.workflow_has_loop_state(state).await? {
+            let looped = workflow_runtime::loop_set(state, &request.workflow_loop_params()).await?;
             actions.push(json!({
                 "method": "workflow.loop.set",
                 "status": "applied",
@@ -2049,22 +2048,28 @@ impl TaskStrategyApplyRequest {
         })
     }
 
-    fn workflow_loop_params(&self, stage: &str) -> Value {
+    async fn workflow_has_loop_state(&self, state: &SocketAppState) -> Result<bool, DispatchError> {
+        let workflow =
+            workflow_runtime::get(state, &json!({"workflow_id": self.workflow_id})).await?;
+        Ok(workflow.get("loop_recipe").is_some()
+            || workflow.get("loop_stage").is_some()
+            || workflow.get("loop_iteration").is_some()
+            || workflow.get("loop_max_iterations").is_some()
+            || workflow.get("loop_stop_reason").is_some()
+            || workflow
+                .get("loop_gates")
+                .and_then(Value::as_array)
+                .is_some_and(|gates| !gates.is_empty()))
+    }
+
+    fn workflow_loop_params(&self) -> Value {
         json!({
             "workflow_id": self.workflow_id,
-            "recipe": "task_strategy_verify_loop",
-            "stage": stage,
+            "recipe": task_strategy_wire_value(&self.plan.strategy),
+            "stage": "planned",
             "iteration": 0,
-            "max_iterations": 3,
-            "gates": [
-                {
-                    "id": format!("{}-gate-verify", self.run_id),
-                    "kind": "verification",
-                    "label": "Run relevant verification",
-                    "status": "pending",
-                    "summary": "Verification must be recorded before the run is considered complete"
-                }
-            ]
+            "max_iterations": DEFAULT_TASK_STRATEGY_LOOP_MAX_ITERATIONS,
+            "gates": []
         })
     }
 

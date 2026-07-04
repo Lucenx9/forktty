@@ -60,7 +60,8 @@ work. For small local code changes, read and edit the repo directly.
    not invent signals from preference alone; treat the
    returned strategy and harness assignments as the default operating plan
    unless the user explicitly overrides them. When the effective plan sets
-   `layers.loop_metadata: true`, recording verify-loop state with
+   `layers.loop_metadata: true`, `task_strategy_apply` bootstraps the initial
+   planned loop record and recording later verify-loop progress with
    `workflow_loop_set` is part of executing that strategy (see Workflow
    Memory). Do not launch team workers or create
    worktrees merely because those tools exist. Use
@@ -414,11 +415,11 @@ For long tasks, multi-agent work, or work that may survive context compaction:
 - For closed loops, record the loop recipe, stage, iteration/max-iteration
   budget, stop reason, and verification gates with `workflow_loop_set`. When
   the applied task-strategy plan sets `layers.loop_metadata: true` (for
-  example `solo_with_verify_loop` or `implementer_plus_reviewer`), this
-  recording is part of the strategy contract, not optional: set the recipe,
-  iteration budget, and stop condition before the first verify pass, update
-  stage/iteration/gates at each pass, and record the stop reason when the
-  loop ends, so `loop_summaries` can restore the loop position after context
+  example `solo_with_verify_loop` or `implementer_plus_reviewer`),
+  `task_strategy_apply` seeds the initial planned loop record, but adoption is
+  still part of the strategy contract, not optional: update
+  stage/iteration/gates at each pass and record the stop reason when the loop
+  ends, so `loop_summaries` can restore the loop position after context
   compaction.
   Keep gate labels/summaries compact and treat `loop_gate_failed`,
   `loop_needs_human`, `loop_blocked`, `loop_budget_exhausted`, and

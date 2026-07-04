@@ -642,8 +642,14 @@ Review-primary goals with an effective `review_only` strategy remain read-only
 for apply-time dirty-repo isolation, but non-review editing goals still force
 worktree isolation even if a client submits a mismatched `review_only` plan.
 With `submit` omitted or `false`, apply performs staged setup only: it can
-upsert a workflow, write workflow plan steps, set loop metadata, upsert a team,
-create team tasks, and queue team-wide messages. With `submit: true`, a
+upsert a workflow, write workflow plan steps, bootstrap loop metadata, upsert a
+team, create team tasks, and queue team-wide messages. When the effective plan
+has `layers.loop_metadata: true`, apply seeds an initial workflow loop record
+only if the workflow does not already have loop state: recipe is the strategy
+wire id (for example `solo_with_verify_loop`), stage is `planned`, iteration is
+`0`, max iterations defaults to `3`, gates are empty, and no stop reason is set.
+Retries with the same run id preserve any existing loop state recorded by an
+agent or user. With `submit: true`, a
 supported team plan becomes an active visible run: ForkTTY upserts the workflow
 as `running`, upserts the team as `active`, creates each task before launch,
 launches one visible worker pane per assignment through `team.worker.launch`,
@@ -799,6 +805,11 @@ counts, iteration budget, stale surface-binding detection, and loop risk flags s
 `loop_budget_exhausted`, and `loop_stale_binding`. Loop summaries deliberately
 omit full workflow goals, memory, evidence, and gate notes; use
 `workflow.get` or `include_workflow_details` when those details are needed.
+If a task-strategy workflow that was bootstrapped with loop metadata reaches a
+terminal status while still at iteration `0` with no gates and no stop reason,
+workflow summaries/details add a non-blocking `loop_never_recorded`
+consistency warning and `context.snapshot` raises the existing
+`workflow_consistency_warning` risk flag.
 
 
 `system.identify` is a compact read-only context call for agents and scripts that need the canonical current target before acting: it accepts the same workspace selectors plus optional `surface_id`, treats wrapper-provided `FORKTTY_SURFACE_ID`/`FORKTTY_WORKSPACE_ID` as caller validation context, uses a known caller surface as the default target when no explicit target selector is supplied, and falls back to the active workspace focus when that caller surface is stale or absent. It returns the target workspace, target surface with `effective_project_cwd`, current agent binding when present, and caller id validation booleans. The CLI `forktty wait agent-status` is a bounded client-side lifecycle poll built from repeated short `context.snapshot` calls with `tail_lines: 0`; it accepts a required `--status` (`running`, `working`, `idle`, `done`, `needs_input`, `blocked`, `suspended`, `ended`, `closed`, or `unknown`), optional workspace/surface/agent filters, `--timeout-ms` capped at 120000, and `--interval-ms` capped at 5000. The wait wrapper never reads terminal text, sends input, closes panes, or holds one socket request open while waiting; timeout exits nonzero with code `timeout`.
