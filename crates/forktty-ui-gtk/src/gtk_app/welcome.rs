@@ -100,7 +100,7 @@ pub(super) fn show_welcome_dialog(
     integration_text.append(&integration_subtitle);
     integration_row.append(&integration_text);
     let setup_button = gtk::Button::builder()
-        .label("Configure")
+        .label("Set Up")
         .valign(gtk::Align::Center)
         .build();
     setup_button.add_css_class("suggested-action");

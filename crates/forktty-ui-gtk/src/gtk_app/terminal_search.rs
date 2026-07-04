@@ -232,8 +232,8 @@ pub(super) fn build_pane_search_bar(widget: &GhosttyTerminalWidget) -> PaneSearc
     entry.set_width_chars(16);
     let count = gtk::Label::new(Some("0/0"));
     count.add_css_class("pane-search-count");
-    let prev = pane_action_button("go-up-symbolic", "Previous Match (Shift+Enter)");
-    let next = pane_action_button("go-down-symbolic", "Next Match (Enter)");
+    let prev = pane_action_button("forktty-back-symbolic", "Previous Match (Shift+Enter)");
+    let next = pane_action_button("forktty-forward-symbolic", "Next Match (Enter)");
     let close = pane_action_button("forktty-close-symbolic", "Close Search (Escape)");
     container.append(&entry);
     container.append(&count);

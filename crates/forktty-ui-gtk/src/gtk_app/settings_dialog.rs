@@ -93,7 +93,7 @@ pub(super) fn show_settings_dialog_page(
         "Notifications",
         "Alerts and commands",
     );
-    let advanced_nav = settings_nav_button("forktty-refresh-symbolic", "Privacy", "Telemetry");
+    let advanced_nav = settings_nav_button("forktty-info-symbolic", "Privacy", "Telemetry");
     worktrees_nav.set_group(Some(&interface_nav));
     agents_nav.set_group(Some(&interface_nav));
     alerts_nav.set_group(Some(&interface_nav));

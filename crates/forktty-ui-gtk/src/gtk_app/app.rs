@@ -280,7 +280,8 @@ pub(super) fn build_ui(app: &adw::Application) {
     let window_controls = gtk::Box::new(gtk::Orientation::Horizontal, 3);
     window_controls.add_css_class("app-window-controls");
     let minimize = app_window_control_button("forktty-window-minimize-symbolic", "Minimize");
-    let maximize = app_window_control_button("forktty-window-maximize-symbolic", "Maximize");
+    let maximize =
+        app_window_control_button("forktty-window-maximize-symbolic", "Maximize or Restore");
     let close = app_window_control_button("forktty-window-close-symbolic", "Close");
     close.add_css_class("close");
     window_controls.append(&minimize);
@@ -799,6 +800,7 @@ fn app_window_control_button(icon_name: &str, label: &str) -> gtk::Button {
         .build();
     button.add_css_class("flat");
     button.add_css_class("app-window-control");
+    button.set_tooltip_text(Some(label));
     set_accessible_button_text(&button, label, None);
     button
 }

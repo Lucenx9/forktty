@@ -147,6 +147,7 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     // Populated asynchronously below: `git worktree list` can be slow on
     // large repositories and must not block the dialog from opening.
     let has_existing_worktrees = Rc::new(Cell::new(false));
+    let worktree_list_failed = Rc::new(Cell::new(false));
     let existing = gtk::ComboBoxText::new();
     existing.add_css_class("worktree-existing");
     existing.set_tooltip_text(Some("Existing worktree to merge or remove"));
@@ -202,11 +203,13 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     install_escape_close(&dialog);
 
     let controls = WorktreeDialogControls {
+        dialog: dialog.clone(),
         title: title.clone(),
         subtitle: subtitle.clone(),
         entry: entry.clone(),
         existing: existing.clone(),
         has_existing_worktrees: has_existing_worktrees.clone(),
+        worktree_list_failed: worktree_list_failed.clone(),
         hint: hint.clone(),
         status: status.clone(),
         primary: primary.clone(),
@@ -226,15 +229,20 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
         let base_cwd = base_cwd.clone();
         let existing = existing.clone();
         let has_existing_worktrees = has_existing_worktrees.clone();
+        let worktree_list_failed = worktree_list_failed.clone();
         let refresh = refresh.clone();
         glib::spawn_future_local(async move {
             let Some(cwd) = base_cwd else {
                 return;
             };
             let cwd = cwd.to_string_lossy().to_string();
-            let Ok(Ok(worktrees)) = run_worktree_blocking(move || worktree::list(&cwd)).await
-            else {
-                return;
+            let worktrees = match run_worktree_blocking(move || worktree::list(&cwd)).await {
+                Ok(Ok(worktrees)) => worktrees,
+                _ => {
+                    worktree_list_failed.set(true);
+                    refresh(false);
+                    return;
+                }
             };
             let choices = worktree_dialog_choices_from_list(worktrees);
             for choice in &choices {
@@ -407,11 +415,13 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
 
 #[derive(Clone)]
 pub(super) struct WorktreeDialogControls {
+    dialog: gtk::Window,
     title: gtk::Label,
     subtitle: gtk::Label,
     entry: gtk::Entry,
     existing: gtk::ComboBoxText,
     has_existing_worktrees: Rc<Cell<bool>>,
+    worktree_list_failed: Rc<Cell<bool>>,
     hint: gtk::Label,
     status: gtk::Label,
     primary: gtk::Button,
@@ -520,6 +530,7 @@ pub(super) fn refresh_worktree_dialog(
     controls: &WorktreeDialogControls,
     validate: bool,
 ) {
+    controls.dialog.set_title(Some(mode.dialog_title()));
     controls.title.set_label(mode.dialog_title());
     controls.subtitle.set_label(mode.dialog_subtitle());
     controls
@@ -538,7 +549,9 @@ pub(super) fn refresh_worktree_dialog(
         }
     }
     controls.hint.set_label(
-        if mode.uses_existing_chooser() && !controls.has_existing_worktrees.get() {
+        if mode.uses_existing_chooser() && controls.worktree_list_failed.get() {
+            "Could not load linked worktrees. Type a worktree or branch name."
+        } else if mode.uses_existing_chooser() && !controls.has_existing_worktrees.get() {
             "No linked worktrees found. Type a worktree or branch name."
         } else {
             mode.hint()

@@ -93,7 +93,12 @@ pub(super) fn show_workspace_popover<W: IsA<gtk::Widget>>(
             }
             inner.append(&body);
             row.set_child(Some(&inner));
-            set_accessible_button_text(&row, &format!("Switch to workspace {}", ws.name), None);
+            let accessible_label = if is_active {
+                format!("Current workspace {}", ws.name)
+            } else {
+                format!("Switch to workspace {}", ws.name)
+            };
+            set_accessible_button_text(&row, &accessible_label, None);
 
             // A strong popover ref here would form a GObject self-cycle and
             // leak the popover on every open; capture a weak ref instead.

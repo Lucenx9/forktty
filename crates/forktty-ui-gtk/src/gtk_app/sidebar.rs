@@ -199,7 +199,8 @@ pub(super) fn refresh_sidebar(
     let snapshot = sidebar_snapshot(state);
     if let Some(name) = snapshot.active_workspace_name.as_deref() {
         ui.workspace_title_label.set_label(name);
-        ui.workspace_title.set_tooltip_text(None);
+        ui.workspace_title
+            .set_tooltip_text(Some(&format!("Active workspace: {name}")));
         set_accessible_button_text(
             &ui.workspace_title,
             &format!("Active workspace: {name}"),

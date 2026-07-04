@@ -3001,10 +3001,40 @@ fn notification_clear_tooltip_and_workspace_popover_accessibility_are_precise() 
 
     assert!(notifications.contains("clear.set_tooltip_text(Some(\"Clear all notifications\"));"));
     assert!(popover.contains("set_accessible_button_text(&row"));
+    assert!(popover.contains("\"Current workspace {}\""));
     assert!(popover.contains("\"Switch to workspace {}\""));
     assert!(popover.contains("set_accessible_button_text(&new_btn"));
     assert!(popover.contains("\"New Workspace\""));
     assert!(popover.contains("Some(\"Ctrl+Shift+N\")"));
+}
+
+#[test]
+fn app_shell_polish_keeps_tooltips_and_bundled_icons_precise() {
+    let app = include_str!("app.rs");
+    let sidebar = include_str!("sidebar.rs");
+    let search = include_str!("terminal_search.rs");
+    let settings = include_str!("settings_dialog.rs");
+    let welcome = include_str!("welcome.rs");
+
+    assert!(app.contains("\"Maximize or Restore\""));
+    assert!(app.contains("button.set_tooltip_text(Some(label));"));
+    assert!(sidebar.contains("Active workspace: {name}"));
+    assert!(search.contains("\"forktty-back-symbolic\""));
+    assert!(search.contains("\"forktty-forward-symbolic\""));
+    assert!(!search.contains("\"go-up-symbolic\""));
+    assert!(!search.contains("\"go-down-symbolic\""));
+    assert!(settings.contains("settings_nav_button(\"forktty-info-symbolic\", \"Privacy\""));
+    assert!(welcome.contains(".label(\"Set Up\")"));
+}
+
+#[test]
+fn worktree_dialog_reports_mode_and_load_failure_context() {
+    let source = include_str!("worktree_dialog.rs");
+
+    assert!(source.contains("dialog: gtk::Window"));
+    assert!(source.contains("controls.dialog.set_title(Some(mode.dialog_title()))"));
+    assert!(source.contains("worktree_list_failed"));
+    assert!(source.contains("Could not load linked worktrees"));
 }
 
 #[test]
