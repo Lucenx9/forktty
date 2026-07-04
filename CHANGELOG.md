@@ -42,6 +42,9 @@ All notable changes to ForkTTY are documented here.
   ..." editing goals no longer route to parallel research lanes, and refactor
   goals now classify as feature implementation instead of repo inspection; a
   goal-routing corpus test pins classifier, profile, and strategy behavior.
+- Fixed task strategy harness routing signal and registry JSON to tolerate
+  missing optional fields (`cooldown`, `locked_out`, `harnesses`) instead of
+  failing deserialization; absent signals now mean "no signal".
 - Fixed more task strategy classifier false positives found by a multi-harness
   review: inspection-first goals that mention tests ("Explain how the tests
   are organized"), documentation nouns matching the old "verif" prefix

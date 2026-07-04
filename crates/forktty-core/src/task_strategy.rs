@@ -121,10 +121,14 @@ fn harness_cooldown_kind_id(kind: &HarnessCooldownKind) -> &'static str {
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct HarnessRoutingSignals {
+    // Missing signal fields mean "no signal", so partial JSON must
+    // deserialize instead of failing on absent booleans.
+    #[serde(default)]
     pub cooldown: bool,
     #[serde(default)]
     pub cooldown_kind: Option<HarnessCooldownKind>,
     pub cooldown_reason: Option<String>,
+    #[serde(default)]
     pub locked_out: bool,
     pub lockout_reason: Option<String>,
 }
@@ -148,6 +152,7 @@ pub struct HarnessCapability {
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct HarnessRegistry {
+    #[serde(default)]
     pub harnesses: Vec<HarnessCapability>,
 }
 
@@ -168,6 +173,10 @@ pub enum TaskStrategyApproval {
     StartRun,
     CreateWorktree,
     LaunchParallelWorkers,
+    /// Reserved for the later risk-escalation approvals named in the plan
+    /// safety notes (push, merge, destructive commands). Planning never
+    /// emits it today; keep the variant so the wire id `increase_risk`
+    /// stays stable when that escalation path lands.
     IncreaseRisk,
 }
 
@@ -689,6 +698,12 @@ fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
     // inspection-first wording ("Explain how the tests are organized") stays
     // repo inspection. Exact tokens only: a bare "verif" prefix would also
     // match documentation nouns such as "verification".
+    //
+    // Deliberate asymmetry with task_class_from_hint: the hint "verify" maps
+    // to VerifyFixLoop while goal wording maps to FocusedBugfix. Both classes
+    // share the same strategy fit table, so routing is identical; the phase
+    // one classifier keeps VerifyFixLoop unreachable on purpose (see
+    // phase_one_classifier_reachable_classes).
     if !is_inspection_primary_goal(goal)
         && contains_token(
             &lower,
@@ -2471,6 +2486,19 @@ mod tests {
             .iter()
             .any(|factor| factor["name"] == "worktree_cwd_fit"
                 && factor["points"].as_i64() > Some(0)));
+    }
+
+    #[test]
+    fn routing_signals_and_registry_json_tolerate_missing_fields() {
+        let signals: HarnessRoutingSignals =
+            serde_json::from_value(serde_json::json!({ "cooldown": true })).unwrap();
+        assert!(signals.cooldown);
+        assert!(!signals.locked_out);
+        assert_eq!(signals.cooldown_kind, None);
+        assert_eq!(signals.cooldown_reason, None);
+
+        let registry: HarnessRegistry = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(registry.harnesses.is_empty());
     }
 
     #[test]
