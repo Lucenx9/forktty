@@ -1,0 +1,1387 @@
+//! Right-side orchestration inspector plus the header Router cluster data
+//! (team chips, status summary) for the main GTK workbench.
+
+use super::*;
+
+const RAIL_APPROVAL_SLOTS: usize = 2;
+const RAIL_HEALTH_SLOTS: usize = 4;
+const RAIL_REPORT_SLOTS: usize = 4;
+const RAIL_NOTIFICATION_SLOTS: usize = 4;
+
+#[derive(Clone)]
+pub(super) struct OrchestrationRailUi {
+    pub(super) shell: gtk::Box,
+    status_value: gtk::Label,
+    strategy_value: gtk::Label,
+    strategy_detail_value: gtk::Label,
+    fanout_value: gtk::Label,
+    max_loops_value: gtk::Label,
+    workflow_value: gtk::Label,
+    router_plan_value: gtk::Label,
+    router_updated_value: gtk::Label,
+    loop_value: gtk::Label,
+    loop_caption_value: gtk::Label,
+    loop_updated_value: gtk::Label,
+    loop_progress: gtk::ProgressBar,
+    approvals_value: gtk::Label,
+    approval_rows: Vec<RailApprovalRow>,
+    approvals_empty: gtk::Label,
+    workers_value: gtk::Label,
+    health_rows: Vec<RailListRow>,
+    reports_value: gtk::Label,
+    report_rows: Vec<RailListRow>,
+    notifications_value: gtk::Label,
+    notification_rows: Vec<RailListRow>,
+    notifications_clear: gtk::Button,
+}
+
+/// Team chips shown at the end of the app header bar.
+#[derive(Clone)]
+pub(super) struct OrchestrationHeaderChipsUi {
+    pub(super) shell: gtk::Box,
+    last_signature: Rc<RefCell<String>>,
+}
+
+#[derive(Clone)]
+struct RailApprovalRow {
+    shell: gtk::Box,
+    title: gtk::Label,
+    caption: gtk::Label,
+    approval_id: Rc<RefCell<Option<String>>>,
+}
+
+#[derive(Clone)]
+struct RailListRow {
+    shell: gtk::Box,
+    dot: gtk::Box,
+    primary: gtk::Label,
+    secondary: gtk::Label,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct RailSnapshot {
+    strategy: String,
+    strategy_detail: String,
+    status: String,
+    fanout: String,
+    max_loops: String,
+    workflow: String,
+    router_plan: String,
+    router_updated: String,
+    loop_state: String,
+    loop_caption: String,
+    loop_updated: String,
+    loop_fraction: f64,
+    loop_planned: bool,
+    approvals: String,
+    approvals_attention: bool,
+    approvals_overflow: usize,
+    approval_items: Vec<RailApprovalItem>,
+    workers: String,
+    health_items: Vec<RailListItem>,
+    reports: String,
+    report_items: Vec<RailListItem>,
+    notifications: String,
+    notifications_attention: bool,
+    notification_items: Vec<RailListItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RailApprovalItem {
+    id: String,
+    title: String,
+    caption: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RailListItem {
+    dot: &'static str,
+    primary: String,
+    secondary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TeamChip {
+    pub(super) label: String,
+    pub(super) count: usize,
+    pub(super) dot: &'static str,
+}
+
+pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationRailUi {
+    let shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    shell.add_css_class("orchestration-rail");
+    shell.set_width_request(320);
+
+    let scroller = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .build();
+    scroller.add_css_class("orchestration-rail-scroll");
+    scroller.set_vexpand(true);
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    body.add_css_class("orchestration-rail-body");
+    body.set_vexpand(true);
+    scroller.set_child(Some(&body));
+
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    header.add_css_class("orchestration-panel-header");
+    let title = gtk::Label::builder()
+        .label("Router")
+        .xalign(0.0)
+        .single_line_mode(true)
+        .build();
+    title.add_css_class("orchestration-panel-title");
+    title.set_hexpand(true);
+    let status_value = gtk::Label::builder()
+        .label("")
+        .single_line_mode(true)
+        .build();
+    status_value.add_css_class("orchestration-status-chip");
+    header.append(&title);
+    header.append(&status_value);
+    body.append(&header);
+
+    let strategy_section = rail_section(&body);
+    let strategy_header = rail_section_header(&strategy_section, "STRATEGY");
+    let edit = rail_outline_button("Edit", "Open Router planner", "app.task-router");
+    strategy_header.append(&edit);
+    let strategy_value = gtk::Label::builder()
+        .label("")
+        .xalign(0.0)
+        .single_line_mode(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    strategy_value.add_css_class("orchestration-strategy-value");
+    strategy_section.append(&strategy_value);
+    let strategy_detail_value = multiline_value(2);
+    strategy_detail_value.add_css_class("orchestration-strategy-detail");
+    strategy_section.append(&strategy_detail_value);
+    let meta = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    meta.add_css_class("orchestration-meta-grid");
+    let fanout_value = rail_meta(&meta, "Fan-out");
+    let max_loops_value = rail_meta(&meta, "Max loops");
+    let workflow_value = rail_meta(&meta, "Workflow");
+    strategy_section.append(&meta);
+
+    let decision_section = rail_section(&body);
+    rail_section_header(&decision_section, "ROUTER DECISION");
+    let router_plan_value = rail_inline_value(&decision_section, "Plan");
+    let router_updated_value = rail_inline_value(&decision_section, "Updated");
+
+    let loop_section = rail_section(&body);
+    rail_section_header(&loop_section, "LOOP STATE");
+    let loop_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    let loop_value = gtk::Label::builder()
+        .label("")
+        .xalign(0.0)
+        .single_line_mode(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    loop_value.add_css_class("orchestration-loop-value");
+    let loop_progress = gtk::ProgressBar::new();
+    loop_progress.add_css_class("orchestration-loop-progress");
+    loop_progress.set_hexpand(true);
+    loop_progress.set_valign(gtk::Align::Center);
+    loop_row.append(&loop_value);
+    loop_row.append(&loop_progress);
+    loop_section.append(&loop_row);
+    let loop_caption_row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    let loop_caption_value = gtk::Label::builder()
+        .label("")
+        .xalign(0.0)
+        .hexpand(true)
+        .single_line_mode(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    loop_caption_value.add_css_class("orchestration-muted-caption");
+    let loop_updated_value = gtk::Label::builder()
+        .label("")
+        .xalign(1.0)
+        .single_line_mode(true)
+        .build();
+    loop_updated_value.add_css_class("orchestration-muted-caption");
+    loop_caption_row.append(&loop_caption_value);
+    loop_caption_row.append(&loop_updated_value);
+    loop_section.append(&loop_caption_row);
+
+    let approvals_section = rail_section(&body);
+    let approvals_header = rail_section_header(&approvals_section, "APPROVALS");
+    let approvals_value = rail_count_label();
+    approvals_header.append(&approvals_value);
+    let approval_rows = (0..RAIL_APPROVAL_SLOTS)
+        .map(|_| build_approval_row(&approvals_section, state))
+        .collect::<Vec<_>>();
+    let approvals_empty = gtk::Label::builder()
+        .label("No pending approvals")
+        .xalign(0.0)
+        .single_line_mode(true)
+        .build();
+    approvals_empty.add_css_class("orchestration-muted-caption");
+    approvals_section.append(&approvals_empty);
+    let auto_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    auto_row.add_css_class("orchestration-section-actions");
+    let auto_label = gtk::Label::builder()
+        .label("Auto-approve: Off")
+        .xalign(0.0)
+        .hexpand(true)
+        .single_line_mode(true)
+        .tooltip_text("ForkTTY never auto-approves; decisions stay explicit")
+        .build();
+    auto_label.add_css_class("orchestration-muted-caption");
+    auto_row.append(&auto_label);
+    auto_row.append(&rail_outline_button(
+        "Settings",
+        "Open Settings",
+        "app.settings",
+    ));
+    approvals_section.append(&auto_row);
+
+    let workers_section = rail_section(&body);
+    let workers_header = rail_section_header(&workers_section, "WORKER HEALTH");
+    let workers_value = rail_count_label();
+    workers_header.append(&workers_value);
+    let health_rows = (0..RAIL_HEALTH_SLOTS)
+        .map(|_| build_list_row(&workers_section))
+        .collect::<Vec<_>>();
+    workers_section.append(&rail_link_row("View all workers", "app.agents"));
+
+    let reports_section = rail_section(&body);
+    let reports_header = rail_section_header(&reports_section, "WORKER REPORTS");
+    let reports_value = rail_count_label();
+    reports_header.append(&reports_value);
+    let report_rows = (0..RAIL_REPORT_SLOTS)
+        .map(|_| build_list_row(&reports_section))
+        .collect::<Vec<_>>();
+    reports_section.append(&rail_link_row("Open worker reports", "app.agents"));
+
+    let notifications_section = rail_section(&body);
+    let notifications_header = rail_section_header(&notifications_section, "NOTIFICATIONS");
+    let notifications_value = rail_count_label();
+    notifications_header.append(&notifications_value);
+    let notification_rows = (0..RAIL_NOTIFICATION_SLOTS)
+        .map(|_| build_list_row(&notifications_section))
+        .collect::<Vec<_>>();
+    let clear_all = gtk::Button::builder()
+        .label("Clear all")
+        .has_frame(false)
+        .tooltip_text("Mark all notifications read")
+        .build();
+    clear_all.add_css_class("flat");
+    clear_all.add_css_class("orchestration-link-button");
+    clear_all.set_halign(gtk::Align::Start);
+    set_accessible_button_text(&clear_all, "Mark all notifications read", None);
+    let state_for_clear = state.clone();
+    clear_all.connect_clicked(move |_| {
+        let notifications = if let Ok(mut model) = state_for_clear.model.lock() {
+            let notifications = model.list_notifications();
+            model.mark_notifications_read();
+            notifications
+        } else {
+            Vec::new()
+        };
+        state_for_clear.mark_notification_feed_entries_cleared(&notifications);
+    });
+    notifications_section.append(&clear_all);
+
+    shell.append(&scroller);
+
+    let ui = OrchestrationRailUi {
+        shell,
+        status_value,
+        strategy_value,
+        strategy_detail_value,
+        fanout_value,
+        max_loops_value,
+        workflow_value,
+        router_plan_value,
+        router_updated_value,
+        loop_value,
+        loop_caption_value,
+        loop_updated_value,
+        loop_progress,
+        approvals_value,
+        approval_rows,
+        approvals_empty,
+        workers_value,
+        health_rows,
+        reports_value,
+        report_rows,
+        notifications_value,
+        notification_rows,
+        notifications_clear: clear_all,
+    };
+    refresh_orchestration_rail(&ui, state);
+    ui
+}
+
+fn build_approval_row(parent: &gtk::Box, state: &SocketAppState) -> RailApprovalRow {
+    let shell = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    shell.add_css_class("orchestration-approval-row");
+    let text = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    text.set_hexpand(true);
+    let title = gtk::Label::builder()
+        .label("")
+        .xalign(0.0)
+        .single_line_mode(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    title.add_css_class("orchestration-approval-title");
+    let caption = gtk::Label::builder()
+        .label("")
+        .xalign(0.0)
+        .single_line_mode(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    caption.add_css_class("orchestration-muted-caption");
+    text.append(&title);
+    text.append(&caption);
+    shell.append(&text);
+
+    let approval_id: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+    let review = rail_outline_button("Review", "Open approval notifications", "app.notifications");
+    shell.append(&review);
+    let deny = gtk::Button::builder()
+        .label("Deny")
+        .has_frame(false)
+        .tooltip_text("Deny this approval request")
+        .build();
+    deny.add_css_class("flat");
+    deny.add_css_class("orchestration-outline-button");
+    deny.add_css_class("orchestration-deny-button");
+    set_accessible_button_text(&deny, "Deny this approval request", None);
+    let state_for_deny = state.clone();
+    let approval_id_for_deny = approval_id.clone();
+    let shell_for_deny = shell.clone();
+    deny.connect_clicked(move |_| {
+        let Some(id) = approval_id_for_deny.borrow().clone() else {
+            return;
+        };
+        // The 1s orchestration refresh re-syncs the slots; hide eagerly so the
+        // row cannot be denied twice while the next tick is pending.
+        if state_for_deny
+            .decide_feed_approval(&id, forktty_core::FeedApprovalState::Denied)
+            .is_ok()
+        {
+            shell_for_deny.set_visible(false);
+        }
+    });
+    shell.append(&deny);
+    shell.set_visible(false);
+    parent.append(&shell);
+    RailApprovalRow {
+        shell,
+        title,
+        caption,
+        approval_id,
+    }
+}
+
+fn build_list_row(parent: &gtk::Box) -> RailListRow {
+    let shell = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    shell.add_css_class("orchestration-list-row");
+    let dot = rail_dot();
+    let primary = gtk::Label::builder()
+        .label("")
+        .xalign(0.0)
+        .hexpand(true)
+        .single_line_mode(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    primary.add_css_class("orchestration-list-primary");
+    let secondary = gtk::Label::builder()
+        .label("")
+        .xalign(1.0)
+        .single_line_mode(true)
+        .build();
+    secondary.add_css_class("orchestration-list-secondary");
+    shell.append(&dot);
+    shell.append(&primary);
+    shell.append(&secondary);
+    shell.set_visible(false);
+    parent.append(&shell);
+    RailListRow {
+        shell,
+        dot,
+        primary,
+        secondary,
+    }
+}
+
+fn rail_dot() -> gtk::Box {
+    let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    dot.add_css_class("rail-dot");
+    dot.set_valign(gtk::Align::Center);
+    dot
+}
+
+fn rail_link_row(label: &str, action: &str) -> gtk::Button {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let text = gtk::Label::builder()
+        .label(label)
+        .xalign(0.0)
+        .hexpand(true)
+        .single_line_mode(true)
+        .build();
+    let chevron = gtk::Label::builder().label("\u{203a}").build();
+    row.append(&text);
+    row.append(&chevron);
+    let button = gtk::Button::builder().child(&row).has_frame(false).build();
+    button.add_css_class("flat");
+    button.add_css_class("orchestration-link-button");
+    button.set_action_name(Some(action));
+    button.set_tooltip_text(Some(label));
+    set_accessible_button_text(&button, label, None);
+    button
+}
+
+fn set_list_rows(rows: &[RailListRow], items: &[RailListItem], empty: &str) {
+    for (index, row) in rows.iter().enumerate() {
+        if let Some(item) = items.get(index) {
+            row.shell.set_visible(true);
+            row.dot.set_visible(true);
+            set_dot_class(&row.dot, item.dot);
+            set_rail_value(&row.primary, &item.primary);
+            set_rail_value(&row.secondary, &item.secondary);
+            for class_name in ["ok", "warn", "err", "info", "idle"] {
+                row.secondary.remove_css_class(class_name);
+            }
+            row.secondary.add_css_class(item.dot);
+        } else if index == 0 && items.is_empty() {
+            row.shell.set_visible(true);
+            row.dot.set_visible(false);
+            set_rail_value(&row.primary, empty);
+            set_rail_value(&row.secondary, "");
+        } else {
+            row.shell.set_visible(false);
+        }
+    }
+}
+
+fn set_dot_class(dot: &gtk::Box, class_name: &'static str) {
+    for candidate in ["ok", "warn", "err", "info", "idle"] {
+        dot.remove_css_class(candidate);
+    }
+    dot.add_css_class(class_name);
+}
+
+pub(super) fn refresh_orchestration_rail(ui: &OrchestrationRailUi, state: &SocketAppState) {
+    let snapshot = orchestration_rail_snapshot(state);
+    set_rail_value(&ui.status_value, &snapshot.status);
+    set_rail_value(&ui.strategy_value, &snapshot.strategy);
+    set_rail_value(&ui.strategy_detail_value, &snapshot.strategy_detail);
+    set_rail_value(&ui.fanout_value, &snapshot.fanout);
+    set_rail_value(&ui.max_loops_value, &snapshot.max_loops);
+    set_rail_value(&ui.workflow_value, &snapshot.workflow);
+    set_rail_value(&ui.router_plan_value, &snapshot.router_plan);
+    set_rail_value(&ui.router_updated_value, &snapshot.router_updated);
+    set_rail_value(&ui.loop_value, &snapshot.loop_state);
+    set_rail_value(&ui.loop_caption_value, &snapshot.loop_caption);
+    set_rail_value(&ui.loop_updated_value, &snapshot.loop_updated);
+    ui.loop_progress
+        .set_fraction(snapshot.loop_fraction.clamp(0.0, 1.0));
+    ui.loop_progress.set_visible(snapshot.loop_planned);
+    set_rail_value(&ui.approvals_value, &snapshot.approvals);
+    set_count_attention(&ui.approvals_value, snapshot.approvals_attention);
+    for (index, row) in ui.approval_rows.iter().enumerate() {
+        if let Some(item) = snapshot.approval_items.get(index) {
+            row.shell.set_visible(true);
+            set_rail_value(&row.title, &item.title);
+            set_rail_value(&row.caption, &item.caption);
+            *row.approval_id.borrow_mut() = Some(item.id.clone());
+        } else {
+            row.shell.set_visible(false);
+            *row.approval_id.borrow_mut() = None;
+        }
+    }
+    if snapshot.approval_items.is_empty() {
+        set_rail_value(&ui.approvals_empty, "No pending approvals");
+        ui.approvals_empty.set_visible(true);
+    } else if snapshot.approvals_overflow > 0 {
+        set_rail_value(
+            &ui.approvals_empty,
+            &format!("+{} more pending", snapshot.approvals_overflow),
+        );
+        ui.approvals_empty.set_visible(true);
+    } else {
+        ui.approvals_empty.set_visible(false);
+    }
+    set_rail_value(&ui.workers_value, &snapshot.workers);
+    set_list_rows(
+        &ui.health_rows,
+        &snapshot.health_items,
+        "No visible workers",
+    );
+    set_rail_value(&ui.reports_value, &snapshot.reports);
+    set_list_rows(&ui.report_rows, &snapshot.report_items, "No worker reports");
+    set_rail_value(&ui.notifications_value, &snapshot.notifications);
+    set_count_attention(&ui.notifications_value, snapshot.notifications_attention);
+    set_list_rows(
+        &ui.notification_rows,
+        &snapshot.notification_items,
+        "No notifications",
+    );
+    ui.notifications_clear
+        .set_visible(!snapshot.notification_items.is_empty());
+}
+
+fn set_count_attention(label: &gtk::Label, attention: bool) {
+    if attention {
+        label.add_css_class("attention");
+    } else {
+        label.remove_css_class("attention");
+    }
+}
+
+pub(super) fn build_orchestration_header_chips(
+    state: &SocketAppState,
+) -> OrchestrationHeaderChipsUi {
+    let shell = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    shell.add_css_class("header-team-chips");
+    let ui = OrchestrationHeaderChipsUi {
+        shell,
+        last_signature: Rc::new(RefCell::new(String::new())),
+    };
+    refresh_orchestration_header_chips(&ui, state);
+    ui
+}
+
+pub(super) fn refresh_orchestration_header_chips(
+    ui: &OrchestrationHeaderChipsUi,
+    state: &SocketAppState,
+) {
+    let chips = latest_team_chips_for_state(state);
+    let signature = chips
+        .iter()
+        .map(|chip| format!("{}:{}:{}", chip.label, chip.count, chip.dot))
+        .collect::<Vec<_>>()
+        .join("|");
+    if *ui.last_signature.borrow() == signature {
+        return;
+    }
+    *ui.last_signature.borrow_mut() = signature;
+    while let Some(child) = ui.shell.first_child() {
+        ui.shell.remove(&child);
+    }
+    ui.shell.set_visible(!chips.is_empty());
+    for chip in &chips {
+        let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        let dot = rail_dot();
+        dot.add_css_class(chip.dot);
+        let name = gtk::Label::builder()
+            .label(&chip.label)
+            .single_line_mode(true)
+            .build();
+        name.add_css_class("header-team-chip-name");
+        let count = gtk::Label::builder()
+            .label(chip.count.to_string())
+            .single_line_mode(true)
+            .build();
+        count.add_css_class("header-team-chip-count");
+        content.append(&dot);
+        content.append(&name);
+        content.append(&count);
+        let button = gtk::Button::builder()
+            .child(&content)
+            .has_frame(false)
+            .build();
+        button.add_css_class("flat");
+        button.add_css_class("header-team-chip");
+        button.set_action_name(Some("app.agents"));
+        let tooltip = format!("{} workers: {}", chip.label, chip.count);
+        button.set_tooltip_text(Some(&tooltip));
+        set_accessible_button_text(&button, &tooltip, None);
+        ui.shell.append(&button);
+    }
+}
+
+/// Compact Router summary for the app status bar, e.g.
+/// "Router: parallel_research  Loop 2/5".
+pub(super) fn orchestration_status_summary(state: &SocketAppState) -> String {
+    let workflow = latest_workflow_snapshot(state.workflow_store_path.as_deref());
+    match (workflow.loop_iteration_display, workflow.strategy.as_str()) {
+        (Some(loop_display), strategy) => format!("Router: {strategy}  {loop_display}"),
+        (None, strategy) => format!("Router: {strategy}"),
+    }
+}
+
+fn rail_section(parent: &gtk::Box) -> gtk::Box {
+    let section = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    section.add_css_class("orchestration-section");
+    parent.append(&section);
+    section
+}
+
+fn rail_section_header(parent: &gtk::Box, title: &str) -> gtk::Box {
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    header.add_css_class("orchestration-section-header");
+    let label = gtk::Label::builder()
+        .label(title)
+        .xalign(0.0)
+        .single_line_mode(true)
+        .build();
+    label.add_css_class("orchestration-section-title");
+    label.set_hexpand(true);
+    header.append(&label);
+    parent.append(&header);
+    header
+}
+
+fn rail_outline_button(label: &str, tooltip: &str, action: &str) -> gtk::Button {
+    let button = gtk::Button::builder().label(label).has_frame(false).build();
+    button.add_css_class("flat");
+    button.add_css_class("orchestration-outline-button");
+    button.set_tooltip_text(Some(tooltip));
+    button.set_action_name(Some(action));
+    set_accessible_button_text(&button, tooltip, None);
+    button
+}
+
+fn rail_count_label() -> gtk::Label {
+    let label = gtk::Label::builder()
+        .label("")
+        .single_line_mode(true)
+        .build();
+    label.add_css_class("orchestration-section-count");
+    label
+}
+
+fn rail_meta(parent: &gtk::Box, label: &str) -> gtk::Label {
+    let box_ = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    box_.add_css_class("orchestration-meta");
+    box_.set_hexpand(true);
+    let key = gtk::Label::builder()
+        .label(label)
+        .xalign(0.0)
+        .single_line_mode(true)
+        .build();
+    key.add_css_class("orchestration-meta-key");
+    let value = gtk::Label::builder()
+        .label("")
+        .xalign(0.0)
+        .single_line_mode(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    value.add_css_class("orchestration-meta-value");
+    box_.append(&key);
+    box_.append(&value);
+    parent.append(&box_);
+    value
+}
+
+fn rail_inline_value(parent: &gtk::Box, label: &str) -> gtk::Label {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.add_css_class("orchestration-inline-row");
+    let key = gtk::Label::builder()
+        .label(label)
+        .xalign(0.0)
+        .single_line_mode(true)
+        .build();
+    key.add_css_class("orchestration-inline-key");
+    let value = gtk::Label::builder()
+        .label("")
+        .xalign(1.0)
+        .hexpand(true)
+        .single_line_mode(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    value.add_css_class("orchestration-inline-value");
+    row.append(&key);
+    row.append(&value);
+    parent.append(&row);
+    value
+}
+
+fn multiline_value(lines: i32) -> gtk::Label {
+    let value = gtk::Label::builder()
+        .label("")
+        .xalign(0.0)
+        .wrap(true)
+        .lines(lines)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    value.add_css_class("orchestration-list-value");
+    value
+}
+
+fn set_rail_value(label: &gtk::Label, value: &str) {
+    if label.label() != value {
+        label.set_label(value);
+        label.set_tooltip_text((!value.is_empty()).then_some(value));
+    }
+}
+
+fn orchestration_rail_snapshot(state: &SocketAppState) -> RailSnapshot {
+    let now_ms = now_unix_ms();
+    let live_statuses = live_surface_statuses(state);
+    let (notifications, notifications_attention, notification_items) = state
+        .model
+        .lock()
+        .ok()
+        .map(|model| {
+            let notifications = model.list_notifications();
+            let unread = notifications.iter().any(|notification| !notification.read);
+            (
+                format_notification_counts(&notifications),
+                unread,
+                notification_list_items(&notifications, now_ms),
+            )
+        })
+        .unwrap_or_else(|| ("unavailable".to_string(), false, Vec::new()));
+    let approval_items = state
+        .pending_feed_approvals(RAIL_APPROVAL_SLOTS)
+        .map(|approvals| {
+            approvals
+                .into_iter()
+                .map(|approval| RailApprovalItem {
+                    caption: format!(
+                        "Requested {}",
+                        relative_time_label(now_ms, approval.created_at_ms)
+                    ),
+                    id: approval.id,
+                    title: approval.title,
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let approval_count = state.pending_feed_approval_count();
+    let approvals = approval_count
+        .map(|count| format!("{count} pending"))
+        .unwrap_or_else(|| "unavailable".to_string());
+    let approvals_attention = approval_count.is_some_and(|count| count > 0);
+    let approvals_overflow =
+        approval_count.map_or(0, |count| count.saturating_sub(approval_items.len()));
+    let workflow = latest_workflow_snapshot(state.workflow_store_path.as_deref());
+    let team = latest_team_snapshot(state.team_store_path.as_deref(), &live_statuses);
+    RailSnapshot {
+        strategy: workflow.strategy,
+        strategy_detail: workflow.strategy_detail,
+        status: workflow.status,
+        fanout: team.fanout,
+        max_loops: workflow.max_loops,
+        workflow: workflow.workflow,
+        router_plan: workflow.router_plan,
+        router_updated: workflow.router_updated,
+        loop_state: workflow.loop_state,
+        loop_caption: workflow.loop_caption,
+        loop_updated: workflow.loop_updated,
+        loop_fraction: workflow.loop_fraction,
+        loop_planned: workflow.loop_planned,
+        approvals,
+        approvals_attention,
+        approvals_overflow,
+        approval_items,
+        workers: team.workers,
+        health_items: team.health_items,
+        reports: team.reports,
+        report_items: team.report_items,
+        notifications,
+        notifications_attention,
+        notification_items,
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+struct WorkflowRailSnapshot {
+    strategy: String,
+    strategy_detail: String,
+    status: String,
+    max_loops: String,
+    workflow: String,
+    router_plan: String,
+    router_updated: String,
+    loop_state: String,
+    loop_caption: String,
+    loop_updated: String,
+    loop_fraction: f64,
+    loop_planned: bool,
+    loop_iteration_display: Option<String>,
+}
+
+fn latest_workflow_snapshot(path: Option<&Path>) -> WorkflowRailSnapshot {
+    let Some(path) = path else {
+        return workflow_fallback("no store", "Workflow store not configured");
+    };
+    let Ok(store) = forktty_core::load_workflows_from_path(path) else {
+        return workflow_fallback("unavailable", "Workflow store unavailable");
+    };
+    let Some(workflow) = store
+        .workflows
+        .iter()
+        .max_by_key(|workflow| workflow.updated_at_ms)
+    else {
+        return workflow_fallback("idle", "No workflow staged");
+    };
+    let now_ms = now_unix_ms();
+    let strategy = workflow
+        .loop_recipe
+        .as_deref()
+        .unwrap_or(workflow.mode.as_str())
+        .to_string();
+    let status = workflow
+        .loop_stage
+        .as_deref()
+        .map(|stage| format!("loop {stage}"))
+        .unwrap_or_else(|| workflow.status.clone());
+    let max_loops = workflow
+        .loop_max_iterations
+        .map(|max| max.to_string())
+        .unwrap_or_else(|| "-".to_string());
+    let loop_iteration_display = match (workflow.loop_iteration, workflow.loop_max_iterations) {
+        (Some(iteration), Some(max)) => Some(format!("Loop {iteration}/{max}")),
+        _ => None,
+    };
+    WorkflowRailSnapshot {
+        strategy: strategy.clone(),
+        strategy_detail: workflow
+            .goal
+            .as_deref()
+            .filter(|goal| !goal.trim().is_empty())
+            .unwrap_or("No routing goal recorded")
+            .to_string(),
+        status,
+        max_loops,
+        workflow: workflow.status.clone(),
+        router_plan: strategy,
+        router_updated: relative_time_label(now_ms, u128::from(workflow.updated_at_ms)),
+        loop_state: format_loop_state(workflow),
+        loop_caption: format_loop_caption(workflow),
+        loop_updated: workflow
+            .loop_updated_at_ms
+            .map(|at_ms| relative_time_label(now_ms, u128::from(at_ms)))
+            .unwrap_or_default(),
+        loop_fraction: loop_fraction(workflow),
+        loop_planned: workflow.loop_stage.is_some(),
+        loop_iteration_display,
+    }
+}
+
+fn workflow_fallback(strategy: &str, detail: &str) -> WorkflowRailSnapshot {
+    WorkflowRailSnapshot {
+        strategy: strategy.to_string(),
+        strategy_detail: detail.to_string(),
+        status: "idle".to_string(),
+        max_loops: "-".to_string(),
+        workflow: "none".to_string(),
+        router_plan: "No plan selected".to_string(),
+        router_updated: "-".to_string(),
+        loop_state: "not planned".to_string(),
+        loop_caption: "No loop metadata".to_string(),
+        loop_updated: String::new(),
+        loop_fraction: 0.0,
+        loop_planned: false,
+        loop_iteration_display: None,
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct TeamRailSnapshot {
+    fanout: String,
+    workers: String,
+    health_items: Vec<RailListItem>,
+    reports: String,
+    report_items: Vec<RailListItem>,
+}
+
+fn latest_team_snapshot(
+    path: Option<&Path>,
+    live_statuses: &std::collections::HashMap<String, String>,
+) -> TeamRailSnapshot {
+    let Some(path) = path else {
+        return team_fallback("no store");
+    };
+    let Ok(store) = forktty_core::load_teams_from_path(path) else {
+        return team_fallback("unavailable");
+    };
+    let Some(team) = store.teams.iter().max_by_key(|team| team.updated_at_ms) else {
+        return team_fallback("no team");
+    };
+    let active = team
+        .workers
+        .iter()
+        .filter(|worker| worker_status_is_active(effective_worker_status(worker, live_statuses)))
+        .count();
+    let workers = if team_is_closed(&team.status) {
+        "finished".to_string()
+    } else {
+        format!("{active}/{} active", team.workers.len())
+    };
+    let report_items = report_list_items(&team.workers);
+    TeamRailSnapshot {
+        fanout: team.workers.len().to_string(),
+        workers,
+        health_items: health_list_items_with_live_statuses(&team.workers, live_statuses),
+        reports: count_label(report_items.len(), "report", "reports"),
+        report_items,
+    }
+}
+
+fn team_fallback(value: &str) -> TeamRailSnapshot {
+    TeamRailSnapshot {
+        fanout: "0".to_string(),
+        workers: value.to_string(),
+        health_items: Vec::new(),
+        reports: "0 reports".to_string(),
+        report_items: Vec::new(),
+    }
+}
+
+fn worker_status_is_active(status: &str) -> bool {
+    status == "running" || status == "active"
+}
+
+/// Mirrors `forktty_core::team`'s closed statuses so finished teams stop
+/// looking live in chips and health rows.
+fn team_is_closed(status: &str) -> bool {
+    matches!(status, "done" | "closed" | "cancelled" | "finished")
+}
+
+fn worker_status_dot(status: &str) -> &'static str {
+    let status = status.to_ascii_lowercase();
+    if status.contains("fail") || status.contains("error") || status.contains("no_heartbeat") {
+        "err"
+    } else if status == "running" || status == "active" || status == "done" || status == "ready" {
+        "ok"
+    } else if status.contains("shutdown")
+        || status.contains("stopped")
+        || status.contains("ended")
+        || status.contains("hibernat")
+    {
+        "idle"
+    } else {
+        "warn"
+    }
+}
+
+/// Groups a team's workers by agent for the header chips and the sidebar TEAM
+/// section, preserving first-seen order.
+#[cfg(test)]
+pub(super) fn team_chips_from_workers(workers: &[forktty_core::TeamWorker]) -> Vec<TeamChip> {
+    let live_statuses = std::collections::HashMap::new();
+    team_chips_from_workers_with_live_statuses(workers, &live_statuses)
+}
+
+fn team_chips_from_workers_with_live_statuses(
+    workers: &[forktty_core::TeamWorker],
+    live_statuses: &std::collections::HashMap<String, String>,
+) -> Vec<TeamChip> {
+    let mut chips: Vec<TeamChip> = Vec::new();
+    for worker in workers {
+        let label = team_agent_label(worker.agent.as_deref().unwrap_or("worker"));
+        let dot = worker_status_dot(effective_worker_status(worker, live_statuses));
+        if let Some(chip) = chips.iter_mut().find(|chip| chip.label == label) {
+            chip.count += 1;
+            chip.dot = merge_dots(chip.dot, dot);
+        } else {
+            chips.push(TeamChip {
+                label,
+                count: 1,
+                dot,
+            });
+        }
+    }
+    chips
+}
+
+pub(super) fn latest_team_chips_for_state(state: &SocketAppState) -> Vec<TeamChip> {
+    let live_statuses = live_surface_statuses(state);
+    latest_team_chips_with_live_statuses(state.team_store_path.as_deref(), &live_statuses)
+}
+
+fn latest_team_chips_with_live_statuses(
+    path: Option<&Path>,
+    live_statuses: &std::collections::HashMap<String, String>,
+) -> Vec<TeamChip> {
+    let Some(path) = path else {
+        return Vec::new();
+    };
+    let Ok(store) = forktty_core::load_teams_from_path(path) else {
+        return Vec::new();
+    };
+    store
+        .teams
+        .iter()
+        .max_by_key(|team| team.updated_at_ms)
+        .filter(|team| !team_is_closed(&team.status))
+        .map(|team| team_chips_from_workers_with_live_statuses(&team.workers, live_statuses))
+        .unwrap_or_default()
+}
+
+fn live_surface_statuses(state: &SocketAppState) -> std::collections::HashMap<String, String> {
+    state
+        .model
+        .lock()
+        .ok()
+        .map(|model| {
+            model
+                .list_surfaces(None)
+                .into_iter()
+                .filter_map(|surface| {
+                    surface.agent_session.map(|session| {
+                        (
+                            surface.id,
+                            agent_session_lifecycle_status(session.lifecycle).to_string(),
+                        )
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn agent_session_lifecycle_status(lifecycle: forktty_core::AgentSessionLifecycle) -> &'static str {
+    match lifecycle {
+        forktty_core::AgentSessionLifecycle::Running => "running",
+        forktty_core::AgentSessionLifecycle::Idle => "idle",
+        forktty_core::AgentSessionLifecycle::NeedsInput => "needs_input",
+        forktty_core::AgentSessionLifecycle::Suspended => "suspended",
+        forktty_core::AgentSessionLifecycle::Ended => "ended",
+        forktty_core::AgentSessionLifecycle::Unknown => "unknown",
+    }
+}
+
+fn effective_worker_status<'a>(
+    worker: &'a forktty_core::TeamWorker,
+    live_statuses: &'a std::collections::HashMap<String, String>,
+) -> &'a str {
+    worker
+        .surface_id
+        .as_deref()
+        .and_then(|surface_id| live_statuses.get(surface_id).map(String::as_str))
+        .unwrap_or(worker.status.as_str())
+}
+
+fn merge_dots(current: &'static str, next: &'static str) -> &'static str {
+    let severity = |dot: &str| match dot {
+        "err" => 3,
+        "warn" => 2,
+        "ok" => 1,
+        _ => 0,
+    };
+    if severity(next) > severity(current) {
+        next
+    } else {
+        current
+    }
+}
+
+pub(super) fn team_agent_label(raw: &str) -> String {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "claude" | "claude-code" | "claude_code" => "Claude".to_string(),
+        "codex" => "Codex".to_string(),
+        "grok" => "Grok".to_string(),
+        "antigravity" | "agy" => "Agy".to_string(),
+        "opencode" => "OpenCode".to_string(),
+        "pi" => "Pi".to_string(),
+        "" | "worker" => "Worker".to_string(),
+        other => {
+            let mut chars = other.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => "Worker".to_string(),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn health_list_items(workers: &[forktty_core::TeamWorker]) -> Vec<RailListItem> {
+    let live_statuses = std::collections::HashMap::new();
+    health_list_items_with_live_statuses(workers, &live_statuses)
+}
+
+fn health_list_items_with_live_statuses(
+    workers: &[forktty_core::TeamWorker],
+    live_statuses: &std::collections::HashMap<String, String>,
+) -> Vec<RailListItem> {
+    let chips = team_chips_from_workers_with_live_statuses(workers, live_statuses);
+    let mut items = Vec::new();
+    for chip in chips.into_iter().take(RAIL_HEALTH_SLOTS) {
+        let ready = workers
+            .iter()
+            .filter(|worker| {
+                team_agent_label(worker.agent.as_deref().unwrap_or("worker")) == chip.label
+                    && worker_status_dot(effective_worker_status(worker, live_statuses)) == "ok"
+            })
+            .count();
+        let status_word = match chip.dot {
+            "err" => "attention",
+            "warn" => "pending",
+            "idle" => "done",
+            _ => "ready",
+        };
+        items.push(RailListItem {
+            dot: chip.dot,
+            primary: chip.label,
+            secondary: format!("{ready}/{}  {status_word}", chip.count),
+        });
+    }
+    items
+}
+
+fn report_list_items(workers: &[forktty_core::TeamWorker]) -> Vec<RailListItem> {
+    workers
+        .iter()
+        .filter(|worker| {
+            worker
+                .report
+                .as_deref()
+                .is_some_and(|report| !report.trim().is_empty())
+        })
+        .take(RAIL_REPORT_SLOTS)
+        .map(|worker| {
+            let agent = team_agent_label(worker.agent.as_deref().unwrap_or("worker"));
+            let role = worker.role.as_deref().unwrap_or("report");
+            RailListItem {
+                dot: "ok",
+                primary: format!("{agent} \u{00b7} {role}"),
+                secondary: "ready".to_string(),
+            }
+        })
+        .collect()
+}
+
+fn notification_list_items(notifications: &[NotificationItem], now_ms: u128) -> Vec<RailListItem> {
+    notifications
+        .iter()
+        .rev()
+        .take(RAIL_NOTIFICATION_SLOTS)
+        .map(|notification| RailListItem {
+            dot: notification_kind_dot(notification.kind),
+            primary: notification.title.trim().to_string(),
+            secondary: relative_time_label(now_ms, notification.created_at_ms),
+        })
+        .collect()
+}
+
+fn notification_kind_dot(kind: NotificationKind) -> &'static str {
+    match kind {
+        NotificationKind::Prompt => "warn",
+        NotificationKind::Error => "err",
+        NotificationKind::Info => "info",
+        NotificationKind::Custom => "idle",
+    }
+}
+
+fn format_notification_counts(notifications: &[NotificationItem]) -> String {
+    let unread = notifications
+        .iter()
+        .filter(|notification| !notification.read)
+        .count();
+    let errors = notifications
+        .iter()
+        .filter(|notification| notification.kind == NotificationKind::Error && !notification.read)
+        .count();
+    if errors > 0 {
+        format!("{unread} new, {}", count_label(errors, "error", "errors"))
+    } else if unread > 0 {
+        format!("{unread} new")
+    } else {
+        "clear".to_string()
+    }
+}
+
+fn format_loop_state(workflow: &forktty_core::WorkflowState) -> String {
+    let Some(stage) = workflow.loop_stage.as_deref() else {
+        return "not planned".to_string();
+    };
+    match (workflow.loop_iteration, workflow.loop_max_iterations) {
+        (Some(iteration), Some(max)) => format!("Loop {iteration} of {max}"),
+        (Some(iteration), None) => format!("{stage} {iteration}"),
+        _ => stage.to_string(),
+    }
+}
+
+fn format_loop_caption(workflow: &forktty_core::WorkflowState) -> String {
+    if workflow.loop_gates.is_empty() {
+        return "No gates recorded".to_string();
+    }
+    count_label(workflow.loop_gates.len(), "gate recorded", "gates recorded")
+}
+
+fn loop_fraction(workflow: &forktty_core::WorkflowState) -> f64 {
+    match (workflow.loop_iteration, workflow.loop_max_iterations) {
+        (Some(iteration), Some(max)) if max > 0 => f64::from(iteration) / f64::from(max),
+        _ => 0.0,
+    }
+}
+
+fn count_label(count: usize, singular: &str, plural: &str) -> String {
+    if count == 1 {
+        format!("{count} {singular}")
+    } else {
+        format!("{count} {plural}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn worker(agent: &str, status: &str, report: Option<&str>) -> forktty_core::TeamWorker {
+        forktty_core::TeamWorker {
+            id: format!("{agent}-{status}"),
+            role: Some("main".to_string()),
+            agent: Some(agent.to_string()),
+            surface_id: None,
+            launched_surface_id: None,
+            worktree_name: None,
+            cwd: None,
+            report: report.map(str::to_string),
+            status: status.to_string(),
+            assigned_task_id: None,
+            last_heartbeat_ms: 0,
+            launched_at_ms: 0,
+            last_nudge_ms: 0,
+            shutdown_requested_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn team_chips_group_by_agent_and_keep_worst_dot() {
+        let chips = team_chips_from_workers(&[
+            worker("codex", "running", None),
+            worker("codex", "running", None),
+            worker("claude", "running", None),
+            worker("grok", "failed", None),
+        ]);
+        assert_eq!(
+            chips,
+            vec![
+                TeamChip {
+                    label: "Codex".to_string(),
+                    count: 2,
+                    dot: "ok"
+                },
+                TeamChip {
+                    label: "Claude".to_string(),
+                    count: 1,
+                    dot: "ok"
+                },
+                TeamChip {
+                    label: "Grok".to_string(),
+                    count: 1,
+                    dot: "err"
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn team_agent_label_maps_known_harnesses_and_capitalizes_custom() {
+        assert_eq!(team_agent_label("claude-code"), "Claude");
+        assert_eq!(team_agent_label("antigravity"), "Agy");
+        assert_eq!(team_agent_label("mistral"), "Mistral");
+        assert_eq!(team_agent_label(""), "Worker");
+    }
+
+    #[test]
+    fn health_items_report_ready_counts_per_agent() {
+        let items = health_list_items(&[
+            worker("codex", "running", None),
+            worker("codex", "idle", None),
+            worker("grok", "no_heartbeat", None),
+        ]);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].primary, "Codex");
+        assert_eq!(items[0].secondary, "1/2  pending");
+        assert_eq!(items[0].dot, "warn");
+        assert_eq!(items[1].primary, "Grok");
+        assert_eq!(items[1].secondary, "0/1  attention");
+        assert_eq!(items[1].dot, "err");
+    }
+
+    #[test]
+    fn live_surface_lifecycle_overrides_persisted_worker_status() {
+        let mut grok = worker("grok", "running", None);
+        grok.surface_id = Some("surface-grok".to_string());
+        let live_statuses = std::collections::HashMap::from([(
+            "surface-grok".to_string(),
+            "needs_input".to_string(),
+        )]);
+
+        let items = health_list_items_with_live_statuses(&[grok.clone()], &live_statuses);
+        assert_eq!(items[0].primary, "Grok");
+        assert_eq!(items[0].secondary, "0/1  pending");
+        assert_eq!(items[0].dot, "warn");
+
+        let chips = team_chips_from_workers_with_live_statuses(&[grok], &live_statuses);
+        assert_eq!(chips[0].dot, "warn");
+    }
+
+    #[test]
+    fn shutdown_workers_read_as_done_not_pending() {
+        let items = health_list_items(&[
+            worker("grok", "shutdown", None),
+            worker("agy", "shutdown_requested", None),
+        ]);
+        assert_eq!(items[0].dot, "idle");
+        assert_eq!(items[0].secondary, "0/1  done");
+        assert_eq!(items[1].dot, "idle");
+        // A mixed group keeps the most severe state visible.
+        assert_eq!(merge_dots("idle", "ok"), "ok");
+        assert_eq!(merge_dots("ok", "idle"), "ok");
+        assert_eq!(merge_dots("ok", "err"), "err");
+    }
+
+    #[test]
+    fn closed_team_statuses_match_core_lifecycle() {
+        for status in ["done", "closed", "cancelled", "finished"] {
+            assert!(team_is_closed(status), "{status} should read as closed");
+        }
+        for status in ["active", "running", "working", "forming"] {
+            assert!(!team_is_closed(status), "{status} should read as open");
+        }
+    }
+
+    #[test]
+    fn report_items_only_include_workers_with_reports() {
+        let items = report_list_items(&[
+            worker("codex", "running", Some("done: findings")),
+            worker("claude", "running", None),
+            worker("grok", "done", Some("  ")),
+        ]);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].primary, "Codex \u{00b7} main");
+        assert_eq!(items[0].secondary, "ready");
+    }
+
+    #[test]
+    fn format_notification_counts_surfaces_new_and_errors() {
+        let prompt = NotificationItem {
+            id: "one".to_string(),
+            title: "Input".to_string(),
+            body: String::new(),
+            kind: NotificationKind::Prompt,
+            created_at_ms: 1,
+            read: false,
+            workspace_id: None,
+            surface_id: None,
+            terminal_metadata: None,
+        };
+        let error = NotificationItem {
+            id: "two".to_string(),
+            title: "Error".to_string(),
+            body: String::new(),
+            kind: NotificationKind::Error,
+            created_at_ms: 2,
+            read: false,
+            workspace_id: None,
+            surface_id: None,
+            terminal_metadata: None,
+        };
+        assert_eq!(
+            format_notification_counts(&[prompt.clone(), error]),
+            "2 new, 1 error"
+        );
+        assert_eq!(format_notification_counts(&[prompt]), "1 new");
+        assert_eq!(format_notification_counts(&[]), "clear");
+    }
+
+    #[test]
+    fn count_label_uses_singular_for_one() {
+        assert_eq!(count_label(0, "report", "reports"), "0 reports");
+        assert_eq!(count_label(1, "report", "reports"), "1 report");
+        assert_eq!(count_label(2, "report", "reports"), "2 reports");
+    }
+}

@@ -144,6 +144,20 @@ pub(super) fn show_settings_dialog_page(
         &loaded.appearance.sidebar_position,
     );
     sidebar_list.append(&sidebar_position);
+    let show_orchestration_rail = adw::SwitchRow::builder()
+        .title("Show orchestration rail")
+        .subtitle("Show the Router and orchestration panel on the right.")
+        .active(loaded.appearance.show_orchestration_rail)
+        .build();
+    show_orchestration_rail.add_css_class("settings-row");
+    sidebar_list.append(&show_orchestration_rail);
+    let show_workflow_feed = adw::SwitchRow::builder()
+        .title("Show workflow feed")
+        .subtitle("Show live workflow, team, and notification events below the panes.")
+        .active(loaded.appearance.show_workflow_feed)
+        .build();
+    show_workflow_feed.add_css_class("settings-row");
+    sidebar_list.append(&show_workflow_feed);
     interface_content.append(&sidebar_section);
     stack.add_named(&interface_page, Some("interface"));
 
@@ -182,6 +196,23 @@ pub(super) fn show_settings_dialog_page(
     persist_terminal_processes.add_css_class("settings-row");
     terminal_session_list.append(&persist_terminal_processes);
     worktrees_content.append(&terminal_session_section);
+
+    let (worktree_actions_section, worktree_actions_list) = settings_section("Manage", "");
+    let create_worktree_row = settings_action_row(
+        "Worktree manager",
+        "Create, attach, merge, or remove git worktrees.",
+    );
+    let create_worktree_button = gtk::Button::with_label("Open\u{2026}");
+    create_worktree_button.add_css_class("settings-inline-action");
+    create_worktree_row.add_suffix(&create_worktree_button);
+    create_worktree_row.set_activatable_widget(Some(&create_worktree_button));
+    worktree_actions_list.append(&create_worktree_row);
+    worktrees_content.append(&worktree_actions_section);
+    let parent_for_worktrees = parent.clone();
+    let state_for_worktrees = state.clone();
+    create_worktree_button.connect_clicked(move |_| {
+        show_worktree_dialog(&parent_for_worktrees, &state_for_worktrees);
+    });
     stack.add_named(&worktrees_page, Some("worktrees"));
 
     let (agents_page, agents_content) = settings_page("Agents", "Agent integrations.");
@@ -242,8 +273,35 @@ pub(super) fn show_settings_dialog_page(
 
     let (provider_detection_section, provider_detection_list) =
         settings_section("Detected Providers", "");
+    let check_now_row = settings_action_row(
+        "Provider readiness",
+        "Re-scan the configured provider commands on PATH.",
+    );
+    let check_now_button = gtk::Button::with_label("Check now");
+    check_now_button.add_css_class("settings-inline-action");
+    check_now_row.add_suffix(&check_now_button);
+    check_now_row.set_activatable_widget(Some(&check_now_button));
+    let check_now_list = gtk::ListBox::new();
+    check_now_list.add_css_class("settings-list");
+    check_now_list.set_selection_mode(gtk::SelectionMode::None);
+    check_now_list.append(&check_now_row);
+    // Insert between the section header and the detection list so refreshes
+    // that clear the detection list never touch this row.
+    provider_detection_section.insert_child_after(
+        &check_now_list,
+        provider_detection_section.first_child().as_ref(),
+    );
     append_team_provider_detection_rows(&provider_detection_list, &loaded.team);
     agents_content.append(&provider_detection_section);
+    check_now_button.connect_clicked({
+        let list = provider_detection_list.clone();
+        let current = current.clone();
+        let dialog = dialog.clone();
+        move |_| {
+            refresh_team_provider_detection_rows(&list, &current.borrow().team);
+            dialog.add_toast(adw::Toast::new("Provider detection refreshed."));
+        }
+    });
 
     let (agent_advanced_section, agent_advanced_list) = settings_section("Advanced", "");
     let hooks_row = settings_action_row("Agent hooks", "Install provider hook entries.");
@@ -318,10 +376,52 @@ pub(super) fn show_settings_dialog_page(
     notification_command.set_input_purpose(gtk::InputPurpose::Terminal);
     notification_command_list.append(&notification_command);
     alerts_content.append(&notification_command_section);
+
+    let (history_section, history_list) = settings_section("History", "");
+    let clear_history_row = settings_action_row(
+        "Notification history",
+        "Remove all notifications from the in-app panel.",
+    );
+    let clear_history_button = gtk::Button::with_label("Clear now");
+    clear_history_button.add_css_class("settings-inline-action");
+    clear_history_button.add_css_class("destructive-action");
+    clear_history_row.add_suffix(&clear_history_button);
+    clear_history_row.set_activatable_widget(Some(&clear_history_button));
+    history_list.append(&clear_history_row);
+    alerts_content.append(&history_section);
+    clear_history_button.connect_clicked({
+        let state = state.clone();
+        let dialog = dialog.clone();
+        move |_| {
+            let notifications = if let Ok(mut model) = state.model.lock() {
+                let notifications = model.list_notifications();
+                model.clear_notifications();
+                notifications
+            } else {
+                Vec::new()
+            };
+            state.mark_notification_feed_entries_cleared(&notifications);
+            dialog.add_toast(adw::Toast::new("Notification history cleared."));
+        }
+    });
     stack.add_named(&alerts_page, Some("alerts"));
 
-    let (advanced_page, advanced_content) = settings_page("Privacy", "Telemetry.");
-    let (privacy_section, privacy_list) = settings_section("Privacy", "");
+    let (advanced_page, advanced_content) =
+        settings_page("Privacy", "ForkTTY is local-first and built for privacy.");
+    let (local_first_section, local_first_list) = settings_section("Local-first by design", "");
+    for line in [
+        "All workspace and session data stays on this machine.",
+        "Agent coordination runs over an owner-only local Unix socket.",
+        "No cloud sync. No analytics.",
+        "The MCP bridge is stdio-only and local.",
+    ] {
+        let row = settings_action_row(line, "");
+        row.set_activatable(false);
+        local_first_list.append(&row);
+    }
+    advanced_content.append(&local_first_section);
+
+    let (privacy_section, privacy_list) = settings_section("Telemetry", "");
     let anonymous_ping = adw::SwitchRow::builder()
         .title("Anonymous daily ping")
         .subtitle(
@@ -332,6 +432,32 @@ pub(super) fn show_settings_dialog_page(
     anonymous_ping.add_css_class("settings-row");
     privacy_list.append(&anonymous_ping);
     advanced_content.append(&privacy_section);
+
+    let (locations_section, locations_list) = settings_section("Stored data locations", "");
+    let mut stored_locations = vec![];
+    if let Ok(dir) = config::config_dir() {
+        stored_locations.push(("Configuration", dir));
+    }
+    if let Some(dir) = dirs::state_dir()
+        .or_else(dirs::data_local_dir)
+        .map(|dir| dir.join("forktty"))
+    {
+        stored_locations.push(("Session data", dir));
+    }
+    for (label, dir) in stored_locations {
+        let row = settings_action_row(label, &dir.to_string_lossy());
+        let open_button = gtk::Button::with_label("Open");
+        open_button.add_css_class("settings-inline-action");
+        row.add_suffix(&open_button);
+        row.set_activatable_widget(Some(&open_button));
+        locations_list.append(&row);
+        let description = format!("{label} directory");
+        open_button.connect_clicked(move |_| match glib::filename_to_uri(&dir, None) {
+            Ok(uri) => open_external_uri(&uri, &description),
+            Err(err) => eprintln!("Could not resolve {description}: {err}"),
+        });
+    }
+    advanced_content.append(&locations_section);
 
     let (advanced_section, advanced_list) = settings_section("Maintenance", "");
     let reset_row =
@@ -482,6 +608,42 @@ pub(super) fn show_settings_dialog_page(
                 &on_apply,
                 |config| config.appearance.sidebar_visible = row.is_active(),
                 "Sidebar visibility updated.",
+            );
+        }
+    });
+    show_orchestration_rail.connect_notify_local(Some("active"), {
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |row: &adw::SwitchRow, _| {
+            if suppress_updates.get() {
+                return;
+            }
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.appearance.show_orchestration_rail = row.is_active(),
+                "Orchestration rail visibility updated.",
+            );
+        }
+    });
+    show_workflow_feed.connect_notify_local(Some("active"), {
+        let dialog = dialog.clone();
+        let current = current.clone();
+        let on_apply = on_apply.clone();
+        let suppress_updates = suppress_updates.clone();
+        move |row: &adw::SwitchRow, _| {
+            if suppress_updates.get() {
+                return;
+            }
+            persist_settings_change(
+                &dialog,
+                &current,
+                &on_apply,
+                |config| config.appearance.show_workflow_feed = row.is_active(),
+                "Workflow feed visibility updated.",
             );
         }
     });
@@ -809,6 +971,8 @@ pub(super) fn show_settings_dialog_page(
             let window_mode_for_reset = window_mode.clone();
             let sidebar_position_for_reset = sidebar_position.clone();
             let sidebar_visible_for_reset = sidebar_visible.clone();
+            let show_orchestration_rail_for_reset = show_orchestration_rail.clone();
+            let show_workflow_feed_for_reset = show_workflow_feed.clone();
             let worktree_layout_for_reset = worktree_layout.clone();
             let pr_lookup_for_reset = pr_lookup.clone();
             let persist_terminal_processes_for_reset = persist_terminal_processes.clone();
@@ -868,6 +1032,9 @@ pub(super) fn show_settings_dialog_page(
                         &defaults.appearance.sidebar_position,
                     ));
                     sidebar_visible_for_reset.set_active(defaults.appearance.sidebar_visible);
+                    show_orchestration_rail_for_reset
+                        .set_active(defaults.appearance.show_orchestration_rail);
+                    show_workflow_feed_for_reset.set_active(defaults.appearance.show_workflow_feed);
                     worktree_layout_for_reset.set_selected(settings_choice_index(
                         WORKTREE_LAYOUT_ITEMS,
                         &defaults.general.worktree_layout,

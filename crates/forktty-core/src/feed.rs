@@ -246,6 +246,40 @@ impl FeedStore {
         Ok(changed)
     }
 
+    pub fn mark_notifications_read<I>(&mut self, ids: I) -> Result<Vec<FeedEntry>, FeedError>
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        let ids = ids
+            .into_iter()
+            .map(|id| id.as_ref().to_string())
+            .collect::<BTreeSet<_>>();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let previous = self.entries.clone();
+        let mut changed = Vec::new();
+        for entry in &mut self.entries {
+            if entry.entry_type != FeedEntryType::Notification
+                || entry.read
+                || !ids.contains(&entry.id)
+            {
+                continue;
+            }
+            entry.read = true;
+            changed.push(entry.clone());
+        }
+        if changed.is_empty() {
+            return Ok(changed);
+        }
+        if let Err(err) = self.save() {
+            self.entries = previous;
+            return Err(err);
+        }
+        Ok(changed)
+    }
+
     fn bound_entries(&mut self) {
         self.entries
             .sort_by_key(|entry| std::cmp::Reverse(entry.created_at_ms));

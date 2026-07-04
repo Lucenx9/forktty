@@ -345,7 +345,7 @@ pub(super) fn show_about_dialog(parent: &adw::ApplicationWindow) {
     dialog.present();
 }
 
-fn open_external_uri(uri: &str, description: &str) {
+pub(super) fn open_external_uri(uri: &str, description: &str) {
     if let Err(err) = gio::AppInfo::launch_default_for_uri(uri, None::<&gio::AppLaunchContext>) {
         eprintln!("Could not open {description}: {err}");
     }

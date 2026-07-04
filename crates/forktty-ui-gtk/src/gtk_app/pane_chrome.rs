@@ -65,6 +65,13 @@ fn build_pane_chrome_with_content(
         .ellipsize(gtk::pango::EllipsizeMode::End)
         .build();
     title.add_css_class("terminal-pane-title");
+    let agent_badge = gtk::Label::builder()
+        .label("")
+        .xalign(0.5)
+        .single_line_mode(true)
+        .build();
+    agent_badge.add_css_class("pane-agent-badge");
+    agent_badge.set_visible(false);
     let cwd = gtk::Label::builder()
         .label("")
         .xalign(1.0)
@@ -244,22 +251,71 @@ fn build_pane_chrome_with_content(
     header.append(&attention_dot);
     header.append(&drag_grip);
     header.append(&title);
+    header.append(&agent_badge);
     header.append(&cwd);
     header.append(&actions);
     pane.append(&header_revealer);
     pane.append(&terminal_overlay);
 
+    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    footer.add_css_class("terminal-pane-footer");
+    let footer_shell = gtk::Label::builder()
+        .label(pane_shell_label())
+        .xalign(0.0)
+        .hexpand(true)
+        .single_line_mode(true)
+        .build();
+    footer_shell.add_css_class("terminal-pane-footer-shell");
+    let footer_state = gtk::Label::builder()
+        .label("")
+        .xalign(1.0)
+        .single_line_mode(true)
+        .build();
+    footer_state.add_css_class("terminal-pane-footer-state");
+    let footer_dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    footer_dot.add_css_class("rail-dot");
+    footer_dot.add_css_class("ok");
+    footer_dot.set_valign(gtk::Align::Center);
+    footer.append(&footer_shell);
+    footer.append(&footer_state);
+    footer.append(&footer_dot);
+    // The footer mirrors the header: both are pane chrome and stay hidden
+    // while a workspace shows a single pane.
+    let footer_revealer = gtk::Revealer::builder()
+        .transition_type(gtk::RevealerTransitionType::SlideUp)
+        .transition_duration(180)
+        .child(&footer)
+        .build();
+    pane.append(&footer_revealer);
+
     PaneChrome {
         pane,
         header_revealer,
+        footer_revealer,
+        footer_state,
+        footer_dot,
         single_pane_actions,
         focus_marker,
         title,
+        agent_badge,
         cwd,
         attention_dot,
         search_bar,
         search_supported,
     }
+}
+
+/// Best-effort label for the shell panes spawn by default.
+fn pane_shell_label() -> String {
+    std::env::var("SHELL")
+        .ok()
+        .and_then(|shell| {
+            std::path::Path::new(&shell)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "shell".to_string())
 }
 
 pub(super) fn pane_action_button(icon_name: &str, tooltip: &str) -> gtk::Button {
@@ -648,6 +704,7 @@ pub(super) fn update_pane_chrome(chrome: &PaneChrome, surface: &Surface, active:
     let title_text = surface_title(surface);
     chrome.title.set_label(&title_text);
     chrome.title.set_tooltip_text(Some(&title_text));
+    update_pane_agent_badge(chrome, surface);
     let cwd_text = compact_path(&surface.cwd);
     let full_cwd = surface.cwd.to_string_lossy();
     chrome.cwd.set_label(&cwd_text);
@@ -667,6 +724,79 @@ pub(super) fn update_pane_chrome(chrome: &PaneChrome, surface: &Surface, active:
     }
     chrome.attention_dot.set_visible(!active && needs_attention);
     chrome.focus_marker.set_visible(active);
+}
+
+fn update_pane_agent_badge(chrome: &PaneChrome, surface: &Surface) {
+    for class_name in [
+        "needs-input",
+        "running",
+        "idle",
+        "suspended",
+        "unknown",
+        "ended",
+    ] {
+        chrome.agent_badge.remove_css_class(class_name);
+    }
+    for class_name in ["ok", "warn", "err", "info", "idle"] {
+        chrome.footer_dot.remove_css_class(class_name);
+    }
+    let Some(session) = surface.agent_session.as_ref() else {
+        chrome.agent_badge.set_label("");
+        chrome.agent_badge.set_tooltip_text(None);
+        chrome.agent_badge.set_visible(false);
+        chrome.footer_state.set_label("");
+        chrome.footer_dot.add_css_class("ok");
+        return;
+    };
+    let agent = pane_agent_label(session.agent);
+    let (lifecycle, class_name) = pane_lifecycle_label(session.lifecycle);
+    let label = format!("{agent} {lifecycle}");
+    chrome.agent_badge.set_label(&label);
+    chrome.agent_badge.add_css_class(class_name);
+    chrome
+        .agent_badge
+        .set_tooltip_text(Some(&format!("{agent} session: {lifecycle}")));
+    chrome.agent_badge.set_visible(true);
+    chrome.footer_state.set_label(lifecycle);
+    chrome
+        .footer_dot
+        .add_css_class(pane_lifecycle_dot(session.lifecycle));
+}
+
+fn pane_lifecycle_dot(lifecycle: forktty_core::AgentSessionLifecycle) -> &'static str {
+    match lifecycle {
+        forktty_core::AgentSessionLifecycle::NeedsInput => "warn",
+        forktty_core::AgentSessionLifecycle::Running => "ok",
+        forktty_core::AgentSessionLifecycle::Idle
+        | forktty_core::AgentSessionLifecycle::Suspended
+        | forktty_core::AgentSessionLifecycle::Unknown
+        | forktty_core::AgentSessionLifecycle::Ended => "idle",
+    }
+}
+
+fn pane_agent_label(agent: forktty_core::AgentKind) -> &'static str {
+    match agent {
+        forktty_core::AgentKind::ClaudeCode => "Claude",
+        forktty_core::AgentKind::Codex => "Codex",
+        forktty_core::AgentKind::Antigravity => "Agy",
+        forktty_core::AgentKind::Grok => "Grok",
+        forktty_core::AgentKind::Pi => "Pi",
+        forktty_core::AgentKind::OpenCode => "OpenCode",
+        forktty_core::AgentKind::Custom => "Agent",
+    }
+}
+
+fn pane_lifecycle_label(
+    lifecycle: forktty_core::AgentSessionLifecycle,
+) -> (&'static str, &'static str) {
+    match lifecycle {
+        forktty_core::AgentSessionLifecycle::NeedsInput => ("input", "needs-input"),
+        forktty_core::AgentSessionLifecycle::Running => ("working", "running"),
+        forktty_core::AgentSessionLifecycle::Idle => ("idle", "idle"),
+        forktty_core::AgentSessionLifecycle::Suspended => ("paused", "suspended"),
+        forktty_core::AgentSessionLifecycle::Unknown => ("unknown", "unknown"),
+        forktty_core::AgentSessionLifecycle::Ended => ("done", "ended"),
+    }
 }
 
 pub(super) fn update_tab_tooltip(widget: &impl IsA<gtk::Widget>, title: Option<String>) {
@@ -741,6 +871,23 @@ mod tests {
             &other_workspace_surface_id
         ));
         assert!(pane_swap_allowed(&model, &first_surface_id, &second_pane));
+    }
+
+    #[test]
+    fn pane_agent_badge_labels_are_compact_for_header_chrome() {
+        assert_eq!(
+            pane_agent_label(forktty_core::AgentKind::Antigravity),
+            "Agy"
+        );
+        assert_eq!(pane_agent_label(forktty_core::AgentKind::Grok), "Grok");
+        assert_eq!(
+            pane_lifecycle_label(forktty_core::AgentSessionLifecycle::NeedsInput),
+            ("input", "needs-input")
+        );
+        assert_eq!(
+            pane_lifecycle_label(forktty_core::AgentSessionLifecycle::Ended),
+            ("done", "ended")
+        );
     }
 
     #[test]

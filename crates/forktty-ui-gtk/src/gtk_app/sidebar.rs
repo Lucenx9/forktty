@@ -1239,3 +1239,134 @@ fn format_status_summary_part(status: &StatusEntry) -> String {
     };
     format!("{}: {}", status.label, value)
 }
+
+/// Fixed sidebar sections below the workspace list: TEAM (latest team
+/// workers grouped by agent), RESOURCES shortcuts, and the Settings/About
+/// footer, mirroring the agent-workspace layout.
+#[derive(Clone)]
+pub(super) struct SidebarSectionsUi {
+    pub(super) team_shell: gtk::Box,
+    team_rows: gtk::Box,
+    team_signature: Rc<RefCell<String>>,
+    pub(super) resources_shell: gtk::Box,
+    pub(super) git_repos_row: gtk::Button,
+    pub(super) placeholder_rows: Vec<(gtk::Button, &'static str)>,
+    pub(super) footer_shell: gtk::Box,
+    pub(super) about_row: gtk::Button,
+}
+
+pub(super) fn build_sidebar_sections(state: &SocketAppState) -> SidebarSectionsUi {
+    let team_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    team_shell.add_css_class("sidebar-fixed-section");
+    team_shell.append(&sidebar_section_label("Team"));
+    let team_rows = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    team_shell.append(&team_rows);
+
+    let resources_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    resources_shell.add_css_class("sidebar-fixed-section");
+    resources_shell.append(&sidebar_section_label("Resources"));
+    let git_repos_row = sidebar_nav_row("forktty-merge-symbolic", "Git Repos", None);
+    resources_shell.append(&git_repos_row);
+    let mut placeholder_rows = Vec::new();
+    for (icon, label) in [
+        ("forktty-info-symbolic", "Knowledge Base"),
+        ("forktty-copy-symbolic", "Snippets"),
+        ("forktty-grid-symbolic", "Environments"),
+        ("forktty-keyboard-symbolic", "Secrets"),
+    ] {
+        let row = sidebar_nav_row(icon, label, None);
+        resources_shell.append(&row);
+        placeholder_rows.push((row, label));
+    }
+
+    let footer_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    footer_shell.add_css_class("sidebar-footer");
+    let settings_row = sidebar_nav_row("forktty-settings-symbolic", "Settings", None);
+    settings_row.set_action_name(Some("app.settings"));
+    footer_shell.append(&settings_row);
+    let about_row = sidebar_nav_row("forktty-info-symbolic", "About ForkTTY", None);
+    footer_shell.append(&about_row);
+
+    let ui = SidebarSectionsUi {
+        team_shell,
+        team_rows,
+        team_signature: Rc::new(RefCell::new(String::new())),
+        resources_shell,
+        git_repos_row,
+        placeholder_rows,
+        footer_shell,
+        about_row,
+    };
+    refresh_sidebar_team_section(&ui, state);
+    ui
+}
+
+pub(super) fn refresh_sidebar_team_section(ui: &SidebarSectionsUi, state: &SocketAppState) {
+    let chips = latest_team_chips_for_state(state);
+    let signature = chips
+        .iter()
+        .map(|chip| format!("{}:{}:{}", chip.label, chip.count, chip.dot))
+        .collect::<Vec<_>>()
+        .join("|");
+    if *ui.team_signature.borrow() == signature {
+        return;
+    }
+    *ui.team_signature.borrow_mut() = signature;
+    while let Some(child) = ui.team_rows.first_child() {
+        ui.team_rows.remove(&child);
+    }
+    ui.team_shell.set_visible(!chips.is_empty());
+    for chip in &chips {
+        let row = sidebar_nav_row("forktty-terminal-symbolic", &chip.label, Some(chip));
+        row.set_action_name(Some("app.agents"));
+        ui.team_rows.append(&row);
+    }
+}
+
+fn sidebar_section_label(title: &str) -> gtk::Label {
+    let label = gtk::Label::builder()
+        .label(title)
+        .xalign(0.0)
+        .single_line_mode(true)
+        .build();
+    label.add_css_class("sidebar-section-label");
+    label.add_css_class("sidebar-fixed-section-label");
+    label
+}
+
+fn sidebar_nav_row(icon: &str, label: &str, chip: Option<&TeamChip>) -> gtk::Button {
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let icon = gtk::Image::from_icon_name(icon);
+    icon.add_css_class("sidebar-nav-icon");
+    content.append(&icon);
+    let text = gtk::Label::builder()
+        .label(label)
+        .xalign(0.0)
+        .hexpand(true)
+        .single_line_mode(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    text.add_css_class("sidebar-nav-label");
+    content.append(&text);
+    if let Some(chip) = chip {
+        let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        dot.add_css_class("rail-dot");
+        dot.add_css_class(chip.dot);
+        dot.set_valign(gtk::Align::Center);
+        content.append(&dot);
+        let count = gtk::Label::builder()
+            .label(chip.count.to_string())
+            .single_line_mode(true)
+            .build();
+        count.add_css_class("sidebar-nav-count");
+        content.append(&count);
+    }
+    let button = gtk::Button::builder()
+        .child(&content)
+        .has_frame(false)
+        .build();
+    button.add_css_class("flat");
+    button.add_css_class("sidebar-nav-row");
+    set_accessible_button_text(&button, label, None);
+    button
+}

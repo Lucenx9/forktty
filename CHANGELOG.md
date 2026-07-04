@@ -34,6 +34,23 @@ All notable changes to ForkTTY are documented here.
   touching live worker surfaces.
 
 ### Changed
+- The GTK workbench now follows the agent-workspace layout end to end: the
+  titlebar carries a Router cluster (breadcrumb, workspace selector, Plan and
+  Apply shortcuts into the read-only Router planner) plus live team chips; the
+  sidebar gains TEAM, RESOURCES, and Settings/About sections; the right-side
+  rail shows structured strategy/loop/approval/worker/report/notification rows
+  with working Review/Deny on pending Feed approvals and a notifications
+  Clear-all; the workflow feed gets wall-clock timestamps, per-kind status
+  colors, filter tabs, and a Clear button; split panes gain a slim footer with
+  the shell name and agent lifecycle; and the status bar summarizes the active
+  Router strategy and loop.
+- Settings follows the same agent-workspace pass: Interface gains live "Show
+  orchestration rail" and "Show workflow feed" toggles (new
+  `appearance.show_orchestration_rail` / `appearance.show_workflow_feed`
+  config keys, default on), Worktrees links the worktree manager, Agents can
+  re-scan provider readiness on demand, Notifications can clear the in-app
+  history, and Privacy states the local-first guarantees and stored data
+  locations next to the telemetry toggle.
 - `team.finish` now accepts `compact`/`--compact` to finalize teams without
   echoing the full team record and mailbox bodies in the response.
 - Team worker health now distinguishes workers that have no heartbeat plumbing
@@ -90,6 +107,14 @@ All notable changes to ForkTTY are documented here.
   notifications no longer clears a pane's unrelated unread-output badge; the
   notification panel also refreshes header state immediately and no longer
   renders freshly-read rows as unread.
+- Fixed notification clearing so the persisted Feed marks cleared
+  notification rows read while still keeping them in history, preventing the
+  new Router rail and workflow feed from showing cleared notifications as
+  still unread.
+- Fixed the new Router rail and workflow feed live state so worker health uses
+  live pane lifecycle such as `needs_input` instead of raw persisted worker
+  status, and the workflow feed `LOGS` tab shows metadata logs instead of
+  notification rows.
 - Fixed Feed approval responses so pending approvals whose workspace or surface
   target went stale are persisted as `stale` and rejected instead of being
   approved through the socket after `feed.list` already showed them stale.

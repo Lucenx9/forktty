@@ -898,6 +898,23 @@ fn sidebar_visible_defaults_to_true_when_missing() {
 }
 
 #[test]
+fn workbench_panel_visibility_defaults_on_and_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let config = load_config_from_path(&path).unwrap();
+    assert!(config.appearance.show_orchestration_rail);
+    assert!(config.appearance.show_workflow_feed);
+
+    let mut config = config;
+    config.appearance.show_orchestration_rail = false;
+    config.appearance.show_workflow_feed = false;
+    save_config_to_path(&path, &config).unwrap();
+    let loaded = load_config_from_path(&path).unwrap();
+    assert!(!loaded.appearance.show_orchestration_rail);
+    assert!(!loaded.appearance.show_workflow_feed);
+}
+
+#[test]
 fn pr_lookup_defaults_to_disabled_when_missing() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");

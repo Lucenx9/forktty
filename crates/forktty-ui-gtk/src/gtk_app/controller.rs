@@ -8,9 +8,13 @@ use super::*;
 pub(super) struct PaneChrome {
     pub(super) pane: gtk::Box,
     pub(super) header_revealer: gtk::Revealer,
+    pub(super) footer_revealer: gtk::Revealer,
+    pub(super) footer_state: gtk::Label,
+    pub(super) footer_dot: gtk::Box,
     pub(super) single_pane_actions: gtk::Box,
     pub(super) focus_marker: gtk::Box,
     pub(super) title: gtk::Label,
+    pub(super) agent_badge: gtk::Label,
     pub(super) cwd: gtk::Label,
     pub(super) attention_dot: gtk::Box,
     pub(super) search_bar: PaneSearchBar,
@@ -353,6 +357,7 @@ impl TerminalController {
         let widget = self.widget_for_pane(&visible_tree, &workspace_id);
         for chrome in self.chromes.values() {
             chrome.header_revealer.set_reveal_child(!single_pane);
+            chrome.footer_revealer.set_reveal_child(!single_pane);
             chrome.single_pane_actions.set_visible(single_pane);
             chrome.single_pane_actions.set_sensitive(single_pane);
         }
