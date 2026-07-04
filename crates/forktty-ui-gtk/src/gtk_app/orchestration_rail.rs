@@ -4,8 +4,8 @@
 use super::*;
 
 const RAIL_APPROVAL_SLOTS: usize = 2;
-const RAIL_HEALTH_SLOTS: usize = 4;
-const RAIL_REPORT_SLOTS: usize = 4;
+const RAIL_HEALTH_SLOTS: usize = 5;
+const RAIL_REPORT_SLOTS: usize = 5;
 const RAIL_NOTIFICATION_SLOTS: usize = 4;
 
 #[derive(Clone)]
@@ -733,23 +733,25 @@ fn orchestration_rail_snapshot(state: &SocketAppState) -> RailSnapshot {
             )
         })
         .unwrap_or_else(|| ("unavailable".to_string(), false, Vec::new()));
-    let approval_items = state
-        .pending_feed_approvals(RAIL_APPROVAL_SLOTS)
+    let visible_approvals = current_pending_feed_approvals(state, active_workspace_id.as_deref());
+    let approval_count = visible_approvals.as_ref().map(Vec::len);
+    let approval_items = visible_approvals
+        .as_ref()
         .map(|approvals| {
             approvals
-                .into_iter()
+                .iter()
+                .take(RAIL_APPROVAL_SLOTS)
                 .map(|approval| RailApprovalItem {
                     caption: format!(
                         "Requested {}",
                         relative_time_label(now_ms, approval.created_at_ms)
                     ),
-                    id: approval.id,
-                    title: approval.title,
+                    id: approval.id.clone(),
+                    title: approval.title.clone(),
                 })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let approval_count = state.pending_feed_approval_count();
     let approvals = approval_count
         .map(|count| format!("{count} pending"))
         .unwrap_or_else(|| "unavailable".to_string());
@@ -1192,6 +1194,46 @@ fn worker_has_report(worker: &forktty_core::TeamWorker) -> bool {
         .is_some_and(|report| !report.trim().is_empty())
 }
 
+fn current_pending_feed_approvals(
+    state: &SocketAppState,
+    workspace_id: Option<&str>,
+) -> Option<Vec<forktty_socket::PendingFeedApproval>> {
+    let approvals = state.pending_feed_approvals(usize::MAX)?;
+    let model = state.model.lock().ok()?;
+    Some(
+        approvals
+            .into_iter()
+            .filter(|approval| rail_approval_matches_workspace(&model, approval, workspace_id))
+            .collect(),
+    )
+}
+
+fn rail_approval_matches_workspace(
+    model: &forktty_core::WorkspaceModel,
+    approval: &forktty_socket::PendingFeedApproval,
+    workspace_id: Option<&str>,
+) -> bool {
+    let approval_workspace = approval.workspace_id.as_deref();
+    match workspace_id {
+        Some(workspace_id) if approval_workspace.is_some_and(|id| id != workspace_id) => {
+            return false;
+        }
+        None if approval_workspace.is_some() => return false,
+        _ => {}
+    }
+    if let Some(surface_id) = approval.surface_id.as_deref() {
+        let Some(surface) = model.surface(surface_id) else {
+            return false;
+        };
+        return workspace_id.is_none_or(|workspace_id| surface.workspace_id == workspace_id);
+    }
+    approval_workspace.is_none_or(|workspace_id| {
+        model
+            .workspace_id_for(forktty_core::WorkspaceSelector::Id(workspace_id))
+            .is_some()
+    })
+}
+
 fn current_rail_notifications(
     model: &forktty_core::WorkspaceModel,
     workspace_id: Option<&str>,
@@ -1505,7 +1547,7 @@ mod tests {
                 10,
             )
             .unwrap();
-        for index in 0..5 {
+        for index in 0..6 {
             team_store
                 .upsert_worker(
                     forktty_core::TeamWorkerUpsert {
@@ -1532,8 +1574,46 @@ mod tests {
             &live_statuses,
         );
 
-        assert_eq!(team.reports, "5 reports");
+        assert_eq!(team.reports, "6 reports");
         assert_eq!(team.report_items.len(), RAIL_REPORT_SLOTS);
+    }
+
+    #[test]
+    fn rail_approvals_ignore_closed_surface_prompts() {
+        let mut model = forktty_core::WorkspaceModel::new();
+        let workspace = model.create_workspace("main", "/tmp");
+        let prompt_surface = model
+            .split_surface(
+                &workspace.focused_surface_id,
+                forktty_core::SplitAxis::Horizontal,
+            )
+            .unwrap();
+        let live_approval = forktty_socket::PendingFeedApproval {
+            id: "live".to_string(),
+            title: "Live approval".to_string(),
+            workspace_id: Some(workspace.id.clone()),
+            surface_id: Some(workspace.focused_surface_id.clone()),
+            created_at_ms: 1,
+        };
+        let stale_approval = forktty_socket::PendingFeedApproval {
+            id: "stale".to_string(),
+            title: "Claude needs input".to_string(),
+            workspace_id: Some(workspace.id.clone()),
+            surface_id: Some(prompt_surface.id.clone()),
+            created_at_ms: 2,
+        };
+        model.close_surface(&prompt_surface.id).unwrap();
+
+        assert!(rail_approval_matches_workspace(
+            &model,
+            &live_approval,
+            Some(&workspace.id)
+        ));
+        assert!(!rail_approval_matches_workspace(
+            &model,
+            &stale_approval,
+            Some(&workspace.id)
+        ));
     }
 
     #[test]

@@ -387,6 +387,8 @@ impl SocketAppState {
                     PendingFeedApproval {
                         id: entry.id,
                         title,
+                        workspace_id: entry.workspace_id,
+                        surface_id: entry.surface_id,
                         created_at_ms: entry.created_at_ms,
                     }
                 })
@@ -414,6 +416,8 @@ impl SocketAppState {
 pub struct PendingFeedApproval {
     pub id: String,
     pub title: String,
+    pub workspace_id: Option<String>,
+    pub surface_id: Option<String>,
     pub created_at_ms: u128,
 }
 

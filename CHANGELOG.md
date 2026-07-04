@@ -125,9 +125,10 @@ All notable changes to ForkTTY are documented here.
 - Fixed the workflow feed combined view so bursts of metadata logs, especially
   Antigravity tool logs, cannot push workflow, team, approval, or notification
   rows out of the visible five-line summary.
-- Fixed the Router rail worker reports count so it reports the total number of
-  available worker reports even when only the first four rows are shown, and
-  hides prompt notifications whose target surface has already been closed.
+- Fixed the Router rail worker reports and approvals so five-worker review
+  teams show all five report/health rows, pending approvals whose target
+  surface has closed are hidden from the rail, and prompt notifications whose
+  target surface has already been closed stay hidden.
 - Fixed Feed approval responses so pending approvals whose workspace or surface
   target went stale are persisted as `stale` and rejected instead of being
   approved through the socket after `feed.list` already showed them stale.
