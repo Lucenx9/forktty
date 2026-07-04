@@ -37,6 +37,18 @@ All notable changes to ForkTTY are documented here.
   guessing or exact internal enum names.
 
 ### Fixed
+- Fixed task strategy goal keyword false positives: artifact words such as
+  "quickstart" or "smaller" no longer trigger the fast profile, "parallelize
+  ..." editing goals no longer route to parallel research lanes, and refactor
+  goals now classify as feature implementation instead of repo inspection; a
+  goal-routing corpus test pins classifier, profile, and strategy behavior.
+- Fixed more task strategy classifier false positives found by a multi-harness
+  review: inspection-first goals that mention tests ("Explain how the tests
+  are organized"), documentation nouns matching the old "verif" prefix
+  ("Document how verification works in CI"), and adjectival "built" ("Inspect
+  the built artifacts directory") no longer classify as editing work, and the
+  researcher assignment capacity factor no longer claims a capacity benefit
+  when it awards zero points.
 - Fixed Settings dialog live behavior so Reset also cleans previously enabled
   detached PTY persistence sessions, enabling GitHub PR lookup triggers an
   immediate refresh instead of waiting for the next timer tick, and agent setup

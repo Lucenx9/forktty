@@ -374,7 +374,11 @@ work, so dirty-repo state alone does not force worktree isolation for a
 `router_profile` is omitted, it uses `balanced`
 unless the goal or request hints clearly imply `fast`, `conservative`,
 `parallel`, or `review_heavy`; an explicit profile reweights the same
-explainable scorer without changing approval or visibility rules. It never
+explainable scorer without changing approval or visibility rules. Goal-based
+task class and router profile inference recognizes English keywords only;
+goals written in other languages fall back to `repo_inspection` with the
+`balanced` profile unless the caller passes normalized `task_kind`,
+`router_profile`, or the other explicit hints. It never
 launches processes, mutates workflow/team/feed state, creates worktrees, sends
 terminal input, or schedules background work.
 Optional `harness_signals` is an object keyed by harness id. Each value can set

@@ -685,10 +685,23 @@ fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
     if contains_comparison_research_intent(&lower) {
         return TaskClass::ParallelResearch;
     }
-    if contains_token(
-        &lower,
-        &["test", "tests", "testing", "verify", "verifies", "verified"],
-    ) || contains_token_prefix(&lower, &["verif"])
+    // Test/verify mentions read as verify-fix work only for action goals;
+    // inspection-first wording ("Explain how the tests are organized") stays
+    // repo inspection. Exact tokens only: a bare "verif" prefix would also
+    // match documentation nouns such as "verification".
+    if !is_inspection_primary_goal(goal)
+        && contains_token(
+            &lower,
+            &[
+                "test",
+                "tests",
+                "testing",
+                "verify",
+                "verifies",
+                "verified",
+                "verifying",
+            ],
+        )
     {
         return TaskClass::FocusedBugfix;
     }
@@ -706,7 +719,9 @@ fn contains_bugfix_intent(lower: &str) -> bool {
 }
 
 fn contains_parallel_research_intent(lower: &str) -> bool {
-    contains_token_prefix(lower, &["parallel"])
+    // Exact tokens only: a bare "parallel" prefix would also match editing
+    // goals about the code itself, such as "parallelize the loop".
+    contains_token(lower, &["parallel", "parallelism"])
 }
 
 fn contains_comparison_research_intent(lower: &str) -> bool {
@@ -715,36 +730,72 @@ fn contains_comparison_research_intent(lower: &str) -> bool {
 }
 
 fn contains_implementation_intent(lower: &str) -> bool {
+    // "built" is deliberately absent: goals such as "Inspect the built
+    // artifacts directory" use it as an adjective, not a request to build.
     contains_token(
         lower,
         &[
-            "add", "adds", "added", "adding", "build", "builds", "built", "building",
+            "add", "adds", "added", "adding", "build", "builds", "building",
         ],
-    ) || contains_token_prefix(lower, &["implement"])
+    ) || contains_token_prefix(
+        lower,
+        &["implement", "refactor", "paralleliz", "parallelis"],
+    )
 }
+
+/// Lead-in words skipped when deciding what the first meaningful goal token
+/// is ("Please quickly review ..." leads with "review").
+const GOAL_LEAD_IN_TOKENS: [&str; 7] = [
+    "the",
+    "a",
+    "an",
+    "please",
+    "quickly",
+    "carefully",
+    "thoroughly",
+];
 
 /// Returns true when the goal reads as a review-first request (the first
 /// meaningful token is a review verb), as opposed to an editing goal that
 /// merely mentions a review.
 fn is_review_primary_goal(goal: &str) -> bool {
     let lower = goal.to_lowercase();
-    let skip = [
-        "the",
-        "a",
-        "an",
-        "please",
-        "quickly",
-        "carefully",
-        "thoroughly",
-    ];
     let mut tokens = lower
         .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .filter(|token| !token.is_empty() && !skip.contains(token));
+        .filter(|token| !token.is_empty() && !GOAL_LEAD_IN_TOKENS.contains(token));
     let first = tokens.next();
     if first == Some("read") && tokens.next() == Some("only") {
         return true;
     }
     matches!(first, Some("review" | "reviews"))
+}
+
+/// Returns true when the goal reads as a read-only inspection request (the
+/// first meaningful token is a describe/inspect verb or a question word), as
+/// opposed to an action goal that merely mentions the same nouns.
+fn is_inspection_primary_goal(goal: &str) -> bool {
+    let lower = goal.to_lowercase();
+    let first = lower
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .find(|token| !token.is_empty() && !GOAL_LEAD_IN_TOKENS.contains(token));
+    matches!(
+        first,
+        Some(
+            "explain"
+                | "describe"
+                | "document"
+                | "summarize"
+                | "summarise"
+                | "show"
+                | "list"
+                | "inspect"
+                | "where"
+                | "how"
+                | "what"
+                | "why"
+                | "which"
+        )
+    )
 }
 
 fn infer_router_profile(
@@ -765,9 +816,14 @@ fn infer_router_profile(
     }
 
     let lower = goal.to_lowercase();
-    if contains_token_prefix(
+    // Exact tokens plus explicit inflections: a bare "quick"/"small" prefix
+    // would also match artifact words such as "quickstart" or "smaller".
+    if contains_token(
         &lower,
-        &["quick", "fast", "asap", "urgent", "small", "simple"],
+        &[
+            "quick", "quickly", "fast", "faster", "fastest", "asap", "urgent", "urgently", "small",
+            "simple",
+        ],
     ) {
         return TaskRouterProfile::Fast;
     }
@@ -1239,16 +1295,19 @@ fn score_harness_for_role(
                 "synthesizer role has no plan-mode support signal".to_string()
             },
         ),
-        HarnessRole::Researcher => push_score_factor(
-            &mut factors,
-            "role_capability_fit",
-            if harness.max_parallel_sessions.unwrap_or(1) > 1 {
-                10
-            } else {
-                0
-            },
-            "research role benefits from available parallel session capacity".to_string(),
-        ),
+        HarnessRole::Researcher => {
+            let has_parallel_capacity = harness.max_parallel_sessions.unwrap_or(1) > 1;
+            push_score_factor(
+                &mut factors,
+                "role_capability_fit",
+                if has_parallel_capacity { 10 } else { 0 },
+                if has_parallel_capacity {
+                    "research role benefits from available parallel session capacity".to_string()
+                } else {
+                    "research role has no declared parallel session capacity".to_string()
+                },
+            )
+        }
         HarnessRole::Implementer | HarnessRole::Verifier => push_score_factor(
             &mut factors,
             "role_capability_fit",
@@ -1486,6 +1545,139 @@ mod tests {
                 profile: TaskRouterProfile::Balanced,
                 strategy: TaskStrategy::SoloTracked,
             },
+            Case {
+                goal: "Explain how the socket server routes requests",
+                editing: false,
+                class: TaskClass::RepoInspection,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloTracked,
+            },
+            Case {
+                goal: "Urgent fix for the AppImage startup failure",
+                editing: true,
+                class: TaskClass::FocusedBugfix,
+                profile: TaskRouterProfile::Fast,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
+            Case {
+                goal: "Verify the config validation rejects bad ports",
+                editing: false,
+                class: TaskClass::FocusedBugfix,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
+            Case {
+                goal: "Build a status widget for the header bar",
+                editing: true,
+                class: TaskClass::FeatureImplementation,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
+            Case {
+                goal: "Read-only audit of the worktree module",
+                editing: false,
+                class: TaskClass::ReviewOnly,
+                profile: TaskRouterProfile::ReviewHeavy,
+                strategy: TaskStrategy::ReviewOnly,
+            },
+            Case {
+                goal: "Research session persistence approaches in parallel",
+                editing: false,
+                class: TaskClass::ParallelResearch,
+                profile: TaskRouterProfile::Parallel,
+                strategy: TaskStrategy::ParallelResearch,
+            },
+            Case {
+                goal: "Try parallel attempts to fix the renderer flicker",
+                editing: true,
+                class: TaskClass::ParallelExperiment,
+                profile: TaskRouterProfile::Parallel,
+                strategy: TaskStrategy::ParallelExperiment,
+            },
+            // Regression: "quickstart" names an artifact, not urgency; it must
+            // not prefix-match "quick" into the fast profile.
+            Case {
+                goal: "Add a quickstart section to the README",
+                editing: true,
+                class: TaskClass::FeatureImplementation,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
+            // Regression: "parallelize" is an editing goal about the code, not
+            // a request for parallel agent lanes.
+            Case {
+                goal: "Parallelize the image decode loop with rayon",
+                editing: true,
+                class: TaskClass::FeatureImplementation,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
+            // Refactors are editing goals; the runtime edit-intent inference
+            // already treats them as edits. "smaller" must not prefix-match
+            // "small" into the fast profile.
+            Case {
+                goal: "Refactor the pane tree module into smaller files",
+                editing: true,
+                class: TaskClass::FeatureImplementation,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
+            Case {
+                goal: "Safely refactor the session store without behavior changes",
+                editing: true,
+                class: TaskClass::FeatureImplementation,
+                profile: TaskRouterProfile::Conservative,
+                // Conservative profile deliberately promotes the reviewer
+                // pairing over the solo verify loop.
+                strategy: TaskStrategy::ImplementerPlusReviewer,
+            },
+            // Documented limitation: goal keywords are English-only, so
+            // non-English goals fall back to repo inspection unless the caller
+            // passes a task-class hint (see the hint-based tests below).
+            Case {
+                goal: "Sistemare il crash all'avvio della finestra",
+                editing: false,
+                class: TaskClass::RepoInspection,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloTracked,
+            },
+            // Regression: inspection-first goals that mention tests are not
+            // verify-fix work.
+            Case {
+                goal: "Explain how the tests are organized",
+                editing: false,
+                class: TaskClass::RepoInspection,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloTracked,
+            },
+            // Regression: "verification" is a documentation noun; it must not
+            // prefix-match "verif" into a bugfix.
+            Case {
+                goal: "Document how verification works in CI",
+                editing: false,
+                class: TaskClass::RepoInspection,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloTracked,
+            },
+            // Regression: "built" is an adjective here, not an implementation
+            // verb.
+            Case {
+                goal: "Inspect the built artifacts directory",
+                editing: false,
+                class: TaskClass::RepoInspection,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloTracked,
+            },
+            // Action goals that mention tests still classify as verify-fix
+            // work; the inspection guard only applies to inspection-first
+            // wording.
+            Case {
+                goal: "Make the failing tests pass",
+                editing: true,
+                class: TaskClass::FocusedBugfix,
+                profile: TaskRouterProfile::Balanced,
+                strategy: TaskStrategy::SoloWithVerifyLoop,
+            },
         ];
 
         for case in cases {
@@ -1503,6 +1695,52 @@ mod tests {
                 case.goal
             );
         }
+    }
+
+    #[test]
+    fn researcher_capacity_factor_reason_matches_awarded_points() {
+        let single_session = HarnessRegistry {
+            harnesses: vec![HarnessCapability {
+                max_parallel_sessions: None,
+                ..harness("single", false, true)
+            }],
+        };
+        let ranked = ranked_harnesses_for_role(
+            &HarnessRole::Researcher,
+            &single_session,
+            &TaskStrategyLayers::default(),
+        );
+        let factor = ranked[0]
+            .factors
+            .iter()
+            .find(|factor| factor.name == "role_capability_fit")
+            .expect("researcher assignment always carries a role_capability_fit factor");
+        assert_eq!(factor.points, 0);
+        assert!(
+            factor
+                .reason
+                .contains("no declared parallel session capacity"),
+            "zero-point reason must not claim a capacity benefit: {}",
+            factor.reason
+        );
+
+        let multi_session = HarnessRegistry {
+            harnesses: vec![harness("multi", false, true)],
+        };
+        let ranked = ranked_harnesses_for_role(
+            &HarnessRole::Researcher,
+            &multi_session,
+            &TaskStrategyLayers::default(),
+        );
+        let factor = ranked[0]
+            .factors
+            .iter()
+            .find(|factor| factor.name == "role_capability_fit")
+            .expect("researcher assignment always carries a role_capability_fit factor");
+        assert_eq!(factor.points, 10);
+        assert!(factor
+            .reason
+            .contains("benefits from available parallel session capacity"));
     }
 
     #[test]
