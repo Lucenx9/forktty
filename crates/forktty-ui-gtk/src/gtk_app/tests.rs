@@ -2786,7 +2786,8 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(feed_source.contains("(\"WORKFLOW FEED\", true)"));
     assert!(feed_source.contains("load_workflows_from_path(path)"));
     assert!(feed_source.contains("load_teams_from_path(path)"));
-    assert!(feed_source.contains("list_logs(&workspace.id)"));
+    assert!(feed_source.contains("active_workspace_id_for_state(state)"));
+    assert!(feed_source.contains("list_logs(workspace_id)"));
     assert!(router_dialog_source.contains("task_router_result_row(&result, \"assignments\", true)"));
     assert!(router_dialog_source.contains("value.set_lines(2);"));
     assert!(css.contains("button.flat.header-router-crumb {"));

@@ -115,6 +115,9 @@ All notable changes to ForkTTY are documented here.
   live pane lifecycle such as `needs_input` instead of raw persisted worker
   status, and the workflow feed `LOGS` tab shows metadata logs instead of
   notification rows.
+- Fixed the Router rail, header chips, status summary, and workflow feed so
+  they scope workflow/team state to the active workspace instead of continuing
+  to show the most recently updated router task after its workspace was closed.
 - Fixed Feed approval responses so pending approvals whose workspace or surface
   target went stale are persisted as `stale` and rejected instead of being
   approved through the socket after `feed.list` already showed them stale.

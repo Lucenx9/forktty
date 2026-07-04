@@ -234,27 +234,12 @@ fn set_feed_status_class(label: &gtk::Label, status: &str) {
 }
 
 fn orchestration_feed_lines(state: &SocketAppState) -> Vec<FeedLine> {
-    let mut lines = Vec::new();
-    if let Some(path) = state.workflow_store_path.as_deref() {
-        if let Ok(store) = forktty_core::load_workflows_from_path(path) {
-            lines.extend(store.events.iter().rev().take(5).map(|event| FeedLine {
-                at_ms: u128::from(event.at_ms),
-                source: FeedSource::Workflow,
-                body: format!("Router: {}", event.summary),
-                status: feed_status_label(&event.kind),
-            }));
-        }
-    }
-    if let Some(path) = state.team_store_path.as_deref() {
-        if let Ok(store) = forktty_core::load_teams_from_path(path) {
-            lines.extend(store.events.iter().rev().take(5).map(|event| FeedLine {
-                at_ms: u128::from(event.created_at_ms),
-                source: FeedSource::Team,
-                body: format!("Team: {}", event.summary),
-                status: feed_status_label(&event.kind),
-            }));
-        }
-    }
+    let active_workspace_id = active_workspace_id_for_state(state);
+    let mut lines = orchestration_feed_lines_for_workspace(
+        state.workflow_store_path.as_deref(),
+        state.team_store_path.as_deref(),
+        active_workspace_id.as_deref(),
+    );
     if let Ok(model) = state.model.lock() {
         lines.extend(
             model
@@ -269,10 +254,10 @@ fn orchestration_feed_lines(state: &SocketAppState) -> Vec<FeedLine> {
                     status: feed_notification_kind(notification.kind).to_string(),
                 }),
         );
-        for workspace in model.list_workspaces() {
+        if let Some(workspace_id) = active_workspace_id.as_deref() {
             lines.extend(
                 model
-                    .list_logs(&workspace.id)
+                    .list_logs(workspace_id)
                     .iter()
                     .take(5)
                     .map(|log| FeedLine {
@@ -287,6 +272,90 @@ fn orchestration_feed_lines(state: &SocketAppState) -> Vec<FeedLine> {
     lines.sort_by_key(|line| std::cmp::Reverse(line.at_ms));
     lines.truncate(FEED_ROW_COUNT);
     lines
+}
+
+fn orchestration_feed_lines_for_workspace(
+    workflow_path: Option<&Path>,
+    team_path: Option<&Path>,
+    workspace_id: Option<&str>,
+) -> Vec<FeedLine> {
+    let mut lines = Vec::new();
+    if let Some(path) = workflow_path {
+        if let Ok(store) = forktty_core::load_workflows_from_path(path) {
+            let workflow_workspaces = store
+                .workflows
+                .iter()
+                .map(|workflow| (workflow.id.as_str(), workflow.workspace_id.as_deref()))
+                .collect::<std::collections::HashMap<_, _>>();
+            lines.extend(
+                store
+                    .events
+                    .iter()
+                    .rev()
+                    .filter(|event| {
+                        workflow_workspaces
+                            .get(event.workflow_id.as_str())
+                            .is_some_and(|record_workspace| {
+                                record_matches_workspace(*record_workspace, workspace_id)
+                            })
+                    })
+                    .take(5)
+                    .map(|event| FeedLine {
+                        at_ms: u128::from(event.at_ms),
+                        source: FeedSource::Workflow,
+                        body: format!("Router: {}", event.summary),
+                        status: feed_status_label(&event.kind),
+                    }),
+            );
+        }
+    }
+    if let Some(path) = team_path {
+        if let Ok(store) = forktty_core::load_teams_from_path(path) {
+            let team_workspaces = store
+                .teams
+                .iter()
+                .map(|team| (team.id.as_str(), team.workspace_id.as_deref()))
+                .collect::<std::collections::HashMap<_, _>>();
+            lines.extend(
+                store
+                    .events
+                    .iter()
+                    .rev()
+                    .filter(|event| {
+                        team_workspaces.get(event.team_id.as_str()).is_some_and(
+                            |record_workspace| {
+                                record_matches_workspace(*record_workspace, workspace_id)
+                            },
+                        )
+                    })
+                    .take(5)
+                    .map(|event| FeedLine {
+                        at_ms: u128::from(event.created_at_ms),
+                        source: FeedSource::Team,
+                        body: format!("Team: {}", event.summary),
+                        status: feed_status_label(&event.kind),
+                    }),
+            );
+        }
+    }
+    lines.sort_by_key(|line| std::cmp::Reverse(line.at_ms));
+    lines.truncate(FEED_ROW_COUNT);
+    lines
+}
+
+fn active_workspace_id_for_state(state: &SocketAppState) -> Option<String> {
+    state
+        .model
+        .lock()
+        .ok()
+        .and_then(|model| model.active_workspace_id())
+}
+
+fn record_matches_workspace(record_workspace_id: Option<&str>, workspace_id: Option<&str>) -> bool {
+    match workspace_id {
+        Some(workspace_id) => record_workspace_id == Some(workspace_id),
+        None => record_workspace_id.is_none(),
+    }
 }
 
 fn feed_log_level(level: forktty_core::LogLevel) -> &'static str {
@@ -436,5 +505,52 @@ mod tests {
         assert!(feed_line_matches(&notification, FeedFilter::All));
         assert!(!feed_line_matches(&notification, FeedFilter::Events));
         assert!(!feed_line_matches(&notification, FeedFilter::Logs));
+    }
+
+    #[test]
+    fn feed_lines_ignore_events_from_inactive_workspaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let workflow_path = dir.path().join("workflow-v1.json");
+        let team_path = dir.path().join("team-v1.json");
+
+        let mut workflow_store = forktty_core::WorkflowStoreData::default();
+        workflow_store
+            .upsert(
+                forktty_core::WorkflowUpsert {
+                    workflow_id: Some("closed-router".to_string()),
+                    workspace_id: Some("workspace-closed".to_string()),
+                    mode: Some("task_strategy".to_string()),
+                    status: Some("done".to_string()),
+                    goal: Some("Closed workspace router task".to_string()),
+                    ..forktty_core::WorkflowUpsert::default()
+                },
+                10,
+            )
+            .unwrap();
+        forktty_core::save_workflows_to_path(&workflow_path, &workflow_store).unwrap();
+
+        let mut team_store = forktty_core::TeamStoreData::default();
+        team_store
+            .upsert_team(
+                forktty_core::TeamUpsert {
+                    team_id: "closed-team".to_string(),
+                    workspace_id: Some("workspace-closed".to_string()),
+                    leader_surface_id: None,
+                    name: Some("Closed Team".to_string()),
+                    status: Some("done".to_string()),
+                    goal: None,
+                },
+                20,
+            )
+            .unwrap();
+        forktty_core::save_teams_to_path(&team_path, &team_store).unwrap();
+
+        let lines = orchestration_feed_lines_for_workspace(
+            Some(&workflow_path),
+            Some(&team_path),
+            Some("workspace-main"),
+        );
+
+        assert!(lines.is_empty());
     }
 }

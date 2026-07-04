@@ -598,7 +598,11 @@ pub(super) fn refresh_orchestration_header_chips(
 /// Compact Router summary for the app status bar, e.g.
 /// "Router: parallel_research  Loop 2/5".
 pub(super) fn orchestration_status_summary(state: &SocketAppState) -> String {
-    let workflow = latest_workflow_snapshot(state.workflow_store_path.as_deref());
+    let active_workspace_id = active_workspace_id_for_state(state);
+    let workflow = latest_workflow_snapshot_for_workspace(
+        state.workflow_store_path.as_deref(),
+        active_workspace_id.as_deref(),
+    );
     match (workflow.loop_iteration_display, workflow.strategy.as_str()) {
         (Some(loop_display), strategy) => format!("Router: {strategy}  {loop_display}"),
         (None, strategy) => format!("Router: {strategy}"),
@@ -713,6 +717,7 @@ fn set_rail_value(label: &gtk::Label, value: &str) {
 
 fn orchestration_rail_snapshot(state: &SocketAppState) -> RailSnapshot {
     let now_ms = now_unix_ms();
+    let active_workspace_id = active_workspace_id_for_state(state);
     let live_statuses = live_surface_statuses(state);
     let (notifications, notifications_attention, notification_items) = state
         .model
@@ -751,8 +756,15 @@ fn orchestration_rail_snapshot(state: &SocketAppState) -> RailSnapshot {
     let approvals_attention = approval_count.is_some_and(|count| count > 0);
     let approvals_overflow =
         approval_count.map_or(0, |count| count.saturating_sub(approval_items.len()));
-    let workflow = latest_workflow_snapshot(state.workflow_store_path.as_deref());
-    let team = latest_team_snapshot(state.team_store_path.as_deref(), &live_statuses);
+    let workflow = latest_workflow_snapshot_for_workspace(
+        state.workflow_store_path.as_deref(),
+        active_workspace_id.as_deref(),
+    );
+    let team = latest_team_snapshot_for_workspace(
+        state.team_store_path.as_deref(),
+        active_workspace_id.as_deref(),
+        &live_statuses,
+    );
     RailSnapshot {
         strategy: workflow.strategy,
         strategy_detail: workflow.strategy_detail,
@@ -798,7 +810,10 @@ struct WorkflowRailSnapshot {
     loop_iteration_display: Option<String>,
 }
 
-fn latest_workflow_snapshot(path: Option<&Path>) -> WorkflowRailSnapshot {
+fn latest_workflow_snapshot_for_workspace(
+    path: Option<&Path>,
+    workspace_id: Option<&str>,
+) -> WorkflowRailSnapshot {
     let Some(path) = path else {
         return workflow_fallback("no store", "Workflow store not configured");
     };
@@ -808,6 +823,7 @@ fn latest_workflow_snapshot(path: Option<&Path>) -> WorkflowRailSnapshot {
     let Some(workflow) = store
         .workflows
         .iter()
+        .filter(|workflow| record_matches_workspace(workflow.workspace_id.as_deref(), workspace_id))
         .max_by_key(|workflow| workflow.updated_at_ms)
     else {
         return workflow_fallback("idle", "No workflow staged");
@@ -883,8 +899,9 @@ struct TeamRailSnapshot {
     report_items: Vec<RailListItem>,
 }
 
-fn latest_team_snapshot(
+fn latest_team_snapshot_for_workspace(
     path: Option<&Path>,
+    workspace_id: Option<&str>,
     live_statuses: &std::collections::HashMap<String, String>,
 ) -> TeamRailSnapshot {
     let Some(path) = path else {
@@ -893,7 +910,12 @@ fn latest_team_snapshot(
     let Ok(store) = forktty_core::load_teams_from_path(path) else {
         return team_fallback("unavailable");
     };
-    let Some(team) = store.teams.iter().max_by_key(|team| team.updated_at_ms) else {
+    let Some(team) = store
+        .teams
+        .iter()
+        .filter(|team| record_matches_workspace(team.workspace_id.as_deref(), workspace_id))
+        .max_by_key(|team| team.updated_at_ms)
+    else {
         return team_fallback("no team");
     };
     let active = team
@@ -984,12 +1006,18 @@ fn team_chips_from_workers_with_live_statuses(
 }
 
 pub(super) fn latest_team_chips_for_state(state: &SocketAppState) -> Vec<TeamChip> {
+    let active_workspace_id = active_workspace_id_for_state(state);
     let live_statuses = live_surface_statuses(state);
-    latest_team_chips_with_live_statuses(state.team_store_path.as_deref(), &live_statuses)
+    latest_team_chips_for_workspace(
+        state.team_store_path.as_deref(),
+        active_workspace_id.as_deref(),
+        &live_statuses,
+    )
 }
 
-fn latest_team_chips_with_live_statuses(
+fn latest_team_chips_for_workspace(
     path: Option<&Path>,
+    workspace_id: Option<&str>,
     live_statuses: &std::collections::HashMap<String, String>,
 ) -> Vec<TeamChip> {
     let Some(path) = path else {
@@ -1001,10 +1029,26 @@ fn latest_team_chips_with_live_statuses(
     store
         .teams
         .iter()
+        .filter(|team| record_matches_workspace(team.workspace_id.as_deref(), workspace_id))
         .max_by_key(|team| team.updated_at_ms)
         .filter(|team| !team_is_closed(&team.status))
         .map(|team| team_chips_from_workers_with_live_statuses(&team.workers, live_statuses))
         .unwrap_or_default()
+}
+
+fn active_workspace_id_for_state(state: &SocketAppState) -> Option<String> {
+    state
+        .model
+        .lock()
+        .ok()
+        .and_then(|model| model.active_workspace_id())
+}
+
+fn record_matches_workspace(record_workspace_id: Option<&str>, workspace_id: Option<&str>) -> bool {
+    match workspace_id {
+        Some(workspace_id) => record_workspace_id == Some(workspace_id),
+        None => record_workspace_id.is_none(),
+    }
 }
 
 fn live_surface_statuses(state: &SocketAppState) -> std::collections::HashMap<String, String> {
@@ -1332,6 +1376,66 @@ mod tests {
         for status in ["active", "running", "working", "forming"] {
             assert!(!team_is_closed(status), "{status} should read as open");
         }
+    }
+
+    #[test]
+    fn rail_snapshots_ignore_records_from_inactive_workspaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let workflow_path = dir.path().join("workflow-v1.json");
+        let team_path = dir.path().join("team-v1.json");
+
+        let mut workflow_store = forktty_core::WorkflowStoreData::default();
+        workflow_store
+            .upsert(
+                forktty_core::WorkflowUpsert {
+                    workflow_id: Some("closed-router".to_string()),
+                    workspace_id: Some("workspace-closed".to_string()),
+                    mode: Some("task_strategy".to_string()),
+                    status: Some("done".to_string()),
+                    goal: Some("Closed workspace router task".to_string()),
+                    ..forktty_core::WorkflowUpsert::default()
+                },
+                10,
+            )
+            .unwrap();
+        forktty_core::save_workflows_to_path(&workflow_path, &workflow_store).unwrap();
+
+        let mut team_store = forktty_core::TeamStoreData::default();
+        team_store
+            .upsert_team(
+                forktty_core::TeamUpsert {
+                    team_id: "closed-team".to_string(),
+                    workspace_id: Some("workspace-closed".to_string()),
+                    leader_surface_id: None,
+                    name: Some("Closed Team".to_string()),
+                    status: Some("done".to_string()),
+                    goal: None,
+                },
+                20,
+            )
+            .unwrap();
+        forktty_core::save_teams_to_path(&team_path, &team_store).unwrap();
+
+        let workflow =
+            latest_workflow_snapshot_for_workspace(Some(&workflow_path), Some("workspace-main"));
+        assert_eq!(workflow.strategy, "idle");
+        assert_eq!(workflow.workflow, "none");
+
+        let live_statuses = std::collections::HashMap::new();
+        let team = latest_team_snapshot_for_workspace(
+            Some(&team_path),
+            Some("workspace-main"),
+            &live_statuses,
+        );
+        assert_eq!(team.fanout, "0");
+        assert_eq!(team.workers, "no team");
+
+        let chips = latest_team_chips_for_workspace(
+            Some(&team_path),
+            Some("workspace-main"),
+            &live_statuses,
+        );
+        assert!(chips.is_empty());
     }
 
     #[test]
