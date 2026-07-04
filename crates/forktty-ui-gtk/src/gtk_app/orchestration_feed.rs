@@ -230,12 +230,20 @@ pub(super) fn refresh_orchestration_feed(ui: &OrchestrationFeedUi, state: &Socke
         } else if index == 0 {
             row.shell.set_visible(true);
             set_feed_label(&row.time, "");
-            set_feed_label(&row.body, "No workflow events yet");
+            set_feed_label(&row.body, feed_empty_body(filter));
             set_feed_label(&row.status, "idle");
             set_feed_status_class(&row.status, "idle");
         } else {
             row.shell.set_visible(false);
         }
+    }
+}
+
+fn feed_empty_body(filter: FeedFilter) -> &'static str {
+    match filter {
+        FeedFilter::All => "No feed activity yet",
+        FeedFilter::Events => "No workflow or team events yet",
+        FeedFilter::Logs => "No logs yet",
     }
 }
 
@@ -633,6 +641,16 @@ mod tests {
         assert!(feed_line_matches(&notification, FeedFilter::All));
         assert!(!feed_line_matches(&notification, FeedFilter::Events));
         assert!(!feed_line_matches(&notification, FeedFilter::Logs));
+    }
+
+    #[test]
+    fn feed_empty_body_matches_active_filter() {
+        assert_eq!(feed_empty_body(FeedFilter::All), "No feed activity yet");
+        assert_eq!(
+            feed_empty_body(FeedFilter::Events),
+            "No workflow or team events yet"
+        );
+        assert_eq!(feed_empty_body(FeedFilter::Logs), "No logs yet");
     }
 
     #[test]

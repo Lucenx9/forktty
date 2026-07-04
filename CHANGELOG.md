@@ -137,6 +137,9 @@ All notable changes to ForkTTY are documented here.
 - Fixed the workflow feed so notification rows are scoped to the active
   workspace and live surfaces, and the `LOGS` tab uses its full five-row budget
   instead of inheriting the mixed feed's compact log cap.
+- Fixed workflow feed empty states so the `EVENTS` and `LOGS` tabs describe
+  their own missing content instead of always saying there are no workflow
+  events.
 - Fixed the Router rail worker reports and approvals so five-worker review
   teams show all five report/health rows, pending approvals whose target
   surface has closed are hidden from the rail, and prompt notifications whose
