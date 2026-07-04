@@ -820,9 +820,11 @@ active workers, open tasks, or pending messages as `active_without_open_work`.
 `team.worker.health` reports `heartbeat_state: "no_heartbeat"` for workers
 whose provider path has no heartbeat yet, reserving `"stale"` for workers with
 a recorded heartbeat older than the stale threshold. When the attached surface
-already has persisted agent-session lifecycle metadata, health rows include an
-`agent_session` object and derive `running`, `idle`, `needs_input`, or `done`
-from that lifecycle before falling back to heartbeat age.
+already has persisted agent-session lifecycle metadata for the same provider as
+the team worker, health rows include an `agent_session` object and derive
+`running`, `idle`, `needs_input`, or `done` from that lifecycle before falling
+back to heartbeat age; lifecycle metadata from a different provider on a reused
+surface is ignored.
 
 `workflow.loop.set` records bounded closed-loop progress on an existing
 workflow: optional recipe, stage, iteration, maximum iterations, stop reason,

@@ -416,7 +416,9 @@ fn terminal_notification_activation_report(metadata: &TerminalNotificationMetada
     format!("\x1b]99;i={};\x1b\\", metadata.id)
 }
 
-fn terminal_notification_close_report(metadata: &TerminalNotificationMetadata) -> String {
+pub(super) fn terminal_notification_close_report(
+    metadata: &TerminalNotificationMetadata,
+) -> String {
     format!("\x1b]99;i={}:p=close;\x1b\\", metadata.id)
 }
 

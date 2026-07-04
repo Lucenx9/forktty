@@ -391,6 +391,54 @@ async fn team_worker_health_reflects_surface_agent_session_completion() {
 }
 
 #[tokio::test]
+async fn team_worker_health_ignores_mismatched_surface_agent_session() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(model.set_surface_agent_session(
+            surface_id,
+            AgentKind::ClaudeCode,
+            "claude-session-1"
+        ));
+        assert!(model
+            .set_surface_agent_session_lifecycle(surface_id, AgentSessionLifecycle::NeedsInput));
+    }
+
+    dispatch(&state, "team.upsert", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    dispatch(
+        &state,
+        "team.worker.upsert",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "grok",
+            "surface_id": surface_id,
+            "status": "running"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let health = dispatch(
+        &state,
+        "team.worker.health",
+        json!({"team_id": "team-1", "stale_after_ms": 0}),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(health["workers"][0]["agent_session"], Value::Null);
+    assert_eq!(health["workers"][0]["lifecycle"], "running");
+    assert_eq!(health["workers"][0]["final_state"], "running");
+}
+
+#[tokio::test]
 #[serial_test::serial]
 async fn team_worker_launch_allows_relaunch_when_record_surface_runtime_is_missing() {
     let bin_dir = tempfile::tempdir().unwrap();

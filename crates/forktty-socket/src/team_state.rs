@@ -3,7 +3,8 @@ use crate::{
     DispatchError, SocketAppState,
 };
 use forktty_core::{
-    AgentSession, AgentSessionLifecycle, Surface, TeamState, TeamSummary, TeamWorker,
+    agents::agent_metadata_aliases, AgentSession, AgentSessionLifecycle, Surface, TeamState,
+    TeamSummary, TeamWorker,
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -457,7 +458,9 @@ pub(crate) fn team_worker_health_rows(
             let surface_alive = surface_present && surface_ready;
             let surface_starting =
                 surface_present && surface_runtime_present && !surface_ready && !stale;
-            let agent_session = surface.and_then(|surface| surface.agent_session.as_ref());
+            let agent_session = surface
+                .and_then(|surface| surface.agent_session.as_ref())
+                .filter(|session| worker_agent_matches_session(worker.agent.as_deref(), session));
             let agent_lifecycle = agent_session.map(|session| session.lifecycle);
             let agent_lifecycle_label = agent_lifecycle.and_then(worker_agent_lifecycle_label);
             let heartbeat_state = if worker.last_heartbeat_ms == 0 {
@@ -617,6 +620,17 @@ fn worker_agent_final_state_label(lifecycle: AgentSessionLifecycle) -> Option<&'
         AgentSessionLifecycle::Ended => Some("done"),
         AgentSessionLifecycle::Suspended | AgentSessionLifecycle::Unknown => None,
     }
+}
+
+fn worker_agent_matches_session(worker_agent: Option<&str>, agent_session: &AgentSession) -> bool {
+    let Some(worker_agent) = worker_agent else {
+        return false;
+    };
+    let worker_agent = worker_agent.trim();
+    !worker_agent.is_empty()
+        && agent_metadata_aliases(agent_session.agent)
+            .iter()
+            .any(|alias| worker_agent.eq_ignore_ascii_case(alias))
 }
 
 fn agent_session_worker_health_value(agent_session: &AgentSession) -> Value {

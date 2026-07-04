@@ -1362,6 +1362,17 @@ fn reserve_orchestration_record_ids(state: &SocketAppState) {
         }
     }
 
+    if let Some(approvals) = state.pending_feed_approvals(usize::MAX) {
+        for approval in approvals {
+            if let Some(workspace_id) = approval.workspace_id {
+                workspace_ids.push(workspace_id);
+            }
+            if let Some(surface_id) = approval.surface_id {
+                surface_ids.push(surface_id);
+            }
+        }
+    }
+
     if workspace_ids.is_empty() && surface_ids.is_empty() {
         return;
     }
@@ -1657,9 +1668,13 @@ pub(super) fn install_session_autosave(state: &SocketAppState, ui_alive: Rc<Cell
 mod tests {
     use super::{
         app_chrome_override_css, app_chrome_override_priority, default_gsk_renderer,
-        gdk_disable_with_ghostty_opengl_defaults,
+        gdk_disable_with_ghostty_opengl_defaults, reserve_orchestration_record_ids,
     };
+    use forktty_core::{FeedEntry, FeedEntryType, FeedStore};
+    use forktty_socket::SocketAppState;
     use gtk4 as gtk;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn default_gsk_renderer_avoids_leaky_cairo_software_path() {
@@ -1702,5 +1717,45 @@ mod tests {
         assert!(css.contains("window.ft-settings-window headerbar.settings-titlebar"));
         assert!(css.contains("background-color: #171717"));
         assert!(css.contains("background-image: none"));
+    }
+
+    #[test]
+    fn reserves_orchestration_ids_from_pending_feed_approvals() {
+        let dir = tempfile::tempdir().unwrap();
+        let feed_path = dir.path().join("feed.json");
+        let mut store = FeedStore::open_at(&feed_path).unwrap();
+        store
+            .append(FeedEntry {
+                id: "approval-1".to_string(),
+                entry_type: FeedEntryType::Approval,
+                kind: Some("approval".to_string()),
+                read: false,
+                key: None,
+                value: None,
+                total: None,
+                title: "Claude needs input".to_string(),
+                body: "Approve?".to_string(),
+                workspace_id: Some("workspace-1".to_string()),
+                surface_id: Some("surface-1".to_string()),
+                created_at_ms: 1,
+                approval_state: Some(forktty_core::FeedApprovalState::Pending),
+            })
+            .unwrap();
+        let model = Arc::new(Mutex::new(forktty_core::WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_feed_store_path(&feed_path)
+        .unwrap();
+
+        reserve_orchestration_record_ids(&state);
+        let workspace = model.lock().unwrap().create_workspace("main", dir.path());
+
+        assert_ne!(workspace.id, "workspace-1");
+        assert_ne!(workspace.focused_surface_id, "surface-1");
     }
 }

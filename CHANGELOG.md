@@ -140,10 +140,16 @@ All notable changes to ForkTTY are documented here.
 - Fixed the Router rail notification Clear-all action so it only clears the
   notifications visible in the active workspace instead of deleting hidden
   notifications from other workspaces.
+- Fixed the Router rail notification Clear-all action so it also closes
+  matching desktop notifications and sends OSC 99 close reports for terminal
+  notifications that requested close reporting.
 - Fixed the new Router rail and workflow feed live state so worker health uses
   live pane lifecycle such as `needs_input` instead of raw persisted worker
   status, and the workflow feed `LOGS` tab shows metadata logs instead of
   notification rows.
+- Fixed Router rail worker health so a live agent session is applied only when
+  its provider matches the team worker, preventing a recycled surface with a
+  different agent session from making another worker look blocked.
 - Fixed the Router rail notification "Clear all" action so it actually clears
   in-app notification rows instead of only marking them read and leaving them
   visible.
@@ -154,6 +160,10 @@ All notable changes to ForkTTY are documented here.
   workspace/surface ids referenced by durable workflow/team records are
   reserved before new GTK workspaces are created, preventing old router/team
   records from being adopted by an unrelated fresh workspace.
+- Fixed orchestration UI restart state so pending Feed approvals also reserve
+  their referenced workspace/surface ids before fresh GTK workspaces are
+  created, preventing stale approval prompts from reattaching to unrelated
+  panes after restart.
 - Fixed the workflow feed combined view so bursts of metadata logs, especially
   Antigravity tool logs, cannot push workflow, team, approval, or notification
   rows out of the visible five-line summary.

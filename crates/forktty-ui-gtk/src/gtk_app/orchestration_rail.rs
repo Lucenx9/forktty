@@ -111,6 +111,12 @@ struct RailListItem {
     secondary: String,
 }
 
+#[derive(Debug, Clone)]
+struct LiveSurfaceStatus {
+    agent: forktty_core::AgentKind,
+    lifecycle: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct TeamChip {
     pub(super) label: String,
@@ -303,6 +309,10 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
             })
             .unwrap_or_default();
         state_for_clear.mark_notification_feed_entries_cleared(&notifications);
+        for notification in notifications {
+            close_desktop_notification(&notification.id);
+            send_rail_terminal_notification_close_report(&state_for_clear, &notification);
+        }
     });
     notifications_section.append(&clear_all);
 
@@ -469,6 +479,10 @@ fn build_approval_row(parent: &gtk::Box, state: &SocketAppState) -> RailApproval
         let Some(id) = approval_id_for_deny.borrow().clone() else {
             return;
         };
+        if !rail_approval_id_is_currently_visible(&state_for_deny, &id) {
+            shell_for_deny.set_visible(false);
+            return;
+        }
         // The 1s orchestration refresh re-syncs the slots; hide eagerly so the
         // row cannot be denied twice while the next tick is pending.
         if state_for_deny
@@ -1048,7 +1062,7 @@ struct TeamRailSnapshot {
 fn latest_team_snapshot_for_workspace(
     path: Option<&Path>,
     workspace_id: Option<&str>,
-    live_statuses: &std::collections::HashMap<String, String>,
+    live_statuses: &std::collections::HashMap<String, LiveSurfaceStatus>,
 ) -> TeamRailSnapshot {
     let Some(path) = path else {
         return team_fallback("no store");
@@ -1136,7 +1150,7 @@ pub(super) fn team_chips_from_workers(workers: &[forktty_core::TeamWorker]) -> V
 
 fn team_chips_from_workers_with_live_statuses(
     workers: &[forktty_core::TeamWorker],
-    live_statuses: &std::collections::HashMap<String, String>,
+    live_statuses: &std::collections::HashMap<String, LiveSurfaceStatus>,
 ) -> Vec<TeamChip> {
     let mut chips: Vec<TeamChip> = Vec::new();
     for worker in workers {
@@ -1169,7 +1183,7 @@ pub(super) fn latest_team_chips_for_state(state: &SocketAppState) -> Vec<TeamChi
 fn latest_team_chips_for_workspace(
     path: Option<&Path>,
     workspace_id: Option<&str>,
-    live_statuses: &std::collections::HashMap<String, String>,
+    live_statuses: &std::collections::HashMap<String, LiveSurfaceStatus>,
 ) -> Vec<TeamChip> {
     let Some(path) = path else {
         return Vec::new();
@@ -1181,7 +1195,7 @@ fn latest_team_chips_for_workspace(
         .teams
         .iter()
         .filter(|team| record_matches_workspace(team.workspace_id.as_deref(), workspace_id))
-        .max_by_key(|team| team.updated_at_ms)
+        .max_by_key(|team| (!team_is_closed(&team.status), team.updated_at_ms))
         .filter(|team| !team_is_closed(&team.status))
         .map(|team| team_chips_from_workers_with_live_statuses(&team.workers, live_statuses))
         .unwrap_or_default()
@@ -1202,7 +1216,9 @@ fn record_matches_workspace(record_workspace_id: Option<&str>, workspace_id: Opt
     }
 }
 
-fn live_surface_statuses(state: &SocketAppState) -> std::collections::HashMap<String, String> {
+fn live_surface_statuses(
+    state: &SocketAppState,
+) -> std::collections::HashMap<String, LiveSurfaceStatus> {
     state
         .model
         .lock()
@@ -1215,7 +1231,11 @@ fn live_surface_statuses(state: &SocketAppState) -> std::collections::HashMap<St
                     surface.agent_session.map(|session| {
                         (
                             surface.id,
-                            agent_session_lifecycle_status(session.lifecycle).to_string(),
+                            LiveSurfaceStatus {
+                                agent: session.agent,
+                                lifecycle: agent_session_lifecycle_status(session.lifecycle)
+                                    .to_string(),
+                            },
                         )
                     })
                 })
@@ -1237,13 +1257,35 @@ fn agent_session_lifecycle_status(lifecycle: forktty_core::AgentSessionLifecycle
 
 fn effective_worker_status<'a>(
     worker: &'a forktty_core::TeamWorker,
-    live_statuses: &'a std::collections::HashMap<String, String>,
+    live_statuses: &'a std::collections::HashMap<String, LiveSurfaceStatus>,
 ) -> &'a str {
     worker
         .surface_id
         .as_deref()
-        .and_then(|surface_id| live_statuses.get(surface_id).map(String::as_str))
+        .and_then(|surface_id| {
+            live_statuses.get(surface_id).and_then(|status| {
+                matching_live_worker_status(worker.agent.as_deref(), status).map(String::as_str)
+            })
+        })
         .unwrap_or(worker.status.as_str())
+}
+
+fn matching_live_worker_status<'a>(
+    worker_agent: Option<&str>,
+    status: &'a LiveSurfaceStatus,
+) -> Option<&'a String> {
+    let worker_agent = worker_agent?.trim();
+    if worker_agent.is_empty() {
+        return None;
+    }
+    if forktty_core::agents::agent_metadata_aliases(status.agent)
+        .iter()
+        .any(|alias| worker_agent.eq_ignore_ascii_case(alias))
+    {
+        Some(&status.lifecycle)
+    } else {
+        None
+    }
 }
 
 fn merge_dots(current: &'static str, next: &'static str) -> &'static str {
@@ -1287,7 +1329,7 @@ fn health_list_items(workers: &[forktty_core::TeamWorker]) -> Vec<RailListItem> 
 
 fn health_list_items_with_live_statuses(
     workers: &[forktty_core::TeamWorker],
-    live_statuses: &std::collections::HashMap<String, String>,
+    live_statuses: &std::collections::HashMap<String, LiveSurfaceStatus>,
 ) -> Vec<RailListItem> {
     let chips = team_chips_from_workers_with_live_statuses(workers, live_statuses);
     let mut items = Vec::new();
@@ -1352,6 +1394,33 @@ fn current_pending_feed_approvals(
     )
 }
 
+fn rail_approval_id_is_currently_visible(state: &SocketAppState, approval_id: &str) -> bool {
+    let active_workspace_id = active_workspace_id_for_state(state);
+    let Some(approvals) = state.pending_feed_approvals(usize::MAX) else {
+        return false;
+    };
+    let Ok(model) = state.model.lock() else {
+        return false;
+    };
+    rail_approval_id_matches_workspace(
+        &model,
+        &approvals,
+        approval_id,
+        active_workspace_id.as_deref(),
+    )
+}
+
+fn rail_approval_id_matches_workspace(
+    model: &forktty_core::WorkspaceModel,
+    approvals: &[forktty_socket::PendingFeedApproval],
+    approval_id: &str,
+    workspace_id: Option<&str>,
+) -> bool {
+    approvals.iter().any(|approval| {
+        approval.id == approval_id && rail_approval_matches_workspace(model, approval, workspace_id)
+    })
+}
+
 fn rail_approval_matches_workspace(
     model: &forktty_core::WorkspaceModel,
     approval: &forktty_socket::PendingFeedApproval,
@@ -1404,6 +1473,23 @@ fn clear_rail_notifications_from_model(
         model.dismiss_notification(&notification.id);
     }
     notifications
+}
+
+fn send_rail_terminal_notification_close_report(
+    state: &SocketAppState,
+    notification: &NotificationItem,
+) {
+    let Some(metadata) = notification.terminal_metadata.as_ref() else {
+        return;
+    };
+    if !metadata.report_close {
+        return;
+    }
+    let Some(surface_id) = notification.surface_id.as_deref() else {
+        return;
+    };
+    let report = super::notifications_panel::terminal_notification_close_report(metadata);
+    let _ = state.terminal.send_text(surface_id, &report);
 }
 
 fn rail_notification_matches_workspace(
@@ -1660,7 +1746,10 @@ mod tests {
         grok.surface_id = Some("surface-grok".to_string());
         let live_statuses = std::collections::HashMap::from([(
             "surface-grok".to_string(),
-            "needs_input".to_string(),
+            LiveSurfaceStatus {
+                agent: forktty_core::AgentKind::Grok,
+                lifecycle: "needs_input".to_string(),
+            },
         )]);
 
         let items = health_list_items_with_live_statuses(&[grok.clone()], &live_statuses);
@@ -1670,6 +1759,27 @@ mod tests {
 
         let chips = team_chips_from_workers_with_live_statuses(&[grok], &live_statuses);
         assert_eq!(chips[0].dot, "warn");
+    }
+
+    #[test]
+    fn live_surface_lifecycle_ignores_mismatched_worker_agent() {
+        let mut grok = worker("grok", "running", None);
+        grok.surface_id = Some("surface-grok".to_string());
+        let live_statuses = std::collections::HashMap::from([(
+            "surface-grok".to_string(),
+            LiveSurfaceStatus {
+                agent: forktty_core::AgentKind::ClaudeCode,
+                lifecycle: "needs_input".to_string(),
+            },
+        )]);
+
+        let items = health_list_items_with_live_statuses(&[grok.clone()], &live_statuses);
+        assert_eq!(items[0].primary, "Grok");
+        assert_eq!(items[0].secondary, "1/1  ready");
+        assert_eq!(items[0].dot, "ok");
+
+        let chips = team_chips_from_workers_with_live_statuses(&[grok], &live_statuses);
+        assert_eq!(chips[0].dot, "ok");
     }
 
     #[test]
@@ -1795,6 +1905,80 @@ mod tests {
 
         assert_eq!(workflow.workflow, "running");
         assert_eq!(workflow.strategy_detail, "Active router audit");
+    }
+
+    #[test]
+    fn rail_team_chips_prefer_open_record_over_newer_terminal_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let team_path = dir.path().join("team-v1.json");
+        let mut team_store = forktty_core::TeamStoreData::default();
+        team_store
+            .upsert_team(
+                forktty_core::TeamUpsert {
+                    team_id: "active-team".to_string(),
+                    workspace_id: Some("workspace-1".to_string()),
+                    leader_surface_id: None,
+                    name: Some("Active Team".to_string()),
+                    status: Some("active".to_string()),
+                    goal: Some("Active router audit".to_string()),
+                },
+                10,
+            )
+            .unwrap();
+        team_store
+            .upsert_worker(
+                forktty_core::TeamWorkerUpsert {
+                    team_id: "active-team".to_string(),
+                    worker_id: "active-worker".to_string(),
+                    role: Some("reviewer".to_string()),
+                    agent: Some("codex".to_string()),
+                    surface_id: Some("surface-active".to_string()),
+                    worktree_name: None,
+                    status: Some("running".to_string()),
+                    assigned_task_id: None,
+                    report: None,
+                },
+                11,
+            )
+            .unwrap();
+        team_store
+            .upsert_team(
+                forktty_core::TeamUpsert {
+                    team_id: "newer-done-team".to_string(),
+                    workspace_id: Some("workspace-1".to_string()),
+                    leader_surface_id: None,
+                    name: Some("Done Team".to_string()),
+                    status: Some("done".to_string()),
+                    goal: Some("Completed router audit".to_string()),
+                },
+                20,
+            )
+            .unwrap();
+        team_store
+            .upsert_worker(
+                forktty_core::TeamWorkerUpsert {
+                    team_id: "newer-done-team".to_string(),
+                    worker_id: "done-worker".to_string(),
+                    role: Some("reviewer".to_string()),
+                    agent: Some("grok".to_string()),
+                    surface_id: Some("surface-done".to_string()),
+                    worktree_name: None,
+                    status: Some("done".to_string()),
+                    assigned_task_id: None,
+                    report: None,
+                },
+                21,
+            )
+            .unwrap();
+        forktty_core::save_teams_to_path(&team_path, &team_store).unwrap();
+
+        let live_statuses = std::collections::HashMap::new();
+        let chips =
+            latest_team_chips_for_workspace(Some(&team_path), Some("workspace-1"), &live_statuses);
+
+        assert_eq!(chips.len(), 1);
+        assert_eq!(chips[0].label, "Codex");
+        assert_eq!(chips[0].dot, "ok");
     }
 
     #[test]
@@ -2025,6 +2209,34 @@ mod tests {
     }
 
     #[test]
+    fn rail_approval_id_revalidation_uses_current_workspace() {
+        let mut model = forktty_core::WorkspaceModel::new();
+        let first = model.create_workspace("first", "/tmp/first");
+        let second = model.create_workspace("second", "/tmp/second");
+        let approval = forktty_socket::PendingFeedApproval {
+            id: "approval-1".to_string(),
+            title: "Claude needs input".to_string(),
+            workspace_id: Some(first.id.clone()),
+            surface_id: Some(first.focused_surface_id.clone()),
+            created_at_ms: 1,
+        };
+        let approvals = vec![approval];
+
+        assert!(rail_approval_id_matches_workspace(
+            &model,
+            &approvals,
+            "approval-1",
+            Some(&first.id)
+        ));
+        assert!(!rail_approval_id_matches_workspace(
+            &model,
+            &approvals,
+            "approval-1",
+            Some(&second.id)
+        ));
+    }
+
+    #[test]
     fn rail_notifications_ignore_closed_surface_prompts() {
         let mut model = forktty_core::WorkspaceModel::new();
         let workspace = model.create_workspace("main", "/tmp");
@@ -2104,6 +2316,54 @@ mod tests {
 
         assert_eq!(cleared.len(), 2);
         assert!(model.list_notifications().is_empty());
+    }
+
+    #[test]
+    fn rail_notification_clear_sends_terminal_close_report() {
+        let model = std::sync::Arc::new(std::sync::Mutex::new(forktty_core::WorkspaceModel::new()));
+        let terminal = std::sync::Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal.clone(),
+            "/bin/sh",
+            std::path::PathBuf::from("/tmp/forktty.sock"),
+        );
+        let surface_id = {
+            let mut model = model.lock().unwrap();
+            model.create_workspace("main", "/tmp").focused_surface_id
+        };
+        spawn_focused_surface_if_needed(&state).unwrap();
+        let notification = NotificationItem {
+            id: "notification-1".to_string(),
+            title: "Build".to_string(),
+            body: "Done".to_string(),
+            kind: NotificationKind::Prompt,
+            created_at_ms: 1,
+            read: false,
+            workspace_id: None,
+            surface_id: Some(surface_id.clone()),
+            terminal_metadata: Some(TerminalNotificationMetadata {
+                id: "build".to_string(),
+                report_activation: false,
+                report_close: true,
+                buttons: Vec::new(),
+                icon_names: Vec::new(),
+                icon_data: None,
+                icon_cache_id: None,
+                urgency: None,
+                sound_name: None,
+                expires_after_ms: None,
+                app_name: None,
+                notification_types: Vec::new(),
+            }),
+        };
+
+        send_rail_terminal_notification_close_report(&state, &notification);
+
+        assert_eq!(
+            terminal.sent_text(&surface_id).unwrap(),
+            vec!["\x1b]99;i=build:p=close;\x1b\\"]
+        );
     }
 
     #[test]
