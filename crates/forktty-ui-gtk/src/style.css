@@ -977,12 +977,33 @@ button.flat.status-shortcut:focus-visible {
   border-left: 1px solid #242424;
 }
 
+.orchestration-rail.collapsed {
+  min-width: 48px;
+}
+
 .orchestration-rail-scroll {
   background: #101010;
 }
 
 .orchestration-rail-body {
   background: #101010;
+}
+
+button.flat.orchestration-rail-collapsed-strip {
+  min-width: 44px;
+  padding: 0 6px;
+  border-radius: 0;
+  background: #101010;
+  color: #b7b7b7;
+  border-left: 1px solid #242424;
+  font-size: 0.74em;
+  font-weight: 720;
+}
+
+button.flat.orchestration-rail-collapsed-strip:hover,
+button.flat.orchestration-rail-collapsed-strip:focus-visible {
+  background: #181818;
+  color: #ededed;
 }
 
 .orchestration-panel-header {
@@ -1006,6 +1027,22 @@ button.flat.status-shortcut:focus-visible {
   border: 1px solid alpha(#8fcf7f, 0.28);
   font-size: 0.70em;
   font-weight: 720;
+}
+
+button.flat.orchestration-collapse-button {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border-radius: 5px;
+  color: #8a8a8a;
+  font-size: 0.72em;
+  font-weight: 720;
+}
+
+button.flat.orchestration-collapse-button:hover,
+button.flat.orchestration-collapse-button:focus-visible {
+  color: #d7d7d7;
+  background: #202020;
 }
 
 .orchestration-section {
@@ -1201,6 +1238,10 @@ button.flat.orchestration-link-button:focus-visible {
   border-top: 1px solid #242424;
 }
 
+.orchestration-feed.collapsed {
+  min-height: 34px;
+}
+
 .orchestration-feed-header {
   min-height: 34px;
   padding: 0 12px;
@@ -1242,6 +1283,22 @@ button.flat.orchestration-feed-clear:focus-visible {
   background: #202020;
 }
 
+button.flat.orchestration-feed-collapse {
+  min-width: 24px;
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 5px;
+  color: #8a8a8a;
+  font-size: 0.74em;
+  font-weight: 720;
+}
+
+button.flat.orchestration-feed-collapse:hover,
+button.flat.orchestration-feed-collapse:focus-visible {
+  color: #d7d7d7;
+  background: #202020;
+}
+
 .orchestration-feed-live {
   min-height: 20px;
   padding: 0 8px;
@@ -1254,6 +1311,10 @@ button.flat.orchestration-feed-clear:focus-visible {
 }
 
 .orchestration-feed-rows {
+  background: #131313;
+}
+
+.orchestration-feed-rows-shell {
   background: #131313;
 }
 

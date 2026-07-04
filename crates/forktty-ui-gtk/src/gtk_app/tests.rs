@@ -2777,13 +2777,23 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(rail_source.contains("rail_section_header(&reports_section, \"WORKER REPORTS\")"));
     assert!(rail_source.contains("rail_section_header(&notifications_section, \"NOTIFICATIONS\")"));
     assert!(rail_source.contains("gtk::ProgressBar::new()"));
-    assert!(rail_source.contains("pending_feed_approvals(RAIL_APPROVAL_SLOTS)"));
+    assert!(rail_source.contains("current_pending_feed_approvals("));
+    assert!(rail_source.contains("pending_feed_approvals(usize::MAX)"));
+    assert!(rail_source.contains("rail_approval_matches_workspace("));
+    assert!(rail_source.contains("set_orchestration_rail_collapsed("));
+    assert!(rail_source.contains("orchestration-rail-collapsed-strip"));
+    assert!(rail_source.contains("Collapse Router rail"));
+    assert!(rail_source.contains("Expand Router rail"));
     assert!(
         rail_source.contains("decide_feed_approval(&id, forktty_core::FeedApprovalState::Denied)")
     );
     assert!(rail_source.contains("mark_notifications_read()"));
     assert!(rail_source.contains("mark_notification_feed_entries_cleared(&notifications)"));
     assert!(feed_source.contains("(\"WORKFLOW FEED\", true)"));
+    assert!(feed_source.contains("set_workflow_feed_collapsed("));
+    assert!(feed_source.contains("orchestration-feed-rows-shell"));
+    assert!(feed_source.contains("Collapse workflow feed"));
+    assert!(feed_source.contains("Expand workflow feed"));
     assert!(feed_source.contains("load_workflows_from_path(path)"));
     assert!(feed_source.contains("load_teams_from_path(path)"));
     assert!(feed_source.contains("active_workspace_id_for_state(state)"));
@@ -2795,9 +2805,14 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(css.contains("button.flat.header-team-chip {"));
     assert!(css.contains(".rail-dot.ok {"));
     assert!(css.contains(".orchestration-feed {"));
+    assert!(css.contains(".orchestration-feed.collapsed {"));
+    assert!(css.contains("button.flat.orchestration-feed-collapse"));
     assert!(css.contains(".orchestration-feed-tab.active"));
     assert!(css.contains(".orchestration-feed-status.err {"));
     assert!(css.contains(".orchestration-panel-header {"));
+    assert!(css.contains(".orchestration-rail.collapsed {"));
+    assert!(css.contains(".orchestration-rail-collapsed-strip"));
+    assert!(css.contains("button.flat.orchestration-collapse-button"));
     assert!(css.contains(".orchestration-section {"));
     assert!(css.contains(".orchestration-loop-progress"));
     assert!(css.contains(".task-router-result {"));

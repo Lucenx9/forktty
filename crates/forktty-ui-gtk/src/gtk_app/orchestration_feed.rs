@@ -16,10 +16,13 @@ enum FeedFilter {
 #[derive(Clone)]
 pub(super) struct OrchestrationFeedUi {
     pub(super) shell: gtk::Box,
+    rows_shell: gtk::Box,
+    collapse_button: gtk::Button,
     rows: Vec<FeedRowUi>,
     tabs: Vec<gtk::Button>,
     filter: Rc<Cell<u8>>,
     cleared_before_ms: Rc<Cell<u128>>,
+    collapsed: Rc<Cell<bool>>,
 }
 
 #[derive(Clone)]
@@ -83,10 +86,20 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
     clear.add_css_class("orchestration-feed-clear");
     set_accessible_button_text(&clear, "Hide current feed rows", None);
     header.append(&clear);
+    let collapse = gtk::Button::builder()
+        .label("v")
+        .has_frame(false)
+        .tooltip_text("Collapse workflow feed")
+        .build();
+    collapse.add_css_class("flat");
+    collapse.add_css_class("orchestration-feed-collapse");
+    set_accessible_button_text(&collapse, "Collapse workflow feed", None);
+    header.append(&collapse);
     shell.append(&header);
 
     let rows_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
     rows_box.add_css_class("orchestration-feed-rows");
+    rows_box.add_css_class("orchestration-feed-rows-shell");
     let rows = (0..FEED_ROW_COUNT)
         .map(|_| {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
@@ -129,11 +142,15 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
 
     let ui = OrchestrationFeedUi {
         shell,
+        rows_shell: rows_box,
+        collapse_button: collapse,
         rows,
         tabs,
         filter: Rc::new(Cell::new(0)),
         cleared_before_ms: Rc::new(Cell::new(0)),
+        collapsed: Rc::new(Cell::new(false)),
     };
+    set_workflow_feed_collapsed(&ui, false);
     for (index, tab) in ui.tabs.iter().enumerate() {
         let ui_for_tab = ui.clone();
         let state_for_tab = state.clone();
@@ -155,8 +172,41 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
         ui_for_clear.cleared_before_ms.set(now_unix_ms());
         refresh_orchestration_feed(&ui_for_clear, &state_for_clear);
     });
+    let ui_for_collapse = ui.clone();
+    ui.collapse_button.connect_clicked(move |_| {
+        let collapsed = !ui_for_collapse.collapsed.get();
+        set_workflow_feed_collapsed(&ui_for_collapse, collapsed);
+    });
     refresh_orchestration_feed(&ui, state);
     ui
+}
+
+fn set_workflow_feed_collapsed(ui: &OrchestrationFeedUi, collapsed: bool) {
+    ui.collapsed.set(collapsed);
+    ui.rows_shell.set_visible(!collapsed);
+    ui.shell
+        .set_height_request(if collapsed { 34 } else { 156 });
+    if collapsed {
+        ui.shell.add_css_class("collapsed");
+    } else {
+        ui.shell.remove_css_class("collapsed");
+    }
+    ui.collapse_button
+        .set_label(if collapsed { "^" } else { "v" });
+    ui.collapse_button.set_tooltip_text(Some(if collapsed {
+        "Expand workflow feed"
+    } else {
+        "Collapse workflow feed"
+    }));
+    set_accessible_button_text(
+        &ui.collapse_button,
+        if collapsed {
+            "Expand workflow feed"
+        } else {
+            "Collapse workflow feed"
+        },
+        None,
+    );
 }
 
 pub(super) fn refresh_orchestration_feed(ui: &OrchestrationFeedUi, state: &SocketAppState) {
@@ -166,7 +216,7 @@ pub(super) fn refresh_orchestration_feed(ui: &OrchestrationFeedUi, state: &Socke
         _ => FeedFilter::All,
     };
     let cleared_before_ms = ui.cleared_before_ms.get();
-    let lines = orchestration_feed_lines(state)
+    let lines = orchestration_feed_lines_for_filter(state, filter)
         .into_iter()
         .filter(|line| line.at_ms > cleared_before_ms && feed_line_matches(line, filter))
         .collect::<Vec<_>>();
@@ -234,29 +284,29 @@ fn set_feed_status_class(label: &gtk::Label, status: &str) {
     label.add_css_class(feed_status_class(status));
 }
 
-fn orchestration_feed_lines(state: &SocketAppState) -> Vec<FeedLine> {
+fn orchestration_feed_lines_for_filter(
+    state: &SocketAppState,
+    filter: FeedFilter,
+) -> Vec<FeedLine> {
     let active_workspace_id = active_workspace_id_for_state(state);
-    let mut lines = orchestration_feed_lines_for_workspace(
-        state.workflow_store_path.as_deref(),
-        state.team_store_path.as_deref(),
-        active_workspace_id.as_deref(),
-    );
+    let mut lines = if matches!(filter, FeedFilter::All | FeedFilter::Events) {
+        orchestration_feed_lines_for_workspace(
+            state.workflow_store_path.as_deref(),
+            state.team_store_path.as_deref(),
+            active_workspace_id.as_deref(),
+        )
+    } else {
+        Vec::new()
+    };
     if let Ok(model) = state.model.lock() {
-        lines.extend(
-            model
-                .list_notifications()
-                .iter()
-                .rev()
-                .take(5)
-                .map(|notification| FeedLine {
-                    at_ms: notification.created_at_ms,
-                    source: FeedSource::Notification,
-                    body: notification.title.trim().to_string(),
-                    status: feed_notification_kind(notification.kind).to_string(),
-                }),
-        );
+        if filter == FeedFilter::All {
+            lines.extend(feed_notification_lines_for_workspace(
+                &model,
+                active_workspace_id.as_deref(),
+            ));
+        }
         if let Some(workspace_id) = active_workspace_id.as_deref() {
-            append_log_lines(&mut lines, &model.list_logs(workspace_id));
+            lines = append_log_lines_for_filter(lines, &model.list_logs(workspace_id), filter);
         }
     }
     finalize_feed_lines(lines)
@@ -284,6 +334,68 @@ fn append_log_lines(lines: &mut Vec<FeedLine>, logs: &[forktty_core::LogEntry]) 
         body: format!("Log: {}", log.message.trim()),
         status: feed_log_level(log.level).to_string(),
     }));
+}
+
+fn append_log_lines_for_filter(
+    mut lines: Vec<FeedLine>,
+    logs: &[forktty_core::LogEntry],
+    filter: FeedFilter,
+) -> Vec<FeedLine> {
+    match filter {
+        FeedFilter::All => {
+            append_log_lines(&mut lines, logs);
+            lines
+        }
+        FeedFilter::Events => lines,
+        FeedFilter::Logs => logs
+            .iter()
+            .take(FEED_ROW_COUNT)
+            .map(|log| FeedLine {
+                at_ms: log.timestamp_ms,
+                source: FeedSource::Log,
+                body: format!("Log: {}", log.message.trim()),
+                status: feed_log_level(log.level).to_string(),
+            })
+            .collect(),
+    }
+}
+
+fn feed_notification_lines_for_workspace(
+    model: &forktty_core::WorkspaceModel,
+    workspace_id: Option<&str>,
+) -> Vec<FeedLine> {
+    model
+        .list_notifications()
+        .into_iter()
+        .filter(|notification| feed_notification_matches_workspace(notification, workspace_id))
+        .filter(|notification| {
+            notification
+                .surface_id
+                .as_deref()
+                .is_none_or(|surface_id| model.surface(surface_id).is_some())
+        })
+        .rev()
+        .take(5)
+        .map(|notification| FeedLine {
+            at_ms: notification.created_at_ms,
+            source: FeedSource::Notification,
+            body: notification.title.trim().to_string(),
+            status: feed_notification_kind(notification.kind).to_string(),
+        })
+        .collect()
+}
+
+fn feed_notification_matches_workspace(
+    notification: &NotificationItem,
+    workspace_id: Option<&str>,
+) -> bool {
+    match workspace_id {
+        Some(workspace_id) => notification
+            .workspace_id
+            .as_deref()
+            .is_none_or(|record_workspace_id| record_workspace_id == workspace_id),
+        None => notification.workspace_id.is_none(),
+    }
 }
 
 fn finalize_feed_lines(mut lines: Vec<FeedLine>) -> Vec<FeedLine> {
@@ -604,5 +716,69 @@ mod tests {
         );
 
         assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn feed_notification_lines_ignore_inactive_and_closed_surface_notifications() {
+        let mut model = forktty_core::WorkspaceModel::new();
+        let active = model.create_workspace("main", "/tmp/main");
+        let active_surface_id = active.focused_surface_id.clone();
+        let inactive = model.create_workspace("other", "/tmp/other");
+        let inactive_surface_id = inactive.focused_surface_id.clone();
+        model.focus_surface_and_select_workspace(&active_surface_id);
+
+        model.create_notification("Global notice", "", NotificationKind::Info, None, None);
+        model.create_notification(
+            "Active notice",
+            "",
+            NotificationKind::Prompt,
+            Some(active.id.clone()),
+            Some(active_surface_id.clone()),
+        );
+        model.create_notification(
+            "Inactive notice",
+            "",
+            NotificationKind::Error,
+            Some(inactive.id.clone()),
+            Some(inactive_surface_id),
+        );
+        model.create_notification(
+            "Closed surface notice",
+            "",
+            NotificationKind::Prompt,
+            Some(active.id.clone()),
+            Some("surface-missing".to_string()),
+        );
+
+        let lines = feed_notification_lines_for_workspace(&model, Some(&active.id));
+        let titles = lines
+            .iter()
+            .map(|line| line.body.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(titles, vec!["Active notice", "Global notice"]);
+    }
+
+    #[test]
+    fn logs_filter_uses_full_log_capacity_even_when_events_exist() {
+        let logs = (0..FEED_ROW_COUNT)
+            .map(|index| forktty_core::LogEntry {
+                id: format!("log-{index}"),
+                timestamp_ms: 100 + index as u128,
+                level: forktty_core::LogLevel::Info,
+                message: format!("Antigravity request {index}"),
+            })
+            .collect::<Vec<_>>();
+        let lines = vec![FeedLine {
+            at_ms: 1,
+            source: FeedSource::Workflow,
+            body: "Router: running".to_string(),
+            status: "workflow".to_string(),
+        }];
+
+        let lines = append_log_lines_for_filter(lines, &logs, FeedFilter::Logs);
+
+        assert_eq!(lines.len(), FEED_ROW_COUNT);
+        assert!(lines.iter().all(|line| line.source == FeedSource::Log));
     }
 }

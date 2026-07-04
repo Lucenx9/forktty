@@ -44,6 +44,9 @@ All notable changes to ForkTTY are documented here.
   colors, filter tabs, and a Clear button; split panes gain a slim footer with
   the shell name and agent lifecycle; and the status bar summarizes the active
   Router strategy and loop.
+- The Router rail and bottom workflow feed can now be collapsed from their
+  headers for temporary workspace space recovery while the Settings toggles
+  remain the persistent show/hide controls.
 - Settings follows the same agent-workspace pass: Interface gains live "Show
   orchestration rail" and "Show workflow feed" toggles (new
   `appearance.show_orchestration_rail` / `appearance.show_workflow_feed`
@@ -125,6 +128,9 @@ All notable changes to ForkTTY are documented here.
 - Fixed the workflow feed combined view so bursts of metadata logs, especially
   Antigravity tool logs, cannot push workflow, team, approval, or notification
   rows out of the visible five-line summary.
+- Fixed the workflow feed so notification rows are scoped to the active
+  workspace and live surfaces, and the `LOGS` tab uses its full five-row budget
+  instead of inheriting the mixed feed's compact log cap.
 - Fixed the Router rail worker reports and approvals so five-worker review
   teams show all five report/health rows, pending approvals whose target
   surface has closed are hidden from the rail, and prompt notifications whose

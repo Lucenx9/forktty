@@ -11,6 +11,9 @@ const RAIL_NOTIFICATION_SLOTS: usize = 4;
 #[derive(Clone)]
 pub(super) struct OrchestrationRailUi {
     pub(super) shell: gtk::Box,
+    expanded_body: gtk::ScrolledWindow,
+    collapsed_strip: gtk::Button,
+    collapse_button: gtk::Button,
     status_value: gtk::Label,
     strategy_value: gtk::Label,
     strategy_detail_value: gtk::Label,
@@ -138,8 +141,17 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
         .single_line_mode(true)
         .build();
     status_value.add_css_class("orchestration-status-chip");
+    let collapse_button = gtk::Button::builder()
+        .label("<")
+        .has_frame(false)
+        .tooltip_text("Collapse Router rail")
+        .build();
+    collapse_button.add_css_class("flat");
+    collapse_button.add_css_class("orchestration-collapse-button");
+    set_accessible_button_text(&collapse_button, "Collapse Router rail", None);
     header.append(&title);
     header.append(&status_value);
+    header.append(&collapse_button);
     body.append(&header);
 
     let strategy_section = rail_section(&body);
@@ -286,8 +298,23 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
 
     shell.append(&scroller);
 
+    let collapsed_strip = gtk::Button::builder()
+        .label("Router")
+        .has_frame(false)
+        .tooltip_text("Expand Router rail")
+        .build();
+    collapsed_strip.add_css_class("flat");
+    collapsed_strip.add_css_class("orchestration-rail-collapsed-strip");
+    collapsed_strip.set_vexpand(true);
+    collapsed_strip.set_valign(gtk::Align::Fill);
+    set_accessible_button_text(&collapsed_strip, "Expand Router rail", None);
+    shell.append(&collapsed_strip);
+
     let ui = OrchestrationRailUi {
         shell,
+        expanded_body: scroller,
+        collapsed_strip,
+        collapse_button,
         status_value,
         strategy_value,
         strategy_detail_value,
@@ -311,8 +338,42 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
         notification_rows,
         notifications_clear: clear_all,
     };
+    set_orchestration_rail_collapsed(&ui, false);
+    let ui_for_collapse = ui.clone();
+    ui.collapse_button.connect_clicked(move |_| {
+        set_orchestration_rail_collapsed(&ui_for_collapse, true);
+    });
+    let ui_for_expand = ui.clone();
+    ui.collapsed_strip.connect_clicked(move |_| {
+        set_orchestration_rail_collapsed(&ui_for_expand, false);
+    });
     refresh_orchestration_rail(&ui, state);
     ui
+}
+
+fn set_orchestration_rail_collapsed(ui: &OrchestrationRailUi, collapsed: bool) {
+    ui.expanded_body.set_visible(!collapsed);
+    ui.collapsed_strip.set_visible(collapsed);
+    ui.shell.set_width_request(if collapsed { 48 } else { 320 });
+    if collapsed {
+        ui.shell.add_css_class("collapsed");
+    } else {
+        ui.shell.remove_css_class("collapsed");
+    }
+    ui.collapse_button.set_tooltip_text(Some(if collapsed {
+        "Expand Router rail"
+    } else {
+        "Collapse Router rail"
+    }));
+    set_accessible_button_text(
+        &ui.collapse_button,
+        if collapsed {
+            "Expand Router rail"
+        } else {
+            "Collapse Router rail"
+        },
+        None,
+    );
 }
 
 fn build_approval_row(parent: &gtk::Box, state: &SocketAppState) -> RailApprovalRow {
@@ -467,6 +528,8 @@ fn set_dot_class(dot: &gtk::Box, class_name: &'static str) {
 
 pub(super) fn refresh_orchestration_rail(ui: &OrchestrationRailUi, state: &SocketAppState) {
     let snapshot = orchestration_rail_snapshot(state);
+    ui.collapsed_strip
+        .set_tooltip_text(Some(&format!("Expand Router rail: {}", snapshot.status)));
     set_rail_value(&ui.status_value, &snapshot.status);
     set_rail_value(&ui.strategy_value, &snapshot.strategy);
     set_rail_value(&ui.strategy_detail_value, &snapshot.strategy_detail);
