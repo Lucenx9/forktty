@@ -2787,7 +2787,8 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(
         rail_source.contains("decide_feed_approval(&id, forktty_core::FeedApprovalState::Denied)")
     );
-    assert!(rail_source.contains("mark_notifications_read()"));
+    assert!(rail_source.contains("clear_rail_notifications_from_model("));
+    assert!(rail_source.contains("model.clear_notifications()"));
     assert!(rail_source.contains("mark_notification_feed_entries_cleared(&notifications)"));
     assert!(feed_source.contains("(\"WORKFLOW FEED\", true)"));
     assert!(feed_source.contains("set_workflow_feed_collapsed("));

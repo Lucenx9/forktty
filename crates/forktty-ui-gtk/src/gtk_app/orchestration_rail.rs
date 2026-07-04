@@ -277,21 +277,19 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
     let clear_all = gtk::Button::builder()
         .label("Clear all")
         .has_frame(false)
-        .tooltip_text("Mark all notifications read")
+        .tooltip_text("Clear all notifications")
         .build();
     clear_all.add_css_class("flat");
     clear_all.add_css_class("orchestration-link-button");
     clear_all.set_halign(gtk::Align::Start);
-    set_accessible_button_text(&clear_all, "Mark all notifications read", None);
+    set_accessible_button_text(&clear_all, "Clear all notifications", None);
     let state_for_clear = state.clone();
     clear_all.connect_clicked(move |_| {
-        let notifications = if let Ok(mut model) = state_for_clear.model.lock() {
-            let notifications = model.list_notifications();
-            model.mark_notifications_read();
-            notifications
-        } else {
-            Vec::new()
-        };
+        let notifications = state_for_clear
+            .model
+            .lock()
+            .map(|mut model| clear_rail_notifications_from_model(&mut model))
+            .unwrap_or_default();
         state_for_clear.mark_notification_feed_entries_cleared(&notifications);
     });
     notifications_section.append(&clear_all);
@@ -1314,6 +1312,14 @@ fn current_rail_notifications(
         .collect()
 }
 
+fn clear_rail_notifications_from_model(
+    model: &mut forktty_core::WorkspaceModel,
+) -> Vec<NotificationItem> {
+    let notifications = model.list_notifications();
+    model.clear_notifications();
+    notifications
+}
+
 fn rail_notification_matches_workspace(
     notification: &NotificationItem,
     workspace_id: Option<&str>,
@@ -1741,6 +1747,24 @@ mod tests {
         );
         assert_eq!(format_notification_counts(&[prompt]), "1 new");
         assert_eq!(format_notification_counts(&[]), "clear");
+    }
+
+    #[test]
+    fn clear_rail_notifications_removes_visible_notifications() {
+        let mut model = forktty_core::WorkspaceModel::new();
+        model.create_notification("Build failed", "", NotificationKind::Error, None, None);
+        model.create_notification(
+            "Claude needs input",
+            "",
+            NotificationKind::Prompt,
+            None,
+            None,
+        );
+
+        let cleared = clear_rail_notifications_from_model(&mut model);
+
+        assert_eq!(cleared.len(), 2);
+        assert!(model.list_notifications().is_empty());
     }
 
     #[test]

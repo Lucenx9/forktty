@@ -118,6 +118,9 @@ All notable changes to ForkTTY are documented here.
   live pane lifecycle such as `needs_input` instead of raw persisted worker
   status, and the workflow feed `LOGS` tab shows metadata logs instead of
   notification rows.
+- Fixed the Router rail notification "Clear all" action so it actually clears
+  in-app notification rows instead of only marking them read and leaving them
+  visible.
 - Fixed the Router rail, header chips, status summary, and workflow feed so
   they scope workflow/team state to the active workspace instead of continuing
   to show the most recently updated router task after its workspace was closed.
