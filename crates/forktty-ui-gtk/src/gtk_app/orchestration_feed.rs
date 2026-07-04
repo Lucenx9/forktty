@@ -21,7 +21,7 @@ pub(super) struct OrchestrationFeedUi {
     rows: Vec<FeedRowUi>,
     tabs: Vec<gtk::Button>,
     filter: Rc<Cell<u8>>,
-    cleared_before_ms: Rc<Cell<u128>>,
+    cleared_before_ms: Rc<[Cell<u128>; 3]>,
     collapsed: Rc<Cell<bool>>,
 }
 
@@ -147,7 +147,7 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
         rows,
         tabs,
         filter: Rc::new(Cell::new(0)),
-        cleared_before_ms: Rc::new(Cell::new(0)),
+        cleared_before_ms: Rc::new([Cell::new(0), Cell::new(0), Cell::new(0)]),
         collapsed: Rc::new(Cell::new(false)),
     };
     set_workflow_feed_collapsed(&ui, false);
@@ -169,7 +169,8 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
     let ui_for_clear = ui.clone();
     let state_for_clear = state.clone();
     clear.connect_clicked(move |_| {
-        ui_for_clear.cleared_before_ms.set(now_unix_ms());
+        let filter = feed_filter_from_index(ui_for_clear.filter.get());
+        ui_for_clear.cleared_before_ms[feed_filter_slot(filter)].set(now_unix_ms());
         refresh_orchestration_feed(&ui_for_clear, &state_for_clear);
     });
     let ui_for_collapse = ui.clone();
@@ -210,15 +211,15 @@ fn set_workflow_feed_collapsed(ui: &OrchestrationFeedUi, collapsed: bool) {
 }
 
 pub(super) fn refresh_orchestration_feed(ui: &OrchestrationFeedUi, state: &SocketAppState) {
-    let filter = match ui.filter.get() {
-        1 => FeedFilter::Events,
-        2 => FeedFilter::Logs,
-        _ => FeedFilter::All,
-    };
-    let cleared_before_ms = ui.cleared_before_ms.get();
+    let filter = feed_filter_from_index(ui.filter.get());
+    let cleared_before_ms = [
+        ui.cleared_before_ms[0].get(),
+        ui.cleared_before_ms[1].get(),
+        ui.cleared_before_ms[2].get(),
+    ];
     let lines = orchestration_feed_lines_for_filter(state, filter)
         .into_iter()
-        .filter(|line| line.at_ms > cleared_before_ms && feed_line_matches(line, filter))
+        .filter(|line| feed_line_visible_after_clear(line, filter, &cleared_before_ms))
         .collect::<Vec<_>>();
     for (index, row) in ui.rows.iter().enumerate() {
         if let Some(line) = lines.get(index) {
@@ -239,12 +240,36 @@ pub(super) fn refresh_orchestration_feed(ui: &OrchestrationFeedUi, state: &Socke
     }
 }
 
+fn feed_filter_from_index(index: u8) -> FeedFilter {
+    match index {
+        1 => FeedFilter::Events,
+        2 => FeedFilter::Logs,
+        _ => FeedFilter::All,
+    }
+}
+
+fn feed_filter_slot(filter: FeedFilter) -> usize {
+    match filter {
+        FeedFilter::All => 0,
+        FeedFilter::Events => 1,
+        FeedFilter::Logs => 2,
+    }
+}
+
 fn feed_empty_body(filter: FeedFilter) -> &'static str {
     match filter {
         FeedFilter::All => "No feed activity yet",
         FeedFilter::Events => "No workflow or team events yet",
         FeedFilter::Logs => "No logs yet",
     }
+}
+
+fn feed_line_visible_after_clear(
+    line: &FeedLine,
+    filter: FeedFilter,
+    cleared_before_ms: &[u128; 3],
+) -> bool {
+    line.at_ms > cleared_before_ms[feed_filter_slot(filter)] && feed_line_matches(line, filter)
 }
 
 fn feed_line_matches(line: &FeedLine, filter: FeedFilter) -> bool {
@@ -651,6 +676,39 @@ mod tests {
             "No workflow or team events yet"
         );
         assert_eq!(feed_empty_body(FeedFilter::Logs), "No logs yet");
+    }
+
+    #[test]
+    fn feed_clear_threshold_is_filter_specific() {
+        let workflow = FeedLine {
+            at_ms: 10,
+            source: FeedSource::Workflow,
+            body: "Router: done".to_string(),
+            status: "workflow".to_string(),
+        };
+        let log = FeedLine {
+            at_ms: 10,
+            source: FeedSource::Log,
+            body: "Log: noisy provider trace".to_string(),
+            status: "info".to_string(),
+        };
+        let cleared_before_ms = [0, 0, 20];
+
+        assert!(feed_line_visible_after_clear(
+            &workflow,
+            FeedFilter::Events,
+            &cleared_before_ms
+        ));
+        assert!(feed_line_visible_after_clear(
+            &log,
+            FeedFilter::All,
+            &cleared_before_ms
+        ));
+        assert!(!feed_line_visible_after_clear(
+            &log,
+            FeedFilter::Logs,
+            &cleared_before_ms
+        ));
     }
 
     #[test]

@@ -140,6 +140,8 @@ All notable changes to ForkTTY are documented here.
 - Fixed workflow feed empty states so the `EVENTS` and `LOGS` tabs describe
   their own missing content instead of always saying there are no workflow
   events.
+- Fixed the workflow feed `Clear` action so clearing one tab only hides rows in
+  that tab instead of also hiding older rows from the other feed filters.
 - Fixed the Router rail worker reports and approvals so five-worker review
   teams show all five report/health rows, pending approvals whose target
   surface has closed are hidden from the rail, and prompt notifications whose
