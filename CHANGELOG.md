@@ -169,6 +169,11 @@ All notable changes to ForkTTY are documented here.
   panes after restart.
 - Fixed task-router loop intent inference so non-English loop phrases no
   longer bypass the structured `task_kind` / `router_profile` hint contract.
+- Fixed task-router loop intent inference so broad phrases such as "with loop"
+  or "until clean" no longer seed loop metadata unless the goal also names a
+  repeat or verification action.
+- Fixed split-pane footer shell labels so they use ForkTTY's configured shell
+  instead of the parent process `SHELL` environment variable.
 - Fixed the workflow feed combined view so bursts of metadata logs, especially
   Antigravity tool logs, cannot push workflow, team, approval, or notification
   rows out of the visible five-line summary.

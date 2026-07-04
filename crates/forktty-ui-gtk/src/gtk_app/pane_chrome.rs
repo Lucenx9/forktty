@@ -259,8 +259,11 @@ fn build_pane_chrome_with_content(
 
     let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     footer.add_css_class("terminal-pane-footer");
+    let shell_label = state
+        .map(|state| pane_shell_label(&state.shell))
+        .unwrap_or_else(|| "shell".to_string());
     let footer_shell = gtk::Label::builder()
-        .label(pane_shell_label())
+        .label(shell_label)
         .xalign(0.0)
         .hexpand(true)
         .single_line_mode(true)
@@ -306,14 +309,10 @@ fn build_pane_chrome_with_content(
 }
 
 /// Best-effort label for the shell panes spawn by default.
-fn pane_shell_label() -> String {
-    std::env::var("SHELL")
-        .ok()
-        .and_then(|shell| {
-            std::path::Path::new(&shell)
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-        })
+fn pane_shell_label(configured_shell: &str) -> String {
+    std::path::Path::new(configured_shell.trim())
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| "shell".to_string())
 }
@@ -888,6 +887,14 @@ mod tests {
             pane_lifecycle_label(forktty_core::AgentSessionLifecycle::Ended),
             ("done", "ended")
         );
+    }
+
+    #[test]
+    fn pane_shell_label_uses_configured_shell_instead_of_process_env() {
+        crate::test_env::with_env(&[("SHELL", Some("/bin/bash"))], || {
+            assert_eq!(pane_shell_label("/usr/bin/fish"), "fish");
+            assert_eq!(pane_shell_label(""), "shell");
+        });
     }
 
     #[test]

@@ -779,18 +779,6 @@ fn contains_implementation_intent(lower: &str) -> bool {
 
 fn contains_iterative_loop_intent(goal: &str) -> bool {
     let lower = goal.to_lowercase();
-    if lower.contains("iterative audit")
-        || lower.contains("use loop")
-        || lower.contains("with loop")
-        || lower.contains("repeat verification")
-        || lower.contains("repeat verify")
-        || lower.contains("keep checking")
-        || lower.contains("until clean")
-        || lower.contains("another pass")
-    {
-        return true;
-    }
-
     let tokens = lower
         .split(|ch: char| !ch.is_ascii_alphanumeric())
         .filter(|token| !token.is_empty())
@@ -800,6 +788,12 @@ fn contains_iterative_loop_intent(goal: &str) -> bool {
             *token,
             "repeat" | "repeated" | "repeating" | "iterate" | "iterating" | "iteration"
         ) || token.starts_with("iterativ")
+    });
+    let has_loop_action = tokens.iter().any(|token| {
+        matches!(
+            *token,
+            "audit" | "check" | "checking" | "verify" | "verification"
+        )
     });
     let has_verification_target = tokens.iter().any(|token| {
         matches!(
@@ -816,6 +810,18 @@ fn contains_iterative_loop_intent(goal: &str) -> bool {
                 | "verifying"
         )
     });
+    if lower.contains("iterative audit")
+        || lower.contains("use loop")
+        || (lower.contains("with loop") && has_verification_target)
+        || lower.contains("repeat verification")
+        || lower.contains("repeat verify")
+        || lower.contains("keep checking")
+        || (lower.contains("until clean") && (has_repeat || has_loop_action))
+        || lower.contains("another pass")
+    {
+        return true;
+    }
+
     has_repeat && has_verification_target
 }
 
@@ -1893,6 +1899,28 @@ mod tests {
             .factors
             .iter()
             .any(|factor| factor.name == "iterative_loop_intent"));
+    }
+
+    #[test]
+    fn broad_loop_phrases_do_not_trigger_verify_loop_without_verification_target() {
+        for goal in [
+            "Explain retry logic with loop backoff",
+            "Explain the until clean state label",
+        ] {
+            let plan = plan_for_goal(goal, false);
+
+            assert_ne!(plan.task_class, TaskClass::VerifyFixLoop, "{goal}");
+            assert!(
+                !plan.layers.loop_metadata,
+                "{goal} should not seed loop metadata"
+            );
+            assert!(
+                plan.reasons
+                    .iter()
+                    .all(|reason| !reason.contains("iterative loop intent")),
+                "{goal} should not report iterative loop intent"
+            );
+        }
     }
 
     #[test]

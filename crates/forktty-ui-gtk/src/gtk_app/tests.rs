@@ -2872,7 +2872,7 @@ fn pane_footer_mirrors_header_visibility_and_lifecycle() {
     let css = include_str!("../style.css");
 
     assert!(pane_source.contains("footer_revealer"));
-    assert!(pane_source.contains("pane_shell_label()"));
+    assert!(pane_source.contains("pane_shell_label(&state.shell)"));
     assert!(controller_source.contains("chrome.footer_revealer.set_reveal_child(!single_pane);"));
     assert!(css.contains(".terminal-pane-footer {"));
     assert!(css.contains(".terminal-pane-footer-shell {"));
