@@ -174,6 +174,8 @@ All notable changes to ForkTTY are documented here.
   repeat or verification action.
 - Fixed split-pane footer shell labels so they use ForkTTY's configured shell
   instead of the parent process `SHELL` environment variable.
+- Fixed the Router rail so capped Worker Health and Worker Reports sections
+  show a `+N more` overflow caption instead of silently hiding extra rows.
 - Fixed the workflow feed combined view so bursts of metadata logs, especially
   Antigravity tool logs, cannot push workflow, team, approval, or notification
   rows out of the visible five-line summary.

@@ -37,8 +37,10 @@ pub(super) struct OrchestrationRailUi {
     approvals_empty: gtk::Label,
     workers_value: gtk::Label,
     health_rows: Vec<RailListRow>,
+    health_overflow: gtk::Label,
     reports_value: gtk::Label,
     report_rows: Vec<RailListRow>,
+    reports_overflow: gtk::Label,
     notifications_value: gtk::Label,
     notification_rows: Vec<RailListRow>,
     notifications_clear: gtk::Button,
@@ -89,8 +91,10 @@ struct RailSnapshot {
     approval_items: Vec<RailApprovalItem>,
     workers: String,
     health_items: Vec<RailListItem>,
+    health_overflow: usize,
     reports: String,
     report_items: Vec<RailListItem>,
+    report_overflow: usize,
     notifications: String,
     notifications_attention: bool,
     notifications_unread: usize,
@@ -271,6 +275,7 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
     let health_rows = (0..RAIL_HEALTH_SLOTS)
         .map(|_| build_list_row(&workers_section))
         .collect::<Vec<_>>();
+    let health_overflow = rail_overflow_label(&workers_section);
     workers_section.append(&rail_link_row("View all workers", "app.agents"));
 
     let reports_section = rail_section(&body);
@@ -280,6 +285,7 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
     let report_rows = (0..RAIL_REPORT_SLOTS)
         .map(|_| build_list_row(&reports_section))
         .collect::<Vec<_>>();
+    let reports_overflow = rail_overflow_label(&reports_section);
     reports_section.append(&rail_link_row("Open worker reports", "app.agents"));
 
     let notifications_section = rail_section(&body);
@@ -366,8 +372,10 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
         approvals_empty,
         workers_value,
         health_rows,
+        health_overflow,
         reports_value,
         report_rows,
+        reports_overflow,
         notifications_value,
         notification_rows,
         notifications_clear: clear_all,
@@ -561,6 +569,18 @@ fn rail_link_row(label: &str, action: &str) -> gtk::Button {
     button
 }
 
+fn rail_overflow_label(parent: &gtk::Box) -> gtk::Label {
+    let label = gtk::Label::builder()
+        .label("")
+        .xalign(0.0)
+        .single_line_mode(true)
+        .visible(false)
+        .build();
+    label.add_css_class("orchestration-muted-caption");
+    parent.append(&label);
+    label
+}
+
 fn set_list_rows(rows: &[RailListRow], items: &[RailListItem], empty: &str) {
     for (index, row) in rows.iter().enumerate() {
         if let Some(item) = items.get(index) {
@@ -582,6 +602,15 @@ fn set_list_rows(rows: &[RailListRow], items: &[RailListItem], empty: &str) {
             row.shell.set_visible(false);
         }
     }
+}
+
+fn set_overflow_label(label: &gtk::Label, count: usize, singular: &str, plural: &str) {
+    if count == 0 {
+        label.set_visible(false);
+        return;
+    }
+    set_rail_value(label, &format!("+{}", count_label(count, singular, plural)));
+    label.set_visible(true);
 }
 
 fn set_dot_class(dot: &gtk::Box, class_name: &'static str) {
@@ -651,8 +680,20 @@ pub(super) fn refresh_orchestration_rail(ui: &OrchestrationRailUi, state: &Socke
         &snapshot.health_items,
         "No visible workers",
     );
+    set_overflow_label(
+        &ui.health_overflow,
+        snapshot.health_overflow,
+        "more worker group",
+        "more worker groups",
+    );
     set_rail_value(&ui.reports_value, &snapshot.reports);
     set_list_rows(&ui.report_rows, &snapshot.report_items, "No worker reports");
+    set_overflow_label(
+        &ui.reports_overflow,
+        snapshot.report_overflow,
+        "more report",
+        "more reports",
+    );
     set_rail_value(&ui.notifications_value, &snapshot.notifications);
     set_count_attention(&ui.notifications_value, snapshot.notifications_attention);
     set_list_rows(
@@ -938,8 +979,10 @@ fn orchestration_rail_snapshot(state: &SocketAppState) -> RailSnapshot {
         approval_items,
         workers: team.workers,
         health_items: team.health_items,
+        health_overflow: team.health_overflow,
         reports: team.reports,
         report_items: team.report_items,
+        report_overflow: team.report_overflow,
         notifications,
         notifications_attention,
         notifications_unread,
@@ -1055,8 +1098,32 @@ struct TeamRailSnapshot {
     fanout: String,
     workers: String,
     health_items: Vec<RailListItem>,
+    health_overflow: usize,
     reports: String,
     report_items: Vec<RailListItem>,
+    report_overflow: usize,
+}
+
+#[cfg(test)]
+impl TeamRailSnapshot {
+    fn from_workers_for_test(workers: &[forktty_core::TeamWorker]) -> Self {
+        let live_statuses = std::collections::HashMap::new();
+        let report_items = report_list_items(workers);
+        let report_count = workers
+            .iter()
+            .filter(|worker| worker_has_report(worker))
+            .count();
+        let report_overflow = report_count.saturating_sub(report_items.len());
+        Self {
+            fanout: workers.len().to_string(),
+            workers: format!("{}/{} active", workers.len(), workers.len()),
+            health_items: health_list_items_with_live_statuses(workers, &live_statuses),
+            health_overflow: health_overflow_with_live_statuses(workers, &live_statuses),
+            reports: count_label(report_count, "report", "reports"),
+            report_items,
+            report_overflow,
+        }
+    }
 }
 
 fn latest_team_snapshot_for_workspace(
@@ -1098,7 +1165,9 @@ fn latest_team_snapshot_for_workspace(
         fanout: team.workers.len().to_string(),
         workers,
         health_items: health_list_items_with_live_statuses(&team.workers, live_statuses),
+        health_overflow: health_overflow_with_live_statuses(&team.workers, live_statuses),
         reports: count_label(report_count, "report", "reports"),
+        report_overflow: report_count.saturating_sub(report_items.len()),
         report_items,
     }
 }
@@ -1108,8 +1177,10 @@ fn team_fallback(value: &str) -> TeamRailSnapshot {
         fanout: "0".to_string(),
         workers: value.to_string(),
         health_items: Vec::new(),
+        health_overflow: 0,
         reports: "0 reports".to_string(),
         report_items: Vec::new(),
+        report_overflow: 0,
     }
 }
 
@@ -1354,6 +1425,15 @@ fn health_list_items_with_live_statuses(
         });
     }
     items
+}
+
+fn health_overflow_with_live_statuses(
+    workers: &[forktty_core::TeamWorker],
+    live_statuses: &std::collections::HashMap<String, LiveSurfaceStatus>,
+) -> usize {
+    team_chips_from_workers_with_live_statuses(workers, live_statuses)
+        .len()
+        .saturating_sub(RAIL_HEALTH_SLOTS)
 }
 
 fn report_list_items(workers: &[forktty_core::TeamWorker]) -> Vec<RailListItem> {
@@ -1738,6 +1818,22 @@ mod tests {
         assert_eq!(items[1].primary, "Grok");
         assert_eq!(items[1].secondary, "0/1  attention");
         assert_eq!(items[1].dot, "err");
+    }
+
+    #[test]
+    fn health_items_expose_overflow_when_agent_groups_are_capped() {
+        let workers = [
+            worker("codex", "running", None),
+            worker("claude", "running", None),
+            worker("grok", "running", None),
+            worker("antigravity", "running", None),
+            worker("opencode", "running", None),
+            worker("custom-agent", "running", None),
+        ];
+        let team = TeamRailSnapshot::from_workers_for_test(&workers);
+
+        assert_eq!(team.health_items.len(), RAIL_HEALTH_SLOTS);
+        assert_eq!(team.health_overflow, 1);
     }
 
     #[test]
@@ -2168,6 +2264,7 @@ mod tests {
 
         assert_eq!(team.reports, "6 reports");
         assert_eq!(team.report_items.len(), RAIL_REPORT_SLOTS);
+        assert_eq!(team.report_overflow, 1);
     }
 
     #[test]
