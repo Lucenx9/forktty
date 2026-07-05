@@ -97,6 +97,10 @@ All notable changes to ForkTTY are documented here.
   passed/failed/running gate counts when loop metadata exists.
 
 ### Fixed
+- Fixed Codex MCP setup so managed ForkTTY MCP servers inherit
+  `XDG_RUNTIME_DIR`, allowing sessions without `FORKTTY_SOCKET_PATH` to find
+  the default `$XDG_RUNTIME_DIR/forktty.sock` instead of falling back to the
+  legacy `/tmp` socket path.
 - Fixed top-level CLI routing for the ergonomic workflow-loop wrappers so
   `forktty workflow-loop-gate`, `workflow-loop-step-done`, and
   `workflow-loop-publish` reach the socket CLI instead of failing as unknown

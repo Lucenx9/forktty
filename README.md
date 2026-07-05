@@ -584,7 +584,7 @@ larger MCP config size budget for `$CODEX_HOME/config.toml` or
 `~/.codex/config.toml`. If setup registers an AppImage launcher, the managed
 MCP server env includes `APPIMAGE_EXTRACT_AND_RUN=1` so persistent MCP clients
 do not keep a FUSE AppImage mount alive.
-`FORKTTY_SOCKET_PATH`,
+`XDG_RUNTIME_DIR`, `FORKTTY_SOCKET_PATH`,
 `FORKTTY_WORKSPACE_ID`, and `FORKTTY_SURFACE_ID` are honored as defaults when
 the MCP host launches from a ForkTTY pane, except `identify` treats workspace and
 surface env ids as caller validation context and degrades stale caller surfaces

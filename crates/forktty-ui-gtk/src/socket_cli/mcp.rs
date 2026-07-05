@@ -410,6 +410,7 @@ fn codex_mcp_server_item(launcher: &Path) -> toml_edit::Item {
     table.insert("args", toml_edit::value(args));
     let mut env_vars = toml_edit::Array::new();
     for name in [
+        "XDG_RUNTIME_DIR",
         "FORKTTY_SOCKET_PATH",
         "FORKTTY_WORKSPACE_ID",
         "FORKTTY_SURFACE_ID",

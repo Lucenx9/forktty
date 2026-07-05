@@ -95,6 +95,11 @@ fn mcp_setup_plans_write_agent_configs_and_are_idempotent() {
                 .unwrap()
                 .iter()
                 .any(|value| value.as_str() == Some("FORKTTY_SOCKET_PATH")));
+            assert!(codex_server["env_vars"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value.as_str() == Some("XDG_RUNTIME_DIR")));
 
             for (agent, path) in [
                 ("claude", claude_mcp_config_path()),

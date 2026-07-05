@@ -967,7 +967,9 @@ writes a ForkTTY-managed server named `forktty`, preserves foreign MCP servers,
 writes atomically, and creates a `.bak-*` backup when content changes. When the
 registered launcher is an AppImage file, the managed server environment sets
 `APPIMAGE_EXTRACT_AND_RUN=1` so persistent MCP servers do not keep a FUSE
-AppImage mount alive.
+AppImage mount alive. Codex registration also allows `XDG_RUNTIME_DIR` through
+to the MCP server so it can find the default owner-only socket at
+`$XDG_RUNTIME_DIR/forktty.sock` when `FORKTTY_SOCKET_PATH` is not set.
 `forktty mcp remove` removes only that managed server entry. `forktty mcp
 remove gemini` is kept only to clean legacy ForkTTY-managed server entries
 from `~/.gemini/settings.json`; Gemini MCP setup remains unsupported.

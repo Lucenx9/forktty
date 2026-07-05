@@ -32,6 +32,33 @@ fn mcp_codex_setup_and_remove_preserve_comments_and_formatting() {
 }
 
 #[test]
+fn mcp_codex_setup_updates_managed_env_vars_when_defaults_change() {
+    let codex_home = tempfile::tempdir().unwrap();
+    let codex_home_s = codex_home.path().to_string_lossy().to_string();
+    with_env(&[("CODEX_HOME", Some(codex_home_s.as_str()))], || {
+        let path = codex_mcp_config_path();
+        ensure_parent_dir(&path).unwrap();
+        fs::write(
+            &path,
+            "[mcp_servers.forktty]\ncommand = \"/usr/bin/forktty\"\nargs = [\"mcp\"]\nenv_vars = [\"FORKTTY_SOCKET_PATH\", \"FORKTTY_WORKSPACE_ID\", \"FORKTTY_SURFACE_ID\"]\n\n[mcp_servers.forktty.env]\nFORKTTY_MCP_MANAGED = \"forktty\"\n",
+        )
+        .unwrap();
+
+        let spec = mcp_agent_spec("codex").unwrap();
+        let plan = build_mcp_setup_plan(spec, Path::new("/usr/bin/forktty")).unwrap();
+
+        assert!(plan.changed);
+        let config: toml::Table = plan.content.parse().unwrap();
+        let env_vars = config["mcp_servers"]["forktty"]["env_vars"]
+            .as_array()
+            .unwrap();
+        assert!(env_vars
+            .iter()
+            .any(|value| value.as_str() == Some("XDG_RUNTIME_DIR")));
+    });
+}
+
+#[test]
 fn mcp_codex_setup_allows_config_above_hook_config_limit() {
     let codex_home = tempfile::tempdir().unwrap();
     let codex_home_s = codex_home.path().to_string_lossy().to_string();
