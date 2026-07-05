@@ -5,6 +5,7 @@ use super::*;
 
 const FEED_ROW_COUNT: usize = 5;
 const FEED_LOG_ROWS_WHEN_EVENTS_EXIST: usize = 2;
+type FeedClearCutoffs = std::collections::HashMap<Option<String>, [u128; 3]>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FeedFilter {
@@ -23,7 +24,7 @@ pub(super) struct OrchestrationFeedUi {
     rows: Vec<FeedRowUi>,
     tabs: Vec<gtk::Button>,
     filter: Rc<Cell<u8>>,
-    cleared_before_ms: Rc<[Cell<u128>; 3]>,
+    cleared_before_ms: Rc<RefCell<FeedClearCutoffs>>,
     collapsed: Rc<Cell<bool>>,
 }
 
@@ -158,7 +159,7 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
         rows,
         tabs,
         filter: Rc::new(Cell::new(0)),
-        cleared_before_ms: Rc::new([Cell::new(0), Cell::new(0), Cell::new(0)]),
+        cleared_before_ms: Rc::new(RefCell::new(FeedClearCutoffs::default())),
         collapsed: Rc::new(Cell::new(false)),
     };
     set_workflow_feed_collapsed(&ui, false);
@@ -184,7 +185,13 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
     let state_for_clear = state.clone();
     clear.connect_clicked(move |_| {
         let filter = feed_filter_from_index(ui_for_clear.filter.get());
-        ui_for_clear.cleared_before_ms[feed_filter_slot(filter)].set(now_unix_ms());
+        let workspace_id = active_workspace_id_for_state(&state_for_clear);
+        set_feed_clear_cutoff(
+            &mut ui_for_clear.cleared_before_ms.borrow_mut(),
+            workspace_id.as_deref(),
+            filter,
+            now_unix_ms(),
+        );
         refresh_orchestration_feed(&ui_for_clear, &state_for_clear);
     });
     let ui_for_collapse = ui.clone();
@@ -229,15 +236,14 @@ fn set_workflow_feed_collapsed(ui: &OrchestrationFeedUi, collapsed: bool) {
 
 pub(super) fn refresh_orchestration_feed(ui: &OrchestrationFeedUi, state: &SocketAppState) {
     let filter = feed_filter_from_index(ui.filter.get());
-    let cleared_before_ms = [
-        ui.cleared_before_ms[0].get(),
-        ui.cleared_before_ms[1].get(),
-        ui.cleared_before_ms[2].get(),
-    ];
-    let lines = orchestration_feed_lines_for_filter(state, filter)
-        .into_iter()
-        .filter(|line| feed_line_visible_after_clear(line, filter, &cleared_before_ms))
-        .collect::<Vec<_>>();
+    let workspace_id = active_workspace_id_for_state(state);
+    let cleared_before_ms =
+        feed_clear_cutoffs_for_workspace(&ui.cleared_before_ms.borrow(), workspace_id.as_deref());
+    let lines =
+        orchestration_feed_lines_for_filter_in_workspace(state, filter, workspace_id.as_deref())
+            .into_iter()
+            .filter(|line| feed_line_visible_after_clear(line, filter, &cleared_before_ms))
+            .collect::<Vec<_>>();
     for (index, row) in ui.rows.iter().enumerate() {
         if let Some(line) = lines.get(index) {
             row.shell.set_visible(true);
@@ -271,6 +277,39 @@ fn feed_filter_slot(filter: FeedFilter) -> usize {
         FeedFilter::Events => 1,
         FeedFilter::Logs => 2,
     }
+}
+
+fn set_feed_clear_cutoff(
+    cutoffs: &mut FeedClearCutoffs,
+    workspace_id: Option<&str>,
+    filter: FeedFilter,
+    at_ms: u128,
+) {
+    cutoffs
+        .entry(workspace_id.map(str::to_string))
+        .or_insert([0; 3])[feed_filter_slot(filter)] = at_ms;
+}
+
+fn feed_clear_cutoff(
+    cutoffs: &FeedClearCutoffs,
+    workspace_id: Option<&str>,
+    filter: FeedFilter,
+) -> u128 {
+    cutoffs
+        .get(&workspace_id.map(str::to_string))
+        .map(|values| values[feed_filter_slot(filter)])
+        .unwrap_or_default()
+}
+
+fn feed_clear_cutoffs_for_workspace(
+    cutoffs: &FeedClearCutoffs,
+    workspace_id: Option<&str>,
+) -> [u128; 3] {
+    [
+        feed_clear_cutoff(cutoffs, workspace_id, FeedFilter::All),
+        feed_clear_cutoff(cutoffs, workspace_id, FeedFilter::Events),
+        feed_clear_cutoff(cutoffs, workspace_id, FeedFilter::Logs),
+    ]
 }
 
 fn feed_empty_body(filter: FeedFilter) -> &'static str {
@@ -334,16 +373,16 @@ fn set_feed_status_class(label: &gtk::Label, status: &str) {
     label.add_css_class(feed_status_class(status));
 }
 
-fn orchestration_feed_lines_for_filter(
+fn orchestration_feed_lines_for_filter_in_workspace(
     state: &SocketAppState,
     filter: FeedFilter,
+    active_workspace_id: Option<&str>,
 ) -> Vec<FeedLine> {
-    let active_workspace_id = active_workspace_id_for_state(state);
     let mut lines = if matches!(filter, FeedFilter::All | FeedFilter::Events) {
         orchestration_feed_lines_for_workspace(
             state.workflow_store_path.as_deref(),
             state.team_store_path.as_deref(),
-            active_workspace_id.as_deref(),
+            active_workspace_id,
         )
     } else {
         Vec::new()
@@ -352,10 +391,10 @@ fn orchestration_feed_lines_for_filter(
         if filter == FeedFilter::All {
             lines.extend(feed_notification_lines_for_workspace(
                 &model,
-                active_workspace_id.as_deref(),
+                active_workspace_id,
             ));
         }
-        if let Some(workspace_id) = active_workspace_id.as_deref() {
+        if let Some(workspace_id) = active_workspace_id {
             lines = append_log_lines_for_filter(lines, &model.list_logs(workspace_id), filter);
         }
     }
@@ -725,6 +764,55 @@ mod tests {
             &log,
             FeedFilter::Logs,
             &cleared_before_ms
+        ));
+    }
+
+    #[test]
+    fn feed_clear_threshold_is_workspace_specific() {
+        let mut cutoffs = FeedClearCutoffs::default();
+        set_feed_clear_cutoff(&mut cutoffs, Some("workspace-a"), FeedFilter::All, 20);
+        set_feed_clear_cutoff(&mut cutoffs, Some("workspace-a"), FeedFilter::Logs, 30);
+
+        assert_eq!(
+            feed_clear_cutoff(&cutoffs, Some("workspace-a"), FeedFilter::All),
+            20
+        );
+        assert_eq!(
+            feed_clear_cutoff(&cutoffs, Some("workspace-a"), FeedFilter::Logs),
+            30
+        );
+        assert_eq!(
+            feed_clear_cutoff(&cutoffs, Some("workspace-b"), FeedFilter::All),
+            0
+        );
+        assert_eq!(feed_clear_cutoff(&cutoffs, None, FeedFilter::All), 0);
+
+        let workflow = FeedLine {
+            at_ms: 10,
+            source: FeedSource::Workflow,
+            body: "Router: done".to_string(),
+            status: "workflow".to_string(),
+        };
+        let workspace_a_cutoff = [
+            feed_clear_cutoff(&cutoffs, Some("workspace-a"), FeedFilter::All),
+            feed_clear_cutoff(&cutoffs, Some("workspace-a"), FeedFilter::Events),
+            feed_clear_cutoff(&cutoffs, Some("workspace-a"), FeedFilter::Logs),
+        ];
+        let workspace_b_cutoff = [
+            feed_clear_cutoff(&cutoffs, Some("workspace-b"), FeedFilter::All),
+            feed_clear_cutoff(&cutoffs, Some("workspace-b"), FeedFilter::Events),
+            feed_clear_cutoff(&cutoffs, Some("workspace-b"), FeedFilter::Logs),
+        ];
+
+        assert!(!feed_line_visible_after_clear(
+            &workflow,
+            FeedFilter::All,
+            &workspace_a_cutoff
+        ));
+        assert!(feed_line_visible_after_clear(
+            &workflow,
+            FeedFilter::All,
+            &workspace_b_cutoff
         ));
     }
 

@@ -2855,6 +2855,8 @@ fn settings_dialog_covers_workbench_layout_and_privacy_sections() {
     assert!(settings_source.contains("model.clear_notifications()"));
     assert!(settings_source.contains("mark_notification_feed_entries_cleared(&notifications)"));
     assert!(settings_source.contains("settings_section(\"Local-first by design\", \"\")"));
+    assert!(settings_source.contains("No cloud sync; anonymous daily ping is controlled below."));
+    assert!(!settings_source.contains("No cloud sync. No analytics."));
     assert!(settings_source.contains("settings_section(\"Stored data locations\", \"\")"));
     assert!(settings_source.contains(".set_active(defaults.appearance.show_orchestration_rail)"));
     assert!(app_source.contains(

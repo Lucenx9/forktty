@@ -405,7 +405,7 @@ pub(super) fn show_settings_dialog_page(
     for line in [
         "All workspace and session data stays on this machine.",
         "Agent coordination runs over an owner-only local Unix socket.",
-        "No cloud sync. No analytics.",
+        "No cloud sync; anonymous daily ping is controlled below.",
         "The MCP bridge is stdio-only and local.",
     ] {
         let row = settings_action_row(line, "");

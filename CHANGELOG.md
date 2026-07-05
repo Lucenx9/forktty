@@ -187,6 +187,10 @@ All notable changes to ForkTTY are documented here.
   events.
 - Fixed the workflow feed `Clear` action so clearing one tab only hides rows in
   that tab instead of also hiding older rows from the other feed filters.
+- Fixed the workflow feed `Clear` action so clearing a tab in one workspace no
+  longer hides older feed rows after switching to another workspace.
+- Fixed Settings privacy copy so it no longer claims "No analytics" next to
+  the configurable anonymous daily ping toggle.
 - Fixed the Router rail so active workflow/team records stay selected over
   newer terminal records in the same workspace, preventing old completed runs
   from hiding current worker health or loop state after cleanup/evidence churn.
