@@ -578,7 +578,7 @@ button.flat.header-team-chip:focus-visible {
 }
 
 .rail-dot.warn {
-  background: @ft_warning;
+  background: alpha(@ft_warning, 0.7);
 }
 
 .rail-dot.err {
@@ -1879,7 +1879,7 @@ button.flat.pane-tab-close:active {
   min-width: 4px;
   min-height: 4px;
   border-radius: 50%;
-  background: alpha(@accent_color, 0.7);
+  background: alpha(@accent_color, 0.55);
   margin-right: 4px;
 }
 

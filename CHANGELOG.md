@@ -55,6 +55,10 @@ All notable changes to ForkTTY are documented here.
   tied to the existing GTK visual rules.
 
 ### Changed
+- Softened the orange status dots so they read as quiet ambient cues: warn
+  `.rail-dot`s (sidebar nav, worker/health, feed, pane footers) and the
+  `.pane-attention-dot` now render at reduced opacity instead of full-strength
+  orange.
 - Quietened neutral status indicators so only meaningful state carries colour:
   the workflow-feed "live" marker is now a small green dot plus a muted label
   instead of a filled green pill, and the Router status chip's idle/neutral
