@@ -45,6 +45,7 @@
 @define-color ft_success #8fcf7f;
 @define-color ft_warning #eaa06a;
 @define-color ft_danger #d36b6b;
+@define-color ft_info #7fa6d9;
 
 /* --------------------------------------------------------------------------
  * Base
@@ -577,15 +578,15 @@ button.flat.header-team-chip:focus-visible {
 }
 
 .rail-dot.warn {
-  background: #e0b05e;
+  background: @ft_warning;
 }
 
 .rail-dot.err {
-  background: #e06c5f;
+  background: @ft_danger;
 }
 
 .rail-dot.info {
-  background: #7fa6d9;
+  background: @ft_info;
 }
 
 .rail-dot.idle {
@@ -1047,15 +1048,15 @@ button.flat.orchestration-rail-collapsed-strip:focus-visible {
 }
 
 .orchestration-rail-strip-badge.warn {
-  color: #e0b05e;
-  background: alpha(#e0b05e, 0.14);
-  border: 1px solid alpha(#e0b05e, 0.26);
+  color: @ft_warning;
+  background: alpha(@ft_warning, 0.14);
+  border: 1px solid alpha(@ft_warning, 0.26);
 }
 
 .orchestration-rail-strip-badge.info {
-  color: #7fa6d9;
-  background: alpha(#7fa6d9, 0.14);
-  border: 1px solid alpha(#7fa6d9, 0.26);
+  color: @ft_info;
+  background: alpha(@ft_info, 0.14);
+  border: 1px solid alpha(@ft_info, 0.26);
 }
 
 .orchestration-panel-header {
@@ -1096,9 +1097,9 @@ button.flat.orchestration-rail-collapsed-strip:focus-visible {
 }
 
 .orchestration-status-chip.err {
-  color: #e06c5f;
-  background: alpha(#e06c5f, 0.12);
-  border-color: alpha(#e06c5f, 0.26);
+  color: @ft_danger;
+  background: alpha(@ft_danger, 0.12);
+  border-color: alpha(@ft_danger, 0.26);
 }
 
 button.flat.orchestration-collapse-button {
@@ -1305,15 +1306,15 @@ button.flat.orchestration-link-button:focus-visible {
 }
 
 .orchestration-list-secondary.warn {
-  color: #e0b05e;
+  color: @ft_warning;
 }
 
 .orchestration-list-secondary.err {
-  color: #e06c5f;
+  color: @ft_danger;
 }
 
 .orchestration-list-secondary.info {
-  color: #7fa6d9;
+  color: @ft_info;
 }
 
 /* --------------------------------------------------------------------------
@@ -1437,13 +1438,13 @@ button.flat.orchestration-feed-collapse:focus-visible {
 }
 
 .orchestration-feed-status.warn {
-  color: #e0b05e;
-  background: alpha(#e0b05e, 0.08);
+  color: @ft_warning;
+  background: alpha(@ft_warning, 0.08);
 }
 
 .orchestration-feed-status.err {
-  color: #e06c5f;
-  background: alpha(#e06c5f, 0.10);
+  color: @ft_danger;
+  background: alpha(@ft_danger, 0.10);
 }
 
 .orchestration-feed-status.info {

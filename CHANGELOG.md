@@ -54,6 +54,12 @@ All notable changes to ForkTTY are documented here.
   tied to the existing GTK visual rules.
 
 ### Changed
+- Consolidated the orchestration status-signal palette (rail dots, rail-strip
+  badges, status chips, list rows, feed status) onto the shared semantic colour
+  tokens: warn and error indicators now render the same warm-orange
+  (`@ft_warning`) and danger red (`@ft_danger`) used elsewhere instead of two
+  divergent gold/red hues, and the status blue is now the named `@ft_info`
+  token — one hue per meaning across the whole app.
 - Agent-status badges in the sidebar (`.workspace-status-badge`) and pane
   headers (`.pane-agent-badge`) are now compact squared pills (5px radius,
   tighter padding, hairline border) instead of fully rounded chips: live/running
