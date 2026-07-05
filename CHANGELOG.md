@@ -4,6 +4,11 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Security
+- Sanitized `forktty worktree-doctor` text output so repository paths and Git
+  worktree metadata containing terminal control characters cannot emit raw
+  ANSI/OSC sequences.
+
 <<<<<<< HEAD
 ### Added
 - Team workers can now persist a bounded final `report` through
