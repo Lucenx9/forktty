@@ -445,9 +445,13 @@ fn explicit_task_strategy_cwd(params: &Value) -> Result<Option<PathBuf>, Dispatc
             "Invalid parameter cwd: expected an absolute path".to_string(),
         ));
     }
-    canonical_existing_dir(&path, "cwd")
-        .map(Some)
-        .map_err(DispatchError::from)
+    let canonical = canonical_existing_dir(&path, "cwd").map_err(DispatchError::from)?;
+    if canonical.to_str().is_none() {
+        return Err(DispatchError::InvalidParam(
+            "Invalid parameter cwd: resolved path must be valid UTF-8".to_string(),
+        ));
+    }
+    Ok(Some(canonical))
 }
 
 fn validate_explicit_task_strategy_cwd(

@@ -649,9 +649,10 @@ instead retries with equivalent explicit `approved` attestations, apply marks
 any matching pending task-strategy Feed approval request as `dismissed` before
 staging the visible workflow/team state, so a superseded prompt does not
 continue raising the `pending_approval` risk flag.
-Optional `cwd` must be an absolute existing directory inside a Git repository
-already represented by an open ForkTTY workspace, surface, or effective project
-cwd, and cannot be combined with `worktree_name`. ForkTTY canonicalizes it
+Optional `cwd` must be an absolute existing directory that resolves to a valid
+UTF-8 canonical path inside a Git repository already represented by an open
+ForkTTY workspace, surface, or effective project cwd, and cannot be combined
+with `worktree_name`. ForkTTY canonicalizes it
 before launch, prompt generation, and submit-retry compatibility checks, then
 uses that canonical path as the visible worker launch cwd and includes it in
 role task/prompt text when no `worktree_name` is used. This lets a caller whose

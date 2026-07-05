@@ -392,6 +392,11 @@ All notable changes to ForkTTY are documented here.
   entries without an explicit installer tag are still recognized when checking
   the installed launcher.
 
+### Security
+- Rejected task-strategy `cwd` values whose canonical path is not valid UTF-8,
+  avoiding a panic when launching team workers from a symlink to a non-UTF-8
+  repository path.
+
 ## [0.2.0-alpha.17] - 2026-07-03
 
 ### Added
