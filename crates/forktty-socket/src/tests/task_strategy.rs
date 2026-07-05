@@ -2687,6 +2687,72 @@ fn inferred_cooldown_requires_minimum_recent_failures() {
 }
 
 #[test]
+fn inferred_cooldown_reasons_stay_applyable_with_max_length_workflow_ids() {
+    let now_ms = 10 * 60 * 60 * 1000;
+    let mut registry = cooldown_inference_registry();
+    let max_id = "w".repeat(159);
+    let workflows = vec![
+        task_strategy_workflow_fixture(&format!("{max_id}1"), "failed", "codex", now_ms - 60_000),
+        task_strategy_workflow_fixture(&format!("{max_id}2"), "failed", "codex", now_ms - 120_000),
+        task_strategy_workflow_fixture(&format!("{max_id}3"), "failed", "codex", now_ms - 180_000),
+    ];
+
+    let reasons = crate::task_strategy_runtime::apply_inferred_harness_cooldowns(
+        &mut registry,
+        &workflows,
+        &Default::default(),
+        now_ms,
+    );
+    let codex = registry
+        .harnesses
+        .iter()
+        .find(|harness| harness.id == "codex")
+        .unwrap();
+    let cooldown_reason = codex.routing_signals.cooldown_reason.as_deref().unwrap();
+    assert!(
+        reasons.iter().all(|reason| reason.len()
+            <= forktty_core::protocol_limits::SOCKET_TASK_STRATEGY_REASON_MAX_BYTES),
+        "{reasons:?}"
+    );
+    assert!(
+        format!("harness is on cooldown: {cooldown_reason}").len()
+            <= forktty_core::protocol_limits::SOCKET_TASK_STRATEGY_REASON_MAX_BYTES,
+        "{cooldown_reason}"
+    );
+
+    let mut plan = plan_task_strategy(TaskStrategyInput {
+        goal: "Implement the task router".to_string(),
+        explicit_mode: None,
+        router_profile: None,
+        task_class_hint: None,
+        last_known_good: None,
+        repo_dirty: false,
+        user_requested_parallelism: false,
+        user_requested_review: false,
+        likely_user_visible_change: true,
+        harness_registry: registry,
+    })
+    .unwrap();
+    plan.reasons.extend(reasons);
+
+    assert!(
+        plan.reasons.iter().all(|reason| reason.len()
+            <= forktty_core::protocol_limits::SOCKET_TASK_STRATEGY_REASON_MAX_BYTES),
+        "{:?}",
+        plan.reasons
+    );
+    for assignment in &plan.assignments {
+        for factor in &assignment.factors {
+            assert!(
+                factor.reason.len()
+                    <= forktty_core::protocol_limits::SOCKET_TASK_STRATEGY_REASON_MAX_BYTES,
+                "{factor:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn inferred_cooldown_ignores_stale_failures_and_clears_after_success() {
     let now_ms = 10 * 60 * 60 * 1000;
     let stale_ms = now_ms - 2 * 60 * 60 * 1000;
