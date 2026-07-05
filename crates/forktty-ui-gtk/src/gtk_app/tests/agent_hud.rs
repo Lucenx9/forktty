@@ -517,7 +517,7 @@ fn agent_hud_css_preserves_attention_tints_on_hover_and_focus() {
     assert!(block(".agent-list row:hover .agent-row.current {").contains("background: #1c1b18;"));
     assert!(
         block(".agent-list row:focus-visible .agent-row.needs-input {")
-            .contains("inset 3px 0 0 alpha(#e88745")
+            .contains("inset 3px 0 0 alpha(@accent_color")
     );
 }
 
@@ -551,7 +551,7 @@ fn agent_hud_loop_badge_has_quiet_warning_css() {
         .contains("border-radius: 999px;"));
     assert!(!block(".agent-current,\n.agent-permission,\n.agent-loop {")
         .contains("text-transform: uppercase;"));
-    assert!(source.contains(".agent-loop {\n  color: #9aa0a6;\n  background: #242424;\n}"));
+    assert!(source.contains(".agent-loop {\n  color: #9aa0a6;\n  background: @ft_line;\n}"));
     assert!(block(".agent-loop.warning {").contains("background: #2b1d1d;"));
 }
 

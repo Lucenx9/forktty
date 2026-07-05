@@ -54,6 +54,23 @@ All notable changes to ForkTTY are documented here.
   tied to the existing GTK visual rules.
 
 ### Changed
+- Agent-status badges in the sidebar (`.workspace-status-badge`) and pane
+  headers (`.pane-agent-badge`) are now compact squared pills (5px radius,
+  tighter padding, hairline border) instead of fully rounded chips: live/running
+  reads sober green, needs-input/attention warm orange, idle/exited neutral
+  grey.
+- Normalized corner radii to a tight 3-step scale (4px small controls, 6px
+  buttons/badges, 8px cards/rows/dialogs, plus full-round pills), collapsing the
+  previous ad-hoc mix of 4/5/6/7/8px so nested surfaces read as one system.
+- Unified surface borders onto a single hairline color and evened out
+  horizontal-padding drift, so cards, rows, and dialogs share one border weight
+  and spacing rhythm instead of three near-identical grays.
+- Unified the "needs attention / needs input" accent across the app onto the
+  warm-orange ForkTTY accent (`#e88745`/`#eaa06a`), replacing the inconsistent
+  gold and peach tints previously used by the header attention button, sidebar
+  needs-attention rail, needs-attention pane border/dot, inline warning status,
+  and agent/notification prompt states. The distinct "current" row marker and
+  keyboard focus rings are unchanged.
 - The GTK workbench now follows the agent-workspace layout end to end: the
   titlebar carries a Router cluster (breadcrumb, workspace selector, Plan and
   Review Plan shortcuts into the read-only Router planner) plus live team
@@ -186,6 +203,12 @@ All notable changes to ForkTTY are documented here.
 - Fixed hook metadata binding so a status event from one provider cannot steal
   a live surface already bound to a different provider session, preventing Grok
   panes from appearing as Claude in agent status surfaces.
+- Fixed Claude hook PermissionRequest handling so sessions running in
+  `bypassPermissions` mode refresh the permission-mode status without creating
+  a stale human-attention prompt notification.
+- Fixed Claude hook Notification handling so informational notifications such
+  as auth success or background-task completion do not briefly mark an actively
+  running session as `needs_input`.
 - Fixed the Router rail notification "Clear all" action so it actually clears
   in-app notification rows instead of only marking them read and leaving them
   visible.

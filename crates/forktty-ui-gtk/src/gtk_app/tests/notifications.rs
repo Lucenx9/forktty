@@ -577,7 +577,7 @@ fn notification_panel_css_matches_quiet_agent_hud_tone() {
     );
     assert!(
         block(".notification-list row:focus-visible .notification-row.unread {")
-            .contains("inset 3px 0 0 alpha(#e88745, 0.82)")
+            .contains("inset 3px 0 0 alpha(@accent_color, 0.82)")
     );
-    assert!(block(".notification-kind.prompt {").contains("color: #e6ad87;"));
+    assert!(block(".notification-kind.prompt {").contains("color: @ft_warning;"));
 }
