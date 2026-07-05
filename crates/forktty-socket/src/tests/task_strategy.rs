@@ -1755,7 +1755,7 @@ async fn task_strategy_apply_forces_dirty_editing_worktree_approval() {
 }
 
 #[tokio::test]
-async fn task_strategy_apply_review_flag_exempts_parallel_research_from_dirty_worktree() {
+async fn task_strategy_apply_review_flag_does_not_exempt_parallel_research_from_dirty_worktree() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();
     state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
@@ -1773,7 +1773,7 @@ async fn task_strategy_apply_review_flag_exempts_parallel_research_from_dirty_wo
     let mut plan = parallel_research_plan_json();
     plan["approvals"] = json!(["start_run"]);
 
-    let result = dispatch(
+    let err = dispatch(
         &state,
         "task.strategy.apply",
         json!({
@@ -1786,15 +1786,14 @@ async fn task_strategy_apply_review_flag_exempts_parallel_research_from_dirty_wo
         }),
     )
     .await
-    .unwrap();
+    .unwrap_err();
 
-    assert_eq!(result["status"], "staged");
-    assert_eq!(result["blocked_approvals"], json!([]));
-    assert!(result["actions"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|action| action["method"] == "team.upsert"));
+    assert_eq!(err.code(), "precondition_failed");
+    assert!(err.to_string().contains("create_worktree"));
+    let workflows = dispatch(&state, "workflow.list", json!({})).await.unwrap();
+    let teams = dispatch(&state, "team.list", json!({})).await.unwrap();
+    assert!(workflows.as_array().unwrap().is_empty());
+    assert!(teams.as_array().unwrap().is_empty());
 }
 
 #[tokio::test]

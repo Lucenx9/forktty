@@ -4,7 +4,11 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
-<<<<<<< HEAD
+### Security
+- Fixed a task strategy safety bypass where a caller-controlled review flag on a
+  parallel research plan could skip dirty-repository worktree isolation for
+  mutating goals.
+
 ### Added
 - Team workers can now persist a bounded final `report` through
   `team.worker.upsert`, CLI, and MCP; the report is returned by `team.get`,
