@@ -61,8 +61,10 @@ work. For small local code changes, read and edit the repo directly.
    returned strategy and harness assignments as the default operating plan
    unless the user explicitly overrides them. When the effective plan sets
    `layers.loop_metadata: true`, `task_strategy_apply` bootstraps the initial
-   planned loop record and recording later verify-loop progress with
-   `workflow_loop_set` is part of executing that strategy (see Workflow
+   planned loop record with pending verifier-contract gates. Treat those gates
+   as the loop's durable done criteria: update them with `workflow_loop_set` or
+   the CLI wrappers `workflow-loop-gate`, `workflow-loop-iteration-start`, and
+   `workflow-loop-iteration-done` as each pass progresses (see Workflow
    Memory). Do not launch team workers or create
    worktrees merely because those tools exist. Use
    `task_strategy_apply` only after explicit approvals; apply stages visible

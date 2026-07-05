@@ -14,7 +14,8 @@ All notable changes to ForkTTY are documented here.
 - Task strategy apply now bootstraps an initial `planned` workflow loop record
   for plans with `layers.loop_metadata: true` and context snapshots warn with
   `loop_never_recorded` when such workflows are finished without loop
-  adoption evidence.
+  adoption evidence. The bootstrap now includes pending verifier-contract gates
+  so loops start with explicit review/implementation/verification checks.
 - Task strategy apply now appends an advisory next-best-harness hint to
   assignment launchability and worker launch failures, naming the highest
   scored other ready harness for the same role so callers can retry without
@@ -36,6 +37,9 @@ All notable changes to ForkTTY are documented here.
   gate update, `workflow-loop-step-done` to mark a stage complete, and
   `workflow-loop-publish` to record a published commit stop reason without
   hand-writing the full gates array.
+- Added `workflow-loop-iteration-start` and `workflow-loop-iteration-done`
+  wrappers so agents can advance bounded loop passes and record the pass result
+  without hand-writing `workflow.loop.set` payloads.
 
 ### Changed
 - The GTK workbench now follows the agent-workspace layout end to end: the
@@ -95,6 +99,9 @@ All notable changes to ForkTTY are documented here.
   is started.
 - The Router rail loop row now shows stage plus iteration budget and compact
   passed/failed/running gate counts when loop metadata exists.
+- Context snapshots now warn with `loop_passed_without_evidence` when a
+  terminal workflow records a successful loop stop reason without workflow
+  evidence, keeping verifier results auditable after compaction.
 
 ### Fixed
 - Fixed Codex MCP setup so managed ForkTTY MCP servers inherit

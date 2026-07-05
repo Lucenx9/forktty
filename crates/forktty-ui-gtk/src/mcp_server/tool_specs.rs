@@ -617,7 +617,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "workflow_loop_set",
             annotations: mutating_annotations(false, false),
-            description: "Update bounded closed-loop state for a workflow: recipe, stage, iteration budget, stop reason, and compact gate statuses. Advancing to a new iteration clears prior gates and stop reason unless replacements are supplied. This records loop progress only; it does not run commands, launch agents, schedule background work, push, merge, or approve actions.",
+            description: "Update bounded closed-loop state for a workflow: recipe, stage, iteration budget, stop reason, and compact verifier-contract gate statuses. Task strategy apply may bootstrap pending gates for loop-enabled plans; agents should update those gates as each pass produces evidence. Advancing to a new iteration clears prior gates and stop reason unless replacements are supplied. This records loop progress only; it does not run commands, launch agents, schedule background work, push, merge, or approve actions.",
             input_schema: object_schema(
                 &["workflow_id"],
                 json!({

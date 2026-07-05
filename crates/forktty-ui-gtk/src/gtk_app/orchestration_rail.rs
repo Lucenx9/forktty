@@ -1731,7 +1731,7 @@ fn loop_gate_status_is_failed(status: &str) -> bool {
 fn loop_gate_status_is_running(status: &str) -> bool {
     matches!(
         status.trim().to_ascii_lowercase().as_str(),
-        "running" | "active" | "working" | "pending" | "in_progress"
+        "running" | "active" | "working" | "in_progress" | "in-progress"
     )
 }
 
@@ -2142,6 +2142,55 @@ mod tests {
             "3 gates: 1 passed, 1 failed, 1 running"
         );
         assert_eq!(workflow.loop_iteration_display.as_deref(), Some("Loop 2/4"));
+    }
+
+    #[test]
+    fn rail_loop_caption_treats_pending_gates_as_open_not_running() {
+        let mut workflow_store = forktty_core::WorkflowStoreData::default();
+        let workflow = workflow_store
+            .upsert(
+                forktty_core::WorkflowUpsert {
+                    workflow_id: Some("loop-router".to_string()),
+                    workspace_id: Some("workspace-1".to_string()),
+                    mode: Some("task_strategy".to_string()),
+                    status: Some("running".to_string()),
+                    goal: Some("Keep checking until clean".to_string()),
+                    ..forktty_core::WorkflowUpsert::default()
+                },
+                10,
+            )
+            .unwrap();
+        let workflow = workflow_store
+            .set_loop_state(
+                &workflow.id,
+                forktty_core::WorkflowLoopStateInput {
+                    recipe: Some("solo_with_verify_loop".to_string()),
+                    stage: Some("planned".to_string()),
+                    iteration: Some(0),
+                    max_iterations: Some(3),
+                    gates: Some(vec![
+                        forktty_core::WorkflowLoopGateInput {
+                            id: "implement".to_string(),
+                            kind: "stage".to_string(),
+                            label: "Implementation".to_string(),
+                            status: "pending".to_string(),
+                            summary: None,
+                        },
+                        forktty_core::WorkflowLoopGateInput {
+                            id: "verify".to_string(),
+                            kind: "verification".to_string(),
+                            label: "Verification".to_string(),
+                            status: "pending".to_string(),
+                            summary: None,
+                        },
+                    ]),
+                    ..forktty_core::WorkflowLoopStateInput::default()
+                },
+                20,
+            )
+            .unwrap();
+
+        assert_eq!(format_loop_caption(&workflow), "2 gates: 2 open");
     }
 
     #[test]

@@ -3891,10 +3891,11 @@ async fn task_strategy_apply_stages_workflow_team_tasks_and_messages() {
     assert_eq!(workflow["loop_stage"], "planned");
     assert_eq!(workflow["loop_iteration"], 0);
     assert_eq!(workflow["loop_max_iterations"], 3);
-    assert!(workflow
-        .get("loop_gates")
-        .and_then(Value::as_array)
-        .is_none_or(Vec::is_empty));
+    assert_eq!(workflow["loop_gates"].as_array().unwrap().len(), 3);
+    assert_eq!(workflow["loop_gates"][0]["id"], "implement");
+    assert_eq!(workflow["loop_gates"][0]["status"], "pending");
+    assert_eq!(workflow["loop_gates"][1]["id"], "verify");
+    assert_eq!(workflow["loop_gates"][2]["id"], "review");
 
     let team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
         .await
@@ -3948,10 +3949,13 @@ async fn task_strategy_apply_bootstraps_loop_metadata_without_overwriting_existi
     assert_eq!(workflow["loop_stage"], "planned");
     assert_eq!(workflow["loop_iteration"], 0);
     assert_eq!(workflow["loop_max_iterations"], 3);
-    assert!(workflow
-        .get("loop_gates")
-        .and_then(Value::as_array)
-        .is_none_or(Vec::is_empty));
+    assert_eq!(workflow["loop_gates"].as_array().unwrap().len(), 2);
+    assert_eq!(workflow["loop_gates"][0]["id"], "implement");
+    assert_eq!(workflow["loop_gates"][0]["kind"], "stage");
+    assert_eq!(workflow["loop_gates"][0]["status"], "pending");
+    assert_eq!(workflow["loop_gates"][1]["id"], "verify");
+    assert_eq!(workflow["loop_gates"][1]["kind"], "verification");
+    assert_eq!(workflow["loop_gates"][1]["status"], "pending");
     assert_eq!(workflow["loop_stop_reason"], Value::Null);
 
     dispatch(
@@ -4037,6 +4041,11 @@ async fn task_strategy_apply_bootstraps_review_only_loop_metadata() {
     assert_eq!(workflow["loop_stage"], "planned");
     assert_eq!(workflow["loop_iteration"], 0);
     assert_eq!(workflow["loop_max_iterations"], 3);
+    assert_eq!(workflow["loop_gates"].as_array().unwrap().len(), 2);
+    assert_eq!(workflow["loop_gates"][0]["id"], "review");
+    assert_eq!(workflow["loop_gates"][0]["kind"], "review");
+    assert_eq!(workflow["loop_gates"][0]["status"], "pending");
+    assert_eq!(workflow["loop_gates"][1]["id"], "verify");
 }
 
 #[tokio::test]

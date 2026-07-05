@@ -36,6 +36,7 @@ use super::team::{
 };
 use super::workflow::{
     handle_workflow_evidence_add, handle_workflow_get, handle_workflow_loop_gate,
+    handle_workflow_loop_iteration_done, handle_workflow_loop_iteration_start,
     handle_workflow_loop_publish, handle_workflow_loop_set, handle_workflow_loop_step_done,
     handle_workflow_plan_set, handle_workflow_replay, handle_workflow_upsert, handle_workflows,
 };
@@ -182,6 +183,14 @@ pub(super) fn dispatch_command(
         | "workflow:loop:step-done"
         | "workflow.loop.step_done"
         | "loop-step-done" => handle_workflow_loop_step_done(context, args),
+        "workflow-loop-iteration-start"
+        | "workflow:loop:iteration-start"
+        | "workflow.loop.iteration_start"
+        | "loop-iteration-start" => handle_workflow_loop_iteration_start(context, args),
+        "workflow-loop-iteration-done"
+        | "workflow:loop:iteration-done"
+        | "workflow.loop.iteration_done"
+        | "loop-iteration-done" => handle_workflow_loop_iteration_done(context, args),
         "workflow-loop-publish"
         | "workflow:loop:publish"
         | "workflow.loop.publish"

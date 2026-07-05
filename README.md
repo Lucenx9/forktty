@@ -301,6 +301,8 @@ forktty task-apply --run-id router-run-1 --plan-json '<team-plan-json>' --cwd /p
 forktty cleanup orchestration --dry-run
 forktty cleanup orchestration --apply
 forktty workflow-loop-set loop-runtime --stage verify --iteration 2 --max-iterations 4
+forktty workflow-loop-iteration-start loop-runtime --stage implement
+forktty workflow-loop-iteration-done loop-runtime passed --summary "all checks passed"
 forktty team ask review-team claude-review --agent claude --task-id review-head --prompt "Review HEAD read-only" --submit
 forktty team review review-team claude-review --agent claude --task-id review-head --commit HEAD --submit
 forktty team watch review-team --stale-after-ms 120000 --limit 10
@@ -452,13 +454,19 @@ notifications remain, while status and progress trace rows are available with
 For closed loops, `workflow.loop.set` / `workflow_loop_set` /
 `forktty workflow-loop-set` records bounded loop metadata on an existing
 workflow: recipe, stage, iteration budget, stop reason, and compact gate
-counts. It is deliberately state-only: ForkTTY does not run a hidden scheduler,
-execute commands, push, merge, or approve actions from loop state. Snapshots
-include `loop_summaries` by default and raise loop risk flags for failed gates,
-blocked or human-needed stages, exhausted budgets, and stale workflow surface
-bindings. Loop summaries omit full workflow goals and gate notes; detailed
-workflow memory remains opt-in, and moving to a new iteration clears prior gate
-results and stop reason unless replacements are supplied in the same request.
+counts. `task.strategy.apply` bootstraps loop-enabled plans with pending
+verifier-contract gates, and the CLI wrappers `workflow-loop-gate`,
+`workflow-loop-step-done`, `workflow-loop-iteration-start`,
+`workflow-loop-iteration-done`, and `workflow-loop-publish` update that state
+without requiring hand-written JSON. It is deliberately state-only: ForkTTY does
+not run a hidden scheduler, execute commands, push, merge, or approve actions
+from loop state. Snapshots include `loop_summaries` by default and raise loop
+risk flags for failed gates, blocked or human-needed stages, exhausted budgets,
+stale workflow surface bindings, loop adoption gaps, and successful loop stop
+reasons that lack workflow evidence. Loop summaries omit full workflow goals and
+gate notes; detailed workflow memory remains opt-in, and moving to a new
+iteration clears prior gate results and stop reason unless replacements are
+supplied in the same request.
 Workspace, surface, agent, and agent-health rows expose
 `effective_project_cwd`, preferring the tracked agent `resume_cwd` over the
 workspace directory when they differ; the GTK sidebar uses the same effective

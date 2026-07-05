@@ -2102,7 +2102,7 @@ impl TaskStrategyApplyRequest {
             "stage": "planned",
             "iteration": 0,
             "max_iterations": DEFAULT_TASK_STRATEGY_LOOP_MAX_ITERATIONS,
-            "gates": []
+            "gates": default_task_strategy_loop_gates(&self.plan.strategy)
         })
     }
 
@@ -2573,6 +2573,57 @@ fn task_strategy_wire_value(strategy: &TaskStrategy) -> &'static str {
         TaskStrategy::TeamPipeline => "team_pipeline",
         TaskStrategy::ReviewOnly => "review_only",
     }
+}
+
+fn default_task_strategy_loop_gates(strategy: &TaskStrategy) -> Value {
+    let mut gates = Vec::new();
+    if matches!(strategy, TaskStrategy::ReviewOnly) {
+        gates.push(json!({
+            "id": "review",
+            "kind": "review",
+            "label": "Independent review",
+            "status": "pending",
+            "summary": "record reviewer or research findings"
+        }));
+    }
+    if matches!(
+        strategy,
+        TaskStrategy::SoloWithVerifyLoop
+            | TaskStrategy::ImplementerPlusReviewer
+            | TaskStrategy::TeamPipeline
+            | TaskStrategy::ParallelExperiment
+    ) {
+        gates.push(json!({
+            "id": "implement",
+            "kind": "stage",
+            "label": "Implementation pass",
+            "status": "pending",
+            "summary": "record code changes, if this strategy edits the repo"
+        }));
+    }
+    gates.push(json!({
+        "id": "verify",
+        "kind": "verification",
+        "label": "Verifier gate",
+        "status": "pending",
+        "summary": "record tests, checks, or explicit evidence before completion"
+    }));
+    if matches!(
+        strategy,
+        TaskStrategy::ImplementerPlusReviewer
+            | TaskStrategy::TeamPipeline
+            | TaskStrategy::ParallelResearch
+            | TaskStrategy::ParallelExperiment
+    ) {
+        gates.push(json!({
+            "id": "review",
+            "kind": "review",
+            "label": "Independent review",
+            "status": "pending",
+            "summary": "record reviewer or research findings"
+        }));
+    }
+    Value::Array(gates)
 }
 
 fn task_strategy_approval_order(approval: &TaskStrategyApproval) -> u8 {

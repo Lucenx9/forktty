@@ -5,7 +5,7 @@ use crate::{
     workflow_runtime, DispatchError, SocketAppState, DEFAULT_TEAM_WORKER_STALE_MS,
     MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES, MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_SURFACES,
 };
-use forktty_core::{SurfaceKind, WorkflowQuery, WorkflowState};
+use forktty_core::{SurfaceKind, WorkflowLoopGate, WorkflowQuery, WorkflowState};
 use forktty_terminal::TerminalTextCapture;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -426,10 +426,19 @@ fn workflow_consistency_warnings(
             .as_deref()
             .is_some_and(workflow_loop_recipe_requires_adoption)
         && workflow.loop_iteration == Some(0)
-        && workflow.loop_gates.is_empty()
+        && workflow_loop_gates_never_recorded(&workflow.loop_gates)
         && workflow.loop_stop_reason.is_none()
     {
         warnings.push("loop_never_recorded");
+    }
+    if workflow_status_is_terminal(&workflow.status)
+        && workflow
+            .loop_stop_reason
+            .as_deref()
+            .is_some_and(workflow_loop_stop_reason_is_success)
+        && workflow.evidence.is_empty()
+    {
+        warnings.push("loop_passed_without_evidence");
     }
     if workflow.plan.is_empty() {
         return warnings;
@@ -459,9 +468,31 @@ fn workflow_status_is_terminal(status: &str) -> bool {
 
 fn workflow_loop_recipe_requires_adoption(recipe: &str) -> bool {
     matches!(
-        recipe,
-        "solo_with_verify_loop" | "implementer_plus_reviewer"
+        recipe.trim().to_ascii_lowercase().as_str(),
+        "solo_with_verify_loop" | "implementer_plus_reviewer" | "team_pipeline" | "review_only"
     )
+}
+
+fn workflow_loop_gates_never_recorded(gates: &[WorkflowLoopGate]) -> bool {
+    gates.is_empty()
+        || gates
+            .iter()
+            .all(|gate| workflow_loop_gate_is_unstarted(&gate.status))
+}
+
+fn workflow_loop_gate_is_unstarted(status: &str) -> bool {
+    matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "pending" | "planned" | "open" | "todo" | "to_do"
+    )
+}
+
+fn workflow_loop_stop_reason_is_success(reason: &str) -> bool {
+    let reason = reason.trim().to_ascii_lowercase();
+    matches!(
+        reason.as_str(),
+        "passed" | "pass" | "ok" | "success" | "succeeded" | "done" | "published"
+    ) || reason.starts_with("published ")
 }
 
 fn workflow_status_is_active(status: &str) -> bool {

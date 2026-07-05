@@ -665,7 +665,8 @@ team, create team tasks, and queue team-wide messages. When the effective plan
 has `layers.loop_metadata: true`, apply seeds an initial workflow loop record
 only if the workflow does not already have loop state: recipe is the strategy
 wire id (for example `solo_with_verify_loop`), stage is `planned`, iteration is
-`0`, max iterations defaults to `3`, gates are empty, and no stop reason is set.
+`0`, max iterations defaults to `3`, gates are pending verifier-contract rows
+derived from the strategy shape, and no stop reason is set.
 Explicitly iterative read-only review goals may keep the `review_only` strategy
 while carrying `layers.loop_metadata: true`, so agents can record repeated
 audit passes without launching team workers or changing the review role.
@@ -834,9 +835,11 @@ When a request advances to a different iteration without supplying replacement
 gates or a replacement stop reason, ForkTTY clears the previous gate rows and
 stop reason so stale failed checks do not describe the new pass.
 CLI `workflow-loop-gate`, `workflow-loop-step-done`, and
+`workflow-loop-iteration-start`, `workflow-loop-iteration-done`, and
 `workflow-loop-publish` are ergonomic wrappers over the same socket method:
-they read the current workflow, merge one compact gate update, and then submit
-an ordinary `workflow.loop.set` payload so existing gate rows are preserved.
+they read the current workflow, advance loop passes or merge one compact gate
+update, and then submit an ordinary `workflow.loop.set` payload so existing
+gate rows are preserved.
 Agents use it to make a visible loop such as discover/plan/execute/verify
 auditable across context compaction. `context.snapshot` exposes stale
 workflow surface bindings on workflow summary/detail rows through
@@ -849,10 +852,14 @@ counts, iteration budget, stale surface-binding detection, and loop risk flags s
 omit full workflow goals, memory, evidence, and gate notes; use
 `workflow.get` or `include_workflow_details` when those details are needed.
 If a task-strategy workflow that was bootstrapped with loop metadata reaches a
-terminal status while still at iteration `0` with no gates and no stop reason,
-workflow summaries/details add a non-blocking `loop_never_recorded`
-consistency warning and `context.snapshot` raises the existing
-`workflow_consistency_warning` risk flag.
+terminal status while still at iteration `0` with only unstarted pending/planned
+gates and no stop reason, workflow summaries/details add a non-blocking
+`loop_never_recorded` consistency warning and `context.snapshot` raises the
+existing `workflow_consistency_warning` risk flag. A terminal workflow that
+records a successful loop stop reason such as `passed` or `published ...`
+without any workflow evidence adds `loop_passed_without_evidence`; this warning
+is non-blocking and exists to keep verifier results auditable after context
+compaction.
 
 
 `system.identify` is a compact read-only context call for agents and scripts that need the canonical current target before acting: it accepts the same workspace selectors plus optional `surface_id`, treats wrapper-provided `FORKTTY_SURFACE_ID`/`FORKTTY_WORKSPACE_ID` as caller validation context, uses a known caller surface as the default target when no explicit target selector is supplied, and falls back to the active workspace focus when that caller surface is stale or absent. It returns the target workspace, target surface with `effective_project_cwd`, current agent binding when present, and caller id validation booleans. The CLI `forktty wait agent-status` is a bounded client-side lifecycle poll built from repeated short `context.snapshot` calls with `tail_lines: 0`; it accepts a required `--status` (`running`, `working`, `idle`, `done`, `needs_input`, `blocked`, `suspended`, `ended`, `closed`, or `unknown`), optional workspace/surface/agent filters, `--timeout-ms` capped at 120000, and `--interval-ms` capped at 5000. The wait wrapper never reads terminal text, sends input, closes panes, or holds one socket request open while waiting; timeout exits nonzero with code `timeout`.

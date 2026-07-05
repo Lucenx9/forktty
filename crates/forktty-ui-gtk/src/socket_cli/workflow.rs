@@ -261,6 +261,114 @@ pub(super) fn handle_workflow_loop_step_done(
     }
 }
 
+pub(super) fn handle_workflow_loop_iteration_start(
+    context: &CliContext,
+    args: Vec<String>,
+) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(
+        &parsed.options,
+        &["stage", "iteration", "max-iterations"],
+        "workflow-loop-iteration-start",
+    )?;
+    let workflow_id = single_required_positional(
+        &parsed.positionals,
+        "workflow-loop-iteration-start",
+        "<workflow-id>",
+    )?;
+    let workflow = get_workflow_for_loop_update(context, &workflow_id)?;
+    let next_iteration = parse_u64_option(&parsed.options, "iteration", "--iteration")?
+        .or_else(|| {
+            workflow
+                .get("loop_iteration")
+                .and_then(Value::as_u64)
+                .map(|iteration| iteration.saturating_add(1))
+        })
+        .unwrap_or(1);
+    let stage = non_blank_string_option(&parsed.options, "stage", "--stage")?
+        .map(|value| value.trim().to_string())
+        .unwrap_or_else(|| "plan".to_string());
+    let mut params = loop_update_params_from_workflow(&workflow_id, &workflow);
+    params.insert("stage".to_string(), Value::String(stage.clone()));
+    params.insert(
+        "iteration".to_string(),
+        Value::Number(next_iteration.into()),
+    );
+    params.remove("stop_reason");
+    if let Some(max_iterations) =
+        parse_u64_option(&parsed.options, "max-iterations", "--max-iterations")?
+    {
+        params.insert(
+            "max_iterations".to_string(),
+            Value::Number(max_iterations.into()),
+        );
+    }
+    let result = send_socket_request(
+        &context.socket_path,
+        "workflow.loop.set",
+        Value::Object(params),
+    )?;
+    if context.json {
+        print_json(&result)
+    } else {
+        write_stdout_line(&format!(
+            "Started workflow {} loop iteration {next_iteration} at {stage}",
+            workflow_id_for_line(&result)
+        ))
+    }
+}
+
+pub(super) fn handle_workflow_loop_iteration_done(
+    context: &CliContext,
+    args: Vec<String>,
+) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    reject_unknown_options(
+        &parsed.options,
+        &["summary"],
+        "workflow-loop-iteration-done",
+    )?;
+    let values = required_positionals(
+        &parsed.positionals,
+        "workflow-loop-iteration-done",
+        &["<workflow-id>", "<result>"],
+    )?;
+    let workflow_id = &values[0];
+    let result_status = &values[1];
+    let workflow = get_workflow_for_loop_update(context, workflow_id)?;
+    let iteration = workflow
+        .get("loop_iteration")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let summary = non_blank_string_option(&parsed.options, "summary", "--summary")?
+        .map(|value| value.trim().to_string());
+    let gate = loop_gate_value(
+        &format!("iteration-{iteration}-result"),
+        "iteration",
+        &format!("Iteration {iteration} result"),
+        result_status,
+        summary.as_deref(),
+    );
+    let mut params = loop_update_params_with_gate(workflow_id, &workflow, Some("done"), gate);
+    params.insert(
+        "stop_reason".to_string(),
+        Value::String(result_status.to_string()),
+    );
+    let result = send_socket_request(
+        &context.socket_path,
+        "workflow.loop.set",
+        Value::Object(params),
+    )?;
+    if context.json {
+        print_json(&result)
+    } else {
+        write_stdout_line(&format!(
+            "Marked workflow {} loop iteration {iteration} {result_status}",
+            workflow_id_for_line(&result)
+        ))
+    }
+}
+
 pub(super) fn handle_workflow_loop_publish(
     context: &CliContext,
     args: Vec<String>,

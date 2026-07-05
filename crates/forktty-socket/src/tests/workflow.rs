@@ -407,6 +407,67 @@ async fn workflow_loop_set_updates_state_and_snapshot_loop_summaries() {
 }
 
 #[tokio::test]
+async fn workflow_done_with_successful_loop_without_evidence_warns() {
+    let (state, _) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    let state = state.with_workflow_store_path(dir.path().join("workflow-v1.json"));
+    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspaces[0]["id"].as_str().unwrap();
+    let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "workflow.upsert",
+        json!({
+            "workflow_id": "workflow-1",
+            "workspace_id": workspace_id,
+            "surface_id": surface_id,
+            "status": "done",
+            "goal": "Fix and verify"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "workflow.loop.set",
+        json!({
+            "workflow_id": "workflow-1",
+            "recipe": "solo_with_verify_loop",
+            "stage": "done",
+            "iteration": 1,
+            "max_iterations": 3,
+            "stop_reason": "passed",
+            "gates": [{
+                "id": "verify",
+                "kind": "verification",
+                "label": "Verification",
+                "status": "passed"
+            }]
+        }),
+    )
+    .await
+    .unwrap();
+
+    let snapshot = dispatch(
+        &state,
+        "context.snapshot",
+        json!({"workspace_id": workspace_id, "tail_lines": 0}),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        snapshot["workflow_summaries"][0]["consistency_warnings"],
+        json!(["loop_passed_without_evidence"])
+    );
+    assert!(snapshot["risk_flags"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("workflow_consistency_warning")));
+}
+
+#[tokio::test]
 async fn workflow_loop_set_rejects_invalid_loop_payloads() {
     let (state, _) = test_state();
     let dir = tempfile::tempdir().unwrap();

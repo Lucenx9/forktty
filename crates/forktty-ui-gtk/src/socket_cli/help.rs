@@ -83,6 +83,8 @@ Usage:
   forktty workflow-loop-set <workflow-id> [--recipe <text>] [--stage <text>] [--iteration <n>] [--max-iterations <n>] [--stop-reason <text>] [--gates-json <json-array>] [--json]
   forktty workflow-loop-gate <workflow-id> <gate-id> <status> [--kind <kind>] [--label <text>] [--summary <text>] [--json]
   forktty workflow-loop-step-done <workflow-id> <stage> [--summary <text>] [--json]
+  forktty workflow-loop-iteration-start <workflow-id> [--stage <stage>] [--iteration <n>] [--max-iterations <n>] [--json]
+  forktty workflow-loop-iteration-done <workflow-id> <result> [--summary <text>] [--json]
   forktty workflow-loop-publish <workflow-id> --commit <rev> [--json]
   forktty workflow-evidence-add <workflow-id> --kind <kind> --title <title> [--text <text>|--text-file <path>|--text-file -] [--evidence-id <id>] [--path <path>] [--json]
   forktty workflow-replay [--workflow-id <id>] [--query <text>] [--since-seq <n>] [--limit <n>] [--json]
@@ -197,6 +199,10 @@ ForkTTY workflow commands
       Add or update one loop gate without hand-writing the full gates array.
   forktty workflow-loop-step-done <workflow-id> <stage> [--summary <text>]
       Mark one loop stage done by recording a passed stage gate.
+  forktty workflow-loop-iteration-start <workflow-id> [--stage <stage>] [--iteration <n>] [--max-iterations <n>]
+      Start the next loop pass and clear stale gate/stop state by advancing the iteration.
+  forktty workflow-loop-iteration-done <workflow-id> <result> [--summary <text>]
+      Mark the current loop pass done with a result stop reason and iteration result gate.
   forktty workflow-loop-publish <workflow-id> --commit <rev>
       Mark the loop done with a published commit stop reason.
   forktty workflow-evidence-add <workflow-id> --kind <kind> --title <title> [--text <text>|--text-file <path>|--text-file -]
@@ -225,6 +231,8 @@ ForkTTY examples
   forktty workflow-loop-set loop-runtime --stage verify --iteration 2 --max-iterations 4
   forktty workflow-loop-gate loop-runtime fmt passed --kind command --label \"cargo fmt --all --check\"
   forktty workflow-loop-step-done loop-runtime verify --summary \"checks passed\"
+  forktty workflow-loop-iteration-start loop-runtime --stage implement
+  forktty workflow-loop-iteration-done loop-runtime passed --summary \"all checks passed\"
   forktty workflow-loop-publish loop-runtime --commit abc1234
 ";
 
@@ -258,6 +266,8 @@ pub(super) const COMPLETION_COMMANDS: &[&str] = &[
     "workflow-loop-set",
     "workflow-loop-gate",
     "workflow-loop-step-done",
+    "workflow-loop-iteration-start",
+    "workflow-loop-iteration-done",
     "workflow-loop-publish",
     "tree",
     "top",

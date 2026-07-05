@@ -299,10 +299,14 @@ fn workflow_loop_set_is_advertised_in_help_text() {
     assert!(WORKFLOW_HELP_TEXT.contains("{id,kind,label,status,summary?}"));
     assert!(WORKFLOW_HELP_TEXT.contains("workflow-loop-gate"));
     assert!(WORKFLOW_HELP_TEXT.contains("workflow-loop-step-done"));
+    assert!(WORKFLOW_HELP_TEXT.contains("workflow-loop-iteration-start"));
+    assert!(WORKFLOW_HELP_TEXT.contains("workflow-loop-iteration-done"));
     assert!(WORKFLOW_HELP_TEXT.contains("workflow-loop-publish"));
     assert!(EXAMPLES_TEXT.contains("forktty workflow-loop-set"));
     assert!(EXAMPLES_TEXT.contains("workflow-loop-gate loop-runtime fmt passed"));
     assert!(EXAMPLES_TEXT.contains("workflow-loop-step-done loop-runtime verify"));
+    assert!(EXAMPLES_TEXT.contains("workflow-loop-iteration-start loop-runtime"));
+    assert!(EXAMPLES_TEXT.contains("workflow-loop-iteration-done loop-runtime passed"));
 }
 
 #[test]
@@ -678,6 +682,128 @@ fn workflow_loop_step_done_marks_stage_done_without_hand_written_json() {
     assert_eq!(
         requests[1]["params"]["gates"][0]["summary"],
         "checks passed"
+    );
+}
+
+#[test]
+fn workflow_loop_iteration_start_advances_iteration_without_hand_written_json() {
+    let requests = with_socket_server(
+        2,
+        |req| match req["method"].as_str() {
+            Some("workflow.get") => json!({
+                "id": req["id"],
+                "ok": true,
+                "result": {
+                    "id": "workflow-1",
+                    "loop_recipe": "solo_with_verify_loop",
+                    "loop_stage": "verify",
+                    "loop_iteration": 1,
+                    "loop_max_iterations": 3,
+                    "loop_gates": [{
+                        "id": "verify",
+                        "kind": "verification",
+                        "label": "Verification",
+                        "status": "failed",
+                        "summary": "first pass failed"
+                    }],
+                    "loop_stop_reason": "failed"
+                },
+            })
+            .to_string(),
+            Some("workflow.loop.set") => json!({
+                "id": req["id"],
+                "ok": true,
+                "result": {
+                    "id": "workflow-1",
+                    "loop_stage": "implement",
+                    "loop_iteration": 2,
+                    "loop_max_iterations": 3,
+                    "loop_gates": []
+                },
+            })
+            .to_string(),
+            other => panic!("unexpected method {other:?}"),
+        },
+        |socket_path| {
+            dispatch_command(
+                &ctx_for(socket_path),
+                "workflow-loop-iteration-start",
+                strings(&["workflow-1", "--stage", "implement"]),
+            )
+            .unwrap();
+        },
+    );
+    assert_eq!(requests[0]["method"], "workflow.get");
+    assert_eq!(requests[1]["method"], "workflow.loop.set");
+    assert_eq!(requests[1]["params"]["workflow_id"], "workflow-1");
+    assert_eq!(requests[1]["params"]["stage"], "implement");
+    assert_eq!(requests[1]["params"]["iteration"], 2);
+    assert_eq!(requests[1]["params"]["max_iterations"], 3);
+    assert!(requests[1]["params"].get("stop_reason").is_none());
+    assert!(requests[1]["params"].get("gates").is_none());
+}
+
+#[test]
+fn workflow_loop_iteration_done_records_result_gate_and_stop_reason() {
+    let requests = with_socket_server(
+        2,
+        |req| match req["method"].as_str() {
+            Some("workflow.get") => json!({
+                "id": req["id"],
+                "ok": true,
+                "result": {
+                    "id": "workflow-1",
+                    "loop_recipe": "solo_with_verify_loop",
+                    "loop_stage": "verify",
+                    "loop_iteration": 2,
+                    "loop_max_iterations": 3,
+                    "loop_gates": [{
+                        "id": "verify",
+                        "kind": "verification",
+                        "label": "Verification",
+                        "status": "passed"
+                    }]
+                },
+            })
+            .to_string(),
+            Some("workflow.loop.set") => json!({
+                "id": req["id"],
+                "ok": true,
+                "result": {
+                    "id": "workflow-1",
+                    "loop_stage": "done",
+                    "loop_stop_reason": "passed"
+                },
+            })
+            .to_string(),
+            other => panic!("unexpected method {other:?}"),
+        },
+        |socket_path| {
+            dispatch_command(
+                &ctx_for(socket_path),
+                "workflow-loop-iteration-done",
+                strings(&["workflow-1", "passed", "--summary", "all checks passed"]),
+            )
+            .unwrap();
+        },
+    );
+    assert_eq!(requests[0]["method"], "workflow.get");
+    assert_eq!(requests[1]["method"], "workflow.loop.set");
+    assert_eq!(requests[1]["params"]["workflow_id"], "workflow-1");
+    assert_eq!(requests[1]["params"]["stage"], "done");
+    assert_eq!(requests[1]["params"]["iteration"], 2);
+    assert_eq!(requests[1]["params"]["max_iterations"], 3);
+    assert_eq!(requests[1]["params"]["stop_reason"], "passed");
+    assert_eq!(requests[1]["params"]["gates"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        requests[1]["params"]["gates"][1]["id"],
+        "iteration-2-result"
+    );
+    assert_eq!(requests[1]["params"]["gates"][1]["kind"], "iteration");
+    assert_eq!(requests[1]["params"]["gates"][1]["status"], "passed");
+    assert_eq!(
+        requests[1]["params"]["gates"][1]["summary"],
+        "all checks passed"
     );
 }
 
