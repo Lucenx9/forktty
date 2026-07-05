@@ -214,7 +214,7 @@ pub(super) fn build_ui(app: &adw::Application) {
     header.pack_start(&brand_separator);
 
     // Router cluster: sidebar toggle, Router breadcrumb, workspace selector,
-    // Plan and Apply. Lives left-of-center in the titlebar like the
+    // Plan and review. Lives left-of-center in the titlebar like the
     // agent-workspace mockups instead of a second strip below the header.
     let router_cluster = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     router_cluster.add_css_class("header-router-cluster");
@@ -278,9 +278,9 @@ pub(super) fn build_ui(app: &adw::Application) {
     plan_button.set_tooltip_text(Some("Plan routing for the next task"));
     router_cluster.append(&plan_button);
     let apply_button = gtk::Button::builder()
-        .label("Apply")
+        .label("Review Plan")
         .has_frame(false)
-        .tooltip_text("Review the routing plan and required approvals")
+        .tooltip_text("Review the routing plan before applying it elsewhere")
         .build();
     apply_button.add_css_class("flat");
     apply_button.add_css_class("header-apply-button");

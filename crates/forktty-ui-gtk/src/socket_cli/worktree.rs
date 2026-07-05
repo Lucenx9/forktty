@@ -1,7 +1,7 @@
 use super::{
     non_blank_string_option, parse_flags, print_json, reject_unknown_options, require_no_args,
     safe_string_field, send_socket_request, string_field, trimmed_env, write_stdout_line,
-    CliContext, CliError, CliResult, ParsedFlags,
+    write_stdout_text, CliContext, CliError, CliResult, ParsedFlags,
 };
 use serde_json::{json, Map, Value};
 
@@ -71,6 +71,25 @@ pub(super) fn handle_worktree_status(context: &CliContext, args: Vec<String>) ->
         print_json(&result)
     } else {
         write_stdout_line(string_field(&result, "status").unwrap_or("unknown"))
+    }
+}
+
+pub(super) fn handle_worktree_doctor(context: &CliContext, args: Vec<String>) -> CliResult<()> {
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "worktree-doctor")?;
+    reject_unknown_options(&parsed.options, &["cwd"], "worktree-doctor")?;
+    let cwd = non_blank_string_option(&parsed.options, "cwd", "--cwd")?
+        .map(|value| value.trim().to_string())
+        .or_else(caller_cwd)
+        .ok_or_else(|| {
+            CliError::new("worktree-doctor requires --cwd, PWD, or the current directory")
+        })?;
+    let report =
+        forktty_core::worktree::doctor(&cwd).map_err(|err| CliError::new(err.to_string()))?;
+    if context.json {
+        print_json(&serde_json::to_value(report)?)
+    } else {
+        write_stdout_text(&format_worktree_doctor_report(&report))
     }
 }
 
@@ -272,6 +291,20 @@ fn format_worktree_line(worktree: &Value) -> String {
         .map(|status| format!(" {status}"))
         .unwrap_or_default();
     format!("{branch} [{name}] {path}{status}")
+}
+
+fn format_worktree_doctor_report(report: &forktty_core::worktree::WorktreeDoctorReport) -> String {
+    let mut output = format!(
+        "Worktree doctor: {} ({})\n",
+        report.status, report.repository_root
+    );
+    for check in &report.checks {
+        output.push_str(&format!(
+            "  {} {}: {}\n",
+            check.status, check.id, check.summary
+        ));
+    }
+    output
 }
 
 fn format_project_action_line(action: &Value) -> String {

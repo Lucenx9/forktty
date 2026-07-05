@@ -626,6 +626,14 @@ fn worktree_status_rejects_positional_combined_with_path_or_cwd() {
 }
 
 #[test]
+fn worktree_doctor_rejects_positionals() {
+    assert_err_contains(
+        handle_worktree_doctor(&test_context(), strings(&["feature-x"])),
+        "worktree-doctor: unexpected argument feature-x",
+    );
+}
+
+#[test]
 fn write_output_line_treats_closed_pipe_as_success() {
     let (mut writer, reader) = std::os::unix::net::UnixStream::pair().unwrap();
     drop(reader);

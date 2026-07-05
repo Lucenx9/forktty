@@ -20,6 +20,7 @@ pub(super) struct OrchestrationRailUi {
     collapsed_notifications_badge: gtk::Label,
     collapse_button: gtk::Button,
     expanded_width: Rc<Cell<i32>>,
+    attention_value: gtk::Label,
     status_value: gtk::Label,
     strategy_value: gtk::Label,
     strategy_detail_value: gtk::Label,
@@ -35,12 +36,14 @@ pub(super) struct OrchestrationRailUi {
     approvals_value: gtk::Label,
     approval_rows: Vec<RailApprovalRow>,
     approvals_empty: gtk::Label,
+    approvals_actions: gtk::Box,
     workers_value: gtk::Label,
     health_rows: Vec<RailListRow>,
     health_overflow: gtk::Label,
     reports_value: gtk::Label,
     report_rows: Vec<RailListRow>,
     reports_overflow: gtk::Label,
+    reports_link: gtk::Button,
     notifications_value: gtk::Label,
     notification_rows: Vec<RailListRow>,
     notifications_clear: gtk::Button,
@@ -69,8 +72,10 @@ struct RailListRow {
     secondary: gtk::Label,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 struct RailSnapshot {
+    attention_summary: String,
+    attention_attention: bool,
     strategy: String,
     strategy_detail: String,
     status: String,
@@ -93,6 +98,7 @@ struct RailSnapshot {
     health_items: Vec<RailListItem>,
     health_overflow: usize,
     reports: String,
+    report_count: usize,
     report_items: Vec<RailListItem>,
     report_overflow: usize,
     notifications: String,
@@ -172,6 +178,17 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
     body.add_css_class("orchestration-rail-body");
     body.set_vexpand(true);
     scroller.set_child(Some(&body));
+
+    let attention_section = rail_section(&body);
+    attention_section.add_css_class("orchestration-attention-section");
+    let attention_value = gtk::Label::builder()
+        .label("")
+        .xalign(0.0)
+        .single_line_mode(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    attention_value.add_css_class("orchestration-attention-summary");
+    attention_section.append(&attention_value);
 
     let strategy_section = rail_section(&body);
     let strategy_header = rail_section_header(&strategy_section, "STRATEGY");
@@ -286,7 +303,8 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
         .map(|_| build_list_row(&reports_section))
         .collect::<Vec<_>>();
     let reports_overflow = rail_overflow_label(&reports_section);
-    reports_section.append(&rail_link_row("Open worker reports", "app.agents"));
+    let reports_link = rail_link_row("Open worker reports", "app.agents");
+    reports_section.append(&reports_link);
 
     let notifications_section = rail_section(&body);
     let notifications_header = rail_section_header(&notifications_section, "NOTIFICATIONS");
@@ -355,6 +373,7 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
         collapsed_notifications_badge,
         collapse_button,
         expanded_width: Rc::new(Cell::new(RAIL_EXPANDED_MIN_WIDTH)),
+        attention_value,
         status_value,
         strategy_value,
         strategy_detail_value,
@@ -370,12 +389,14 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
         approvals_value,
         approval_rows,
         approvals_empty,
+        approvals_actions: auto_row,
         workers_value,
         health_rows,
         health_overflow,
         reports_value,
         report_rows,
         reports_overflow,
+        reports_link,
         notifications_value,
         notification_rows,
         notifications_clear: clear_all,
@@ -634,6 +655,8 @@ pub(super) fn refresh_orchestration_rail(ui: &OrchestrationRailUi, state: &Socke
         snapshot.notifications_unread,
         "Unread notifications",
     );
+    set_rail_value(&ui.attention_value, &snapshot.attention_summary);
+    set_attention_summary_class(&ui.attention_value, snapshot.attention_attention);
     set_rail_value(&ui.status_value, &snapshot.status);
     set_status_chip_class(&ui.status_value, &snapshot.status);
     set_rail_value(&ui.strategy_value, &snapshot.strategy);
@@ -674,6 +697,8 @@ pub(super) fn refresh_orchestration_rail(ui: &OrchestrationRailUi, state: &Socke
     } else {
         ui.approvals_empty.set_visible(false);
     }
+    ui.approvals_actions
+        .set_visible(approvals_settings_visible(&snapshot));
     set_rail_value(&ui.workers_value, &snapshot.workers);
     set_list_rows(
         &ui.health_rows,
@@ -694,6 +719,7 @@ pub(super) fn refresh_orchestration_rail(ui: &OrchestrationRailUi, state: &Socke
         "more report",
         "more reports",
     );
+    ui.reports_link.set_visible(reports_link_visible(&snapshot));
     set_rail_value(&ui.notifications_value, &snapshot.notifications);
     set_count_attention(&ui.notifications_value, snapshot.notifications_attention);
     set_list_rows(
@@ -711,6 +737,22 @@ fn set_count_attention(label: &gtk::Label, attention: bool) {
     } else {
         label.remove_css_class("attention");
     }
+}
+
+fn set_attention_summary_class(label: &gtk::Label, attention: bool) {
+    if attention {
+        label.add_css_class("attention");
+    } else {
+        label.remove_css_class("attention");
+    }
+}
+
+fn approvals_settings_visible(snapshot: &RailSnapshot) -> bool {
+    !snapshot.approval_items.is_empty()
+}
+
+fn reports_link_visible(snapshot: &RailSnapshot) -> bool {
+    snapshot.report_count > 0
 }
 
 fn set_status_chip_class(label: &gtk::Label, status: &str) {
@@ -958,7 +1000,13 @@ fn orchestration_rail_snapshot(state: &SocketAppState) -> RailSnapshot {
         active_workspace_id.as_deref(),
         &live_statuses,
     );
+    let approvals_pending = approval_count.unwrap_or(0);
+    let attention_summary =
+        format_attention_summary(approvals_pending, notifications_unread, &team);
+    let attention_attention = attention_summary != "All clear";
     RailSnapshot {
+        attention_summary,
+        attention_attention,
         strategy: workflow.strategy,
         strategy_detail: workflow.strategy_detail,
         status: workflow.status,
@@ -974,13 +1022,14 @@ fn orchestration_rail_snapshot(state: &SocketAppState) -> RailSnapshot {
         loop_planned: workflow.loop_planned,
         approvals,
         approvals_attention,
-        approvals_pending: approval_count.unwrap_or(0),
+        approvals_pending,
         approvals_overflow,
         approval_items,
         workers: team.workers,
         health_items: team.health_items,
         health_overflow: team.health_overflow,
         reports: team.reports,
+        report_count: team.report_count,
         report_items: team.report_items,
         report_overflow: team.report_overflow,
         notifications,
@@ -1097,9 +1146,13 @@ fn workflow_is_closed(status: &str) -> bool {
 struct TeamRailSnapshot {
     fanout: String,
     workers: String,
+    active_workers: usize,
+    attention_groups: usize,
+    error_groups: usize,
     health_items: Vec<RailListItem>,
     health_overflow: usize,
     reports: String,
+    report_count: usize,
     report_items: Vec<RailListItem>,
     report_overflow: usize,
 }
@@ -1114,12 +1167,17 @@ impl TeamRailSnapshot {
             .filter(|worker| worker_has_report(worker))
             .count();
         let report_overflow = report_count.saturating_sub(report_items.len());
+        let status_counts = team_status_counts(workers, &live_statuses);
         Self {
             fanout: workers.len().to_string(),
-            workers: format!("{}/{} active", workers.len(), workers.len()),
+            workers: format!("{}/{} active", status_counts.active_workers, workers.len()),
+            active_workers: status_counts.active_workers,
+            attention_groups: status_counts.attention_groups,
+            error_groups: status_counts.error_groups,
             health_items: health_list_items_with_live_statuses(workers, &live_statuses),
             health_overflow: health_overflow_with_live_statuses(workers, &live_statuses),
             reports: count_label(report_count, "report", "reports"),
+            report_count,
             report_items,
             report_overflow,
         }
@@ -1150,6 +1208,11 @@ fn latest_team_snapshot_for_workspace(
         .iter()
         .filter(|worker| worker_status_is_active(effective_worker_status(worker, live_statuses)))
         .count();
+    let status_counts = if team_is_closed(&team.status) {
+        TeamStatusCounts::default()
+    } else {
+        team_status_counts(&team.workers, live_statuses)
+    };
     let workers = if team_is_closed(&team.status) {
         "finished".to_string()
     } else {
@@ -1164,9 +1227,13 @@ fn latest_team_snapshot_for_workspace(
     TeamRailSnapshot {
         fanout: team.workers.len().to_string(),
         workers,
+        active_workers: status_counts.active_workers,
+        attention_groups: status_counts.attention_groups,
+        error_groups: status_counts.error_groups,
         health_items: health_list_items_with_live_statuses(&team.workers, live_statuses),
         health_overflow: health_overflow_with_live_statuses(&team.workers, live_statuses),
         reports: count_label(report_count, "report", "reports"),
+        report_count,
         report_overflow: report_count.saturating_sub(report_items.len()),
         report_items,
     }
@@ -1176,12 +1243,58 @@ fn team_fallback(value: &str) -> TeamRailSnapshot {
     TeamRailSnapshot {
         fanout: "0".to_string(),
         workers: value.to_string(),
+        active_workers: 0,
+        attention_groups: 0,
+        error_groups: 0,
         health_items: Vec::new(),
         health_overflow: 0,
         reports: "0 reports".to_string(),
+        report_count: 0,
         report_items: Vec::new(),
         report_overflow: 0,
     }
+}
+
+#[derive(Debug, Clone, Default)]
+struct TeamStatusCounts {
+    active_workers: usize,
+    attention_groups: usize,
+    error_groups: usize,
+}
+
+fn team_status_counts(
+    workers: &[forktty_core::TeamWorker],
+    live_statuses: &std::collections::HashMap<String, LiveSurfaceStatus>,
+) -> TeamStatusCounts {
+    let chips = team_chips_from_workers_with_live_statuses(workers, live_statuses);
+    TeamStatusCounts {
+        active_workers: workers
+            .iter()
+            .filter(|worker| {
+                worker_status_is_active(effective_worker_status(worker, live_statuses))
+            })
+            .count(),
+        attention_groups: chips
+            .iter()
+            .filter(|chip| matches!(chip.dot, "warn" | "err"))
+            .count(),
+        error_groups: chips.iter().filter(|chip| chip.dot == "err").count(),
+    }
+}
+
+fn format_attention_summary(
+    approvals_pending: usize,
+    notifications_unread: usize,
+    team: &TeamRailSnapshot,
+) -> String {
+    let attention_count = approvals_pending + notifications_unread + team.attention_groups;
+    if attention_count == 0 {
+        return "All clear".to_string();
+    }
+    format!(
+        "Attention {attention_count} · Running {} · Reports {} · Errors {}",
+        team.active_workers, team.report_count, team.error_groups
+    )
 }
 
 fn worker_status_is_active(status: &str) -> bool {
@@ -1834,6 +1947,50 @@ mod tests {
 
         assert_eq!(team.health_items.len(), RAIL_HEALTH_SLOTS);
         assert_eq!(team.health_overflow, 1);
+    }
+
+    #[test]
+    fn attention_summary_prioritizes_human_action() {
+        let workers = [
+            worker("codex", "running", Some("report")),
+            worker("claude", "needs_input", None),
+            worker("grok", "failed", None),
+        ];
+        let team = TeamRailSnapshot::from_workers_for_test(&workers);
+
+        assert_eq!(
+            format_attention_summary(1, 1, &team),
+            "Attention 4 · Running 1 · Reports 1 · Errors 1"
+        );
+    }
+
+    #[test]
+    fn attention_summary_reads_all_clear_when_nothing_needs_action() {
+        let team = TeamRailSnapshot::default();
+
+        assert_eq!(format_attention_summary(0, 0, &team), "All clear");
+    }
+
+    #[test]
+    fn empty_sidebar_sections_hide_secondary_actions() {
+        let empty = RailSnapshot::default();
+        let with_approval = RailSnapshot {
+            approval_items: vec![RailApprovalItem {
+                id: "approval-1".to_string(),
+                title: "Claude needs input".to_string(),
+                caption: "Requested now".to_string(),
+            }],
+            ..RailSnapshot::default()
+        };
+        let with_report = RailSnapshot {
+            report_count: 1,
+            ..RailSnapshot::default()
+        };
+
+        assert!(!approvals_settings_visible(&empty));
+        assert!(!reports_link_visible(&empty));
+        assert!(approvals_settings_visible(&with_approval));
+        assert!(reports_link_visible(&with_report));
     }
 
     #[test]

@@ -56,6 +56,7 @@ Usage:
   forktty worktree-attach <branch> [--cwd <repo>]
   forktty worktree-remove <branch-or-worktree> [--cwd <repo>]
   forktty worktree-merge <branch-or-worktree> [--cwd <repo>]
+  forktty worktree-doctor [--cwd <repo>] [--json]
   forktty actions [--cwd <repo>] [--json]
   forktty action-run <id> [--cwd <repo>] [--json]
   forktty set-status --key <key> --value <value> [--label <label>] [--color <color>]

@@ -1,15 +1,18 @@
 //! Bottom workflow feed dock for the GTK workbench: tabbed live rows over
-//! workflow events, team events, and notifications.
+//! workflow events, team events, notifications, and attention rows.
 
 use super::*;
 
 const FEED_ROW_COUNT: usize = 5;
 const FEED_LOG_ROWS_WHEN_EVENTS_EXIST: usize = 2;
-type FeedClearCutoffs = std::collections::HashMap<Option<String>, [u128; 3]>;
+const FEED_ATTENTION_SCAN_LIMIT: usize = FEED_ROW_COUNT * 4;
+const FEED_FILTER_COUNT: usize = 4;
+type FeedClearCutoffs = std::collections::HashMap<Option<String>, [u128; FEED_FILTER_COUNT]>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FeedFilter {
     All,
+    Attention,
     Events,
     Logs,
 }
@@ -59,7 +62,12 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     header.add_css_class("orchestration-feed-header");
     let mut tabs = Vec::new();
-    for (label, active) in [("WORKFLOW FEED", true), ("EVENTS", false), ("LOGS", false)] {
+    for (label, active) in [
+        ("WORKFLOW FEED", true),
+        ("ATTENTION", false),
+        ("EVENTS", false),
+        ("LOGS", false),
+    ] {
         let tab = gtk::Button::builder().label(label).has_frame(false).build();
         tab.add_css_class("flat");
         tab.add_css_class("orchestration-feed-tab");
@@ -265,8 +273,9 @@ pub(super) fn refresh_orchestration_feed(ui: &OrchestrationFeedUi, state: &Socke
 
 fn feed_filter_from_index(index: u8) -> FeedFilter {
     match index {
-        1 => FeedFilter::Events,
-        2 => FeedFilter::Logs,
+        1 => FeedFilter::Attention,
+        2 => FeedFilter::Events,
+        3 => FeedFilter::Logs,
         _ => FeedFilter::All,
     }
 }
@@ -274,8 +283,9 @@ fn feed_filter_from_index(index: u8) -> FeedFilter {
 fn feed_filter_slot(filter: FeedFilter) -> usize {
     match filter {
         FeedFilter::All => 0,
-        FeedFilter::Events => 1,
-        FeedFilter::Logs => 2,
+        FeedFilter::Attention => 1,
+        FeedFilter::Events => 2,
+        FeedFilter::Logs => 3,
     }
 }
 
@@ -287,7 +297,7 @@ fn set_feed_clear_cutoff(
 ) {
     cutoffs
         .entry(workspace_id.map(str::to_string))
-        .or_insert([0; 3])[feed_filter_slot(filter)] = at_ms;
+        .or_insert([0; FEED_FILTER_COUNT])[feed_filter_slot(filter)] = at_ms;
 }
 
 fn feed_clear_cutoff(
@@ -304,17 +314,23 @@ fn feed_clear_cutoff(
 fn feed_clear_cutoffs_for_workspace(
     cutoffs: &FeedClearCutoffs,
     workspace_id: Option<&str>,
-) -> [u128; 3] {
-    [
-        feed_clear_cutoff(cutoffs, workspace_id, FeedFilter::All),
-        feed_clear_cutoff(cutoffs, workspace_id, FeedFilter::Events),
-        feed_clear_cutoff(cutoffs, workspace_id, FeedFilter::Logs),
-    ]
+) -> [u128; FEED_FILTER_COUNT] {
+    let mut values = [0; FEED_FILTER_COUNT];
+    for filter in [
+        FeedFilter::All,
+        FeedFilter::Attention,
+        FeedFilter::Events,
+        FeedFilter::Logs,
+    ] {
+        values[feed_filter_slot(filter)] = feed_clear_cutoff(cutoffs, workspace_id, filter);
+    }
+    values
 }
 
 fn feed_empty_body(filter: FeedFilter) -> &'static str {
     match filter {
         FeedFilter::All => "No feed activity yet",
+        FeedFilter::Attention => "No attention items",
         FeedFilter::Events => "No workflow or team events yet",
         FeedFilter::Logs => "No logs yet",
     }
@@ -323,7 +339,7 @@ fn feed_empty_body(filter: FeedFilter) -> &'static str {
 fn feed_line_visible_after_clear(
     line: &FeedLine,
     filter: FeedFilter,
-    cleared_before_ms: &[u128; 3],
+    cleared_before_ms: &[u128; FEED_FILTER_COUNT],
 ) -> bool {
     line.at_ms > cleared_before_ms[feed_filter_slot(filter)] && feed_line_matches(line, filter)
 }
@@ -331,9 +347,35 @@ fn feed_line_visible_after_clear(
 fn feed_line_matches(line: &FeedLine, filter: FeedFilter) -> bool {
     match filter {
         FeedFilter::All => true,
+        FeedFilter::Attention => feed_line_needs_attention(line),
         FeedFilter::Events => matches!(line.source, FeedSource::Workflow | FeedSource::Team),
         FeedFilter::Logs => matches!(line.source, FeedSource::Log),
     }
+}
+
+fn feed_line_needs_attention(line: &FeedLine) -> bool {
+    matches!(feed_status_class(&line.status), "err" | "warn")
+        || text_mentions_attention(&line.body)
+        || text_mentions_attention(&line.status)
+}
+
+fn text_mentions_attention(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    [
+        "needs input",
+        "need input",
+        "approval",
+        "pending",
+        "blocked",
+        "failed",
+        "failure",
+        "error",
+        "warning",
+        "stale",
+        "conflict",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 fn set_feed_label(label: &gtk::Label, value: &str) {
@@ -378,27 +420,42 @@ fn orchestration_feed_lines_for_filter_in_workspace(
     filter: FeedFilter,
     active_workspace_id: Option<&str>,
 ) -> Vec<FeedLine> {
-    let mut lines = if matches!(filter, FeedFilter::All | FeedFilter::Events) {
-        orchestration_feed_lines_for_workspace(
+    let event_scan_limit = if filter == FeedFilter::Attention {
+        FEED_ATTENTION_SCAN_LIMIT
+    } else {
+        FEED_ROW_COUNT
+    };
+    let mut lines = if matches!(
+        filter,
+        FeedFilter::All | FeedFilter::Attention | FeedFilter::Events
+    ) {
+        orchestration_event_lines_for_workspace(
             state.workflow_store_path.as_deref(),
             state.team_store_path.as_deref(),
             active_workspace_id,
+            event_scan_limit,
         )
     } else {
         Vec::new()
     };
     if let Ok(model) = state.model.lock() {
-        if filter == FeedFilter::All {
-            lines.extend(feed_notification_lines_for_workspace(
+        if matches!(filter, FeedFilter::All | FeedFilter::Attention) {
+            lines.extend(feed_notification_lines_for_workspace_with_limit(
                 &model,
                 active_workspace_id,
+                event_scan_limit,
             ));
         }
         if let Some(workspace_id) = active_workspace_id {
             lines = append_log_lines_for_filter(lines, &model.list_logs(workspace_id), filter);
         }
     }
-    finalize_feed_lines(lines)
+    finalize_feed_lines(
+        lines
+            .into_iter()
+            .filter(|line| feed_line_matches(line, filter))
+            .collect(),
+    )
 }
 
 fn combined_feed_log_limit(has_non_log_rows: bool) -> usize {
@@ -436,6 +493,19 @@ fn append_log_lines_for_filter(
             lines
         }
         FeedFilter::Events => lines,
+        FeedFilter::Attention => {
+            lines.extend(
+                logs.iter()
+                    .take(FEED_ATTENTION_SCAN_LIMIT)
+                    .map(|log| FeedLine {
+                        at_ms: log.timestamp_ms,
+                        source: FeedSource::Log,
+                        body: format!("Log: {}", log.message.trim()),
+                        status: feed_log_level(log.level).to_string(),
+                    }),
+            );
+            lines
+        }
         FeedFilter::Logs => logs
             .iter()
             .take(FEED_ROW_COUNT)
@@ -449,9 +519,18 @@ fn append_log_lines_for_filter(
     }
 }
 
+#[cfg(test)]
 fn feed_notification_lines_for_workspace(
     model: &forktty_core::WorkspaceModel,
     workspace_id: Option<&str>,
+) -> Vec<FeedLine> {
+    feed_notification_lines_for_workspace_with_limit(model, workspace_id, FEED_ROW_COUNT)
+}
+
+fn feed_notification_lines_for_workspace_with_limit(
+    model: &forktty_core::WorkspaceModel,
+    workspace_id: Option<&str>,
+    limit: usize,
 ) -> Vec<FeedLine> {
     model
         .list_notifications()
@@ -464,7 +543,7 @@ fn feed_notification_lines_for_workspace(
                 .is_none_or(|surface_id| model.surface(surface_id).is_some())
         })
         .rev()
-        .take(5)
+        .take(limit)
         .map(|notification| FeedLine {
             at_ms: notification.created_at_ms,
             source: FeedSource::Notification,
@@ -493,10 +572,25 @@ fn finalize_feed_lines(mut lines: Vec<FeedLine>) -> Vec<FeedLine> {
     lines
 }
 
+#[cfg(test)]
 fn orchestration_feed_lines_for_workspace(
     workflow_path: Option<&Path>,
     team_path: Option<&Path>,
     workspace_id: Option<&str>,
+) -> Vec<FeedLine> {
+    finalize_feed_lines(orchestration_event_lines_for_workspace(
+        workflow_path,
+        team_path,
+        workspace_id,
+        FEED_ROW_COUNT,
+    ))
+}
+
+fn orchestration_event_lines_for_workspace(
+    workflow_path: Option<&Path>,
+    team_path: Option<&Path>,
+    workspace_id: Option<&str>,
+    per_store_limit: usize,
 ) -> Vec<FeedLine> {
     let mut lines = Vec::new();
     if let Some(path) = workflow_path {
@@ -518,7 +612,7 @@ fn orchestration_feed_lines_for_workspace(
                                 record_matches_workspace(*record_workspace, workspace_id)
                             })
                     })
-                    .take(5)
+                    .take(per_store_limit)
                     .map(|event| FeedLine {
                         at_ms: u128::from(event.at_ms),
                         source: FeedSource::Workflow,
@@ -547,7 +641,7 @@ fn orchestration_feed_lines_for_workspace(
                             },
                         )
                     })
-                    .take(5)
+                    .take(per_store_limit)
                     .map(|event| FeedLine {
                         at_ms: u128::from(event.created_at_ms),
                         source: FeedSource::Team,
@@ -557,7 +651,7 @@ fn orchestration_feed_lines_for_workspace(
             );
         }
     }
-    finalize_feed_lines(lines)
+    lines
 }
 
 fn active_workspace_id_for_state(state: &SocketAppState) -> Option<String> {
@@ -711,6 +805,53 @@ mod tests {
     }
 
     #[test]
+    fn attention_filter_surfaces_only_rows_requiring_user_attention() {
+        let approval = FeedLine {
+            at_ms: 1,
+            source: FeedSource::Notification,
+            body: "Claude needs input".to_string(),
+            status: "approval".to_string(),
+        };
+        let error = FeedLine {
+            at_ms: 2,
+            source: FeedSource::Log,
+            body: "Log: Antigravity tool error".to_string(),
+            status: "error".to_string(),
+        };
+        let warning = FeedLine {
+            at_ms: 3,
+            source: FeedSource::Log,
+            body: "Log: quota warning".to_string(),
+            status: "warn".to_string(),
+        };
+        let needs_input = FeedLine {
+            at_ms: 4,
+            source: FeedSource::Team,
+            body: "Team: worker needs input".to_string(),
+            status: "worker".to_string(),
+        };
+        let normal_event = FeedLine {
+            at_ms: 5,
+            source: FeedSource::Workflow,
+            body: "Router: review done".to_string(),
+            status: "workflow".to_string(),
+        };
+        let info_log = FeedLine {
+            at_ms: 6,
+            source: FeedSource::Log,
+            body: "Log: provider request started".to_string(),
+            status: "info".to_string(),
+        };
+
+        assert!(feed_line_matches(&approval, FeedFilter::Attention));
+        assert!(feed_line_matches(&error, FeedFilter::Attention));
+        assert!(feed_line_matches(&warning, FeedFilter::Attention));
+        assert!(feed_line_matches(&needs_input, FeedFilter::Attention));
+        assert!(!feed_line_matches(&normal_event, FeedFilter::Attention));
+        assert!(!feed_line_matches(&info_log, FeedFilter::Attention));
+    }
+
+    #[test]
     fn logs_filter_does_not_treat_notifications_as_logs() {
         let notification = FeedLine {
             at_ms: 1,
@@ -727,6 +868,7 @@ mod tests {
     #[test]
     fn feed_empty_body_matches_active_filter() {
         assert_eq!(feed_empty_body(FeedFilter::All), "No feed activity yet");
+        assert_eq!(feed_empty_body(FeedFilter::Attention), "No attention items");
         assert_eq!(
             feed_empty_body(FeedFilter::Events),
             "No workflow or team events yet"
@@ -748,7 +890,7 @@ mod tests {
             body: "Log: noisy provider trace".to_string(),
             status: "info".to_string(),
         };
-        let cleared_before_ms = [0, 0, 20];
+        let cleared_before_ms = [0, 0, 0, 20];
 
         assert!(feed_line_visible_after_clear(
             &workflow,
@@ -795,11 +937,13 @@ mod tests {
         };
         let workspace_a_cutoff = [
             feed_clear_cutoff(&cutoffs, Some("workspace-a"), FeedFilter::All),
+            feed_clear_cutoff(&cutoffs, Some("workspace-a"), FeedFilter::Attention),
             feed_clear_cutoff(&cutoffs, Some("workspace-a"), FeedFilter::Events),
             feed_clear_cutoff(&cutoffs, Some("workspace-a"), FeedFilter::Logs),
         ];
         let workspace_b_cutoff = [
             feed_clear_cutoff(&cutoffs, Some("workspace-b"), FeedFilter::All),
+            feed_clear_cutoff(&cutoffs, Some("workspace-b"), FeedFilter::Attention),
             feed_clear_cutoff(&cutoffs, Some("workspace-b"), FeedFilter::Events),
             feed_clear_cutoff(&cutoffs, Some("workspace-b"), FeedFilter::Logs),
         ];

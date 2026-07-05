@@ -23,6 +23,8 @@ ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix soc
 
 > **Status**: Early alpha (v0.2.0-alpha.17). ForkTTY is Linux-only and the GTK/Ghostty runtime is now the primary implementation. The AppImage is the primary Linux download for this alpha; the Debian package remains available for Debian/Ubuntu users.
 
+For the fastest local walkthrough, read [GETTING_STARTED.md](GETTING_STARTED.md).
+For local quality targets, read [METRICS.md](METRICS.md).
 For the complete user guide, read [forktty.dev/docs](https://forktty.dev/docs).
 For agent-oriented retrieval, start with
 [llms.txt](https://forktty.dev/llms.txt) or the single-file
@@ -260,6 +262,7 @@ commands work even when the GTK app is not running:
 forktty --help
 forktty --version
 forktty doctor          # local diagnostics, no socket required
+forktty worktree-doctor --cwd "$PWD" --json  # read-only worktree diagnostics, no socket required
 forktty ping            # check the running daemon
 ```
 
@@ -315,6 +318,11 @@ forktty notifications
 forktty capabilities
 forktty events
 ```
+
+The socket method stability map lives in
+[docs/socket-api.md](docs/socket-api.md). In short, discovery/context/surface
+reads and basic workspace control are stable-for-alpha; router/team/workflow
+orchestration remains public alpha while the model hardens.
 
 ForkTTY agents and scripts can ask the local task router for a strategy before
 choosing manual modes. `forktty task-plan "fix this bug and verify it" --json`

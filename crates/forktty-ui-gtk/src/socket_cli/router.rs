@@ -44,8 +44,9 @@ use super::workspace::{
     handle_close_workspace, handle_create_workspace, handle_focus, handle_list, handle_ssh,
 };
 use super::worktree::{
-    handle_project_action_list, handle_project_action_run, handle_worktree_list,
-    handle_worktree_merge, handle_worktree_open, handle_worktree_remove, handle_worktree_status,
+    handle_project_action_list, handle_project_action_run, handle_worktree_doctor,
+    handle_worktree_list, handle_worktree_merge, handle_worktree_open, handle_worktree_remove,
+    handle_worktree_status,
 };
 use super::{CliContext, CliError, CliResult};
 
@@ -141,6 +142,9 @@ pub(super) fn dispatch_command(
         }
         "worktree-merge" | "worktree:merge" | "worktree.merge" => {
             handle_worktree_merge(context, args)
+        }
+        "worktree-doctor" | "worktree:doctor" | "worktree.doctor" => {
+            handle_worktree_doctor(context, args)
         }
         "actions" | "project-actions" | "project:action:list" | "project.action.list" => {
             handle_project_action_list(context, args)

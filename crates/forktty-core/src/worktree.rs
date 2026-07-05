@@ -124,6 +124,25 @@ pub struct WorktreeInfo {
     pub setup_warning: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorktreeDoctorReport {
+    pub status: String,
+    pub repository_root: String,
+    #[serde(default)]
+    pub worktrees: Vec<WorktreeInfo>,
+    #[serde(default)]
+    pub checks: Vec<WorktreeDoctorCheck>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorktreeDoctorCheck {
+    pub id: String,
+    pub status: String,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct PreparedWorktreeRemoval {
     repo_git_dir: PathBuf,
@@ -292,6 +311,44 @@ pub fn list(repo_path: &str) -> Result<Vec<WorktreeInfo>, WorktreeError> {
         }
     }
     Ok(result)
+}
+
+pub fn doctor(repo_path: &str) -> Result<WorktreeDoctorReport, WorktreeError> {
+    let repository_root = repository_root(repo_path)?;
+    let repository_root_label = repository_root.to_string_lossy().to_string();
+    let repository_status = status(&repository_root_label)?;
+    let mut checks = vec![doctor_check(
+        "repository",
+        &repository_status,
+        format!("Repository checkout is {repository_status}"),
+        Some(repository_root_label.clone()),
+    )];
+    let worktrees = list(repo_path)?;
+    for worktree in &worktrees {
+        checks.push(doctor_check(
+            format!("worktree:{}", worktree.worktree_name),
+            &worktree.status,
+            format!(
+                "Worktree {} on {} is {}",
+                worktree.worktree_name, worktree.branch, worktree.status
+            ),
+            Some(worktree.path.clone()),
+        ));
+    }
+    let status = if checks.iter().any(|check| check.status == "error") {
+        "error"
+    } else if checks.iter().any(|check| check.status == "warn") {
+        "warn"
+    } else {
+        "ok"
+    }
+    .to_string();
+    Ok(WorktreeDoctorReport {
+        status,
+        repository_root: repository_root_label,
+        worktrees,
+        checks,
+    })
 }
 
 pub fn remove(repo_path: &str, selector: &str, delete_branch: bool) -> Result<(), WorktreeError> {
@@ -598,6 +655,28 @@ fn worktree_status_label(repo: &Repository, worktree_name: &str, path: &Path) ->
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => "missing".to_string(),
         Err(_) => "unknown".to_string(),
+    }
+}
+
+fn doctor_check(
+    id: impl Into<String>,
+    checkout_status: &str,
+    summary: String,
+    path: Option<String>,
+) -> WorktreeDoctorCheck {
+    WorktreeDoctorCheck {
+        id: id.into(),
+        status: doctor_check_status(checkout_status).to_string(),
+        summary,
+        path,
+    }
+}
+
+fn doctor_check_status(checkout_status: &str) -> &'static str {
+    match checkout_status {
+        "clean" => "ok",
+        "dirty" | "conflicts" | "missing" | "unknown" => "warn",
+        _ => "error",
     }
 }
 
@@ -1570,6 +1649,23 @@ mod tests {
 
         assert_eq!(only_worktree_status(repo_path), "clean");
         assert_eq!(status(&info.path).unwrap(), "clean");
+    }
+
+    #[test]
+    fn doctor_reports_dirty_worktree_without_mutating_it() {
+        let dir = make_repo();
+        let info = create(dir.path().to_str().unwrap(), "doctor-dirty", "nested").unwrap();
+        fs::write(Path::new(&info.path).join("dirty.txt"), "dirty\n").unwrap();
+
+        let report = doctor(dir.path().to_str().unwrap()).unwrap();
+
+        assert_eq!(report.status, "warn");
+        assert!(report.checks.iter().any(|check| {
+            check.id == format!("worktree:{}", info.worktree_name)
+                && check.status == "warn"
+                && check.summary.contains("dirty")
+        }));
+        assert_eq!(status(&info.path).unwrap(), "dirty");
     }
 
     #[test]

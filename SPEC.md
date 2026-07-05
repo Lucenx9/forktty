@@ -296,6 +296,11 @@ The protocol is newline-delimited JSON-RPC-like messages:
 {"id":"1","ok":true,"result":[{"id":"...","name":"..."}]}
 ```
 
+Method stability tiers are tracked in [docs/socket-api.md](docs/socket-api.md):
+core discovery/context/surface/workspace calls are stable-for-alpha, while
+router, workflow, team, cleanup, and worktree mutation calls remain public alpha
+unless that document promotes them.
+
 Implemented categories:
 
 | Category | Methods |

@@ -93,6 +93,47 @@ not depend on host notification services. It uses the current display or
 - Open the Settings font family picker and confirm the dropdown lists installed monospace fonts with a working search field; the font size and scrollback spin rows show theme-independent −/+ glyph buttons.
 - Open Notifications, dismiss one notification, then Clear All.
 
+## Attention-first UI Smoke
+
+Use this when the Router rail or bottom workflow feed changes. The goal is to
+verify the manual metrics in `METRICS.md`, not to add telemetry.
+
+- Create or reuse a workspace with mixed orchestration state: at least one
+  active worker, one worker or approval needing input, one warning/error/stale
+  feed item, and at least one routine event/log row.
+- Open ForkTTY at a normal laptop-width window with the Router rail and bottom
+  workflow feed visible.
+- Without scrolling, identify every item that needs intervention from the
+  Router rail plus the bottom `ATTENTION` tab. Target: all critical items named
+  within 3 seconds.
+- Count critical items hidden behind scrolling or non-attention tabs. Target:
+  at least 90% of critical items visible without scrolling, and 0 missed
+  `needs_input`, stuck/stale, approval, error, warning, or conflict states.
+- Ask the tester to rate monitoring effort from 1 to 5. Target: 1-2. If the
+  answer is 3 or higher, save a screenshot and note which section caused the
+  scan friction.
+- Switch back to `WORKFLOW FEED`, `EVENTS`, and `LOGS` and confirm routine
+  trace rows remain available without crowding the attention view.
+
+## General UI Quality Smoke
+
+Use this for visible GTK changes. It applies the visual rules in
+`docs/DESIGN.md` and the general UI metrics in `METRICS.md`.
+
+- Open ForkTTY at normal laptop width and wide desktop width.
+- Inspect the default workspace, sidebar, Router rail, workflow feed, command
+  palette, notifications panel, Settings, and any dialog touched by the change.
+- Confirm the screen keeps one accent color, no gradients/glow, no emoji-as-UI,
+  compact operational spacing, sentence-case labels, and no decorative elements
+  that compete with terminal/workflow state.
+- Score visual clarity, visual noise, and consistency/polish using
+  `METRICS.md`. Target: visual clarity 4-5/5, consistency/polish 4-5/5,
+  and no distracting visual noise in the primary viewport.
+- Check warning/error, selected, disabled, muted, and badge text against the
+  dark surfaces. Any obvious low-contrast gray-on-gray row is a fail.
+- If a score misses target, save a screenshot and either fix it before release
+  or record the exact follow-up in the release notes.
+
 ## Config Recovery Smoke
 
 - Stop the app, then corrupt `$XDG_CONFIG_HOME/forktty/config.toml` (`echo "{ broken" >$XDG_CONFIG_HOME/forktty/config.toml`). Relaunch; ForkTTY should start with defaults, show a Config Issue notification that names the quarantined file, and rename the corrupt config to `*.bad-<timestamp>` or `*.bad-<timestamp>-N` if that name already exists.
@@ -264,6 +305,7 @@ checking that the opt-in browser feature still builds and starts.
 - Run `forktty worktree-attach feature/x --cwd <path-to-clean-repo>` again — it opens/reuses the existing worktree instead of creating a duplicate or failing.
 - If the GTK worktree dialog is opened while no workspace is active, actions report that no active workspace is available instead of using the app launch directory.
 - In the original workspace, run `forktty worktree-status` — returns `clean`; ForkTTY's `.worktrees/` directory should not make the target checkout dirty.
+- In the original workspace, run `forktty worktree-doctor --json` — returns an overall `ok`/`warn`/`error` report with a repository check and one check per known worktree without creating, merging, pruning, or removing anything.
 - From a subdirectory inside that worktree, run `forktty worktree-status` — returns `clean` or `dirty`, not a repository error.
 - `forktty worktree-status <path> extra` — exits with `worktree-status: unexpected argument extra` instead of ignoring the extra selector.
 - Create an uncommitted file in the worktree, then run `forktty worktree-merge feature/x` from the original workspace — merge is rejected and the error says to commit, stash, or resolve the source worktree first.

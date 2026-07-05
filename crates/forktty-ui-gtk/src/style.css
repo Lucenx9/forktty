@@ -1089,6 +1089,21 @@ button.flat.orchestration-collapse-button:focus-visible {
   border-bottom: 1px solid #252525;
 }
 
+.orchestration-attention-section {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.orchestration-attention-summary {
+  color: #d7d7d7;
+  font-size: 0.82em;
+  font-weight: 720;
+}
+
+.orchestration-attention-summary.attention {
+  color: #e88745;
+}
+
 .orchestration-section-header {
   min-height: 22px;
 }

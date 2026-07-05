@@ -696,6 +696,9 @@ mod tests {
             "worktree-merge",
             "worktree:merge",
             "worktree.merge",
+            "worktree-doctor",
+            "worktree:doctor",
+            "worktree.doctor",
         ] {
             assert!(is_socket_cli_command(command), "{command}");
         }

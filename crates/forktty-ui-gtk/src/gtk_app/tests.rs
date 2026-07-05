@@ -2761,6 +2761,8 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(app_source.contains("header.pack_start(&router_cluster);"));
     assert!(app_source.contains("router_crumb.set_action_name(Some(\"app.task-router\"));"));
     assert!(app_source.contains("apply_button.set_action_name(Some(\"app.task-router\"));"));
+    assert!(app_source.contains(".label(\"Review Plan\")"));
+    assert!(!app_source.contains(".label(\"Apply\")"));
     assert!(app_source.contains("orchestration_status_summary(&state)"));
     assert!(app_source.contains("build_orchestration_feed(&state)"));
     assert!(app_source.contains("refresh_orchestration_feed("));
@@ -2792,6 +2794,7 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(rail_source.contains("model.dismiss_notification(&notification.id)"));
     assert!(rail_source.contains("mark_notification_feed_entries_cleared(&notifications)"));
     assert!(feed_source.contains("(\"WORKFLOW FEED\", true)"));
+    assert!(feed_source.contains("(\"ATTENTION\", false)"));
     assert!(feed_source.contains("set_workflow_feed_collapsed("));
     assert!(feed_source.contains("orchestration-feed-rows-shell"));
     assert!(feed_source.contains("Collapse workflow feed"));

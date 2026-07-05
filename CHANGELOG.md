@@ -40,18 +40,34 @@ All notable changes to ForkTTY are documented here.
 - Added `workflow-loop-iteration-start` and `workflow-loop-iteration-done`
   wrappers so agents can advance bounded loop passes and record the pass result
   without hand-writing `workflow.loop.set` payloads.
+- Added read-only `forktty worktree-doctor` diagnostics that report repository
+  and linked-worktree health without creating, pruning, merging, or removing
+  any worktree state.
+- Added a short `GETTING_STARTED.md` walkthrough and `docs/socket-api.md`
+  stability map so users and agents can distinguish stable-for-alpha socket
+  calls from public alpha orchestration surfaces.
+- Added `METRICS.md` with manual attention-first UI quality targets for the
+  Router rail and workflow feed.
+- Added an Attention-first UI smoke checklist to release QA so those metrics
+  are exercised before alpha releases instead of remaining advisory only.
+- Extended `METRICS.md` and release QA with general anti-slop UI quality checks
+  tied to the existing GTK visual rules.
 
 ### Changed
 - The GTK workbench now follows the agent-workspace layout end to end: the
   titlebar carries a Router cluster (breadcrumb, workspace selector, Plan and
-  Apply shortcuts into the read-only Router planner) plus live team chips; the
-  sidebar gains TEAM, RESOURCES, and Settings/About sections; the right-side
-  rail shows structured strategy/loop/approval/worker/report/notification rows
-  with working Review/Deny on pending Feed approvals and a notifications
-  Clear-all; the workflow feed gets wall-clock timestamps, per-kind status
-  colors, filter tabs, and a Clear button; split panes gain a slim footer with
-  the shell name and agent lifecycle; and the status bar summarizes the active
-  Router strategy and loop.
+  Review Plan shortcuts into the read-only Router planner) plus live team
+  chips; the sidebar gains TEAM, RESOURCES, and Settings/About sections; the
+  right-side rail shows an attention-first summary plus structured
+  strategy/loop/approval/worker/report/notification rows with working
+  Review/Deny on pending Feed approvals and a notifications Clear-all; the
+  workflow feed gets wall-clock timestamps, per-kind status colors, filter
+  tabs, and a Clear button; split panes gain a slim footer with the shell name
+  and agent lifecycle; and the status bar summarizes the active Router strategy
+  and loop.
+- The workflow feed now includes an `ATTENTION` tab that isolates approvals,
+  errors, warnings, stale/conflict signals, and needs-input rows from routine
+  workflow/log churn.
 - The Router rail and bottom workflow feed can now be collapsed from their
   headers for temporary workspace space recovery while the Settings toggles
   remain the persistent show/hide controls.
