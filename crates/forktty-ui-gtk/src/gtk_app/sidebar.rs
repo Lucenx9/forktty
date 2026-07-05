@@ -1241,7 +1241,7 @@ fn format_status_summary_part(status: &StatusEntry) -> String {
 }
 
 /// Fixed sidebar sections below the workspace list: TEAM (latest team
-/// workers grouped by agent), RESOURCES shortcuts, and the Settings/About
+/// workers grouped by agent), RESOURCES project shortcuts, and the Settings/About
 /// footer, mirroring the agent-workspace layout.
 #[derive(Clone)]
 pub(super) struct SidebarSectionsUi {
@@ -1250,7 +1250,6 @@ pub(super) struct SidebarSectionsUi {
     team_signature: Rc<RefCell<String>>,
     pub(super) resources_shell: gtk::Box,
     pub(super) git_repos_row: gtk::Button,
-    pub(super) placeholder_rows: Vec<(gtk::Button, &'static str)>,
     pub(super) footer_shell: gtk::Box,
     pub(super) about_row: gtk::Button,
 }
@@ -1265,19 +1264,8 @@ pub(super) fn build_sidebar_sections(state: &SocketAppState) -> SidebarSectionsU
     let resources_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
     resources_shell.add_css_class("sidebar-fixed-section");
     resources_shell.append(&sidebar_section_label("Resources"));
-    let git_repos_row = sidebar_nav_row("forktty-merge-symbolic", "Git Repos", None);
+    let git_repos_row = sidebar_nav_row("forktty-merge-symbolic", "Worktrees", None);
     resources_shell.append(&git_repos_row);
-    let mut placeholder_rows = Vec::new();
-    for (icon, label) in [
-        ("forktty-info-symbolic", "Knowledge Base"),
-        ("forktty-copy-symbolic", "Snippets"),
-        ("forktty-grid-symbolic", "Environments"),
-        ("forktty-keyboard-symbolic", "Secrets"),
-    ] {
-        let row = sidebar_nav_row(icon, label, None);
-        resources_shell.append(&row);
-        placeholder_rows.push((row, label));
-    }
 
     let footer_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
     footer_shell.add_css_class("sidebar-footer");
@@ -1293,7 +1281,6 @@ pub(super) fn build_sidebar_sections(state: &SocketAppState) -> SidebarSectionsU
         team_signature: Rc::new(RefCell::new(String::new())),
         resources_shell,
         git_repos_row,
-        placeholder_rows,
         footer_shell,
         about_row,
     };

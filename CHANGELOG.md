@@ -68,6 +68,9 @@ All notable changes to ForkTTY are documented here.
 - The workflow feed now includes an `ATTENTION` tab that isolates approvals,
   errors, warnings, stale/conflict signals, and needs-input rows from routine
   workflow/log churn.
+- The sidebar Resources section now exposes only the implemented Worktrees
+  shortcut instead of placeholder Knowledge Base, Snippets, Environments, and
+  Secrets rows.
 - The Router rail and bottom workflow feed can now be collapsed from their
   headers for temporary workspace space recovery while the Settings toggles
   remain the persistent show/hide controls.

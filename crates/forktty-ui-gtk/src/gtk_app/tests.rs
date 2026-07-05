@@ -2834,9 +2834,17 @@ fn sidebar_fixed_sections_cover_team_resources_and_footer() {
     assert!(
         app_source.contains("show_worktree_dialog(&window_for_git_repos, &state_for_git_repos)")
     );
+    assert!(!app_source.contains("is not available yet"));
     assert!(app_source.contains("show_about_dialog(&window_for_about)"));
     assert!(sidebar_source.contains("sidebar_section_label(\"Team\")"));
     assert!(sidebar_source.contains("sidebar_section_label(\"Resources\")"));
+    assert!(
+        sidebar_source.contains("sidebar_nav_row(\"forktty-merge-symbolic\", \"Worktrees\", None)")
+    );
+    assert!(!sidebar_source.contains("Knowledge Base"));
+    assert!(!sidebar_source.contains("Snippets"));
+    assert!(!sidebar_source.contains("Environments"));
+    assert!(!sidebar_source.contains("Secrets"));
     assert!(sidebar_source.contains("latest_team_chips_for_state(state)"));
     assert!(sidebar_source.contains("settings_row.set_action_name(Some(\"app.settings\"));"));
     assert!(css.contains(".sidebar-fixed-section {"));

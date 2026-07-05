@@ -612,13 +612,6 @@ pub(super) fn build_ui(app: &adw::Application) {
         sidebar_sections.git_repos_row.connect_clicked(move |_| {
             show_worktree_dialog(&window_for_git_repos, &state_for_git_repos);
         });
-        for (row, label) in &sidebar_sections.placeholder_rows {
-            let toast_for_row = toast_handle.clone();
-            let label = *label;
-            row.connect_clicked(move |_| {
-                toast_for_row.show(&format!("{label} is not available yet"));
-            });
-        }
         let window_for_about = window.clone();
         sidebar_sections.about_row.connect_clicked(move |_| {
             show_about_dialog(&window_for_about);
