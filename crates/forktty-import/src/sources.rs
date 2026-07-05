@@ -169,9 +169,13 @@ pub fn discover_chromium_family(family: BrowserFamily, root: &Path) -> Option<So
         let mut extra: Vec<String> = entries
             .flatten()
             .filter_map(|e| {
-                let name = e.file_name().to_string_lossy().into_owned();
-                if name.starts_with("Profile ") && e.path().is_dir() {
-                    Some(name)
+                let os_name = e.file_name();
+                let name = os_name.to_string_lossy();
+                if name.starts_with("Profile ")
+                    && e.file_type()
+                        .is_ok_and(|ft| ft.is_dir() || (ft.is_symlink() && e.path().is_dir()))
+                {
+                    Some(name.into_owned())
                 } else {
                     None
                 }
