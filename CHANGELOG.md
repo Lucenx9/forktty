@@ -62,6 +62,9 @@ All notable changes to ForkTTY are documented here.
 - Normalized corner radii to a tight 3-step scale (4px small controls, 6px
   buttons/badges, 8px cards/rows/dialogs, plus full-round pills), collapsing the
   previous ad-hoc mix of 4/5/6/7/8px so nested surfaces read as one system.
+- Aligned the workflow-feed / router status chips (live / idle / warn) to the
+  token system: 6px radius, neutral surface + hairline tokens, and the warm
+  accent for the warning state.
 - Refined the header count badges (notification/agent) to a compact squared
   chip on the sober warm accent, replacing the red/orange full-round dots.
 - Unified surface borders onto a single hairline color and evened out

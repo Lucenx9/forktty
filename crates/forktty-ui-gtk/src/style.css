@@ -1073,10 +1073,10 @@ button.flat.orchestration-rail-collapsed-strip:focus-visible {
 .orchestration-status-chip {
   min-height: 18px;
   padding: 0 8px;
-  border-radius: 4px;
-  color: #9d9d9d;
-  background: #1d1d1d;
-  border: 1px solid #2c2c2c;
+  border-radius: 6px;
+  color: @ft_text_3;
+  background: @ft_bg_1;
+  border: 1px solid @ft_line;
   font-size: 0.70em;
   font-weight: 720;
   letter-spacing: 0;
@@ -1090,9 +1090,9 @@ button.flat.orchestration-rail-collapsed-strip:focus-visible {
 }
 
 .orchestration-status-chip.warn {
-  color: #e0b05e;
-  background: alpha(#e0b05e, 0.10);
-  border-color: alpha(#e0b05e, 0.24);
+  color: @ft_warning;
+  background: alpha(@ft_warning, 0.10);
+  border-color: alpha(@ft_warning, 0.24);
 }
 
 .orchestration-status-chip.err {
