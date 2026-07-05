@@ -2293,6 +2293,9 @@ impl TaskStrategyApplyRequest {
             if message["body"].as_str() != Some(expected_body) {
                 continue;
             }
+            if message["superseded"].as_bool().unwrap_or(false) {
+                continue;
+            }
             if message["delivered"].as_bool().unwrap_or(false) {
                 delivered_id = Some(id.to_string());
             } else {

@@ -4765,6 +4765,104 @@ async fn task_strategy_apply_submit_does_not_reuse_staged_prompt_with_stale_cwd(
 }
 
 #[tokio::test]
+async fn task_strategy_apply_does_not_reuse_superseded_matching_prompt() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+
+    dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement prompt A",
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement prompt B",
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+    let result = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-run-1",
+            "goal": "Implement prompt A",
+            "approved": ["start_run"],
+            "plan": staged_team_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert!(result["actions"].as_array().unwrap().iter().any(|action| {
+        action["method"] == "team.message.send"
+            && action["status"] == "applied"
+            && action["message_id"] == "router-run-1-implementer-1-msg-3"
+    }));
+    let team = dispatch(&state, "team.get", json!({"team_id": "router-run-1"}))
+        .await
+        .unwrap();
+    let messages = team["messages"].as_array().unwrap();
+    assert!(messages.iter().any(|message| {
+        message["id"] == "router-run-1-implementer-1-msg-1"
+            && message["superseded"] == true
+            && message["body"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Implement prompt A")
+    }));
+    assert!(messages.iter().any(|message| {
+        message["id"] == "router-run-1-implementer-1-msg-2"
+            && message["superseded"] == true
+            && message["body"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Implement prompt B")
+    }));
+    assert!(messages.iter().any(|message| {
+        message["id"] == "router-run-1-implementer-1-msg-3"
+            && !message["delivered"].as_bool().unwrap_or(false)
+            && !message["superseded"].as_bool().unwrap_or(false)
+            && message["body"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Implement prompt A")
+    }));
+    let inbox = dispatch(
+        &state,
+        "team.inbox",
+        json!({
+            "team_id": "router-run-1",
+            "worker_id": "router-run-1-implementer-1-worker"
+        }),
+    )
+    .await
+    .unwrap();
+    let inbox_messages = inbox.as_array().unwrap();
+    assert!(inbox_messages
+        .iter()
+        .any(|message| message["id"] == "router-run-1-implementer-1-msg-3"));
+    assert!(!inbox_messages.iter().any(|message| {
+        message["id"] == "router-run-1-implementer-1-msg-1"
+            || message["id"] == "router-run-1-implementer-1-msg-2"
+    }));
+}
+
+#[tokio::test]
 #[serial_test::serial]
 async fn task_strategy_apply_submit_relaunches_worker_when_record_surface_runtime_is_missing() {
     let (mut state, backend) = test_state();
