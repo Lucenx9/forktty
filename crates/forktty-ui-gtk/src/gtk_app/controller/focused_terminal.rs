@@ -188,25 +188,33 @@ impl TerminalController {
         Some((generation, last_nonempty_line(&snapshot.text)))
     }
 
+    pub(in crate::gtk_app) fn send_text_to_surface_result(
+        &self,
+        surface_id: &str,
+        text: &str,
+    ) -> Result<(), TerminalError> {
+        if let Some(widget) = self.widgets.get(surface_id) {
+            widget.send_text(text);
+            return Ok(());
+        }
+        let Some(pane) = self.embedded_ghostty_panes.get(surface_id) else {
+            return Err(TerminalError::NotReady(surface_id.to_string()));
+        };
+        let Some(embedder) = self.embedded_ghostty.as_ref() else {
+            return Err(TerminalError::Backend(
+                "embedded Ghostty GTK surface has no embedder".to_string(),
+            ));
+        };
+        unsafe { embedder.send_text(&pane.surface, text) }.map_err(TerminalError::Backend)
+    }
+
     /// Writes `text` to `surface_id`'s terminal as if typed (the caller adds
     /// any trailing `\r`). `false` when the pane has no live widget.
     pub(in crate::gtk_app) fn send_text_to_surface(&self, surface_id: &str, text: &str) -> bool {
-        if let Some(widget) = self.widgets.get(surface_id) {
-            widget.send_text(text);
-            return true;
-        }
-        let Some(pane) = self.embedded_ghostty_panes.get(surface_id) else {
-            return false;
-        };
-        let Some(embedder) = self.embedded_ghostty.as_ref() else {
-            return false;
-        };
-        match unsafe { embedder.send_text(&pane.surface, text) } {
+        match self.send_text_to_surface_result(surface_id, text) {
             Ok(()) => true,
             Err(err) => {
-                eprintln!(
-                    "Failed to send text to embedded Ghostty GTK surface {surface_id}: {err}"
-                );
+                eprintln!("Failed to send text to terminal surface {surface_id}: {err}");
                 false
             }
         }

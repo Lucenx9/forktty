@@ -386,6 +386,30 @@ fn gtk_terminal_backend_blocks_send_until_ready() {
 }
 
 #[test]
+fn gtk_terminal_backend_send_text_no_reply_returns_without_controller_reply() {
+    let (tx, rx) = mpsc::channel();
+    let backend = GtkTerminalBackend::new(tx);
+    backend.spawn(test_spawn_request()).unwrap();
+    assert!(matches!(rx.recv().unwrap(), GtkTerminalCommand::Spawn(_)));
+    backend.mark_surface_ready("surface-1").unwrap();
+
+    backend
+        .send_text_no_reply("surface-1", "echo close-report\n")
+        .unwrap();
+
+    let command = rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("send-text no-reply command should be queued");
+    match command {
+        GtkTerminalCommand::SendTextNoReply { surface_id, text } => {
+            assert_eq!(surface_id, "surface-1");
+            assert_eq!(text, "echo close-report\n");
+        }
+        _ => panic!("expected send-text no-reply command"),
+    }
+}
+
+#[test]
 fn gtk_terminal_backend_propagates_controller_send_text_failure() {
     let (tx, rx) = mpsc::channel();
     let backend = GtkTerminalBackend::new(tx);

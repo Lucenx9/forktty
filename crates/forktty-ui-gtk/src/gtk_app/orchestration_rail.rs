@@ -1682,7 +1682,7 @@ fn send_rail_terminal_notification_close_report(
         return;
     };
     let report = super::notifications_panel::terminal_notification_close_report(metadata);
-    let _ = state.terminal.send_text(surface_id, &report);
+    let _ = state.terminal.send_text_no_reply(surface_id, &report);
 }
 
 fn rail_notification_matches_workspace(

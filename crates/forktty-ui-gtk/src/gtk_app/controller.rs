@@ -140,21 +140,11 @@ impl TerminalController {
                 text,
                 reply,
             } => {
-                let result = if let Some(widget) = self.widgets.get(&surface_id) {
-                    widget.send_text(&text);
-                    Ok(())
-                } else if let Some(pane) = self.embedded_ghostty_panes.get(&surface_id) {
-                    match &self.embedded_ghostty {
-                        Some(embedder) => unsafe { embedder.send_text(&pane.surface, &text) }
-                            .map_err(TerminalError::Backend),
-                        None => Err(TerminalError::Backend(
-                            "embedded Ghostty GTK surface has no embedder".to_string(),
-                        )),
-                    }
-                } else {
-                    Err(TerminalError::NotReady(surface_id.clone()))
-                };
+                let result = self.send_text_to_surface_result(&surface_id, &text);
                 let _ = reply.send(result);
+            }
+            GtkTerminalCommand::SendTextNoReply { surface_id, text } => {
+                let _ = self.send_text_to_surface_result(&surface_id, &text);
             }
             GtkTerminalCommand::ReadText {
                 surface_id,

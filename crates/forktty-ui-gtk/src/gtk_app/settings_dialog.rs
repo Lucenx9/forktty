@@ -1588,7 +1588,7 @@ fn send_settings_terminal_notification_close_report(
         return;
     };
     let report = super::notifications_panel::terminal_notification_close_report(metadata);
-    let _ = state.terminal.send_text(surface_id, &report);
+    let _ = state.terminal.send_text_no_reply(surface_id, &report);
 }
 
 pub(super) fn settings_choice_index(items: &[(&str, &str)], value: &str) -> u32 {

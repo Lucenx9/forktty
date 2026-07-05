@@ -157,6 +157,7 @@ All notable changes to ForkTTY are documented here.
   evidence, keeping verifier results auditable after compaction.
 
 ### Fixed
+- Fixed Router rail and Settings notification clearing so OSC 99 close reports are queued without blocking the GTK main loop.
 - Fixed Codex MCP setup so managed ForkTTY MCP servers inherit
   `XDG_RUNTIME_DIR`, allowing sessions without `FORKTTY_SOCKET_PATH` to find
   the default `$XDG_RUNTIME_DIR/forktty.sock` instead of falling back to the

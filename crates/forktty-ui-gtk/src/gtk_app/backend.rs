@@ -10,6 +10,10 @@ pub(super) enum GtkTerminalCommand {
         text: String,
         reply: mpsc::Sender<Result<(), TerminalError>>,
     },
+    SendTextNoReply {
+        surface_id: String,
+        text: String,
+    },
     ReadText {
         surface_id: String,
         capture: TerminalTextCapture,
@@ -46,6 +50,27 @@ impl GtkTerminalBackend {
         self.sender
             .send(command)
             .map_err(|err| TerminalError::Backend(err.to_string()))
+    }
+
+    fn ensure_surface_ready_for_text(&self, surface_id: &str) -> Result<(), TerminalError> {
+        {
+            let surfaces = self
+                .surfaces
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?;
+            if !surfaces.contains_key(surface_id) {
+                return Err(TerminalError::NotFound(surface_id.to_string()));
+            }
+        }
+        if !self
+            .ready_surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .contains(surface_id)
+        {
+            return Err(TerminalError::NotReady(surface_id.to_string()));
+        }
+        Ok(())
     }
 }
 
@@ -127,23 +152,7 @@ impl TerminalBackend for GtkTerminalBackend {
     }
 
     fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
-        {
-            let surfaces = self
-                .surfaces
-                .lock()
-                .map_err(|_| TerminalError::LockPoisoned)?;
-            if !surfaces.contains_key(surface_id) {
-                return Err(TerminalError::NotFound(surface_id.to_string()));
-            }
-        }
-        if !self
-            .ready_surfaces
-            .lock()
-            .map_err(|_| TerminalError::LockPoisoned)?
-            .contains(surface_id)
-        {
-            return Err(TerminalError::NotReady(surface_id.to_string()));
-        }
+        self.ensure_surface_ready_for_text(surface_id)?;
         let (reply, receiver) = mpsc::channel();
         self.send_command(GtkTerminalCommand::SendText {
             surface_id: surface_id.to_string(),
@@ -151,6 +160,14 @@ impl TerminalBackend for GtkTerminalBackend {
             reply,
         })?;
         wait_for_gtk_command_reply(receiver, "send-text")
+    }
+
+    fn send_text_no_reply(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
+        self.ensure_surface_ready_for_text(surface_id)?;
+        self.send_command(GtkTerminalCommand::SendTextNoReply {
+            surface_id: surface_id.to_string(),
+            text: text.to_string(),
+        })
     }
 
     fn show_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
