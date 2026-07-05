@@ -214,7 +214,7 @@ fn env_short_split_string_option(arg: &str) -> Option<EnvSplitStringOption<'_>> 
 }
 
 fn env_assignment(arg: &str) -> bool {
-    arg.contains('=') && !arg.starts_with('=')
+    arg.contains('=')
 }
 
 fn split_env_string_invokes_shell<S: AsRef<str>>(value: &str, tail: &[S]) -> bool {
@@ -395,6 +395,14 @@ mod tests {
         assert!(is_shell_trampoline(
             "/usr/bin/env",
             &["--", "FOO=bar", "sh", "-c", "echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &["=FOO=bar", "sh", "-c", "echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/env",
+            &["--", "=FOO=bar", "sh", "-c", "echo hi"]
         ));
         assert!(is_shell_trampoline(
             "/usr/bin/env",

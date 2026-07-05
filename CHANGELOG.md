@@ -4,6 +4,7 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+<<<<<<< HEAD
 ### Added
 - Team workers can now persist a bounded final `report` through
   `team.worker.upsert`, CLI, and MCP; the report is returned by `team.get`,
@@ -396,6 +397,9 @@ All notable changes to ForkTTY are documented here.
 - Rejected task-strategy `cwd` values whose canonical path is not valid UTF-8,
   avoiding a panic when launching team workers from a symlink to a non-UTF-8
   repository path.
+- Fixed GNU `env` shell-trampoline detection so environment assignment tokens
+  that start with `=` cannot hide a later `sh -c` command from project-action
+  and team-provider command validation.
 
 ## [0.2.0-alpha.17] - 2026-07-03
 
