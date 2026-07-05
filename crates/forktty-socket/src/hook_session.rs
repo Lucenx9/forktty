@@ -5,6 +5,7 @@ use crate::{
 };
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -176,6 +177,13 @@ pub(super) fn prepare_hook_session_targets(
                     .remove_session(&session_id);
                 return Err(DispatchError::NotFound("surface".to_string()));
             }
+        } else if let Some(target) = unique_hook_session_target_from_cwd(state, params)? {
+            state
+                .hook_session_targets
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?
+                .learn(session_id.clone(), target.clone());
+            insert_hook_session_target(params, &target)?;
         }
     }
 
@@ -183,6 +191,58 @@ pub(super) fn prepare_hook_session_targets(
         state,
         evict_on_return.then_some(session_id),
     ))
+}
+
+fn unique_hook_session_target_from_cwd(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<Option<HookSessionTarget>, DispatchError> {
+    let Some(cwd) = optional_hook_session_cwd(params)? else {
+        return Ok(None);
+    };
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    let surfaces = model.list_surfaces(None);
+    let exact_matches = surfaces
+        .iter()
+        .filter_map(|surface| {
+            let surface_cwd = fs::canonicalize(&surface.cwd).ok()?;
+            (surface_cwd == cwd).then_some(HookSessionTarget {
+                workspace_id: surface.workspace_id.clone(),
+                surface_id: surface.id.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    if !exact_matches.is_empty() {
+        return unique_cwd_hook_session_target(exact_matches);
+    }
+    let ancestor_matches = surfaces
+        .into_iter()
+        .filter_map(|surface| {
+            let surface_cwd = fs::canonicalize(&surface.cwd).ok()?;
+            cwd.starts_with(&surface_cwd).then_some(HookSessionTarget {
+                workspace_id: surface.workspace_id,
+                surface_id: surface.id,
+            })
+        })
+        .collect::<Vec<_>>();
+    unique_cwd_hook_session_target(ancestor_matches)
+}
+
+fn unique_cwd_hook_session_target(
+    matches: Vec<HookSessionTarget>,
+) -> Result<Option<HookSessionTarget>, DispatchError> {
+    match matches.as_slice() {
+        [target] => Ok(Some(target.clone())),
+        [] => Err(DispatchError::NotFound(
+            "hook_session_cwd target".to_string(),
+        )),
+        _ => Err(DispatchError::Conflict(
+            "hook_session_cwd matches multiple live surfaces".to_string(),
+        )),
+    }
 }
 
 fn should_evict_hook_session_target_on_return(

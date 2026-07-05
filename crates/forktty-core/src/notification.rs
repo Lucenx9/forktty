@@ -105,7 +105,11 @@ pub fn dispatch_notification(
 
 pub fn close_desktop_notification(notification_id: &str) {
     if let Some(handle) = take_desktop_notification_handle(notification_id) {
-        handle.close();
+        // notify-rust's zbus backend blocks internally; socket callers may run
+        // inside Tokio workers, where nested blocking runtimes panic.
+        let _ = std::thread::Builder::new()
+            .name("forktty-notification-close".to_string())
+            .spawn(move || handle.close());
     }
 }
 

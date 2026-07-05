@@ -927,6 +927,12 @@ boolean, and — for `hooks test` — per-method `{method, ok, error?}` entries 
 a real socket round-trip that always includes `notification.create`. Both
 commands exit 0 when every check passes and 1 otherwise, so CI can gate on the
 exit code alone; the human-readable output is rendered from the same report.
+Hook metadata events that omit an explicit workspace/surface target but include
+a `hook_session_id` and unique live-surface `hook_session_cwd` are scoped to
+that matching surface and teach the in-memory hook-session target cache for
+later events. Ambiguous cwd matches are rejected rather than defaulting to the
+currently active workspace, avoiding false agent `Working`/`needs input` state
+in the Router rail and workspace list.
 
 `forktty remote-helper hello` is a no-socket stdio handshake intended to run
 through SSH as `ssh <host> forktty remote-helper hello`. It emits one JSON

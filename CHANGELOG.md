@@ -4,7 +4,6 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
-<<<<<<< HEAD
 ### Added
 - Team workers can now persist a bounded final `report` through
   `team.worker.upsert`, CLI, and MCP; the report is returned by `team.get`,
@@ -161,6 +160,13 @@ All notable changes to ForkTTY are documented here.
   evidence, keeping verifier results auditable after compaction.
 
 ### Fixed
+- Fixed hook-driven agent status targeting so untargeted hook events with a
+  unique `hook_session_cwd` bind to the matching live surface, while ambiguous
+  cwd matches are rejected instead of showing false `Working`/`needs input`
+  state on the active workspace; status session binding is now pinned for
+  Codex, Claude, Grok, Pi, Antigravity, and OpenCode aliases.
+- Fixed notification clearing so closing a desktop notification is best-effort
+  and cannot block the socket response used by `forktty hooks test`.
 - Fixed Codex MCP setup so managed ForkTTY MCP servers inherit
   `XDG_RUNTIME_DIR`, allowing sessions without `FORKTTY_SOCKET_PATH` to find
   the default `$XDG_RUNTIME_DIR/forktty.sock` instead of falling back to the

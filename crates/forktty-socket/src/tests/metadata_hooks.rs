@@ -70,6 +70,200 @@ async fn hook_session_status_learns_and_reuses_explicit_surface_target() {
 }
 
 #[tokio::test]
+async fn hook_session_status_learns_unique_surface_target_from_hook_cwd() {
+    let target_dir = tempfile::tempdir().unwrap();
+    let other_dir = tempfile::tempdir().unwrap();
+    let (state, _backend) = test_state();
+
+    let target = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "target", "workingDir": target_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let target_workspace_id = target["id"].as_str().unwrap().to_string();
+    let target_surface_id = target["focused_surface_id"].as_str().unwrap().to_string();
+    let other = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "other", "workingDir": other_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let other_workspace_id = other["id"].as_str().unwrap().to_string();
+
+    dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "key": "agent:codex",
+            "label": "Codex",
+            "value": "Running",
+            "hook_session_id": "codex-session-cwd",
+            "hook_session_cwd": target_dir.path(),
+            "hook_event_name": "prompt-submit",
+            "hook_event_order": 100
+        }),
+    )
+    .await
+    .unwrap();
+
+    dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "key": "agent:codex",
+            "label": "Codex",
+            "value": "Ready",
+            "hook_session_id": "codex-session-cwd",
+            "hook_event_name": "stop",
+            "hook_event_order": 200
+        }),
+    )
+    .await
+    .unwrap();
+
+    let target_statuses = dispatch(
+        &state,
+        "metadata.list_status",
+        json!({"workspace_id": target_workspace_id}),
+    )
+    .await
+    .unwrap();
+    let other_statuses = dispatch(
+        &state,
+        "metadata.list_status",
+        json!({"workspace_id": other_workspace_id}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(target_statuses[0]["value"], "Ready");
+    assert!(other_statuses.as_array().unwrap().is_empty());
+
+    let model = state.model.lock().unwrap();
+    let session = model
+        .surface(&target_surface_id)
+        .unwrap()
+        .agent_session
+        .as_ref()
+        .unwrap();
+    assert_eq!(session.agent, AgentKind::Codex);
+    assert_eq!(session.session_id, "codex-session-cwd");
+    assert_eq!(session.lifecycle, forktty_core::AgentSessionLifecycle::Idle);
+}
+
+#[tokio::test]
+async fn hook_session_status_rejects_ambiguous_hook_cwd_instead_of_defaulting_active_workspace() {
+    let (state, _backend) = test_state();
+    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let initial_workspace_id = workspaces[0]["id"].as_str().unwrap().to_string();
+    let other = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "other", "workingDir": "/tmp"}),
+    )
+    .await
+    .unwrap();
+    let other_workspace_id = other["id"].as_str().unwrap().to_string();
+
+    let err = dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "key": "agent:codex",
+            "label": "Codex",
+            "value": "Running",
+            "hook_session_id": "codex-session-ambiguous",
+            "hook_session_cwd": "/tmp",
+            "hook_event_name": "prompt-submit",
+            "hook_event_order": 100
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "conflict");
+    assert!(err.to_string().contains("matches multiple live surfaces"));
+    let initial_statuses = dispatch(
+        &state,
+        "metadata.list_status",
+        json!({"workspace_id": initial_workspace_id}),
+    )
+    .await
+    .unwrap();
+    let other_statuses = dispatch(
+        &state,
+        "metadata.list_status",
+        json!({"workspace_id": other_workspace_id}),
+    )
+    .await
+    .unwrap();
+    assert!(initial_statuses.as_array().unwrap().is_empty());
+    assert!(other_statuses.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn hook_status_binds_persisted_sessions_for_all_agent_status_keys() {
+    let (state, _backend) = test_state();
+    let agents = [
+        ("codex", "Codex", AgentKind::Codex),
+        ("claude", "Claude", AgentKind::ClaudeCode),
+        ("grok", "Grok", AgentKind::Grok),
+        ("grok-build", "Grok", AgentKind::Grok),
+        ("pi", "Pi", AgentKind::Pi),
+        ("agy", "Antigravity", AgentKind::Antigravity),
+        ("opencode", "OpenCode", AgentKind::OpenCode),
+    ];
+
+    for (index, (key, label, expected_agent)) in agents.iter().enumerate() {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dispatch(
+            &state,
+            "workspace.create",
+            json!({"name": format!("agent-{index}"), "workingDir": dir.path()}),
+        )
+        .await
+        .unwrap();
+        let workspace_id = workspace["id"].as_str().unwrap();
+        let surface_id = workspace["focused_surface_id"].as_str().unwrap();
+        let session_id = format!("{key}-session");
+
+        dispatch(
+            &state,
+            "metadata.set_status",
+            json!({
+                "workspace_id": workspace_id,
+                "surface_id": surface_id,
+                "key": format!("agent:{key}"),
+                "label": label,
+                "value": "Needs input",
+                "hook_session_id": session_id,
+                "hook_event_name": "permission-request",
+                "hook_event_order": index + 1
+            }),
+        )
+        .await
+        .unwrap();
+
+        let model = state.model.lock().unwrap();
+        let session = model
+            .surface(surface_id)
+            .unwrap()
+            .agent_session
+            .as_ref()
+            .unwrap();
+        assert_eq!(&session.agent, expected_agent);
+        assert_eq!(session.session_id, session_id);
+        assert_eq!(
+            session.lifecycle,
+            forktty_core::AgentSessionLifecycle::NeedsInput
+        );
+        drop(model);
+    }
+}
+
+#[tokio::test]
 async fn hook_status_persists_surface_agent_session_binding() {
     let (state, _backend) = test_state();
     let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();

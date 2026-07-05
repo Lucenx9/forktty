@@ -213,6 +213,39 @@ async fn notification_clear_marks_persisted_approvals_dismissed() {
 }
 
 #[tokio::test]
+async fn notification_clear_handles_global_prompt_approvals_with_feed_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let feed_path = dir.path().join("feed.json");
+    let (state, _) = test_state();
+    let state = state.with_feed_store_path(&feed_path).unwrap();
+
+    dispatch(
+        &state,
+        "notification.create",
+        json!({
+            "kind": "prompt",
+            "title": "Global permission",
+            "body": "Run command?"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let cleared = dispatch(&state, "notification.clear", json!({}))
+        .await
+        .unwrap();
+    let feed = dispatch(&state, "feed.list", json!({"limit": 10}))
+        .await
+        .unwrap();
+
+    assert_eq!(cleared["cleared"], true);
+    assert_eq!(feed[0]["type"], "approval");
+    assert_eq!(feed[0]["workspace_id"], Value::Null);
+    assert_eq!(feed[0]["surface_id"], Value::Null);
+    assert_eq!(feed[0]["approval_state"], "dismissed");
+}
+
+#[tokio::test]
 async fn notification_clear_marks_persisted_notifications_read() {
     let dir = tempfile::tempdir().unwrap();
     let feed_path = dir.path().join("feed.json");
