@@ -659,7 +659,7 @@ pub(crate) fn agent_session_lifecycle_from_hook(
     match hook_event.as_str() {
         "session-end" => AgentSessionLifecycle::Ended,
         "stop" | "subagent-stop" | "teammate-idle" => AgentSessionLifecycle::Idle,
-        "notification" | "permission-request" | "elicitation" | "ask-user-question" => {
+        "permission-request" | "elicitation" | "ask-user-question" => {
             AgentSessionLifecycle::NeedsInput
         }
         "session-start"

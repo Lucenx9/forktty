@@ -471,6 +471,75 @@ async fn context_snapshot_compacts_feed_trace_by_default_and_expands_on_request(
 }
 
 #[tokio::test]
+async fn context_snapshot_compact_feed_hides_finalized_approval_prompts() {
+    let dir = tempfile::tempdir().unwrap();
+    let feed_path = dir.path().join("feed.json");
+    let (state, _) = test_state();
+    let state = state.with_feed_store_path(&feed_path).unwrap();
+    let workspace_id = state.model.lock().unwrap().active_workspace_id().unwrap();
+
+    dispatch(
+        &state,
+        "notification.create",
+        json!({
+            "workspace_id": workspace_id,
+            "kind": "prompt",
+            "title": "Stale Claude needs input",
+            "body": "Background task completed"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(&state, "notification.clear", json!({}))
+        .await
+        .unwrap();
+    dispatch(
+        &state,
+        "notification.create",
+        json!({
+            "workspace_id": workspace_id,
+            "kind": "prompt",
+            "title": "Current approval",
+            "body": "Review command?"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let compact = dispatch(
+        &state,
+        "context.snapshot",
+        json!({"workspace_id": workspace_id, "tail_lines": 0}),
+    )
+    .await
+    .unwrap();
+    let compact_feed = compact["feed"].as_array().unwrap();
+    assert!(compact_feed
+        .iter()
+        .any(|item| item["title"] == "Current approval" && item["approval_state"] == "pending"));
+    assert!(!compact_feed
+        .iter()
+        .any(|item| item["title"] == "Stale Claude needs input"));
+
+    let expanded = dispatch(
+        &state,
+        "context.snapshot",
+        json!({
+            "workspace_id": workspace_id,
+            "tail_lines": 0,
+            "include_feed_trace": true
+        }),
+    )
+    .await
+    .unwrap();
+    let expanded_feed = expanded["feed"].as_array().unwrap();
+    assert!(expanded_feed
+        .iter()
+        .any(|item| item["title"] == "Stale Claude needs input"
+            && item["approval_state"] == "dismissed"));
+}
+
+#[tokio::test]
 async fn feed_list_live_fallback_limits_status_and_progress_to_newest_entries() {
     let (state, _) = test_state();
     let workspace_id = {

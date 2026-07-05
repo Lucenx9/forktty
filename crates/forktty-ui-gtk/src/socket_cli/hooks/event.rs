@@ -330,10 +330,14 @@ pub(in crate::socket_cli) fn permission_mode_color(spec: &AgentSpec, mode: &str)
         return "muted";
     }
     match mode {
-        "bypassPermissions" => "red",
+        "bypassPermissions" | "dangerously-skip-permissions" => "red",
         "acceptEdits" | "auto" | "dontAsk" => "yellow",
         _ => "muted",
     }
+}
+
+fn permission_mode_is_bypass(mode: &str) -> bool {
+    matches!(mode, "bypassPermissions" | "dangerously-skip-permissions")
 }
 
 pub(in crate::socket_cli) struct HookActionBuilder<'a> {
@@ -450,6 +454,19 @@ impl<'a> HookActionBuilder<'a> {
     }
 
     fn handle_notification(&self) -> Vec<(String, Value)> {
+        if !hook_notification_needs_attention(self.payload, &self.message) {
+            return vec![
+                self.log(
+                    "info",
+                    if self.message.is_empty() {
+                        format!("{} notification", self.spec.label)
+                    } else {
+                        self.message.clone()
+                    },
+                ),
+                self.status("Running", "blue", self.event),
+            ];
+        }
         let mut note = self.target.clone();
         note.insert(
             "title".to_string(),
@@ -479,6 +496,22 @@ impl<'a> HookActionBuilder<'a> {
     }
 
     fn handle_permission_request(&self) -> Vec<(String, Value)> {
+        if let Some(mode) = self
+            .permission_mode
+            .as_deref()
+            .filter(|mode| permission_mode_is_bypass(mode))
+        {
+            return vec![
+                self.log(
+                    "info",
+                    format!(
+                        "{} permission request observed while bypass mode is active",
+                        self.spec.label
+                    ),
+                ),
+                self.permission_status(mode, self.event),
+            ];
+        }
         let body = if self.message.is_empty() {
             format!("{} requested permission.", self.spec.label)
         } else {
@@ -1117,6 +1150,30 @@ pub(in crate::socket_cli) fn extract_hook_tool_name(payload: &Value) -> Option<S
                 .take(HOOK_TOOL_LABEL_MAX.saturating_sub(3))
                 .collect::<String>()
         ))
+    }
+}
+
+fn extract_hook_notification_type(payload: &Value) -> Option<String> {
+    extract_first_string_like(payload, &["notification_type", "notificationType"])
+        .map(|value| sanitize_for_terminal(&value).chars().take(64).collect())
+        .filter(|value: &String| !value.is_empty())
+}
+
+fn hook_notification_needs_attention(payload: &Value, message: &str) -> bool {
+    match extract_hook_notification_type(payload)
+        .as_deref()
+        .map(str::trim)
+    {
+        Some("permission_prompt" | "idle_prompt" | "elicitation_dialog") => true,
+        Some("auth_success" | "elicitation_complete" | "elicitation_response") => false,
+        Some(_) => true,
+        None => {
+            let lower = message.trim().to_ascii_lowercase();
+            lower.contains("needs your permission")
+                || lower.contains("waiting for your input")
+                || lower.contains("permission required")
+                || !lower.starts_with("background task completed:")
+        }
     }
 }
 

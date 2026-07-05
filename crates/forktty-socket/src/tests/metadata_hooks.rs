@@ -241,6 +241,35 @@ async fn hook_status_updates_persisted_agent_session_lifecycle() {
 }
 
 #[tokio::test]
+async fn notification_hook_status_uses_status_value_for_agent_lifecycle() {
+    let (state, _backend) = test_state();
+    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspaces[0]["id"].as_str().unwrap();
+    let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "workspace_id": workspace_id,
+            "surface_id": surface_id,
+            "key": "agent:claude",
+            "label": "Claude",
+            "value": "Running",
+            "hook_session_id": "claude-session-running",
+            "hook_event_name": "notification",
+            "hook_event_order": 10
+        }),
+    )
+    .await
+    .unwrap();
+
+    let agents = dispatch(&state, "agent.list", json!({})).await.unwrap();
+    assert_eq!(agents[0]["lifecycle"], "running");
+    assert_eq!(agents[0]["lifecycle_evidence"]["status_value"], "Running");
+}
+
+#[tokio::test]
 async fn stale_hook_status_does_not_update_persisted_agent_session_lifecycle() {
     let (state, _backend) = test_state();
     let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();

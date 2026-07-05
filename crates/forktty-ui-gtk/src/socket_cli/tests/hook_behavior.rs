@@ -753,6 +753,104 @@ fn permission_mode_publishes_separate_status_for_codex_and_claude() {
 }
 
 #[test]
+fn claude_permission_request_in_bypass_mode_does_not_create_attention_prompt() {
+    let actions = build_hook_actions(
+        agent_spec("claude").unwrap(),
+        "permission-request",
+        &json!({
+            "session_id": "sess-claude-bypass",
+            "permission_mode": "bypassPermissions",
+            "tool_name": "Bash",
+            "tool_input": { "command": "sed -i 's/x/y/' style.css" }
+        }),
+        "9",
+    );
+
+    assert!(!actions
+        .iter()
+        .any(|(method, _)| method == "notification.create"));
+    assert!(!actions.iter().any(|(method, params)| {
+        method == "metadata.set_status" && params["value"] == "Permission required"
+    }));
+    let permission = actions
+        .iter()
+        .find(|(method, params)| {
+            method == "metadata.set_status" && params["key"] == "agent:claude:permission"
+        })
+        .expect("permission status should stay fresh");
+    assert_eq!(permission.1["value"], "bypassPermissions");
+    assert_eq!(permission.1["hook_event_name"], "permission-request");
+}
+
+#[test]
+fn codex_permission_request_in_skip_permissions_mode_does_not_create_attention_prompt() {
+    let actions = build_hook_actions(
+        agent_spec("codex").unwrap(),
+        "permission-request",
+        &json!({
+            "session_id": "sess-codex-skip",
+            "permission_mode": "dangerously-skip-permissions",
+            "tool_name": "shell",
+            "tool_input": { "command": "cargo test" }
+        }),
+        "9",
+    );
+
+    assert!(!actions
+        .iter()
+        .any(|(method, _)| method == "notification.create"));
+    assert!(!actions.iter().any(|(method, params)| {
+        method == "metadata.set_status" && params["value"] == "Permission required"
+    }));
+    let permission = actions
+        .iter()
+        .find(|(method, params)| {
+            method == "metadata.set_status" && params["key"] == "agent:codex:permission"
+        })
+        .expect("permission status should stay fresh");
+    assert_eq!(permission.1["value"], "dangerously-skip-permissions");
+    assert_eq!(permission.1["color"], "red");
+    assert_eq!(permission.1["hook_event_name"], "permission-request");
+}
+
+#[test]
+fn claude_non_attention_notifications_do_not_create_needs_input_prompt() {
+    let actions = build_hook_actions(
+        agent_spec("claude").unwrap(),
+        "notification",
+        &json!({
+            "session_id": "sess-claude-running",
+            "notification_type": "auth_success",
+            "message": "Authentication succeeded"
+        }),
+        "10",
+    );
+
+    assert!(!actions
+        .iter()
+        .any(|(method, _)| method == "notification.create"));
+    let status = actions
+        .iter()
+        .find(|(method, params)| method == "metadata.set_status" && params["key"] == "agent:claude")
+        .expect("agent status");
+    assert_eq!(status.1["value"], "Running");
+    assert_eq!(status.1["hook_event_name"], "notification");
+
+    let actions = build_hook_actions(
+        agent_spec("claude").unwrap(),
+        "notification",
+        &json!({
+            "session_id": "sess-claude-running",
+            "message": "Background task completed: call-123"
+        }),
+        "11",
+    );
+    assert!(!actions
+        .iter()
+        .any(|(method, _)| method == "notification.create"));
+}
+
+#[test]
 fn hook_status_metadata_includes_current_working_directory() {
     let project_dir = tempfile::tempdir().unwrap();
     let payload = json!({
@@ -1069,6 +1167,21 @@ fn doctor_supported_events_track_installed_entries_per_provider() {
         .collect();
     assert!(opencode_events.contains(&"tool.execute.before"));
     assert!(opencode_events.contains(&"permission.asked"));
+}
+
+#[test]
+fn pi_and_grok_team_providers_do_not_install_hook_notifications() {
+    let team_providers = forktty_core::config::TEAM_PROVIDER_CHOICES;
+    assert!(team_providers.contains(&"pi"));
+    assert!(team_providers.contains(&"grok"));
+
+    let hook_agents = AGENTS.iter().map(|spec| spec.key).collect::<Vec<_>>();
+    assert_eq!(
+        hook_agents,
+        vec!["codex", "claude", "antigravity", "opencode"]
+    );
+    assert!(agent_spec("pi").is_none());
+    assert!(agent_spec("grok").is_none());
 }
 
 #[test]

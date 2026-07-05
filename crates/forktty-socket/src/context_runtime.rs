@@ -151,6 +151,7 @@ fn context_snapshot_feed(feed: Vec<Value>, include_trace: bool) -> Vec<Value> {
     }
     feed.into_iter()
         .filter(|entry| !matches!(feed_entry_type_name(entry), Some("status" | "progress")))
+        .filter(feed_entry_is_active_context_item)
         .collect()
 }
 
@@ -159,6 +160,16 @@ fn feed_entry_type_name(entry: &Value) -> Option<&str> {
         .get("type")
         .or_else(|| entry.get("entry_type"))
         .and_then(Value::as_str)
+}
+
+fn feed_entry_is_active_context_item(entry: &Value) -> bool {
+    if !matches!(feed_entry_type_name(entry), Some("approval")) {
+        return true;
+    }
+    matches!(
+        entry.get("approval_state").and_then(Value::as_str),
+        Some("pending" | "stale")
+    )
 }
 
 fn context_snapshot_terminal_tails(
