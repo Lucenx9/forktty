@@ -416,7 +416,7 @@ fn score_strategy_candidate(
         }
     }
 
-    if input.user_requested_parallelism {
+    if input.user_requested_parallelism && !matches!(task_class, TaskClass::ReviewOnly) {
         let points = if matches!(
             strategy,
             TaskStrategy::ParallelResearch
@@ -665,6 +665,9 @@ fn strategy_order(strategy: &TaskStrategy) -> u8 {
 
 fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
     let lower = goal.to_lowercase();
+    if is_review_primary_goal(goal) {
+        return TaskClass::ReviewOnly;
+    }
     if input.user_requested_parallelism || contains_parallel_research_intent(&lower) {
         // Parallel lanes over an editing goal are competing experiment
         // attempts, not read-only research.
@@ -672,9 +675,6 @@ fn classify_task(goal: &str, input: &TaskStrategyInput) -> TaskClass {
             return TaskClass::ParallelExperiment;
         }
         return TaskClass::ParallelResearch;
-    }
-    if is_review_primary_goal(goal) {
-        return TaskClass::ReviewOnly;
     }
     if contains_implementation_intent(&lower) {
         return TaskClass::FeatureImplementation;
@@ -752,6 +752,9 @@ fn infer_router_profile(
     task_class: &TaskClass,
     input: &TaskStrategyInput,
 ) -> TaskRouterProfile {
+    if input.user_requested_review || matches!(task_class, TaskClass::ReviewOnly) {
+        return TaskRouterProfile::ReviewHeavy;
+    }
     if input.user_requested_parallelism
         || matches!(
             task_class,
@@ -759,9 +762,6 @@ fn infer_router_profile(
         )
     {
         return TaskRouterProfile::Parallel;
-    }
-    if input.user_requested_review || matches!(task_class, TaskClass::ReviewOnly) {
-        return TaskRouterProfile::ReviewHeavy;
     }
 
     let lower = goal.to_lowercase();
@@ -1662,19 +1662,28 @@ mod tests {
 
     #[test]
     fn review_primary_goal_with_fix_terms_stays_review_only() {
-        let review_bug_fix = plan_task_strategy(TaskStrategyInput {
-            goal: "Review the bug fix in the task router".to_string(),
-            explicit_mode: None,
-            router_profile: None,
-            task_class_hint: None,
-            last_known_good: None,
-            repo_dirty: false,
-            user_requested_parallelism: false,
-            user_requested_review: false,
-            likely_user_visible_change: false,
-            harness_registry: caps(),
-        })
-        .unwrap();
+        for (goal, user_requested_parallelism) in [
+            ("Review the bug fix in the task router", false),
+            ("Review the bug fix in parallel", false),
+            ("Review the bug fix in the task router", true),
+        ] {
+            let plan = plan_task_strategy(TaskStrategyInput {
+                goal: goal.to_string(),
+                explicit_mode: None,
+                router_profile: None,
+                task_class_hint: None,
+                last_known_good: None,
+                repo_dirty: false,
+                user_requested_parallelism,
+                user_requested_review: false,
+                likely_user_visible_change: false,
+                harness_registry: caps(),
+            })
+            .unwrap();
+
+            assert_eq!(plan.task_class, TaskClass::ReviewOnly, "{goal}");
+            assert_eq!(plan.strategy, TaskStrategy::ReviewOnly, "{goal}");
+        }
         let fix_with_approaches = plan_task_strategy(TaskStrategyInput {
             goal: "Fix the bug using one of the approaches discussed".to_string(),
             explicit_mode: None,
@@ -1689,8 +1698,6 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(review_bug_fix.task_class, TaskClass::ReviewOnly);
-        assert_eq!(review_bug_fix.strategy, TaskStrategy::ReviewOnly);
         assert_eq!(fix_with_approaches.task_class, TaskClass::FocusedBugfix);
         assert_eq!(
             fix_with_approaches.strategy,
@@ -1703,6 +1710,7 @@ mod tests {
         for goal in [
             "Review the change that adds retry logic",
             "Review the PR that implements the settings dialog",
+            "Review the implementation in parallel",
             "Review the current findings and independently verify the evidence",
         ] {
             let plan = plan_task_strategy(TaskStrategyInput {

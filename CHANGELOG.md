@@ -40,6 +40,9 @@ All notable changes to ForkTTY are documented here.
 - Fixed restored multi-tab panes so the workspace focused surface is also made
   the active tab in its leaf, preventing hidden-tab focus after loading or
   repairing a session.
+- Fixed task strategy classification so review-first goals that mention
+  parallel bugfix or implementation review stay read-only review plans instead
+  of routing to mutating parallel experiments.
 - Fixed tab selection from shortcuts, the command palette, and pane tab strips
   so it saves session state immediately; tab-strip items are now keyboard
   activatable and their context menu shows the existing shortcut hints.
