@@ -55,6 +55,11 @@ All notable changes to ForkTTY are documented here.
   tied to the existing GTK visual rules.
 
 ### Changed
+- Quietened neutral status indicators so only meaningful state carries colour:
+  the workflow-feed "live" marker is now a small green dot plus a muted label
+  instead of a filled green pill, and the Router status chip's idle/neutral
+  state is plain muted text (transparent background/border) rather than a filled
+  grey box — active ok/warn/err states keep their subtle tinted pill.
 - Consolidated the orchestration status-signal palette (rail dots, rail-strip
   badges, status chips, list rows, feed status) onto the shared semantic colour
   tokens: warn and error indicators now render the same warm-orange

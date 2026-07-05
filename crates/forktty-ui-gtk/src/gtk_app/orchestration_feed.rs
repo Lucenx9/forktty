@@ -23,7 +23,7 @@ pub(super) struct OrchestrationFeedUi {
     rows_revealer: gtk::Revealer,
     collapse_button: gtk::Button,
     clear_button: gtk::Button,
-    live_chip: gtk::Label,
+    live_chip: gtk::Box,
     rows: Vec<FeedRowUi>,
     tabs: Vec<gtk::Button>,
     filter: Rc<Cell<u8>>,
@@ -81,11 +81,20 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     spacer.set_hexpand(true);
     header.append(&spacer);
-    let live = gtk::Label::builder()
+    let live = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+    live.add_css_class("orchestration-feed-live");
+    live.set_valign(gtk::Align::Center);
+    let live_dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    live_dot.add_css_class("rail-dot");
+    live_dot.add_css_class("ok");
+    live_dot.set_valign(gtk::Align::Center);
+    live.append(&live_dot);
+    let live_label = gtk::Label::builder()
         .label("live")
         .single_line_mode(true)
         .build();
-    live.add_css_class("orchestration-feed-live");
+    live_label.add_css_class("orchestration-feed-live-label");
+    live.append(&live_label);
     header.append(&live);
     let clear = gtk::Button::builder()
         .label("Clear")

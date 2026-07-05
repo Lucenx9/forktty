@@ -1073,11 +1073,11 @@ button.flat.orchestration-rail-collapsed-strip:focus-visible {
 
 .orchestration-status-chip {
   min-height: 18px;
-  padding: 0 8px;
+  padding: 0 6px;
   border-radius: 6px;
   color: @ft_text_3;
-  background: @ft_bg_1;
-  border: 1px solid @ft_line;
+  background: transparent;
+  border: 1px solid transparent;
   font-size: 0.70em;
   font-weight: 720;
   letter-spacing: 0;
@@ -1384,15 +1384,14 @@ button.flat.orchestration-feed-collapse:focus-visible {
 }
 
 .orchestration-feed-live {
-  min-height: 16px;
-  padding: 0 7px;
-  border-radius: 4px;
-  color: @ft_success;
-  background: alpha(@ft_success, 0.10);
-  border: 1px solid alpha(@ft_success, 0.22);
+  padding: 0 2px;
+}
+
+.orchestration-feed-live-label {
+  color: @ft_text_3;
   font-size: 0.68em;
-  font-weight: 720;
-  letter-spacing: 0;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .orchestration-feed-rows {
