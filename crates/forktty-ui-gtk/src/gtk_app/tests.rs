@@ -2928,11 +2928,12 @@ fn chrome_micro_polish_keyboard_focus_matches_hover() {
     };
 
     assert!(block(".pane-tab-close:focus-visible {").contains("opacity: 1;"));
+    // Focus background matches hover; both resolve to the @ft_bg_1 (#202020) tier.
     assert!(
-        block("button.flat.terminal-pane-action:focus-visible {").contains("background: #202020;")
+        block("button.flat.terminal-pane-action:focus-visible {").contains("background: @ft_bg_1;")
     );
-    assert!(block("button.flat.status-shortcut:focus-visible {").contains("background: #202020;"));
-    assert!(block("button.flat.sidebar-add:focus-visible {").contains("background: #202020;"));
+    assert!(block("button.flat.status-shortcut:focus-visible {").contains("background: @ft_bg_1;"));
+    assert!(block("button.flat.sidebar-add:focus-visible {").contains("background: @ft_bg_1;"));
 }
 
 #[test]
@@ -2946,9 +2947,10 @@ fn chrome_micro_polish_unifies_pane_hover_and_hairline_tone() {
             .unwrap_or_else(|| panic!("missing CSS block {selector}"))
     };
 
-    assert!(block("button.flat.terminal-pane-action:hover {").contains("background: #202020;"));
+    // Hover surface is the @ft_bg_1 (#202020) tier; the hairline is @ft_line (#242424).
+    assert!(block("button.flat.terminal-pane-action:hover {").contains("background: @ft_bg_1;"));
     assert!(block("button.flat.pane-close-action:hover {").contains("background: #2f1f1f;"));
-    assert!(block(".pane-action-separator {").contains("background: #242424;"));
+    assert!(block(".pane-action-separator {").contains("background: @ft_line;"));
 }
 
 #[test]
@@ -2960,7 +2962,8 @@ fn pane_status_uses_readable_muted_contrast() {
         .and_then(|rest| rest.split('}').next())
         .expect("pane-status block");
 
-    assert!(pane_status.contains("color: #8a8a8a;"));
+    // Muted-but-readable status text resolves to @ft_text_3 (#8a8a8a).
+    assert!(pane_status.contains("color: @ft_text_3;"));
 }
 
 #[test]
@@ -2974,9 +2977,12 @@ fn command_palette_microtext_uses_readable_muted_contrast() {
             .unwrap_or_else(|| panic!("missing CSS block {selector}"))
     };
 
-    assert!(block(".ft-menu-shortcut {").contains("color: #8a8a8a;"));
-    assert!(block(".command-item .keycap {").contains("color: #8a8a8a;"));
-    assert!(block(".command-list row:disabled .command-item .keycap {").contains("color: #626262;"));
+    // Muted microtext resolves to @ft_text_3 (#8a8a8a); disabled drops to @ft_text_4 (#626262).
+    assert!(block(".ft-menu-shortcut {").contains("color: @ft_text_3;"));
+    assert!(block(".command-item .keycap {").contains("color: @ft_text_3;"));
+    assert!(
+        block(".command-list row:disabled .command-item .keycap {").contains("color: @ft_text_4;")
+    );
 }
 
 #[test]
