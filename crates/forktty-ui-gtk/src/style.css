@@ -3510,14 +3510,14 @@ entry.task-router-goal:focus-within {
 }
 
 .notification-badge {
-  background: #c95f5f;
-  color: #17110c;
-  border-radius: 999px;
+  background: @accent_color;
+  color: @accent_fg_color;
+  border-radius: 5px;
   font-size: 0.60em;
   font-weight: 700;
   padding: 0 3px;
-  min-width: 12px;
-  min-height: 12px;
+  min-width: 13px;
+  min-height: 13px;
   margin: -5px -7px 0 0;
   box-shadow: 0 0 0 1.5px @ft_bg_0;
   letter-spacing: 0;
@@ -3576,7 +3576,7 @@ entry.task-router-goal:focus-within {
  * -------------------------------------------------------------------------- */
 
 .agent-badge {
-  background: #d97c3e;
+  background: @accent_color;
 }
 
 .agent-panel .ft-dialog-header {

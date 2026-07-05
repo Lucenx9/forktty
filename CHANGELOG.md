@@ -62,6 +62,8 @@ All notable changes to ForkTTY are documented here.
 - Normalized corner radii to a tight 3-step scale (4px small controls, 6px
   buttons/badges, 8px cards/rows/dialogs, plus full-round pills), collapsing the
   previous ad-hoc mix of 4/5/6/7/8px so nested surfaces read as one system.
+- Refined the header count badges (notification/agent) to a compact squared
+  chip on the sober warm accent, replacing the red/orange full-round dots.
 - Unified surface borders onto a single hairline color and evened out
   horizontal-padding drift, so cards, rows, and dialogs share one border weight
   and spacing rhythm instead of three near-identical grays.
@@ -209,6 +211,13 @@ All notable changes to ForkTTY are documented here.
 - Fixed Claude hook Notification handling so informational notifications such
   as auth success or background-task completion do not briefly mark an actively
   running session as `needs_input`.
+- Fixed provider hook PermissionRequest handling so skip-permissions modes do
+  not create stale permission-required prompt notifications, while still
+  surfacing the bypass mode as a red status signal.
+- Fixed compact context snapshots so finalized Feed approvals (`approved`,
+  `denied`, or `dismissed`) are omitted from the operational feed while
+  pending/stale attention items and full `include_feed_trace` history remain
+  available.
 - Fixed the Router rail notification "Clear all" action so it actually clears
   in-app notification rows instead of only marking them read and leaving them
   visible.
