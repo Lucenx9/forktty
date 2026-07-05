@@ -2055,6 +2055,23 @@ fn chrome_refresh_signature_tracks_visual_state_changes() {
         chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips)
     );
 
+    assert!(model.select_tab(&first_surface_id));
+    assert!(model.set_surface_agent_session(
+        &first_surface_id,
+        forktty_core::AgentKind::Codex,
+        "session-1"
+    ));
+    let with_agent = chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips);
+    assert_ne!(base, with_agent);
+    assert!(model.set_surface_agent_session_lifecycle(
+        &first_surface_id,
+        forktty_core::AgentSessionLifecycle::NeedsInput
+    ));
+    assert_ne!(
+        with_agent,
+        chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips)
+    );
+
     let browser_id = model
         .open_browser(
             &workspace_id,
@@ -2728,6 +2745,152 @@ fn chrome_micro_polish_css_stays_gtk_414_compatible() {
             line
         );
     }
+}
+
+#[test]
+fn orchestration_workbench_has_router_header_and_dialog_action() {
+    let app_source = include_str!("app.rs");
+    let actions_source = include_str!("actions.rs");
+    let feed_source = include_str!("orchestration_feed.rs");
+    let rail_source = include_str!("orchestration_rail.rs");
+    let router_dialog_source = include_str!("task_router_dialog.rs");
+    let css = include_str!("../style.css");
+
+    assert!(app_source.contains("build_orchestration_header_chips(&state)"));
+    assert!(app_source.contains("refresh_orchestration_header_chips("));
+    assert!(app_source.contains("header.pack_start(&router_cluster);"));
+    assert!(app_source.contains("router_crumb.set_action_name(Some(\"app.task-router\"));"));
+    assert!(app_source.contains("apply_button.set_action_name(Some(\"app.task-router\"));"));
+    assert!(app_source.contains("orchestration_status_summary(&state)"));
+    assert!(app_source.contains("build_orchestration_feed(&state)"));
+    assert!(app_source.contains("refresh_orchestration_feed("));
+    assert!(app_source.contains("controller.borrow_mut().rebuild_layout();"));
+    assert!(app_source.contains("let workspace_area_for_settings = workspace_area.clone();"));
+    assert!(app_source.contains("apply_sidebar_position(\n            &paned,\n            &sidebar_shell,\n            &workspace_area,"));
+    assert!(actions_source.contains("show_task_router_dialog(&window, &state)"));
+    assert!(rail_source.contains(".label(\"Router\")"));
+    assert!(rail_source.contains("rail_section_header(&strategy_section, \"STRATEGY\")"));
+    assert!(rail_source.contains("rail_section_header(&decision_section, \"ROUTER DECISION\")"));
+    assert!(rail_source.contains("rail_section_header(&loop_section, \"LOOP STATE\")"));
+    assert!(rail_source.contains("rail_section_header(&approvals_section, \"APPROVALS\")"));
+    assert!(rail_source.contains("rail_section_header(&workers_section, \"WORKER HEALTH\")"));
+    assert!(rail_source.contains("rail_section_header(&reports_section, \"WORKER REPORTS\")"));
+    assert!(rail_source.contains("rail_section_header(&notifications_section, \"NOTIFICATIONS\")"));
+    assert!(rail_source.contains("gtk::ProgressBar::new()"));
+    assert!(rail_source.contains("current_pending_feed_approvals("));
+    assert!(rail_source.contains("pending_feed_approvals(usize::MAX)"));
+    assert!(rail_source.contains("rail_approval_matches_workspace("));
+    assert!(rail_source.contains("set_orchestration_rail_collapsed("));
+    assert!(rail_source.contains("orchestration-rail-collapsed-strip"));
+    assert!(rail_source.contains("Collapse Router rail"));
+    assert!(rail_source.contains("Expand Router rail"));
+    assert!(
+        rail_source.contains("decide_feed_approval(&id, forktty_core::FeedApprovalState::Denied)")
+    );
+    assert!(rail_source.contains("clear_rail_notifications_from_model("));
+    assert!(rail_source.contains("current_rail_notifications(model, workspace_id)"));
+    assert!(rail_source.contains("model.dismiss_notification(&notification.id)"));
+    assert!(rail_source.contains("mark_notification_feed_entries_cleared(&notifications)"));
+    assert!(feed_source.contains("(\"WORKFLOW FEED\", true)"));
+    assert!(feed_source.contains("set_workflow_feed_collapsed("));
+    assert!(feed_source.contains("orchestration-feed-rows-shell"));
+    assert!(feed_source.contains("Collapse workflow feed"));
+    assert!(feed_source.contains("Expand workflow feed"));
+    assert!(feed_source.contains("load_workflows_from_path(path)"));
+    assert!(feed_source.contains("load_teams_from_path(path)"));
+    assert!(feed_source.contains("active_workspace_id_for_state(state)"));
+    assert!(feed_source.contains("list_logs(workspace_id)"));
+    assert!(router_dialog_source.contains("task_router_result_row(&result, \"assignments\", true)"));
+    assert!(router_dialog_source.contains("value.set_lines(2);"));
+    assert!(css.contains("button.flat.header-router-crumb {"));
+    assert!(css.contains("button.flat.header-apply-button {"));
+    assert!(css.contains("button.flat.header-team-chip {"));
+    assert!(css.contains(".rail-dot.ok {"));
+    assert!(css.contains(".orchestration-feed {"));
+    assert!(css.contains("button.flat.orchestration-feed-collapse"));
+    assert!(css.contains(".orchestration-feed-tab.active"));
+    assert!(css.contains(".orchestration-feed-status.err {"));
+    assert!(css.contains(".orchestration-panel-header {"));
+    assert!(css.contains(".orchestration-status-chip.err {"));
+    assert!(css.contains(".orchestration-rail-collapsed-strip"));
+    assert!(css.contains(".orchestration-rail-strip-badge.warn {"));
+    assert!(css.contains("button.flat.orchestration-collapse-button"));
+    assert!(css.contains(".orchestration-section {"));
+    assert!(css.contains(".orchestration-loop-progress"));
+    assert!(css.contains(".task-router-result {"));
+}
+
+#[test]
+fn sidebar_fixed_sections_cover_team_resources_and_footer() {
+    let sidebar_source = include_str!("sidebar.rs");
+    let app_source = include_str!("app.rs");
+    let css = include_str!("../style.css");
+
+    assert!(app_source.contains("build_sidebar_sections(&state)"));
+    assert!(app_source.contains("refresh_sidebar_team_section("));
+    assert!(
+        app_source.contains("show_worktree_dialog(&window_for_git_repos, &state_for_git_repos)")
+    );
+    assert!(app_source.contains("show_about_dialog(&window_for_about)"));
+    assert!(sidebar_source.contains("sidebar_section_label(\"Team\")"));
+    assert!(sidebar_source.contains("sidebar_section_label(\"Resources\")"));
+    assert!(sidebar_source.contains("latest_team_chips_for_state(state)"));
+    assert!(sidebar_source.contains("settings_row.set_action_name(Some(\"app.settings\"));"));
+    assert!(css.contains(".sidebar-fixed-section {"));
+    assert!(css.contains("button.flat.sidebar-nav-row {"));
+    assert!(css.contains(".sidebar-footer {"));
+}
+
+#[test]
+fn settings_dialog_covers_workbench_layout_and_privacy_sections() {
+    let settings_source = include_str!("settings_dialog.rs");
+    let app_source = include_str!("app.rs");
+
+    assert!(settings_source.contains("config.appearance.show_orchestration_rail = row.is_active()"));
+    assert!(settings_source.contains("config.appearance.show_workflow_feed = row.is_active()"));
+    assert!(settings_source
+        .contains("show_worktree_dialog(&parent_for_worktrees, &state_for_worktrees)"));
+    assert!(settings_source
+        .contains("refresh_team_provider_detection_rows(&list, &current.borrow().team)"));
+    assert!(settings_source.contains("model.clear_notifications()"));
+    assert!(settings_source.contains("mark_notification_feed_entries_cleared(&notifications)"));
+    assert!(settings_source.contains("settings_section(\"Local-first by design\", \"\")"));
+    assert!(settings_source.contains("No cloud sync; anonymous daily ping is controlled below."));
+    assert!(!settings_source.contains("No cloud sync. No analytics."));
+    assert!(settings_source.contains("settings_section(\"Stored data locations\", \"\")"));
+    assert!(settings_source.contains(".set_active(defaults.appearance.show_orchestration_rail)"));
+    assert!(app_source.contains(
+        "orchestration_rail_shell.set_visible(config.appearance.show_orchestration_rail)"
+    ));
+    assert!(app_source
+        .contains("orchestration_feed_shell.set_visible(config.appearance.show_workflow_feed)"));
+    assert!(app_source.contains(".set_visible(app_config.appearance.show_workflow_feed)"));
+}
+
+#[test]
+fn pane_footer_mirrors_header_visibility_and_lifecycle() {
+    let pane_source = include_str!("pane_chrome.rs");
+    let controller_source = include_str!("controller.rs");
+    let css = include_str!("../style.css");
+
+    assert!(pane_source.contains("footer_revealer"));
+    assert!(pane_source.contains("pane_shell_label(&state.shell)"));
+    assert!(controller_source.contains("chrome.footer_revealer.set_reveal_child(!single_pane);"));
+    assert!(css.contains(".terminal-pane-footer {"));
+    assert!(css.contains(".terminal-pane-footer-shell {"));
+}
+
+#[test]
+fn terminal_empty_stage_surfaces_router_and_workspace_actions() {
+    let source = include_str!("placeholders.rs");
+    let css = include_str!("../style.css");
+
+    assert!(source.contains("show_task_router_dialog(&parent_for_router, &state_for_router)"));
+    assert!(source.contains("labeled_icon_button_parts(\"forktty-search-symbolic\", \"Router\")"));
+    assert!(source.contains("create_plain_workspace(&state_for_create)"));
+    assert!(source.contains("open_workspace_dialog(&parent_for_open, &state_for_open)"));
+    assert!(css.contains(".terminal-empty-actions {"));
+    assert!(css.contains(".terminal-empty-stage {"));
 }
 
 #[test]

@@ -59,7 +59,7 @@ pub(crate) fn notification_clear(state: &SocketAppState) -> Result<Value, Dispat
         model.clear_notifications();
         notifications
     };
-    state.mark_notification_feed_entries_dismissed(&notifications);
+    state.mark_notification_feed_entries_cleared(&notifications);
     for notification in &notifications {
         close_desktop_notification(&notification.id);
         feed_view::send_terminal_notification_close_report(state, notification);

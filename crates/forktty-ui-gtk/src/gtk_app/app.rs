@@ -158,7 +158,7 @@ pub(super) fn build_ui(app: &adw::Application) {
     let (default_width, default_height) = if quake_mode {
         quake_default_size()
     } else {
-        (1200, 760)
+        (1360, 820)
     };
     let socket_path = socket_path_from_env(std::env::var("FORKTTY_SOCKET_PATH").ok());
 
@@ -213,21 +213,84 @@ pub(super) fn build_ui(app: &adw::Application) {
     header.pack_start(&app_menu);
     header.pack_start(&brand_separator);
 
+    // Router cluster: sidebar toggle, Router breadcrumb, workspace selector,
+    // Plan and Apply. Lives left-of-center in the titlebar like the
+    // agent-workspace mockups instead of a second strip below the header.
+    let router_cluster = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    router_cluster.add_css_class("header-router-cluster");
+    let sidebar_toggle = gtk::Button::builder()
+        .icon_name("forktty-grid-symbolic")
+        .tooltip_text("Toggle Sidebar (F9)")
+        .has_frame(false)
+        .build();
+    sidebar_toggle.add_css_class("flat");
+    sidebar_toggle.add_css_class("header-action");
+    sidebar_toggle.set_action_name(Some("app.toggle-sidebar"));
+    set_accessible_button_text(&sidebar_toggle, "Toggle Sidebar", Some("F9"));
+    router_cluster.append(&sidebar_toggle);
+    let router_crumb_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let router_crumb_label = gtk::Label::builder()
+        .label("Router")
+        .single_line_mode(true)
+        .build();
+    let router_crumb_chevron = gtk::Label::builder().label("\u{203a}").build();
+    router_crumb_chevron.add_css_class("header-router-chevron");
+    router_crumb_content.append(&router_crumb_label);
+    router_crumb_content.append(&router_crumb_chevron);
+    let router_crumb = gtk::Button::builder()
+        .child(&router_crumb_content)
+        .has_frame(false)
+        .tooltip_text("Open Router planner")
+        .build();
+    router_crumb.add_css_class("flat");
+    router_crumb.add_css_class("header-router-crumb");
+    router_crumb.set_action_name(Some("app.task-router"));
+    set_accessible_button_text(&router_crumb, "Open Router planner", None);
+    router_cluster.append(&router_crumb);
+
     let workspace_title_label = gtk::Label::builder()
         .label("")
         .ellipsize(gtk::pango::EllipsizeMode::End)
-        .max_width_chars(36)
+        .max_width_chars(28)
         .single_line_mode(true)
         .build();
+    let workspace_title_caret = gtk::Label::builder().label("\u{25be}").build();
+    workspace_title_caret.add_css_class("header-workspace-caret");
+    let workspace_title_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    workspace_title_content.append(&workspace_title_label);
+    workspace_title_content.append(&workspace_title_caret);
     let workspace_title = gtk::Button::builder()
-        .child(&workspace_title_label)
+        .child(&workspace_title_content)
         .has_frame(false)
         .build();
     workspace_title.add_css_class("flat");
     workspace_title.add_css_class("app-header-title");
+    workspace_title.add_css_class("header-workspace-chip");
     workspace_title.set_sensitive(false);
     set_accessible_button_text(&workspace_title, "No active workspace", None);
-    header.set_title_widget(Some(&workspace_title));
+    router_cluster.append(&workspace_title);
+
+    let (plan_button, _, _) = labeled_icon_button_parts("forktty-merge-symbolic", "Plan");
+    plan_button.set_has_frame(false);
+    plan_button.add_css_class("flat");
+    plan_button.add_css_class("header-plan-button");
+    plan_button.set_action_name(Some("app.task-router"));
+    plan_button.set_tooltip_text(Some("Plan routing for the next task"));
+    router_cluster.append(&plan_button);
+    let apply_button = gtk::Button::builder()
+        .label("Apply")
+        .has_frame(false)
+        .tooltip_text("Review the routing plan and required approvals")
+        .build();
+    apply_button.add_css_class("flat");
+    apply_button.add_css_class("header-apply-button");
+    apply_button.set_action_name(Some("app.task-router"));
+    set_accessible_button_text(&apply_button, "Review routing plan", None);
+    router_cluster.append(&apply_button);
+    header.pack_start(&router_cluster);
+    // Suppress the default centered window title; the workspace selector
+    // lives in the router cluster instead.
+    header.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
 
     let command_palette = gtk::Button::builder()
         .icon_name("forktty-search-symbolic")
@@ -296,6 +359,8 @@ pub(super) fn build_ui(app: &adw::Application) {
     header.pack_end(&notifications);
     header.pack_end(&agents);
     header.pack_end(&command_palette);
+    let orchestration_header_chips = build_orchestration_header_chips(&state);
+    header.pack_end(&orchestration_header_chips.shell);
 
     let sidebar = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::Single)
@@ -337,17 +402,47 @@ pub(super) fn build_ui(app: &adw::Application) {
 
     sidebar_shell.append(&sidebar_header);
     sidebar_shell.append(&sidebar_scroll);
+    let sidebar_sections = build_sidebar_sections(&state);
+    sidebar_shell.append(&sidebar_sections.team_shell);
+    sidebar_shell.append(&sidebar_sections.resources_shell);
+    sidebar_shell.append(&sidebar_sections.footer_shell);
 
     let terminal_stack = gtk::Box::new(gtk::Orientation::Vertical, 0);
     terminal_stack.set_overflow(gtk::Overflow::Hidden);
+    terminal_stack.set_hexpand(true);
+    terminal_stack.set_vexpand(true);
     terminal_stack.add_css_class("terminal-stage");
     let terminal_stack = Rc::new(RefCell::new(terminal_stack));
+    let terminal_workbench = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    terminal_workbench.set_hexpand(true);
+    terminal_workbench.set_vexpand(true);
+    terminal_workbench.add_css_class("terminal-workbench");
+    terminal_workbench.append(&*terminal_stack.borrow());
+    let orchestration_feed = build_orchestration_feed(&state);
+    terminal_workbench.append(&orchestration_feed.shell);
+    let orchestration_rail = build_orchestration_rail(&state);
+    orchestration_feed
+        .shell
+        .set_visible(app_config.appearance.show_workflow_feed);
+    orchestration_rail
+        .shell
+        .set_visible(app_config.appearance.show_orchestration_rail);
+    let workspace_area = gtk::Paned::new(gtk::Orientation::Horizontal);
+    workspace_area.set_hexpand(true);
+    workspace_area.set_vexpand(true);
+    workspace_area.add_css_class("workspace-area");
+    workspace_area.set_start_child(Some(&terminal_workbench));
+    workspace_area.set_resize_start_child(true);
+    workspace_area.set_shrink_start_child(false);
+    workspace_area.set_end_child(Some(&orchestration_rail.shell));
+    workspace_area.set_resize_end_child(false);
+    workspace_area.set_shrink_end_child(false);
 
     let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
     paned.add_css_class("workspace-paned");
     let sidebar_on_right = app_config.appearance.sidebar_position == "right";
     if sidebar_on_right {
-        paned.set_start_child(Some(&*terminal_stack.borrow()));
+        paned.set_start_child(Some(&workspace_area));
         paned.set_resize_start_child(true);
         paned.set_shrink_start_child(false);
         paned.set_end_child(Some(&sidebar_shell));
@@ -357,7 +452,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         paned.set_start_child(Some(&sidebar_shell));
         paned.set_resize_start_child(false);
         paned.set_shrink_start_child(false);
-        paned.set_end_child(Some(&*terminal_stack.borrow()));
+        paned.set_end_child(Some(&workspace_area));
         paned.set_resize_end_child(true);
         paned.set_shrink_end_child(false);
     }
@@ -399,10 +494,20 @@ pub(super) fn build_ui(app: &adw::Application) {
     palette_hint.add_css_class("status-shortcut");
     palette_hint.set_action_name(Some("app.command-palette"));
     set_accessible_button_text(&palette_hint, "Open Command Palette", Some("Ctrl+Shift+P"));
+    let status_router = gtk::Label::builder()
+        .label("")
+        .xalign(1.0)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .max_width_chars(48)
+        .single_line_mode(true)
+        .build();
+    status_router.add_css_class("status-router");
+    status_router.set_label(&orchestration_status_summary(&state));
     status_bar.append(&status_location);
     status_bar.append(&pane_status);
     status_bar.append(&status_spacer);
     status_bar.append(&palette_hint);
+    status_bar.append(&status_router);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.add_css_class("app-root");
@@ -471,6 +576,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         .borrow_mut()
         .attach_toast_handle(toast_handle.clone());
     controller.borrow_mut().attach_state(state.clone());
+    controller.borrow_mut().rebuild_layout();
     install_terminal_navigation_fallback(&window, &window, &controller);
 
     #[cfg(feature = "browser")]
@@ -498,6 +604,24 @@ pub(super) fn build_ui(app: &adw::Application) {
         let button = status_location.clone();
         status_location.connect_clicked(move |_| {
             show_workspace_popover(&button, &state_for_click, &controller_for_click);
+        });
+    }
+    {
+        let window_for_git_repos = window.clone();
+        let state_for_git_repos = state.clone();
+        sidebar_sections.git_repos_row.connect_clicked(move |_| {
+            show_worktree_dialog(&window_for_git_repos, &state_for_git_repos);
+        });
+        for (row, label) in &sidebar_sections.placeholder_rows {
+            let toast_for_row = toast_handle.clone();
+            let label = *label;
+            row.connect_clicked(move |_| {
+                toast_for_row.show(&format!("{label} is not available yet"));
+            });
+        }
+        let window_for_about = window.clone();
+        sidebar_sections.about_row.connect_clicked(move |_| {
+            show_about_dialog(&window_for_about);
         });
     }
     let sidebar_ui = SidebarUi {
@@ -569,6 +693,39 @@ pub(super) fn build_ui(app: &adw::Application) {
         refresh_notification_indicator(&notifications_for_timer, &state_for_notifications_timer);
         glib::ControlFlow::Continue
     });
+    let orchestration_rail_for_timer = orchestration_rail.clone();
+    let sidebar_sections_for_timer = sidebar_sections.clone();
+    let orchestration_header_chips_for_timer = orchestration_header_chips.clone();
+    let orchestration_feed_for_timer = orchestration_feed.clone();
+    let status_router_for_timer = status_router.clone();
+    let state_for_orchestration_rail_timer = state.clone();
+    let alive_for_orchestration_rail_timer = ui_alive.clone();
+    glib::timeout_add_local(Duration::from_secs(1), move || {
+        if !alive_for_orchestration_rail_timer.get() {
+            return glib::ControlFlow::Break;
+        }
+        refresh_orchestration_rail(
+            &orchestration_rail_for_timer,
+            &state_for_orchestration_rail_timer,
+        );
+        refresh_orchestration_header_chips(
+            &orchestration_header_chips_for_timer,
+            &state_for_orchestration_rail_timer,
+        );
+        refresh_orchestration_feed(
+            &orchestration_feed_for_timer,
+            &state_for_orchestration_rail_timer,
+        );
+        refresh_sidebar_team_section(
+            &sidebar_sections_for_timer,
+            &state_for_orchestration_rail_timer,
+        );
+        let router_summary = orchestration_status_summary(&state_for_orchestration_rail_timer);
+        if status_router_for_timer.label() != router_summary {
+            status_router_for_timer.set_label(&router_summary);
+        }
+        glib::ControlFlow::Continue
+    });
     let agents_for_timer = agents.clone();
     let agent_badge_for_timer = agent_badge.clone();
     let state_for_agents_timer = state.clone();
@@ -616,11 +773,15 @@ pub(super) fn build_ui(app: &adw::Application) {
     });
     install_session_autosave(&state, ui_alive.clone());
 
-    let terminal_stack_for_settings = terminal_stack.borrow().clone();
+    let workspace_area_for_settings = workspace_area.clone();
     let settings_apply = settings_apply_callback(
-        &paned,
-        &sidebar_shell,
-        &terminal_stack_for_settings,
+        &WorkbenchShells {
+            paned: paned.clone(),
+            sidebar: sidebar_shell.clone(),
+            workspace_area: workspace_area_for_settings,
+            orchestration_rail: orchestration_rail.shell.clone(),
+            workflow_feed: orchestration_feed.shell.clone(),
+        },
         &controller,
         pr_model.clone(),
         pr_in_flight.clone(),
@@ -932,17 +1093,26 @@ pub(super) fn default_startup_workspace_dir_from(
     home.or(current).unwrap_or_else(|| PathBuf::from("/"))
 }
 
+/// Top-level workbench containers that live settings changes re-target.
+pub(super) struct WorkbenchShells {
+    pub(super) paned: gtk::Paned,
+    pub(super) sidebar: gtk::Box,
+    pub(super) workspace_area: gtk::Paned,
+    pub(super) orchestration_rail: gtk::Box,
+    pub(super) workflow_feed: gtk::Box,
+}
+
 pub(super) fn settings_apply_callback(
-    paned: &gtk::Paned,
-    sidebar_shell: &gtk::Box,
-    terminal_stack: &gtk::Box,
+    shells: &WorkbenchShells,
     controller: &Rc<RefCell<TerminalController>>,
     pr_model: Arc<Mutex<WorkspaceModel>>,
     pr_in_flight: Arc<AtomicBool>,
 ) -> SettingsApplyCallback {
-    let paned = paned.clone();
-    let sidebar_shell = sidebar_shell.clone();
-    let terminal_stack = terminal_stack.clone();
+    let paned = shells.paned.clone();
+    let sidebar_shell = shells.sidebar.clone();
+    let workspace_area = shells.workspace_area.clone();
+    let orchestration_rail_shell = shells.orchestration_rail.clone();
+    let orchestration_feed_shell = shells.workflow_feed.clone();
     let controller = controller.clone();
     let pr_model = pr_model.clone();
     let pr_in_flight = pr_in_flight.clone();
@@ -951,10 +1121,12 @@ pub(super) fn settings_apply_callback(
         apply_sidebar_position(
             &paned,
             &sidebar_shell,
-            &terminal_stack,
+            &workspace_area,
             &config.appearance.sidebar_position,
         );
         sidebar_shell.set_visible(config.appearance.sidebar_visible);
+        orchestration_rail_shell.set_visible(config.appearance.show_orchestration_rail);
+        orchestration_feed_shell.set_visible(config.appearance.show_workflow_feed);
         let model = {
             let controller = controller.borrow();
             for widget in controller.widgets.values() {
@@ -973,7 +1145,7 @@ pub(super) fn settings_apply_callback(
 pub(super) fn apply_sidebar_position(
     paned: &gtk::Paned,
     sidebar_shell: &gtk::Box,
-    terminal_stack: &gtk::Box,
+    workspace_area: &gtk::Paned,
     position: &str,
 ) {
     let sidebar_visible = sidebar_shell.is_visible();
@@ -982,7 +1154,7 @@ pub(super) fn apply_sidebar_position(
     set_sidebar_position_class(sidebar_shell, position);
 
     if position == "right" {
-        paned.set_start_child(Some(terminal_stack));
+        paned.set_start_child(Some(workspace_area));
         paned.set_resize_start_child(true);
         paned.set_shrink_start_child(false);
         paned.set_end_child(Some(sidebar_shell));
@@ -992,7 +1164,7 @@ pub(super) fn apply_sidebar_position(
         paned.set_start_child(Some(sidebar_shell));
         paned.set_resize_start_child(false);
         paned.set_shrink_start_child(false);
-        paned.set_end_child(Some(terminal_stack));
+        paned.set_end_child(Some(workspace_area));
         paned.set_resize_end_child(true);
         paned.set_shrink_end_child(false);
     }
@@ -1101,6 +1273,7 @@ pub(super) fn restore_or_bootstrap_workspaces(
                 // an inconsistent UI.
                 let _ = model.repair_session_invariants();
             }
+            reserve_orchestration_record_ids(state);
             if repaired_paths > 0 {
                 create_global_notification(
                     state,
@@ -1122,6 +1295,7 @@ pub(super) fn restore_or_bootstrap_workspaces(
                 "Opened your home directory as the main workspace. Use Ctrl+Shift+P for commands, F9 to toggle the sidebar, and New Worktree for isolated git work.",
                 NotificationKind::Info,
             );
+            reserve_orchestration_record_ids(state);
             bootstrap_default_workspace(state, cwd)
         }
         Err(err) => {
@@ -1132,8 +1306,85 @@ pub(super) fn restore_or_bootstrap_workspaces(
                 &format!("Could not restore the saved session; starting a new workspace. {err}"),
                 NotificationKind::Error,
             );
+            reserve_orchestration_record_ids(state);
             bootstrap_default_workspace(state, cwd)
         }
+    }
+}
+
+fn reserve_orchestration_record_ids(state: &SocketAppState) {
+    let mut workspace_ids = Vec::new();
+    let mut surface_ids = Vec::new();
+
+    if let Some(path) = state.workflow_store_path.as_deref() {
+        match forktty_core::load_workflows_from_path(path) {
+            Ok(store) => {
+                for workflow in store.workflows {
+                    if let Some(workspace_id) = workflow.workspace_id {
+                        workspace_ids.push(workspace_id);
+                    }
+                    if let Some(surface_id) = workflow.surface_id {
+                        surface_ids.push(surface_id);
+                    }
+                }
+            }
+            Err(err) => eprintln!(
+                "ForkTTY: failed to reserve workflow orchestration ids from {}: {err}",
+                path.display()
+            ),
+        }
+    }
+
+    if let Some(path) = state.team_store_path.as_deref() {
+        match forktty_core::load_teams_from_path(path) {
+            Ok(store) => {
+                for team in store.teams {
+                    if let Some(workspace_id) = team.workspace_id {
+                        workspace_ids.push(workspace_id);
+                    }
+                    if let Some(surface_id) = team.leader_surface_id {
+                        surface_ids.push(surface_id);
+                    }
+                    for worker in team.workers {
+                        if let Some(surface_id) = worker.surface_id {
+                            surface_ids.push(surface_id);
+                        }
+                        if let Some(surface_id) = worker.launched_surface_id {
+                            surface_ids.push(surface_id);
+                        }
+                    }
+                }
+            }
+            Err(err) => eprintln!(
+                "ForkTTY: failed to reserve team orchestration ids from {}: {err}",
+                path.display()
+            ),
+        }
+    }
+
+    if let Some(approvals) = state.pending_feed_approvals(usize::MAX) {
+        for approval in approvals {
+            if let Some(workspace_id) = approval.workspace_id {
+                workspace_ids.push(workspace_id);
+            }
+            if let Some(surface_id) = approval.surface_id {
+                surface_ids.push(surface_id);
+            }
+        }
+    }
+
+    if workspace_ids.is_empty() && surface_ids.is_empty() {
+        return;
+    }
+
+    let Ok(mut model) = state.model.lock() else {
+        return;
+    };
+    for workspace_id in workspace_ids {
+        model.reserve_workspace_id(&workspace_id);
+    }
+    for surface_id in surface_ids {
+        model.reserve_surface_id(&surface_id);
     }
 }
 
@@ -1417,9 +1668,13 @@ pub(super) fn install_session_autosave(state: &SocketAppState, ui_alive: Rc<Cell
 mod tests {
     use super::{
         app_chrome_override_css, app_chrome_override_priority, default_gsk_renderer,
-        gdk_disable_with_ghostty_opengl_defaults,
+        gdk_disable_with_ghostty_opengl_defaults, reserve_orchestration_record_ids,
     };
+    use forktty_core::{FeedEntry, FeedEntryType, FeedStore};
+    use forktty_socket::SocketAppState;
     use gtk4 as gtk;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn default_gsk_renderer_avoids_leaky_cairo_software_path() {
@@ -1462,5 +1717,45 @@ mod tests {
         assert!(css.contains("window.ft-settings-window headerbar.settings-titlebar"));
         assert!(css.contains("background-color: #171717"));
         assert!(css.contains("background-image: none"));
+    }
+
+    #[test]
+    fn reserves_orchestration_ids_from_pending_feed_approvals() {
+        let dir = tempfile::tempdir().unwrap();
+        let feed_path = dir.path().join("feed.json");
+        let mut store = FeedStore::open_at(&feed_path).unwrap();
+        store
+            .append(FeedEntry {
+                id: "approval-1".to_string(),
+                entry_type: FeedEntryType::Approval,
+                kind: Some("approval".to_string()),
+                read: false,
+                key: None,
+                value: None,
+                total: None,
+                title: "Claude needs input".to_string(),
+                body: "Approve?".to_string(),
+                workspace_id: Some("workspace-1".to_string()),
+                surface_id: Some("surface-1".to_string()),
+                created_at_ms: 1,
+                approval_state: Some(forktty_core::FeedApprovalState::Pending),
+            })
+            .unwrap();
+        let model = Arc::new(Mutex::new(forktty_core::WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal,
+            "/bin/sh",
+            PathBuf::from("/tmp/forktty.sock"),
+        )
+        .with_feed_store_path(&feed_path)
+        .unwrap();
+
+        reserve_orchestration_record_ids(&state);
+        let workspace = model.lock().unwrap().create_workspace("main", dir.path());
+
+        assert_ne!(workspace.id, "workspace-1");
+        assert_ne!(workspace.focused_surface_id, "surface-1");
     }
 }

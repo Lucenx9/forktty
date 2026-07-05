@@ -80,17 +80,17 @@ use forktty_core::AgentKind;
 #[cfg(test)]
 use forktty_core::AgentSessionLifecycle;
 #[cfg(test)]
+use forktty_core::FeedEntry;
+#[cfg(test)]
 use forktty_core::JsonRpcResponse;
 #[cfg(test)]
 use forktty_core::SplitAxis;
 #[cfg(all(test, feature = "browser"))]
 use forktty_core::MAX_BROWSER_URL_BYTES;
 use forktty_core::{
-    BrowserCommand, FeedApprovalState, FeedStore, NotificationItem, NotificationKind,
-    WorkspaceModel,
+    BrowserCommand, FeedApprovalState, FeedEntryType, FeedStore, NotificationItem,
+    NotificationKind, WorkspaceModel,
 };
-#[cfg(test)]
-use forktty_core::{FeedEntry, FeedEntryType};
 use forktty_terminal::SharedTerminalBackend;
 #[cfg(test)]
 use forktty_terminal::SpawnRequest;
@@ -312,13 +312,18 @@ impl SocketAppState {
         self
     }
 
-    pub fn mark_notification_feed_entries_dismissed(&self, notifications: &[NotificationItem]) {
-        let ids = notifications
+    pub fn mark_notification_feed_entries_cleared(&self, notifications: &[NotificationItem]) {
+        let prompt_ids = notifications
             .iter()
             .filter(|notification| notification.kind == NotificationKind::Prompt)
             .map(feed_events::feed_notification_entry_id)
             .collect::<Vec<_>>();
-        if ids.is_empty() {
+        let notification_ids = notifications
+            .iter()
+            .filter(|notification| notification.kind != NotificationKind::Prompt)
+            .map(feed_events::feed_notification_entry_id)
+            .collect::<Vec<_>>();
+        if prompt_ids.is_empty() && notification_ids.is_empty() {
             return;
         }
         let Ok(mut store) = self.feed_store.lock() else {
@@ -327,10 +332,93 @@ impl SocketAppState {
         let Some(store) = store.as_mut() else {
             return;
         };
-        if let Err(err) = store.mark_approvals(ids, FeedApprovalState::Dismissed) {
+        if let Err(err) = store.mark_approvals(prompt_ids, FeedApprovalState::Dismissed) {
             eprintln!("forktty feed history dismiss update failed: {err}");
         }
+        if let Err(err) = store.mark_notifications_read(notification_ids) {
+            eprintln!("forktty feed history read update failed: {err}");
+        }
     }
+
+    pub fn pending_feed_approval_count(&self) -> Option<usize> {
+        let store = self.feed_store.lock().ok()?;
+        let store = store.as_ref()?;
+        Some(
+            store
+                .list(None, usize::MAX)
+                .iter()
+                .filter(|entry| {
+                    entry.entry_type == FeedEntryType::Approval
+                        && entry.approval_state == Some(FeedApprovalState::Pending)
+                })
+                .count(),
+        )
+    }
+
+    pub fn pending_feed_approval_summaries(&self, limit: usize) -> Option<Vec<String>> {
+        Some(
+            self.pending_feed_approvals(limit)?
+                .into_iter()
+                .map(|approval| approval.title)
+                .collect(),
+        )
+    }
+
+    /// Newest-first pending approval requests with the identifiers needed to
+    /// decide them from a visible UI action.
+    pub fn pending_feed_approvals(&self, limit: usize) -> Option<Vec<PendingFeedApproval>> {
+        let store = self.feed_store.lock().ok()?;
+        let store = store.as_ref()?;
+        Some(
+            store
+                .list(None, usize::MAX)
+                .into_iter()
+                .filter(|entry| {
+                    entry.entry_type == FeedEntryType::Approval
+                        && entry.approval_state == Some(FeedApprovalState::Pending)
+                })
+                .take(limit.max(1))
+                .map(|entry| {
+                    let title = if entry.title.trim().is_empty() {
+                        entry.id.clone()
+                    } else {
+                        entry.title
+                    };
+                    PendingFeedApproval {
+                        id: entry.id,
+                        title,
+                        workspace_id: entry.workspace_id,
+                        surface_id: entry.surface_id,
+                        created_at_ms: entry.created_at_ms,
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    pub fn decide_feed_approval(&self, id: &str, state: FeedApprovalState) -> Result<(), String> {
+        let mut store = self
+            .feed_store
+            .lock()
+            .map_err(|_| "feed store lock poisoned".to_string())?;
+        let store = store
+            .as_mut()
+            .ok_or_else(|| "feed store not configured".to_string())?;
+        store
+            .decide_approval(id, state)
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    }
+}
+
+/// One pending Feed approval request, shaped for UI listing and decisions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingFeedApproval {
+    pub id: String,
+    pub title: String,
+    pub workspace_id: Option<String>,
+    pub surface_id: Option<String>,
+    pub created_at_ms: u128,
 }
 
 pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(), SocketError> {

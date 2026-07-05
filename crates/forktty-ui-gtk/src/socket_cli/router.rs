@@ -35,7 +35,8 @@ use super::team::{
     handle_team_worker_shutdown, handle_team_worker_upsert,
 };
 use super::workflow::{
-    handle_workflow_evidence_add, handle_workflow_get, handle_workflow_loop_set,
+    handle_workflow_evidence_add, handle_workflow_get, handle_workflow_loop_gate,
+    handle_workflow_loop_publish, handle_workflow_loop_set, handle_workflow_loop_step_done,
     handle_workflow_plan_set, handle_workflow_replay, handle_workflow_upsert, handle_workflows,
 };
 use super::workspace::{
@@ -174,6 +175,17 @@ pub(super) fn dispatch_command(
         "workflow-loop-set" | "workflow:loop:set" | "workflow.loop.set" | "loop-set" => {
             handle_workflow_loop_set(context, args)
         }
+        "workflow-loop-gate" | "workflow:loop:gate" | "workflow.loop.gate" | "loop-gate" => {
+            handle_workflow_loop_gate(context, args)
+        }
+        "workflow-loop-step-done"
+        | "workflow:loop:step-done"
+        | "workflow.loop.step_done"
+        | "loop-step-done" => handle_workflow_loop_step_done(context, args),
+        "workflow-loop-publish"
+        | "workflow:loop:publish"
+        | "workflow.loop.publish"
+        | "loop-publish" => handle_workflow_loop_publish(context, args),
         "workflow-plan-set" | "workflow:plan-set" | "workflow.plan.set" => {
             handle_workflow_plan_set(context, args)
         }

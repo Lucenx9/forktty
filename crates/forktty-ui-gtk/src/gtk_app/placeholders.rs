@@ -104,24 +104,33 @@ pub(super) fn empty_terminal_stage(
     state: Option<&SocketAppState>,
     parent: Option<&adw::ApplicationWindow>,
 ) -> gtk::Box {
-    let container = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 12);
     container.add_css_class("terminal-empty-stage");
     container.set_hexpand(true);
     container.set_vexpand(true);
 
     let status = compact_status_page(
         "forktty-terminal-symbolic",
-        "No Workspace",
-        "Create or open a workspace to start a terminal.",
+        "Workspace Ready",
+        "Open a workspace, or plan a router run before launching panes.",
     );
     container.append(&status);
 
     if let Some(state) = state {
         let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        actions.add_css_class("terminal-placeholder-actions");
+        actions.add_css_class("terminal-empty-actions");
         actions.set_halign(gtk::Align::Center);
+        if let Some(parent) = parent {
+            let (router, _, _) = labeled_icon_button_parts("forktty-search-symbolic", "Router");
+            router.add_css_class("suggested-action");
+            let parent_for_router = parent.clone();
+            let state_for_router = state.clone();
+            router.connect_clicked(move |_| {
+                show_task_router_dialog(&parent_for_router, &state_for_router);
+            });
+            actions.append(&router);
+        }
         let (create, _, _) = labeled_icon_button_parts("forktty-add-symbolic", "New Workspace");
-        create.add_css_class("suggested-action");
         let state_for_create = state.clone();
         create.connect_clicked(move |_| create_plain_workspace(&state_for_create));
         actions.append(&create);
@@ -138,6 +147,10 @@ pub(super) fn empty_terminal_stage(
         let hints = gtk::Box::new(gtk::Orientation::Vertical, 6);
         hints.add_css_class("terminal-empty-shortcuts");
         hints.set_halign(gtk::Align::Center);
+        hints.append(&shortcut_hint(
+            "Router",
+            "Plan strategy without launching workers",
+        ));
         hints.append(&shortcut_hint("Ctrl+Shift+N", "New Workspace"));
         hints.append(&shortcut_hint("Ctrl+Shift+O", "Open Workspace"));
         hints.append(&shortcut_hint("Ctrl+Shift+P", "Command Palette"));

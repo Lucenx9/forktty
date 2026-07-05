@@ -493,6 +493,9 @@ mod tests {
         assert!(is_socket_cli_command("workflow:loop:set"));
         assert!(is_socket_cli_command("workflow.loop.set"));
         assert!(is_socket_cli_command("loop-set"));
+        assert!(is_socket_cli_command("workflow-loop-gate"));
+        assert!(is_socket_cli_command("workflow-loop-step-done"));
+        assert!(is_socket_cli_command("workflow-loop-publish"));
         assert!(!is_socket_cli_command("explode"));
     }
 

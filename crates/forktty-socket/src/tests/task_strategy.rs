@@ -236,6 +236,58 @@ async fn task_strategy_plan_accepts_explicit_task_kind_hint() {
 }
 
 #[tokio::test]
+async fn task_strategy_plan_sets_loop_metadata_for_explicit_iterative_goal() {
+    let (state, _backend) = test_state();
+    let result = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "goal": "Use loop for repeat verification until clean",
+            "repo_dirty": false,
+            "likely_user_visible_change": false
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["task_class"], "verify_fix_loop");
+    assert_eq!(result["strategy"], "solo_with_verify_loop");
+    assert_eq!(result["layers"]["loop_metadata"], true);
+    assert!(result["reasons"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|reason| reason
+            .as_str()
+            .unwrap_or_default()
+            .contains("iterative loop intent")));
+}
+
+#[tokio::test]
+async fn task_strategy_plan_sets_loop_metadata_for_iterative_review_hint() {
+    let (state, _backend) = test_state();
+    let result = dispatch(
+        &state,
+        "task.strategy.plan",
+        json!({
+            "goal": "Continue iterative bug sweep until the router workspace UI is clean",
+            "task_kind": "review",
+            "review": true,
+            "repo_dirty": false,
+            "likely_user_visible_change": false
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result["task_class"], "review_only");
+    assert_eq!(result["strategy"], "review_only");
+    assert_eq!(result["layers"]["workflow"], true);
+    assert_eq!(result["layers"]["loop_metadata"], true);
+    assert_eq!(result["assignments"][0]["role"], "reviewer");
+}
+
+#[tokio::test]
 async fn task_strategy_plan_accepts_normalized_task_kind_aliases() {
     let (state, _backend) = test_state();
     for (task_kind, expected_class) in [
@@ -3949,6 +4001,45 @@ async fn task_strategy_apply_bootstraps_loop_metadata_without_overwriting_existi
 }
 
 #[tokio::test]
+async fn task_strategy_apply_bootstraps_review_only_loop_metadata() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+    state.team_store_path = Some(dir.path().join("team-v1.json"));
+
+    let result = dispatch(
+        &state,
+        "task.strategy.apply",
+        json!({
+            "run_id": "router-review-loop",
+            "goal": "Continue iterative bug sweep until clean",
+            "approved": ["start_run"],
+            "plan": review_loop_plan_json()
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert!(result["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| { action["method"] == "workflow.loop.set" && action["stage"] == "planned" }));
+    let workflow = dispatch(
+        &state,
+        "workflow.get",
+        json!({"workflow_id": "router-review-loop"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(workflow["mode"], "task_strategy");
+    assert_eq!(workflow["loop_recipe"], "review_only");
+    assert_eq!(workflow["loop_stage"], "planned");
+    assert_eq!(workflow["loop_iteration"], 0);
+    assert_eq!(workflow["loop_max_iterations"], 3);
+}
+
+#[tokio::test]
 async fn task_strategy_done_with_bootstrapped_loop_warns_when_loop_was_never_recorded() {
     let (mut state, _backend) = test_state();
     let dir = tempfile::tempdir().unwrap();
@@ -5474,6 +5565,32 @@ fn solo_verify_plan_json() -> Value {
         ],
         "approvals": ["start_run"],
         "reasons": ["classified task as FocusedBugfix"],
+        "safety_notes": ["visible setup only"]
+    })
+}
+
+fn review_loop_plan_json() -> Value {
+    json!({
+        "task_class": "review_only",
+        "strategy": "review_only",
+        "layers": {
+            "workflow": true,
+            "team": false,
+            "loop_metadata": true,
+            "worktree": false,
+            "feed": true,
+            "mcp": true,
+            "hooks": true
+        },
+        "assignments": [
+            {
+                "role": "reviewer",
+                "harness_id": "claude",
+                "reason": "review harness"
+            }
+        ],
+        "approvals": ["start_run"],
+        "reasons": ["classified task as ReviewOnly", "inferred iterative loop intent"],
         "safety_notes": ["visible setup only"]
     })
 }

@@ -83,6 +83,12 @@ pub struct AppearanceConfig {
     pub sidebar_position: String,
     #[serde(default = "default_sidebar_visible")]
     pub sidebar_visible: bool,
+    /// Right-side Router/orchestration rail in the main workbench.
+    #[serde(default = "default_true")]
+    pub show_orchestration_rail: bool,
+    /// Bottom workflow feed dock in the main workbench.
+    #[serde(default = "default_true")]
+    pub show_workflow_feed: bool,
     #[serde(default = "default_terminal_renderer", skip_serializing)]
     pub terminal_renderer: String,
     #[serde(default = "default_terminal_theme", skip_serializing)]
@@ -181,6 +187,8 @@ impl Default for AppearanceConfig {
             terminal_audible_bell: default_terminal_audible_bell(),
             sidebar_position: default_sidebar_position(),
             sidebar_visible: default_sidebar_visible(),
+            show_orchestration_rail: true,
+            show_workflow_feed: true,
             terminal_renderer: default_terminal_renderer(),
             terminal_theme: default_terminal_theme(),
             window_mode: default_window_mode(),

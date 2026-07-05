@@ -67,11 +67,14 @@ pub(super) fn chrome_refresh_signature(
             signature.push('|');
             signature.push_str(if surface.needs_attention { "a1" } else { "a0" });
             signature.push('|');
-            signature.push_str(if surface.agent_session.is_some() {
-                "agent1"
+            if let Some(session) = surface.agent_session.as_ref() {
+                signature.push_str("agent=");
+                signature.push_str(chrome_agent_key(session.agent));
+                signature.push(':');
+                signature.push_str(chrome_lifecycle_key(session.lifecycle));
             } else {
-                "agent0"
-            });
+                signature.push_str("agent0");
+            }
             if let forktty_core::SurfaceKind::Browser { url, .. } = &surface.kind {
                 signature.push_str("|browser=");
                 signature.push_str(url);
@@ -117,6 +120,29 @@ pub(super) fn chrome_refresh_signature(
     }
 
     signature
+}
+
+fn chrome_agent_key(agent: forktty_core::AgentKind) -> &'static str {
+    match agent {
+        forktty_core::AgentKind::ClaudeCode => "claude",
+        forktty_core::AgentKind::Codex => "codex",
+        forktty_core::AgentKind::Antigravity => "antigravity",
+        forktty_core::AgentKind::Grok => "grok",
+        forktty_core::AgentKind::Pi => "pi",
+        forktty_core::AgentKind::OpenCode => "opencode",
+        forktty_core::AgentKind::Custom => "custom",
+    }
+}
+
+fn chrome_lifecycle_key(lifecycle: forktty_core::AgentSessionLifecycle) -> &'static str {
+    match lifecycle {
+        forktty_core::AgentSessionLifecycle::NeedsInput => "needs_input",
+        forktty_core::AgentSessionLifecycle::Running => "running",
+        forktty_core::AgentSessionLifecycle::Idle => "idle",
+        forktty_core::AgentSessionLifecycle::Suspended => "suspended",
+        forktty_core::AgentSessionLifecycle::Unknown => "unknown",
+        forktty_core::AgentSessionLifecycle::Ended => "ended",
+    }
 }
 
 // In maximize mode only the focused pane is rendered, so the layout signature

@@ -1150,6 +1150,43 @@ fn next_surface_id_skips_collisions_with_non_numeric_ids() {
 }
 
 #[test]
+fn restored_session_keeps_closed_workspace_and_surface_ids_reserved() {
+    let mut model = WorkspaceModel::new();
+    let main = model.create_workspace("main", "/tmp/main");
+    let closed = model.create_workspace("closed", "/tmp/closed");
+    let closed_surface_id = closed.focused_surface_id.clone();
+
+    model.close_workspace(WorkspaceSelector::Id(&closed.id));
+    let data = model.to_session_data();
+    assert_eq!(data.next_workspace, 2);
+    assert_eq!(data.next_surface, 2);
+
+    let mut restored = WorkspaceModel::new();
+    restored.restore_session(data);
+    let fresh = restored.create_workspace("fresh", "/tmp/fresh");
+
+    assert_eq!(fresh.id, "workspace-3");
+    assert_eq!(fresh.focused_surface_id, "surface-3");
+    assert_ne!(fresh.id, closed.id);
+    assert_ne!(fresh.focused_surface_id, closed_surface_id);
+    assert!(restored
+        .workspace_id_for(WorkspaceSelector::Id(&main.id))
+        .is_some());
+}
+
+#[test]
+fn reserved_orchestration_ids_are_not_reused_by_fresh_sessions() {
+    let mut model = WorkspaceModel::new();
+    model.reserve_workspace_id("workspace-3");
+    model.reserve_surface_id("surface-5");
+
+    let workspace = model.create_workspace("fresh", "/tmp/fresh");
+
+    assert_eq!(workspace.id, "workspace-4");
+    assert_eq!(workspace.focused_surface_id, "surface-6");
+}
+
+#[test]
 fn next_ids_wrap_after_restored_max_numeric_suffixes() {
     let max = u64::MAX;
     let workspace_id = format!("workspace-{max}");
@@ -1173,6 +1210,8 @@ fn next_ids_wrap_after_restored_max_numeric_suffixes() {
         }],
         active_workspace_id: None,
         surfaces: Vec::new(),
+        next_workspace: 0,
+        next_surface: 0,
     });
 
     let tab = model.add_tab(&surface_id).unwrap();

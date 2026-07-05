@@ -213,6 +213,43 @@ async fn notification_clear_marks_persisted_approvals_dismissed() {
 }
 
 #[tokio::test]
+async fn notification_clear_marks_persisted_notifications_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let feed_path = dir.path().join("feed.json");
+    let (state, _) = test_state();
+    let state = state.with_feed_store_path(&feed_path).unwrap();
+    let workspace_id = state.model.lock().unwrap().active_workspace_id().unwrap();
+
+    dispatch(
+        &state,
+        "notification.create",
+        json!({
+            "workspace_id": workspace_id,
+            "kind": "info",
+            "title": "UI smoke",
+            "body": "Temporary notification"
+        }),
+    )
+    .await
+    .unwrap();
+
+    dispatch(&state, "notification.clear", json!({}))
+        .await
+        .unwrap();
+    let feed = dispatch(
+        &state,
+        "feed.list",
+        json!({"workspace_id": workspace_id, "limit": 10}),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(feed[0]["type"], "notification");
+    assert_eq!(feed[0]["title"], "UI smoke");
+    assert_eq!(feed[0]["read"], true);
+}
+
+#[tokio::test]
 async fn context_snapshot_marks_missing_surface_approvals_stale() {
     let dir = tempfile::tempdir().unwrap();
     let feed_path = dir.path().join("feed.json");
@@ -550,6 +587,150 @@ async fn feed_list_reads_persisted_feed_entries_and_records_approval_decisions()
             .list(None, 10)[0]
             .approval_state,
         Some(forktty_core::FeedApprovalState::Approved)
+    );
+}
+
+#[tokio::test]
+async fn socket_state_counts_pending_feed_approvals() {
+    let dir = tempfile::tempdir().unwrap();
+    let feed_path = dir.path().join("feed.json");
+    let (state, _) = test_state();
+    let state = state.with_feed_store_path(&feed_path).unwrap();
+    let workspace_id = state.model.lock().unwrap().active_workspace_id().unwrap();
+
+    assert_eq!(state.pending_feed_approval_count(), Some(0));
+    {
+        let prev = current_snapshot(&state.model);
+        let mut model = state.model.lock().unwrap();
+        model.create_notification(
+            "Permission",
+            "Run command?",
+            NotificationKind::Prompt,
+            Some(workspace_id.clone()),
+            None,
+        );
+        model.create_notification(
+            "Apply",
+            "Launch workers?",
+            NotificationKind::Prompt,
+            Some(workspace_id.clone()),
+            None,
+        );
+        model.create_notification(
+            "Done",
+            "No approval required",
+            NotificationKind::Info,
+            Some(workspace_id.clone()),
+            None,
+        );
+        drop(model);
+        let next = current_snapshot(&state.model);
+        feed_events::record_feed_events(&state, &events::diff(&prev, &next)).unwrap();
+    }
+
+    assert_eq!(state.pending_feed_approval_count(), Some(2));
+    assert_eq!(
+        state.pending_feed_approval_summaries(3),
+        Some(vec!["Permission".to_string(), "Apply".to_string()])
+    );
+    let feed = dispatch(
+        &state,
+        "feed.list",
+        json!({"workspace_id": workspace_id, "limit": 10}),
+    )
+    .await
+    .unwrap();
+    let approval_id = feed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["approval_state"] == "pending")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    dispatch(
+        &state,
+        "feed.approval.respond",
+        json!({"id": approval_id, "decision": "approved"}),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(state.pending_feed_approval_count(), Some(1));
+    let remaining = state.pending_feed_approval_summaries(3).unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert!(remaining
+        .iter()
+        .any(|title| title == "Permission" || title == "Apply"));
+}
+
+#[tokio::test]
+async fn socket_state_lists_and_decides_pending_feed_approvals() {
+    let dir = tempfile::tempdir().unwrap();
+    let feed_path = dir.path().join("feed.json");
+    let (state, _) = test_state();
+    let state = state.with_feed_store_path(&feed_path).unwrap();
+    let workspace_id = state.model.lock().unwrap().active_workspace_id().unwrap();
+
+    assert_eq!(state.pending_feed_approvals(3), Some(Vec::new()));
+    assert!(state
+        .decide_feed_approval("missing", forktty_core::FeedApprovalState::Denied)
+        .is_err());
+
+    {
+        let prev = current_snapshot(&state.model);
+        let mut model = state.model.lock().unwrap();
+        model.create_notification(
+            "Permission",
+            "Run command?",
+            NotificationKind::Prompt,
+            Some(workspace_id.clone()),
+            None,
+        );
+        model.create_notification(
+            "Apply",
+            "Launch workers?",
+            NotificationKind::Prompt,
+            Some(workspace_id.clone()),
+            None,
+        );
+        drop(model);
+        let next = current_snapshot(&state.model);
+        feed_events::record_feed_events(&state, &events::diff(&prev, &next)).unwrap();
+    }
+
+    let approvals = state.pending_feed_approvals(3).unwrap();
+    assert_eq!(approvals.len(), 2);
+    assert!(approvals
+        .iter()
+        .all(|approval| !approval.id.is_empty() && approval.created_at_ms > 0));
+    let denied = approvals
+        .iter()
+        .find(|approval| approval.title == "Apply")
+        .unwrap();
+
+    state
+        .decide_feed_approval(&denied.id, forktty_core::FeedApprovalState::Denied)
+        .unwrap();
+
+    let remaining = state.pending_feed_approvals(3).unwrap();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].title, "Permission");
+    // Deciding twice must fail instead of silently rewriting the decision.
+    assert!(state
+        .decide_feed_approval(&denied.id, forktty_core::FeedApprovalState::Approved)
+        .is_err());
+    assert_eq!(
+        forktty_core::FeedStore::open_at(&feed_path)
+            .unwrap()
+            .list(None, 10)
+            .iter()
+            .find(|entry| entry.id == denied.id)
+            .unwrap()
+            .approval_state,
+        Some(forktty_core::FeedApprovalState::Denied)
     );
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::socket_cli::router::dispatch_command;
 
 #[test]
 fn statusline_requests_status_summary_with_workspace_selector() {
@@ -295,7 +296,13 @@ fn completions_include_grouped_commands_and_subcommands() {
 fn workflow_loop_set_is_advertised_in_help_text() {
     assert!(HELP_TEXT.contains("forktty workflow-loop-set <workflow-id>"));
     assert!(WORKFLOW_HELP_TEXT.contains("workflow-loop-set <workflow-id>"));
+    assert!(WORKFLOW_HELP_TEXT.contains("{id,kind,label,status,summary?}"));
+    assert!(WORKFLOW_HELP_TEXT.contains("workflow-loop-gate"));
+    assert!(WORKFLOW_HELP_TEXT.contains("workflow-loop-step-done"));
+    assert!(WORKFLOW_HELP_TEXT.contains("workflow-loop-publish"));
     assert!(EXAMPLES_TEXT.contains("forktty workflow-loop-set"));
+    assert!(EXAMPLES_TEXT.contains("workflow-loop-gate loop-runtime fmt passed"));
+    assert!(EXAMPLES_TEXT.contains("workflow-loop-step-done loop-runtime verify"));
 }
 
 #[test]
@@ -533,6 +540,199 @@ fn workflow_loop_set_requests_workflow_loop_set() {
     assert_eq!(request["params"]["iteration"], 2);
     assert_eq!(request["params"]["max_iterations"], 3);
     assert_eq!(request["params"]["gates"][0]["id"], "fmt");
+}
+
+#[test]
+fn workflow_loop_set_rejects_gate_objects_missing_required_fields_before_socket() {
+    let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+    assert_err_contains(
+        handle_workflow_loop_set(
+            &ctx,
+            strings(&[
+                "workflow-1",
+                "--gates-json",
+                r#"[{"id":"fmt","label":"fmt","status":"passed"}]"#,
+            ]),
+        ),
+        "--gates-json gate object requires id, kind, label, and status",
+    );
+}
+
+#[test]
+fn workflow_loop_gate_updates_one_gate_without_full_gate_array() {
+    let requests = with_socket_server(
+        2,
+        |req| match req["method"].as_str() {
+            Some("workflow.get") => json!({
+                "id": req["id"],
+                "ok": true,
+                "result": {
+                    "id": "workflow-1",
+                    "loop_recipe": "review-fix-verify",
+                    "loop_stage": "verify",
+                    "loop_iteration": 2,
+                    "loop_max_iterations": 3,
+                    "loop_gates": [{
+                        "id": "test",
+                        "kind": "command",
+                        "label": "cargo test",
+                        "status": "running"
+                    }]
+                },
+            })
+            .to_string(),
+            Some("workflow.loop.set") => json!({
+                "id": req["id"],
+                "ok": true,
+                "result": {
+                    "id": "workflow-1",
+                    "loop_stage": "verify",
+                    "loop_iteration": 2,
+                    "loop_max_iterations": 3,
+                    "loop_gates": []
+                },
+            })
+            .to_string(),
+            other => panic!("unexpected method {other:?}"),
+        },
+        |socket_path| {
+            dispatch_command(
+                &ctx_for(socket_path),
+                "workflow-loop-gate",
+                strings(&[
+                    "workflow-1",
+                    "fmt",
+                    "passed",
+                    "--kind",
+                    "command",
+                    "--label",
+                    "cargo fmt",
+                    "--summary",
+                    "clean",
+                ]),
+            )
+            .unwrap();
+        },
+    );
+    assert_eq!(requests[0]["method"], "workflow.get");
+    assert_eq!(requests[0]["params"]["workflow_id"], "workflow-1");
+    assert_eq!(requests[1]["method"], "workflow.loop.set");
+    assert_eq!(requests[1]["params"]["workflow_id"], "workflow-1");
+    assert_eq!(requests[1]["params"]["stage"], "verify");
+    assert_eq!(requests[1]["params"]["iteration"], 2);
+    assert_eq!(requests[1]["params"]["max_iterations"], 3);
+    assert_eq!(requests[1]["params"]["gates"].as_array().unwrap().len(), 2);
+    assert_eq!(requests[1]["params"]["gates"][1]["id"], "fmt");
+    assert_eq!(requests[1]["params"]["gates"][1]["kind"], "command");
+    assert_eq!(requests[1]["params"]["gates"][1]["status"], "passed");
+}
+
+#[test]
+fn workflow_loop_step_done_marks_stage_done_without_hand_written_json() {
+    let requests = with_socket_server(
+        2,
+        |req| match req["method"].as_str() {
+            Some("workflow.get") => json!({
+                "id": req["id"],
+                "ok": true,
+                "result": {
+                    "id": "workflow-1",
+                    "loop_stage": "verify",
+                    "loop_iteration": 2,
+                    "loop_max_iterations": 3,
+                    "loop_gates": []
+                },
+            })
+            .to_string(),
+            Some("workflow.loop.set") => json!({
+                "id": req["id"],
+                "ok": true,
+                "result": {
+                    "id": "workflow-1",
+                    "loop_stage": "verify",
+                    "loop_gates": [{"id": "stage-verify", "status": "passed"}]
+                },
+            })
+            .to_string(),
+            other => panic!("unexpected method {other:?}"),
+        },
+        |socket_path| {
+            dispatch_command(
+                &ctx_for(socket_path),
+                "workflow-loop-step-done",
+                strings(&["workflow-1", "verify", "--summary", "checks passed"]),
+            )
+            .unwrap();
+        },
+    );
+    assert_eq!(requests[0]["method"], "workflow.get");
+    assert_eq!(requests[1]["method"], "workflow.loop.set");
+    assert_eq!(requests[1]["params"]["workflow_id"], "workflow-1");
+    assert_eq!(requests[1]["params"]["stage"], "verify");
+    assert_eq!(requests[1]["params"]["iteration"], 2);
+    assert_eq!(requests[1]["params"]["max_iterations"], 3);
+    assert_eq!(requests[1]["params"]["gates"][0]["id"], "stage-verify");
+    assert_eq!(requests[1]["params"]["gates"][0]["kind"], "stage");
+    assert_eq!(requests[1]["params"]["gates"][0]["label"], "verify");
+    assert_eq!(requests[1]["params"]["gates"][0]["status"], "passed");
+    assert_eq!(
+        requests[1]["params"]["gates"][0]["summary"],
+        "checks passed"
+    );
+}
+
+#[test]
+fn workflow_loop_publish_records_commit_stop_reason_and_done_stage() {
+    let requests = with_socket_server(
+        2,
+        |req| match req["method"].as_str() {
+            Some("workflow.get") => json!({
+                "id": req["id"],
+                "ok": true,
+                "result": {
+                    "id": "workflow-1",
+                    "loop_stage": "verify",
+                    "loop_iteration": 2,
+                    "loop_max_iterations": 3,
+                    "loop_gates": []
+                },
+            })
+            .to_string(),
+            Some("workflow.loop.set") => json!({
+                "id": req["id"],
+                "ok": true,
+                "result": {
+                    "id": "workflow-1",
+                    "loop_stage": "done",
+                    "loop_stop_reason": "published abc1234"
+                },
+            })
+            .to_string(),
+            other => panic!("unexpected method {other:?}"),
+        },
+        |socket_path| {
+            dispatch_command(
+                &ctx_for(socket_path),
+                "workflow-loop-publish",
+                strings(&["workflow-1", "--commit", "abc1234"]),
+            )
+            .unwrap();
+        },
+    );
+    assert_eq!(requests[0]["method"], "workflow.get");
+    assert_eq!(requests[1]["method"], "workflow.loop.set");
+    assert_eq!(requests[1]["params"]["workflow_id"], "workflow-1");
+    assert_eq!(requests[1]["params"]["stage"], "done");
+    assert_eq!(requests[1]["params"]["iteration"], 2);
+    assert_eq!(requests[1]["params"]["max_iterations"], 3);
+    assert_eq!(requests[1]["params"]["stop_reason"], "published abc1234");
+    assert_eq!(requests[1]["params"]["gates"][0]["id"], "published");
+    assert_eq!(requests[1]["params"]["gates"][0]["kind"], "publish");
+    assert_eq!(requests[1]["params"]["gates"][0]["status"], "passed");
+    assert_eq!(
+        requests[1]["params"]["gates"][0]["summary"],
+        "commit abc1234"
+    );
 }
 
 #[test]

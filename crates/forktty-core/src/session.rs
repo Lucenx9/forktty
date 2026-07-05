@@ -51,6 +51,15 @@ pub struct SessionData {
     /// in which case restore falls back to a plain terminal for every leaf.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub surfaces: Vec<Surface>,
+    /// Monotonic high-water mark for generated workspace ids. This prevents a
+    /// closed workspace id from being reused after restart while durable
+    /// workflow/team records may still reference the old id.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub next_workspace: u64,
+    /// Monotonic high-water mark for generated surface ids. See
+    /// `next_workspace` for the durable-record collision this avoids.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub next_surface: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -509,6 +518,8 @@ fn migrate_v2_session(v2: V2SessionData) -> Result<SessionData, SessionError> {
         workspaces,
         active_workspace_id: v2.active_workspace_id,
         surfaces: v2.surfaces,
+        next_workspace: 0,
+        next_surface: 0,
     })
 }
 
@@ -577,6 +588,8 @@ fn migrate_legacy_session(legacy: LegacySessionData) -> Result<SessionData, Sess
         active_workspace_id,
         // Legacy sessions predate browser panes: every surface is a terminal.
         surfaces: Vec::new(),
+        next_workspace: 0,
+        next_surface: 0,
     })
 }
 
@@ -956,6 +969,10 @@ fn default_session_version() -> u32 {
     SESSION_FORMAT_VERSION
 }
 
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
+}
+
 fn default_legacy_session_version() -> u32 {
     1
 }
@@ -1065,6 +1082,8 @@ mod tests {
             workspaces: model.list_workspaces(),
             active_workspace_id: Some(workspace.id),
             surfaces: Vec::new(),
+            next_workspace: 0,
+            next_surface: 0,
         };
         validate_session_data(&data).unwrap();
     }
@@ -1076,6 +1095,8 @@ mod tests {
             workspaces: Vec::new(),
             active_workspace_id: None,
             surfaces: Vec::new(),
+            next_workspace: 0,
+            next_surface: 0,
         };
 
         assert!(matches!(
@@ -1096,6 +1117,8 @@ mod tests {
             workspaces: model.list_workspaces(),
             active_workspace_id: Some(workspace.id),
             surfaces: Vec::new(),
+            next_workspace: 0,
+            next_surface: 0,
         };
 
         save_session_to_path(&path, &data).unwrap();
@@ -1154,6 +1177,8 @@ mod tests {
             workspaces: model.list_workspaces(),
             active_workspace_id: Some(workspace.id),
             surfaces: Vec::new(),
+            next_workspace: 0,
+            next_surface: 0,
         };
         save_session_to_path(&target, &data).unwrap();
         symlink(&target, &path).unwrap();
@@ -1206,6 +1231,8 @@ mod tests {
             workspaces: model.list_workspaces(),
             active_workspace_id: Some(workspace.id),
             surfaces: Vec::new(),
+            next_workspace: 0,
+            next_surface: 0,
         };
 
         save_session_to_path(&path, &data).expect("save through broken symlink should succeed");

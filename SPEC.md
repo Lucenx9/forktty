@@ -92,7 +92,7 @@ Native session file:
 ~/.local/share/forktty/session-v2.json
 ```
 
-The native session includes workspace order, active workspace, pane tree, focused surface, cwd, branch, worktree metadata, and opt-in bounded plain-text tails when `appearance.persistent_scrollback_lines` is greater than zero. Embedded Ghostty panes currently source those tails from Ghostty's visible-text ABI rather than an off-screen scrollback-tail ABI. It does not serialize running PTY process handles; the session file records only durable identifiers (surface ids, agent resume metadata). Process survival across a UI restart is a separate, opt-in mechanism (`general.persist_terminal_processes`) described under [PTY process persistence](#pty-process-persistence), keyed by the persisted surface id rather than by any serialized handle.
+The native session includes workspace order, active workspace, pane tree, focused surface, cwd, branch, worktree metadata, generated workspace/surface id high-water marks, and opt-in bounded plain-text tails when `appearance.persistent_scrollback_lines` is greater than zero. Embedded Ghostty panes currently source those tails from Ghostty's visible-text ABI rather than an off-screen scrollback-tail ABI. It does not serialize running PTY process handles; the session file records only durable identifiers (surface ids, agent resume metadata). Process survival across a UI restart is a separate, opt-in mechanism (`general.persist_terminal_processes`) described under [PTY process persistence](#pty-process-persistence), keyed by the persisted surface id rather than by any serialized handle. On restore or fresh bootstrap, ForkTTY also reserves workspace/surface id suffixes referenced by durable workflow/team records before creating new GTK workspaces, so a prior orchestration record cannot be adopted merely because a new session would otherwise recycle the same `workspace-N` or `surface-N` id.
 
 Browser panes persist their surface URL and profile ID in the same session
 model. WebKit processes, in-memory page state, and terminal PTY state are
@@ -165,6 +165,8 @@ persist_terminal_processes = false
 persistent_scrollback_lines = 0
 sidebar_position = "left"
 sidebar_visible = true
+show_orchestration_rail = true
+show_workflow_feed = true
 window_mode = "normal"
 
 [notifications]
@@ -180,7 +182,7 @@ auto_check = true
 anonymous_ping = true
 ```
 
-Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Config load validates and normalizes `general.shell` from manual TOML edits, but the Settings dialog does not expose a shell editor. Saved settings validate worktree layout, terminal-process persistence, persistent scrollback bounds (max 1,000 lines), sidebar position, window mode, PR lookup toggle, update auto-check toggle, telemetry anonymous-ping toggle, notification filters, notification command, and team provider selection. Settings > Worktrees exposes `general.persist_terminal_processes` as "Persist terminal processes" and reports whether `dtach` is currently detectable on the ForkTTY process `PATH`. The `[team]` config section controls visible team worker launches: `default_agent` is `auto` or one of `codex`, `claude`, `pi`, `opencode`, `antigravity`, `grok`; `provider_order` is a non-empty deduplicated ordered list of those providers; `auto_fallback` controls whether a configured non-auto default can fall through to the next available provider; `disabled_agents` excludes providers from launch until re-enabled; and `provider_commands` is an optional canonical-provider map of direct command names or absolute executable paths for harnesses installed outside the ForkTTY process `PATH` (for example `{ codex = "/opt/codex/bin/codex" }`). Provider command overrides are single argv programs, not shell snippets or argument strings; launch args still come from the launch request. Provider aliases such as `claude-code`, `open-code`, `agy`, and `grok-build` normalize to canonical names on load. Legacy `general.theme_source`, `font_family`, `font_size`, `scrollback_lines`, `terminal_audible_bell`, `terminal_renderer`, `terminal_theme`, and the temporary alpha `embedded_ghostty` switch are accepted on load for compatibility, omitted from new saves, and ignored by the GTK runtime; terminal panes always require the embedded Ghostty GTK renderer. Terminal font, color, bell, `scrollback-limit`, and `scrollbar` preferences come from Ghostty's config when present; no system Ghostty install is required. Embedded panes fall back to Ghostty's bounded default scrollback budget (10,000,000 bytes per surface) when Ghostty config does not set `scrollback-limit`; legacy ForkTTY `scrollback_lines` does not change retained embedded history. The GTK runtime loads `~/.config/ghostty/config.ghostty` and the legacy `~/.config/ghostty/config`, follows `config-file`, resolves `theme` for dark mode, searches Ghostty theme directories, and applies font size/family/style-family/style/synthetic-style entries, font features/variations, foreground/background, cursor, selection, named colors, `cell-foreground`/`cell-background` cursor and selection color references, `cursor-opacity`, DECSCUSR-backed `cursor-style`/`cursor-style-blink` defaults, `selection-clear-on-typing`, `selection-clear-on-copy`, `selection-word-chars`, `clipboard-trim-trailing-spaces`, `clipboard-codepoint-map`, `copy-on-select`, `right-click-action`, `scroll-to-bottom`, `scrollbar`, SGR faint text plus `faint-opacity`, `mouse-reporting`, `mouse-shift-capture`, `mouse-hide-while-typing`, `bell-features`, `bell-audio-path`, `bell-audio-volume`, `mouse-scroll-multiplier`, `adjust-cell-width`, `adjust-cell-height`, `adjust-font-baseline`, underline/strikethrough/overline/cursor metric adjustments, `bold-color`/`bold-is-bright`, short/full hex colors, ANSI palette entries 0-15, `image-storage-limit`, `unfocused-split-opacity`, and `unfocused-split-fill`. `terminal_renderer` is retained on load for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
+Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Config load validates and normalizes `general.shell` from manual TOML edits, but the Settings dialog does not expose a shell editor. Saved settings validate worktree layout, terminal-process persistence, persistent scrollback bounds (max 1,000 lines), sidebar position, window mode, PR lookup toggle, update auto-check toggle, telemetry anonymous-ping toggle, notification filters, notification command, and team provider selection. `appearance.show_orchestration_rail` and `appearance.show_workflow_feed` (both default `true`) toggle the right-side Router/orchestration rail and the bottom workflow feed dock in the GTK workbench; Settings > Interface exposes them and applies changes live. Settings > Worktrees exposes `general.persist_terminal_processes` as "Persist terminal processes" and reports whether `dtach` is currently detectable on the ForkTTY process `PATH`. The `[team]` config section controls visible team worker launches: `default_agent` is `auto` or one of `codex`, `claude`, `pi`, `opencode`, `antigravity`, `grok`; `provider_order` is a non-empty deduplicated ordered list of those providers; `auto_fallback` controls whether a configured non-auto default can fall through to the next available provider; `disabled_agents` excludes providers from launch until re-enabled; and `provider_commands` is an optional canonical-provider map of direct command names or absolute executable paths for harnesses installed outside the ForkTTY process `PATH` (for example `{ codex = "/opt/codex/bin/codex" }`). Provider command overrides are single argv programs, not shell snippets or argument strings; launch args still come from the launch request. Provider aliases such as `claude-code`, `open-code`, `agy`, and `grok-build` normalize to canonical names on load. Legacy `general.theme_source`, `font_family`, `font_size`, `scrollback_lines`, `terminal_audible_bell`, `terminal_renderer`, `terminal_theme`, and the temporary alpha `embedded_ghostty` switch are accepted on load for compatibility, omitted from new saves, and ignored by the GTK runtime; terminal panes always require the embedded Ghostty GTK renderer. Terminal font, color, bell, `scrollback-limit`, and `scrollbar` preferences come from Ghostty's config when present; no system Ghostty install is required. Embedded panes fall back to Ghostty's bounded default scrollback budget (10,000,000 bytes per surface) when Ghostty config does not set `scrollback-limit`; legacy ForkTTY `scrollback_lines` does not change retained embedded history. The GTK runtime loads `~/.config/ghostty/config.ghostty` and the legacy `~/.config/ghostty/config`, follows `config-file`, resolves `theme` for dark mode, searches Ghostty theme directories, and applies font size/family/style-family/style/synthetic-style entries, font features/variations, foreground/background, cursor, selection, named colors, `cell-foreground`/`cell-background` cursor and selection color references, `cursor-opacity`, DECSCUSR-backed `cursor-style`/`cursor-style-blink` defaults, `selection-clear-on-typing`, `selection-clear-on-copy`, `selection-word-chars`, `clipboard-trim-trailing-spaces`, `clipboard-codepoint-map`, `copy-on-select`, `right-click-action`, `scroll-to-bottom`, `scrollbar`, SGR faint text plus `faint-opacity`, `mouse-reporting`, `mouse-shift-capture`, `mouse-hide-while-typing`, `bell-features`, `bell-audio-path`, `bell-audio-volume`, `mouse-scroll-multiplier`, `adjust-cell-width`, `adjust-cell-height`, `adjust-font-baseline`, underline/strikethrough/overline/cursor metric adjustments, `bold-color`/`bold-is-bright`, short/full hex colors, ANSI palette entries 0-15, `image-storage-limit`, `unfocused-split-opacity`, and `unfocused-split-fill`. `terminal_renderer` is retained on load for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
 
 Ghostty compatibility scope:
 
@@ -374,9 +376,13 @@ work, so dirty-repo state alone does not force worktree isolation for a
 `router_profile` is omitted, it uses `balanced`
 unless the goal or request hints clearly imply `fast`, `conservative`,
 `parallel`, or `review_heavy`; an explicit profile reweights the same
-explainable scorer without changing approval or visibility rules. Goal-based
-task class and router profile inference recognizes English keywords only;
-goals written in other languages fall back to `repo_inspection` with the
+explainable scorer without changing approval or visibility rules. Explicit
+iterative goals such as "use loop", "iterative audit", "repeat verification",
+or "keep checking until clean"
+classify as `verify_fix_loop` and bias the selected strategy toward
+`layers.loop_metadata: true`; this remains planning metadata only. Other
+goal-based task class and router profile inference recognizes English keywords
+only; goals written in other languages fall back to `repo_inspection` with the
 `balanced` profile unless the caller passes normalized `task_kind`,
 `router_profile`, or the other explicit hints. It never
 launches processes, mutates workflow/team/feed state, creates worktrees, sends
@@ -579,10 +585,10 @@ tracks through durable workflow state, cannot omit `layers.team: true` from
 strategies that require visible team orchestration, cannot force
 `layers.team: true` onto a strategy that the planner does not treat as a team
 strategy, cannot force `layers.loop_metadata: true` onto a strategy that the
-planner does not treat as a verify-loop strategy, or attach assignment roles
-that the planner would not assign for that strategy. `team` or `loop_metadata`
-layers require the `workflow` layer so ForkTTY does not create orphan team
-state or no-op loop metadata.
+planner does not treat as a verify-loop or iterative-review strategy, or attach
+assignment roles that the planner would not assign for that strategy. `team` or
+`loop_metadata` layers require the `workflow` layer so ForkTTY does not create
+orphan team state or no-op loop metadata.
 When both surface aliases are provided, `leader_surface_id` and `surface_id`
 must refer to the same surface. The MCP `task_strategy_apply` tool forwards
 the current `FORKTTY_WORKSPACE_ID` and `FORKTTY_SURFACE_ID` as the default
@@ -660,6 +666,9 @@ has `layers.loop_metadata: true`, apply seeds an initial workflow loop record
 only if the workflow does not already have loop state: recipe is the strategy
 wire id (for example `solo_with_verify_loop`), stage is `planned`, iteration is
 `0`, max iterations defaults to `3`, gates are empty, and no stop reason is set.
+Explicitly iterative read-only review goals may keep the `review_only` strategy
+while carrying `layers.loop_metadata: true`, so agents can record repeated
+audit passes without launching team workers or changing the review role.
 Retries with the same run id preserve any existing loop state recorded by an
 agent or user. With `submit: true`, a
 supported team plan becomes an active visible run: ForkTTY upserts the workflow
@@ -811,9 +820,11 @@ active workers, open tasks, or pending messages as `active_without_open_work`.
 `team.worker.health` reports `heartbeat_state: "no_heartbeat"` for workers
 whose provider path has no heartbeat yet, reserving `"stale"` for workers with
 a recorded heartbeat older than the stale threshold. When the attached surface
-already has persisted agent-session lifecycle metadata, health rows include an
-`agent_session` object and derive `running`, `idle`, `needs_input`, or `done`
-from that lifecycle before falling back to heartbeat age.
+already has persisted agent-session lifecycle metadata for the same provider as
+the team worker, health rows include an `agent_session` object and derive
+`running`, `idle`, `needs_input`, or `done` from that lifecycle before falling
+back to heartbeat age; lifecycle metadata from a different provider on a reused
+surface is ignored.
 
 `workflow.loop.set` records bounded closed-loop progress on an existing
 workflow: optional recipe, stage, iteration, maximum iterations, stop reason,
@@ -822,6 +833,10 @@ scheduler, run commands, send terminal input, push, merge, or grant approval.
 When a request advances to a different iteration without supplying replacement
 gates or a replacement stop reason, ForkTTY clears the previous gate rows and
 stop reason so stale failed checks do not describe the new pass.
+CLI `workflow-loop-gate`, `workflow-loop-step-done`, and
+`workflow-loop-publish` are ergonomic wrappers over the same socket method:
+they read the current workflow, merge one compact gate update, and then submit
+an ordinary `workflow.loop.set` payload so existing gate rows are preserved.
 Agents use it to make a visible loop such as discover/plan/execute/verify
 auditable across context compaction. `context.snapshot` exposes stale
 workflow surface bindings on workflow summary/detail rows through

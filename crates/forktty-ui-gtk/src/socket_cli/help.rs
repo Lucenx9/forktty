@@ -81,6 +81,9 @@ Usage:
   forktty workflow-upsert [--workflow-id <id>] [--workspace-id <id>|--workspace-name <name>|--worktree-name <name>] [--surface-id <id>] [--agent <agent>] [--session-id <id>] [--mode <mode>] [--status <status>] [--goal <text>] [--memory <text>] [--json]
   forktty workflow-plan-set <workflow-id> --steps-json <json-array> [--json]
   forktty workflow-loop-set <workflow-id> [--recipe <text>] [--stage <text>] [--iteration <n>] [--max-iterations <n>] [--stop-reason <text>] [--gates-json <json-array>] [--json]
+  forktty workflow-loop-gate <workflow-id> <gate-id> <status> [--kind <kind>] [--label <text>] [--summary <text>] [--json]
+  forktty workflow-loop-step-done <workflow-id> <stage> [--summary <text>] [--json]
+  forktty workflow-loop-publish <workflow-id> --commit <rev> [--json]
   forktty workflow-evidence-add <workflow-id> --kind <kind> --title <title> [--text <text>|--text-file <path>|--text-file -] [--evidence-id <id>] [--path <path>] [--json]
   forktty workflow-replay [--workflow-id <id>] [--query <text>] [--since-seq <n>] [--limit <n>] [--json]
   forktty log [message] [--message <message>] [--level info|warn|error]
@@ -189,6 +192,13 @@ ForkTTY workflow commands
   forktty workflow-upsert [--workflow-id <id>] [workspace selectors] [--goal <text>] [--memory <text>]
   forktty workflow-plan-set <workflow-id> --steps-json <json-array>
   forktty workflow-loop-set <workflow-id> [--recipe <text>] [--stage <text>] [--iteration <n>] [--max-iterations <n>] [--stop-reason <text>] [--gates-json <json-array>]
+      --gates-json must be an array of {id,kind,label,status,summary?} objects.
+  forktty workflow-loop-gate <workflow-id> <gate-id> <status> [--kind <kind>] [--label <text>] [--summary <text>]
+      Add or update one loop gate without hand-writing the full gates array.
+  forktty workflow-loop-step-done <workflow-id> <stage> [--summary <text>]
+      Mark one loop stage done by recording a passed stage gate.
+  forktty workflow-loop-publish <workflow-id> --commit <rev>
+      Mark the loop done with a published commit stop reason.
   forktty workflow-evidence-add <workflow-id> --kind <kind> --title <title> [--text <text>|--text-file <path>|--text-file -]
   forktty workflow-replay [--workflow-id <id>] [--query <text>] [--since-seq <n>]
 ";
@@ -213,6 +223,9 @@ ForkTTY examples
   forktty team finish review-team
   forktty workflows --query release --limit 5
   forktty workflow-loop-set loop-runtime --stage verify --iteration 2 --max-iterations 4
+  forktty workflow-loop-gate loop-runtime fmt passed --kind command --label \"cargo fmt --all --check\"
+  forktty workflow-loop-step-done loop-runtime verify --summary \"checks passed\"
+  forktty workflow-loop-publish loop-runtime --commit abc1234
 ";
 
 // Curated ergonomic command set, not every low-level socket alias.
@@ -243,6 +256,9 @@ pub(super) const COMPLETION_COMMANDS: &[&str] = &[
     "workflow-get",
     "workflow-upsert",
     "workflow-loop-set",
+    "workflow-loop-gate",
+    "workflow-loop-step-done",
+    "workflow-loop-publish",
     "tree",
     "top",
     "events",

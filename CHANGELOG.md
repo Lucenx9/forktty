@@ -32,8 +32,40 @@ All notable changes to ForkTTY are documented here.
   `orchestration_cleanup`, and `forktty cleanup orchestration` so stale
   team/workflow records can be inspected and conservatively closed without
   touching live worker surfaces.
+- Added ergonomic workflow-loop CLI wrappers: `workflow-loop-gate` to merge one
+  gate update, `workflow-loop-step-done` to mark a stage complete, and
+  `workflow-loop-publish` to record a published commit stop reason without
+  hand-writing the full gates array.
 
 ### Changed
+- The GTK workbench now follows the agent-workspace layout end to end: the
+  titlebar carries a Router cluster (breadcrumb, workspace selector, Plan and
+  Apply shortcuts into the read-only Router planner) plus live team chips; the
+  sidebar gains TEAM, RESOURCES, and Settings/About sections; the right-side
+  rail shows structured strategy/loop/approval/worker/report/notification rows
+  with working Review/Deny on pending Feed approvals and a notifications
+  Clear-all; the workflow feed gets wall-clock timestamps, per-kind status
+  colors, filter tabs, and a Clear button; split panes gain a slim footer with
+  the shell name and agent lifecycle; and the status bar summarizes the active
+  Router strategy and loop.
+- The Router rail and bottom workflow feed can now be collapsed from their
+  headers for temporary workspace space recovery while the Settings toggles
+  remain the persistent show/hide controls.
+- Reworked both collapsed states: the collapsed Router rail is a slim strip
+  with an expand chevron plus pending-approval and unread-notification badges
+  (and now stays collapsed even after the divider has been dragged), the rail
+  header no longer scrolls away with the rail body, the workflow feed
+  collapses with a slide animation and re-expands when a feed tab is clicked,
+  collapse controls use chevron icons instead of ASCII arrows, and the rail
+  status and feed "live" pills were restyled (status pill now colored by
+  state instead of always green).
+- Settings follows the same agent-workspace pass: Interface gains live "Show
+  orchestration rail" and "Show workflow feed" toggles (new
+  `appearance.show_orchestration_rail` / `appearance.show_workflow_feed`
+  config keys, default on), Worktrees links the worktree manager, Agents can
+  re-scan provider readiness on demand, Notifications can clear the in-app
+  history, and Privacy states the local-first guarantees and stored data
+  locations next to the telemetry toggle.
 - `team.finish` now accepts `compact`/`--compact` to finalize teams without
   echoing the full team record and mailbox bodies in the response.
 - Team worker health now distinguishes workers that have no heartbeat plumbing
@@ -56,8 +88,19 @@ All notable changes to ForkTTY are documented here.
   aliases such as `bugfix`, `feature`, `review`, and `research`, so agents can
   pass clear user intent across languages without relying on ForkTTY keyword
   guessing or exact internal enum names.
+- Task strategy planning now treats explicit iterative goals such as repeat
+  verification, iterative audits, and "keep checking until clean" as
+  verify-loop work, and preserves `review_only` strategy for explicit review
+  hints while still setting `layers.loop_metadata: true`; no hidden scheduler
+  is started.
+- The Router rail loop row now shows stage plus iteration budget and compact
+  passed/failed/running gate counts when loop metadata exists.
 
 ### Fixed
+- Fixed top-level CLI routing for the ergonomic workflow-loop wrappers so
+  `forktty workflow-loop-gate`, `workflow-loop-step-done`, and
+  `workflow-loop-publish` reach the socket CLI instead of failing as unknown
+  arguments.
 - Fixed task strategy worktree isolation so dirty-repo read-only parallel
   reviews can remain `parallel_research` without requiring worktree isolation,
   while mutating `parallel_experiment` plans still require isolation.
@@ -90,6 +133,71 @@ All notable changes to ForkTTY are documented here.
   notifications no longer clears a pane's unrelated unread-output badge; the
   notification panel also refreshes header state immediately and no longer
   renders freshly-read rows as unread.
+- Fixed notification clearing so the persisted Feed marks cleared
+  notification rows read while still keeping them in history, preventing the
+  new Router rail and workflow feed from showing cleared notifications as
+  still unread.
+- Fixed the Router rail notification Clear-all action so it only clears the
+  notifications visible in the active workspace instead of deleting hidden
+  notifications from other workspaces.
+- Fixed the Router rail notification Clear-all action so it also closes
+  matching desktop notifications and sends OSC 99 close reports for terminal
+  notifications that requested close reporting.
+- Fixed the Settings notification-history Clear action so it also closes
+  matching desktop notifications and sends OSC 99 close reports for terminal
+  notifications that requested close reporting.
+- Fixed the new Router rail and workflow feed live state so worker health uses
+  live pane lifecycle such as `needs_input` instead of raw persisted worker
+  status, and the workflow feed `LOGS` tab shows metadata logs instead of
+  notification rows.
+- Fixed Router rail worker health so a live agent session is applied only when
+  its provider matches the team worker, preventing a recycled surface with a
+  different agent session from making another worker look blocked.
+- Fixed the Router rail notification "Clear all" action so it actually clears
+  in-app notification rows instead of only marking them read and leaving them
+  visible.
+- Fixed the Router rail, header chips, status summary, and workflow feed so
+  they scope workflow/team state to the active workspace instead of continuing
+  to show the most recently updated router task after its workspace was closed.
+- Fixed orchestration UI state after restarts so closed or prior-session
+  workspace/surface ids referenced by durable workflow/team records are
+  reserved before new GTK workspaces are created, preventing old router/team
+  records from being adopted by an unrelated fresh workspace.
+- Fixed orchestration UI restart state so pending Feed approvals also reserve
+  their referenced workspace/surface ids before fresh GTK workspaces are
+  created, preventing stale approval prompts from reattaching to unrelated
+  panes after restart.
+- Fixed task-router loop intent inference so non-English loop phrases no
+  longer bypass the structured `task_kind` / `router_profile` hint contract.
+- Fixed task-router loop intent inference so broad phrases such as "with loop"
+  or "until clean" no longer seed loop metadata unless the goal also names a
+  repeat or verification action.
+- Fixed split-pane footer shell labels so they use ForkTTY's configured shell
+  instead of the parent process `SHELL` environment variable.
+- Fixed the Router rail so capped Worker Health and Worker Reports sections
+  show a `+N more` overflow caption instead of silently hiding extra rows.
+- Fixed the workflow feed combined view so bursts of metadata logs, especially
+  Antigravity tool logs, cannot push workflow, team, approval, or notification
+  rows out of the visible five-line summary.
+- Fixed the workflow feed so notification rows are scoped to the active
+  workspace and live surfaces, and the `LOGS` tab uses its full five-row budget
+  instead of inheriting the mixed feed's compact log cap.
+- Fixed workflow feed empty states so the `EVENTS` and `LOGS` tabs describe
+  their own missing content instead of always saying there are no workflow
+  events.
+- Fixed the workflow feed `Clear` action so clearing one tab only hides rows in
+  that tab instead of also hiding older rows from the other feed filters.
+- Fixed the workflow feed `Clear` action so clearing a tab in one workspace no
+  longer hides older feed rows after switching to another workspace.
+- Fixed Settings privacy copy so it no longer claims "No analytics" next to
+  the configurable anonymous daily ping toggle.
+- Fixed the Router rail so active workflow/team records stay selected over
+  newer terminal records in the same workspace, preventing old completed runs
+  from hiding current worker health or loop state after cleanup/evidence churn.
+- Fixed the Router rail worker reports and approvals so five-worker review
+  teams show all five report/health rows, pending approvals whose target
+  surface has closed are hidden from the rail, and prompt notifications whose
+  target surface has already been closed stay hidden.
 - Fixed Feed approval responses so pending approvals whose workspace or surface
   target went stale are persisted as `stale` and rejected instead of being
   approved through the socket after `feed.list` already showed them stale.
