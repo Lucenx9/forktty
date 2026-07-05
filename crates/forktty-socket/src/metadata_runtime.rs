@@ -97,10 +97,13 @@ pub(crate) fn set_status(state: &SocketAppState, params: &Value) -> Result<Value
                 request.surface_id.as_deref(),
                 request.hook_session_id.as_deref(),
             ) {
-                if model
-                    .surface(surface_id)
-                    .is_some_and(|surface| surface.workspace_id == request.workspace_id)
-                {
+                if model.surface(surface_id).is_some_and(|surface| {
+                    surface.workspace_id == request.workspace_id
+                        && surface.agent_session.as_ref().is_none_or(|session| {
+                            session.agent == agent
+                                || session.lifecycle == AgentSessionLifecycle::Ended
+                        })
+                }) {
                     model.set_surface_agent_session(surface_id, agent, hook_session_id);
                     if let Some(hook_session_cwd) = request.hook_session_cwd {
                         model.set_surface_agent_session_resume_cwd(surface_id, hook_session_cwd);

@@ -183,6 +183,9 @@ All notable changes to ForkTTY are documented here.
 - Fixed Router rail worker health so a live agent session is applied only when
   its provider matches the team worker, preventing a recycled surface with a
   different agent session from making another worker look blocked.
+- Fixed hook metadata binding so a status event from one provider cannot steal
+  a live surface already bound to a different provider session, preventing Grok
+  panes from appearing as Claude in agent status surfaces.
 - Fixed the Router rail notification "Clear all" action so it actually clears
   in-app notification rows instead of only marking them read and leaving them
   visible.

@@ -134,6 +134,63 @@ async fn hook_status_persists_surface_agent_session_binding() {
 }
 
 #[tokio::test]
+async fn hook_status_does_not_steal_surface_from_different_agent_session() {
+    let (state, _backend) = test_state();
+    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspaces[0]["id"].as_str().unwrap();
+    let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "workspace_id": workspace_id,
+            "surface_id": surface_id,
+            "key": "agent:grok",
+            "label": "Grok",
+            "value": "Running",
+            "hook_session_id": "grok-session-1",
+            "hook_event_name": "session-start",
+            "hook_event_order": 100
+        }),
+    )
+    .await
+    .unwrap();
+
+    dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "workspace_id": workspace_id,
+            "surface_id": surface_id,
+            "key": "agent:claude",
+            "label": "Claude",
+            "value": "Needs input",
+            "hook_session_id": "claude-session-1",
+            "hook_event_name": "permission-request",
+            "hook_event_order": 200
+        }),
+    )
+    .await
+    .unwrap();
+
+    let agents = dispatch(&state, "agent.list", json!({})).await.unwrap();
+    assert_eq!(agents.as_array().unwrap().len(), 1);
+    assert_eq!(agents[0]["agent"], "grok");
+    assert_eq!(agents[0]["session_id"], "grok-session-1");
+
+    let model = state.model.lock().unwrap();
+    let session = model
+        .surface(surface_id)
+        .unwrap()
+        .agent_session
+        .as_ref()
+        .unwrap();
+    assert_eq!(session.agent, AgentKind::Grok);
+    assert_eq!(session.session_id, "grok-session-1");
+}
+
+#[tokio::test]
 async fn hook_status_updates_persisted_agent_session_lifecycle() {
     let (state, _backend) = test_state();
     let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
