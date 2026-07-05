@@ -63,6 +63,9 @@ All notable changes to ForkTTY are documented here.
   prompts.
 - Fixed task strategy planning input validation so oversized routing reason
   hints are rejected before they can inflate plan score explanations.
+- Fixed inferred task strategy cooldown reasons so long workflow IDs cannot
+  make planner-generated score factors or plan reasons fail apply-time size
+  validation.
 - Fixed task strategy error reporting so unsupported routing enum values and
   malformed submitted plans cannot echo oversized caller-controlled strings.
 - Fixed task strategy text validation so goals reject terminal control

@@ -547,10 +547,11 @@ pub(crate) fn apply_inferred_harness_cooldowns(
         let Some(reason) = inferred_harness_cooldown_reason(workflows, &harness.id, now_ms) else {
             continue;
         };
-        reasons.push(format!(
+        let reason = bound_task_strategy_reason_for_prefix(reason, "harness is on cooldown: ");
+        reasons.push(bound_task_strategy_reason(format!(
             "inferred advisory cooldown for harness {}: {reason}",
             harness.id
-        ));
+        )));
         harness.routing_signals.cooldown = true;
         harness.routing_signals.cooldown_reason = Some(reason);
     }
@@ -559,6 +560,40 @@ pub(crate) fn apply_inferred_harness_cooldowns(
 
 /// `workflows` must be newest-first (`WorkflowStore::list` order): a success
 /// encountered before enough failures clears the older failure evidence.
+fn bound_task_strategy_reason(value: String) -> String {
+    truncate_utf8_with_ellipsis(value, MAX_TASK_STRATEGY_REASON_BYTES)
+}
+
+fn bound_task_strategy_reason_for_prefix(value: String, prefix: &str) -> String {
+    let remaining = MAX_TASK_STRATEGY_REASON_BYTES.saturating_sub(prefix.len());
+    truncate_utf8_with_ellipsis(value, remaining)
+}
+
+fn truncate_utf8_with_ellipsis(mut value: String, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value;
+    }
+    if max_bytes == 0 {
+        return String::new();
+    }
+    const ELLIPSIS: &str = "…";
+    if max_bytes <= ELLIPSIS.len() {
+        let mut keep_bytes = max_bytes;
+        while !value.is_char_boundary(keep_bytes) {
+            keep_bytes -= 1;
+        }
+        value.truncate(keep_bytes);
+        return value;
+    }
+    let mut keep_bytes = max_bytes - ELLIPSIS.len();
+    while !value.is_char_boundary(keep_bytes) {
+        keep_bytes -= 1;
+    }
+    value.truncate(keep_bytes);
+    value.push_str(ELLIPSIS);
+    value
+}
+
 fn inferred_harness_cooldown_reason(
     workflows: &[WorkflowState],
     harness_id: &str,
