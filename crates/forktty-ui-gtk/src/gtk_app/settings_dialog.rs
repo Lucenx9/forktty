@@ -1569,26 +1569,12 @@ fn clear_notification_history_from_settings(state: &SocketAppState) -> usize {
     state.mark_notification_feed_entries_cleared(&notifications);
     for notification in &notifications {
         close_desktop_notification(&notification.id);
-        send_settings_terminal_notification_close_report(state, notification);
     }
+    super::notifications_panel::send_terminal_notification_close_reports_via_backend(
+        state.terminal.clone(),
+        notifications.clone(),
+    );
     notifications.len()
-}
-
-fn send_settings_terminal_notification_close_report(
-    state: &SocketAppState,
-    notification: &NotificationItem,
-) {
-    let Some(metadata) = notification.terminal_metadata.as_ref() else {
-        return;
-    };
-    if !metadata.report_close {
-        return;
-    }
-    let Some(surface_id) = notification.surface_id.as_deref() else {
-        return;
-    };
-    let report = super::notifications_panel::terminal_notification_close_report(metadata);
-    let _ = state.terminal.send_text(surface_id, &report);
 }
 
 pub(super) fn settings_choice_index(items: &[(&str, &str)], value: &str) -> u32 {
@@ -1696,9 +1682,13 @@ mod tests {
 
         assert_eq!(cleared, 1);
         assert!(model.lock().unwrap().list_notifications().is_empty());
-        assert_eq!(
-            terminal.sent_text(&surface_id).unwrap(),
-            vec!["\x1b]99;i=build:p=close;\x1b\\"]
-        );
+        let expected = vec!["\x1b]99;i=build:p=close;\x1b\\"];
+        for _ in 0..20 {
+            if terminal.sent_text(&surface_id).unwrap() == expected {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(terminal.sent_text(&surface_id).unwrap(), expected);
     }
 }

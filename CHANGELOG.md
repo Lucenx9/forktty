@@ -151,6 +151,7 @@ All notable changes to ForkTTY are documented here.
   evidence, keeping verifier results auditable after compaction.
 
 ### Fixed
+- Fixed clearing notification history from Settings and the orchestration rail so terminal close reports are sent off the GTK callback path, preventing attacker-controlled OSC 99 close-report notifications from freezing the UI during Clear actions.
 - Fixed Codex MCP setup so managed ForkTTY MCP servers inherit
   `XDG_RUNTIME_DIR`, allowing sessions without `FORKTTY_SOCKET_PATH` to find
   the default `$XDG_RUNTIME_DIR/forktty.sock` instead of falling back to the
