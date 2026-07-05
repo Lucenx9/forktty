@@ -648,10 +648,20 @@ pub(super) fn push_tab_to_leaf(
     near_surface_id: &str,
     new_tab_id: SurfaceId,
 ) -> bool {
+    // Pass by reference down the tree to avoid eager O(N) clones during traversal.
+    push_tab_to_leaf_internal(node, near_surface_id, &new_tab_id)
+}
+
+fn push_tab_to_leaf_internal(
+    node: &mut PaneNode,
+    near_surface_id: &str,
+    new_tab_id: &SurfaceId,
+) -> bool {
     match node {
         PaneNode::Leaf { tabs, active } => {
             if tabs.iter().any(|id| id == near_surface_id) {
-                tabs.push(new_tab_id);
+                // Defer the clone until the exact insertion point is found.
+                tabs.push(new_tab_id.clone());
                 *active = tabs.len() - 1;
                 true
             } else {
@@ -660,6 +670,6 @@ pub(super) fn push_tab_to_leaf(
         }
         PaneNode::Split { children, .. } => children
             .iter_mut()
-            .any(|child| push_tab_to_leaf(child, near_surface_id, new_tab_id.clone())),
+            .any(|child| push_tab_to_leaf_internal(child, near_surface_id, new_tab_id)),
     }
 }

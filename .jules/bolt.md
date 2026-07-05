@@ -1,0 +1,3 @@
+## 2024-05-19 - Recursive Iterator Clone Bottlenecks in Tree Traversals
+**Learning:** In Rust pane-tree architectures (like `forktty-core`), checking nodes during traversal with `.any(|child| helper(child, new_value.clone()))` forces an eager `O(N)` allocation of the value for every visited split node before it even reaches the correct target leaf.
+**Action:** Always refactor the recursive traversal into an `_internal` helper that takes a reference (`&SurfaceId` instead of `SurfaceId`) down the call stack. Keep the public API taking the owned value, and only call `.clone()` directly inside the matched leaf body where the actual mutation happens, bringing the complexity from `O(N)` clones to exactly `1`.
