@@ -1,7 +1,7 @@
 use super::{
     non_blank_string_option, parse_flags, print_json, reject_unknown_options, require_no_args,
-    safe_string_field, send_socket_request, string_field, trimmed_env, write_stdout_line,
-    write_stdout_text, CliContext, CliError, CliResult, ParsedFlags,
+    safe_string_field, sanitize_for_terminal, send_socket_request, string_field, trimmed_env,
+    write_stdout_line, write_stdout_text, CliContext, CliError, CliResult, ParsedFlags,
 };
 use serde_json::{json, Map, Value};
 
@@ -293,15 +293,20 @@ fn format_worktree_line(worktree: &Value) -> String {
     format!("{branch} [{name}] {path}{status}")
 }
 
-fn format_worktree_doctor_report(report: &forktty_core::worktree::WorktreeDoctorReport) -> String {
+pub(super) fn format_worktree_doctor_report(
+    report: &forktty_core::worktree::WorktreeDoctorReport,
+) -> String {
     let mut output = format!(
         "Worktree doctor: {} ({})\n",
-        report.status, report.repository_root
+        sanitize_for_terminal(&report.status),
+        sanitize_for_terminal(&report.repository_root)
     );
     for check in &report.checks {
         output.push_str(&format!(
             "  {} {}: {}\n",
-            check.status, check.id, check.summary
+            sanitize_for_terminal(&check.status),
+            sanitize_for_terminal(&check.id),
+            sanitize_for_terminal(&check.summary)
         ));
     }
     output

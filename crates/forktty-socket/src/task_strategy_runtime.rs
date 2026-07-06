@@ -147,13 +147,9 @@ fn task_strategy_likely_user_visible_change(strategy: &TaskStrategy) -> bool {
     )
 }
 
-fn task_strategy_plan_is_read_only_review(plan: &TaskStrategyPlan, review_requested: bool) -> bool {
-    let review_only = matches!(plan.task_class, TaskClass::ReviewOnly)
-        && matches!(plan.strategy, TaskStrategy::ReviewOnly);
-    let parallel_review = review_requested
-        && matches!(plan.task_class, TaskClass::ParallelResearch)
-        && matches!(plan.strategy, TaskStrategy::ParallelResearch);
-    (review_only || parallel_review)
+fn task_strategy_plan_is_read_only_review(plan: &TaskStrategyPlan) -> bool {
+    matches!(plan.task_class, TaskClass::ReviewOnly)
+        && matches!(plan.strategy, TaskStrategy::ReviewOnly)
         && plan.assignments.iter().all(|assignment| {
             matches!(
                 assignment.role,
@@ -1673,8 +1669,7 @@ impl TaskStrategyApplyRequest {
             Err(err) if self.worktree_name.is_some() && err.code() == "not_found" => false,
             Err(err) => return Err(err),
         };
-        let read_only_review_plan =
-            task_strategy_plan_is_read_only_review(&self.plan, self.user_requested_review);
+        let read_only_review_plan = task_strategy_plan_is_read_only_review(&self.plan);
         let likely_user_visible_change =
             task_class_likely_user_visible_change(&self.plan.task_class)
                 || task_strategy_likely_user_visible_change(&self.plan.strategy)

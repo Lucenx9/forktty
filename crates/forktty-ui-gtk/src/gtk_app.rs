@@ -12,8 +12,8 @@ use forktty_socket::{
     SocketAppState,
 };
 use forktty_terminal::{
-    SpawnRequest, TerminalBackend, TerminalError, TerminalSurfaceState, TerminalTextCapture,
-    TerminalTextSnapshot, TerminalTextSnapshotParts,
+    SharedTerminalBackend, SpawnRequest, TerminalBackend, TerminalError, TerminalSurfaceState,
+    TerminalTextCapture, TerminalTextSnapshot, TerminalTextSnapshotParts,
 };
 use global_hotkey::{
     hotkey::{Code, HotKey},

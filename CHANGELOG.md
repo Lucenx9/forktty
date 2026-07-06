@@ -167,6 +167,12 @@ All notable changes to ForkTTY are documented here.
   Codex, Claude, Grok, Pi, Antigravity, and OpenCode aliases.
 - Fixed notification clearing so closing a desktop notification is best-effort
   and cannot block the socket response used by `forktty hooks test`.
+- Fixed Router rail and Settings notification clearing so OSC 99 close reports
+  are sent off the GTK callback path, preventing terminal close-report
+  handshakes from freezing Clear actions.
+- Sanitized `forktty worktree-doctor` text output so repository paths and Git
+  worktree metadata containing terminal control characters cannot emit raw
+  ANSI/OSC sequences.
 - Fixed Codex MCP setup so managed ForkTTY MCP servers inherit
   `XDG_RUNTIME_DIR`, allowing sessions without `FORKTTY_SOCKET_PATH` to find
   the default `$XDG_RUNTIME_DIR/forktty.sock` instead of falling back to the
@@ -175,9 +181,10 @@ All notable changes to ForkTTY are documented here.
   `forktty workflow-loop-gate`, `workflow-loop-step-done`, and
   `workflow-loop-publish` reach the socket CLI instead of failing as unknown
   arguments.
-- Fixed task strategy worktree isolation so dirty-repo read-only parallel
-  reviews can remain `parallel_research` without requiring worktree isolation,
-  while mutating `parallel_experiment` plans still require isolation.
+- Fixed task strategy worktree isolation so a caller-controlled review flag on
+  a `parallel_research` plan cannot suppress dirty-repository isolation for a
+  mutating goal; only coherent `review_only` plans retain the read-only
+  exemption.
 - Fixed task strategy goal keyword false positives: artifact words such as
   "quickstart" or "smaller" no longer trigger the fast profile, "parallelize
   ..." editing goals no longer route to parallel research lanes, and refactor

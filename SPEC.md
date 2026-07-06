@@ -604,11 +604,9 @@ any explicit `cwd`, the normalized plan `task_class`, mutating strategy shape,
 and high-confidence goal wording. A `review_only` strategy suppresses this
 dirty-editing isolation only when the submitted plan is coherently read-only:
 `task_class: review_only`, `strategy: review_only`, and reviewer-only
-assignments. A caller-explicit read-only parallel review can also suppress
-dirty-editing isolation when the submitted plan is coherent
-`parallel_research` with only reviewer/researcher roles and
-`user_requested_review`/`review: true`; mutating `parallel_experiment` plans do
-not get this exemption. ForkTTY then recomputes required approvals from the
+assignments. Caller-explicit review hints on `parallel_research` plans do not
+suppress dirty-editing isolation because parallel research can still produce
+mutating follow-up work. ForkTTY then recomputes required approvals from the
 requested operation and effective plan shape (`start_run` always,
 `create_worktree` when the effective layers require worktree isolation, and
 `launch_parallel_workers` when `submit: true` would launch more than one

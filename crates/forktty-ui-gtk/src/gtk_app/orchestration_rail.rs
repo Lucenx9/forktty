@@ -333,10 +333,13 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
             })
             .unwrap_or_default();
         state_for_clear.mark_notification_feed_entries_cleared(&notifications);
-        for notification in notifications {
+        for notification in &notifications {
             close_desktop_notification(&notification.id);
-            send_rail_terminal_notification_close_report(&state_for_clear, &notification);
         }
+        super::notifications_panel::send_terminal_notification_close_reports_via_backend(
+            state_for_clear.terminal.clone(),
+            notifications,
+        );
     });
     notifications_section.append(&clear_all);
 
@@ -1668,23 +1671,6 @@ fn clear_rail_notifications_from_model(
     notifications
 }
 
-fn send_rail_terminal_notification_close_report(
-    state: &SocketAppState,
-    notification: &NotificationItem,
-) {
-    let Some(metadata) = notification.terminal_metadata.as_ref() else {
-        return;
-    };
-    if !metadata.report_close {
-        return;
-    }
-    let Some(surface_id) = notification.surface_id.as_deref() else {
-        return;
-    };
-    let report = super::notifications_panel::terminal_notification_close_report(metadata);
-    let _ = state.terminal.send_text(surface_id, &report);
-}
-
 fn rail_notification_matches_workspace(
     notification: &NotificationItem,
     workspace_id: Option<&str>,
@@ -2661,12 +2647,18 @@ mod tests {
             }),
         };
 
-        send_rail_terminal_notification_close_report(&state, &notification);
-
-        assert_eq!(
-            terminal.sent_text(&surface_id).unwrap(),
-            vec!["\x1b]99;i=build:p=close;\x1b\\"]
+        super::notifications_panel::send_terminal_notification_close_reports_via_backend(
+            state.terminal.clone(),
+            vec![notification],
         );
+        let expected = vec!["\x1b]99;i=build:p=close;\x1b\\"];
+        for _ in 0..20 {
+            if terminal.sent_text(&surface_id).unwrap() == expected {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(terminal.sent_text(&surface_id).unwrap(), expected);
     }
 
     #[test]

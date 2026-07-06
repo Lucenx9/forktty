@@ -626,6 +626,31 @@ fn worktree_status_rejects_positional_combined_with_path_or_cwd() {
 }
 
 #[test]
+fn worktree_doctor_report_sanitizes_terminal_control_characters() {
+    let report = forktty_core::worktree::WorktreeDoctorReport {
+        status: "warn".to_string(),
+        repository_root: "/tmp/repo_\x1b]52;c;ROOT\x07".to_string(),
+        worktrees: Vec::new(),
+        checks: vec![forktty_core::worktree::WorktreeDoctorCheck {
+            id: "worktree:admin_\x1b]52;c;ADMIN\x07".to_string(),
+            status: "warn".to_string(),
+            summary: "Worktree admin_\x1b]8;;https://example.invalid\x07link\x1b]8;;\x07 is dirty"
+                .to_string(),
+            path: None,
+        }],
+    };
+
+    let text = format_worktree_doctor_report(&report);
+
+    assert!(!text.contains('\x1b'));
+    assert!(!text.contains('\x07'));
+    assert!(text.contains(r"/tmp/repo_\x1b]52;c;ROOT\x07"));
+    assert!(text.contains(r"worktree:admin_\x1b]52;c;ADMIN\x07"));
+    assert!(text
+        .contains(r"Worktree admin_\x1b]8;;https://example.invalid\x07link\x1b]8;;\x07 is dirty"));
+}
+
+#[test]
 fn worktree_doctor_rejects_positionals() {
     assert_err_contains(
         handle_worktree_doctor(&test_context(), strings(&["feature-x"])),

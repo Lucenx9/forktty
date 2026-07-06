@@ -167,8 +167,8 @@ use workspace::format_workspace_line;
 use workspace::{handle_create_workspace, handle_ssh};
 #[cfg(test)]
 use worktree::{
-    handle_project_action_list, handle_project_action_run, handle_worktree_doctor,
-    handle_worktree_status,
+    format_worktree_doctor_report, handle_project_action_list, handle_project_action_run,
+    handle_worktree_doctor, handle_worktree_status,
 };
 const SOCKET_TIMEOUT: Duration = protocol_limits::OFFICIAL_SOCKET_TIMEOUT;
 const DEFAULT_AGENT_WAIT_TIMEOUT_MS: u64 = 30_000;

@@ -1008,10 +1008,7 @@ fn effective_layers_for_strategy(
     if matches!(strategy, TaskStrategy::ReviewOnly) && contains_iterative_loop_intent(&input.goal) {
         layers.loop_metadata = true;
     }
-    let read_only_parallel_research =
-        matches!(strategy, TaskStrategy::ParallelResearch) && input.user_requested_review;
     if !matches!(strategy, TaskStrategy::ReviewOnly)
-        && !read_only_parallel_research
         && input.repo_dirty
         && input.likely_user_visible_change
     {
@@ -2352,7 +2349,7 @@ mod tests {
     }
 
     #[test]
-    fn dirty_parallel_review_research_does_not_require_worktree_isolation() {
+    fn dirty_parallel_review_research_requires_worktree_isolation() {
         let plan = plan_task_strategy(TaskStrategyInput {
             goal: "Review the router implementation in parallel and note fixes".to_string(),
             explicit_mode: None,
@@ -2368,8 +2365,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(plan.strategy, TaskStrategy::ParallelResearch);
-        assert!(!plan.layers.worktree);
-        assert!(!plan
+        assert!(plan.layers.worktree);
+        assert!(plan
             .approvals
             .contains(&TaskStrategyApproval::CreateWorktree));
     }

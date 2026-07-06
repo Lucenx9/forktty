@@ -377,6 +377,34 @@ fn send_terminal_notification_close_report(
     );
 }
 
+pub(super) fn send_terminal_notification_close_reports_via_backend(
+    terminal: SharedTerminalBackend,
+    notifications: Vec<NotificationItem>,
+) {
+    let reports = notifications
+        .into_iter()
+        .filter_map(|notification| {
+            let metadata = notification.terminal_metadata?;
+            if !metadata.report_close {
+                return None;
+            }
+            let surface_id = notification.surface_id?;
+            Some((surface_id, terminal_notification_close_report(&metadata)))
+        })
+        .collect::<Vec<_>>();
+    if reports.is_empty() {
+        return;
+    }
+
+    // Keep notification clear handlers off the GTK callback path; terminal
+    // backend replies can wait on live panes and freeze the UI when batched.
+    std::thread::spawn(move || {
+        for (surface_id, report) in reports {
+            let _ = terminal.send_text(&surface_id, &report);
+        }
+    });
+}
+
 fn send_terminal_notification_button_report(
     controller: Option<&Rc<RefCell<TerminalController>>>,
     notification: &NotificationItem,
