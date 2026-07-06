@@ -80,15 +80,13 @@ use forktty_core::AgentKind;
 #[cfg(test)]
 use forktty_core::AgentSessionLifecycle;
 #[cfg(test)]
-use forktty_core::FeedEntry;
-#[cfg(test)]
 use forktty_core::JsonRpcResponse;
 #[cfg(test)]
 use forktty_core::SplitAxis;
 #[cfg(all(test, feature = "browser"))]
 use forktty_core::MAX_BROWSER_URL_BYTES;
 use forktty_core::{
-    BrowserCommand, FeedApprovalState, FeedEntryType, FeedStore, NotificationItem,
+    BrowserCommand, FeedApprovalState, FeedEntry, FeedEntryType, FeedStore, NotificationItem,
     NotificationKind, WorkspaceModel,
 };
 use forktty_terminal::SharedTerminalBackend;
@@ -341,18 +339,7 @@ impl SocketAppState {
     }
 
     pub fn pending_feed_approval_count(&self) -> Option<usize> {
-        let store = self.feed_store.lock().ok()?;
-        let store = store.as_ref()?;
-        Some(
-            store
-                .list(None, usize::MAX)
-                .iter()
-                .filter(|entry| {
-                    entry.entry_type == FeedEntryType::Approval
-                        && entry.approval_state == Some(FeedApprovalState::Pending)
-                })
-                .count(),
-        )
+        Some(self.pending_feed_approval_entries(usize::MAX)?.len())
     }
 
     pub fn pending_feed_approval_summaries(&self, limit: usize) -> Option<Vec<String>> {
@@ -367,17 +354,9 @@ impl SocketAppState {
     /// Newest-first pending approval requests with the identifiers needed to
     /// decide them from a visible UI action.
     pub fn pending_feed_approvals(&self, limit: usize) -> Option<Vec<PendingFeedApproval>> {
-        let store = self.feed_store.lock().ok()?;
-        let store = store.as_ref()?;
         Some(
-            store
-                .list(None, usize::MAX)
+            self.pending_feed_approval_entries(limit.max(1))?
                 .into_iter()
-                .filter(|entry| {
-                    entry.entry_type == FeedEntryType::Approval
-                        && entry.approval_state == Some(FeedApprovalState::Pending)
-                })
-                .take(limit.max(1))
                 .map(|entry| {
                     let title = if entry.title.trim().is_empty() {
                         entry.id.clone()
@@ -396,7 +375,83 @@ impl SocketAppState {
         )
     }
 
+    fn pending_feed_approval_entries(&self, limit: usize) -> Option<Vec<FeedEntry>> {
+        let entries = {
+            let store = self.feed_store.lock().ok()?;
+            let store = store.as_ref()?;
+            store.list(None, usize::MAX)
+        };
+        let model = self.model.lock().ok()?;
+        Some(
+            entries
+                .into_iter()
+                .filter(|entry| {
+                    entry.entry_type == FeedEntryType::Approval
+                        && entry.approval_state == Some(FeedApprovalState::Pending)
+                        && !feed_view::feed_entry_is_stale(&model, entry)
+                })
+                .take(limit)
+                .collect(),
+        )
+    }
+
+    /// Feed history target identifiers, shaped for session bootstrap id
+    /// reservation. Unlike [`SocketAppState::pending_feed_approvals`], this
+    /// includes stale or finalized entries because even non-actionable history
+    /// should not be confused with a newly generated workspace or surface id.
+    pub fn feed_record_targets_for_reservation(&self) -> Option<Vec<FeedRecordTarget>> {
+        let store = self.feed_store.lock().ok()?;
+        let store = store.as_ref()?;
+        Some(
+            store
+                .list(None, usize::MAX)
+                .into_iter()
+                .filter_map(|entry| {
+                    if entry.workspace_id.is_none() && entry.surface_id.is_none() {
+                        return None;
+                    }
+                    Some(FeedRecordTarget {
+                        workspace_id: entry.workspace_id,
+                        surface_id: entry.surface_id,
+                    })
+                })
+                .collect(),
+        )
+    }
+
     pub fn decide_feed_approval(&self, id: &str, state: FeedApprovalState) -> Result<(), String> {
+        let entry = {
+            let store = self
+                .feed_store
+                .lock()
+                .map_err(|_| "feed store lock poisoned".to_string())?;
+            let store = store
+                .as_ref()
+                .ok_or_else(|| "feed store not configured".to_string())?;
+            store
+                .list(None, usize::MAX)
+                .into_iter()
+                .find(|entry| entry.id == id && entry.entry_type == FeedEntryType::Approval)
+        };
+        if let Some(entry) = entry {
+            let model = self
+                .model
+                .lock()
+                .map_err(|_| "model lock poisoned".to_string())?;
+            if entry.approval_state == Some(FeedApprovalState::Pending)
+                && feed_view::feed_entry_is_stale(&model, &entry)
+            {
+                let mut store = self
+                    .feed_store
+                    .lock()
+                    .map_err(|_| "feed store lock poisoned".to_string())?;
+                let store = store
+                    .as_mut()
+                    .ok_or_else(|| "feed store not configured".to_string())?;
+                let _ = store.mark_approvals([id], FeedApprovalState::Stale);
+                return Err(format!("feed approval {id} is no longer active"));
+            }
+        }
         let mut store = self
             .feed_store
             .lock()
@@ -419,6 +474,13 @@ pub struct PendingFeedApproval {
     pub workspace_id: Option<String>,
     pub surface_id: Option<String>,
     pub created_at_ms: u128,
+}
+
+/// One feed-history target reference used to reserve generated model ids.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedRecordTarget {
+    pub workspace_id: Option<String>,
+    pub surface_id: Option<String>,
 }
 
 pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(), SocketError> {

@@ -85,6 +85,24 @@ Five workspace crates plus `xtask`, with a strict dependency flow: `forktty-core
 
 Useful CLI for inspecting a running instance: `forktty doctor`, `forktty --json doctor`, `forktty capabilities`, `forktty identify`, `forktty context-snapshot`, `forktty top`, `forktty surfaces`, `forktty agents`, `forktty agent-health`, `forktty teams`, `forktty team-summary`, `forktty workflows`, `forktty workflow-loop-set`, `forktty feed`, `forktty events`, and `forktty wait agent-status`.
 
+## Optional local skills
+
+Some agents working on ForkTTY may have local skills installed, including the
+Matt Pocock engineering skills. Treat these as workflow accelerators, not hard
+dependencies: when a named skill is unavailable, follow the equivalent manual
+workflow using this file, local code, tests, and issue/spec context.
+
+- Use `ask-matt` when unsure which local engineering skill fits the task.
+- Use `forktty-agent-orchestration` for ForkTTY socket, MCP, hooks, team/workflow, panes, worktrees, status, and agent-integration work.
+- Use `diagnosing-bugs` for reported bugs, regressions, failing behavior, slow paths, or confusing UI/socket/MCP state.
+- Use `implement` when executing a PRD, issue batch, or explicit implementation brief; use `tdd` as well when the request calls for test-first work or integration tests.
+- Use `code-review` before finishing any non-trivial code change. Review the final diff against the relevant fixed point: use the supplied base if the user gave one, the merge-base with the target branch for branch/PR work, or the current uncommitted diff when working directly in the local tree.
+- Use `codebase-design`, `domain-modeling`, or `improve-codebase-architecture` for module-boundary, deep-module, ubiquitous-language, or architecture-improvement work. Do not turn a small bug fix into an architecture project just because these skills exist.
+- Use `research` when external API, packaging, GTK/Ghostty, OS, or standards behavior must be checked against high-trust sources.
+- Use `triage`, `to-prd`, and `to-issues` only when converting reports or conversations into issue-tracker work; do not create tracker artifacts unless the user asked for that workflow.
+- Use `grilling`, `grill-me`, or `grill-with-docs` only when the user wants a plan or design stress-tested before implementation.
+- Use `prototype` for throwaway UI/state-model experiments, and `handoff` when stopping midstream and another agent needs to continue.
+
 ## GitHub repository structure
 
 ForkTTY uses standard GitHub community/automation locations plus a small set of root source-of-truth docs. Keep the repository shape predictable for GitHub, contributors, release automation, and coding agents.

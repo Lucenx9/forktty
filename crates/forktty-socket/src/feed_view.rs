@@ -4,7 +4,7 @@ use forktty_core::{
 };
 use serde_json::{json, Value};
 
-use crate::SocketAppState;
+use crate::{feed_events, SocketAppState};
 
 pub(crate) fn list(model: &WorkspaceModel, workspace_id: Option<&str>, limit: usize) -> Vec<Value> {
     if limit == 0 {
@@ -115,10 +115,14 @@ pub(crate) fn entries_for_model(model: &WorkspaceModel, entries: Vec<FeedEntry>)
 fn normalize_feed_entry_for_model(model: &WorkspaceModel, entry: &mut FeedEntry) {
     if entry.entry_type == FeedEntryType::Approval
         && entry.approval_state == Some(FeedApprovalState::Pending)
-        && feed_entry_target_is_stale(model, entry)
+        && feed_entry_is_stale(model, entry)
     {
         entry.approval_state = Some(FeedApprovalState::Stale);
     }
+}
+
+pub(crate) fn feed_entry_is_stale(model: &WorkspaceModel, entry: &FeedEntry) -> bool {
+    feed_entry_target_is_stale(model, entry) || prompt_notification_entry_is_missing(model, entry)
 }
 
 pub(crate) fn feed_entry_target_is_stale(model: &WorkspaceModel, entry: &FeedEntry) -> bool {
@@ -144,6 +148,20 @@ fn feed_target_is_stale(
         model
             .workspace_id_for(WorkspaceSelector::Id(workspace_id))
             .is_none()
+    })
+}
+
+fn prompt_notification_entry_is_missing(model: &WorkspaceModel, entry: &FeedEntry) -> bool {
+    if entry.kind.as_deref() != Some("prompt") {
+        return false;
+    }
+    !model.list_notifications().into_iter().any(|notification| {
+        feed_events::feed_notification_entry_id(&notification) == entry.id
+            && notification.kind == NotificationKind::Prompt
+            && notification.title == entry.title
+            && notification.body == entry.body
+            && notification.workspace_id == entry.workspace_id
+            && notification.surface_id == entry.surface_id
     })
 }
 
