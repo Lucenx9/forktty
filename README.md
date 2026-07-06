@@ -37,7 +37,7 @@ For agent-oriented retrieval, start with
 on the project overview, install paths, quick start, and contributor commands.
 
 <p align="center">
-  <img src="docs/assets/forktty-alpha14.png" alt="ForkTTY with embedded Ghostty panes, workspace sidebar, split terminals, and agent status indicators; the current alpha also includes a Router rail and workflow feed described below" width="960" />
+  <img src="docs/assets/forktty-alpha14.png" alt="ForkTTY with a workspace sidebar, embedded Ghostty terminal, Router rail, and workflow feed" width="960" />
 </p>
 
 ## Why ForkTTY
