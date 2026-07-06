@@ -4,6 +4,8 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.18] - 2026-07-06
+
 ### Added
 - Team workers can now persist a bounded final `report` through
   `team.worker.upsert`, CLI, and MCP; the report is returned by `team.get`,
