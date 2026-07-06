@@ -160,6 +160,9 @@ All notable changes to ForkTTY are documented here.
   evidence, keeping verifier results auditable after compaction.
 
 ### Fixed
+- Fixed the Router rail and workflow feed so global task-strategy workflow and
+  team records created without an explicit workspace target remain visible in
+  the active workspace instead of disappearing behind the workspace filter.
 - Fixed hook-driven agent status targeting so untargeted hook events with a
   unique `hook_session_cwd` bind to the matching live surface, while ambiguous
   cwd matches are rejected instead of showing false `Working`/`needs input`

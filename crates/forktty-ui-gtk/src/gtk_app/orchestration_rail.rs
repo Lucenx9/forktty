@@ -1398,7 +1398,8 @@ fn active_workspace_id_for_state(state: &SocketAppState) -> Option<String> {
 
 fn record_matches_workspace(record_workspace_id: Option<&str>, workspace_id: Option<&str>) -> bool {
     match workspace_id {
-        Some(workspace_id) => record_workspace_id == Some(workspace_id),
+        Some(workspace_id) => record_workspace_id
+            .is_none_or(|record_workspace_id| record_workspace_id == workspace_id),
         None => record_workspace_id.is_none(),
     }
 }
@@ -2104,6 +2105,82 @@ mod tests {
             &live_statuses,
         );
         assert!(chips.is_empty());
+    }
+
+    #[test]
+    fn rail_snapshots_include_global_records_for_active_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let workflow_path = dir.path().join("workflow-v1.json");
+        let team_path = dir.path().join("team-v1.json");
+
+        let mut workflow_store = forktty_core::WorkflowStoreData::default();
+        workflow_store
+            .upsert(
+                forktty_core::WorkflowUpsert {
+                    workflow_id: Some("global-router".to_string()),
+                    workspace_id: None,
+                    mode: Some("task_strategy".to_string()),
+                    status: Some("running".to_string()),
+                    goal: Some("Global Router task".to_string()),
+                    ..forktty_core::WorkflowUpsert::default()
+                },
+                10,
+            )
+            .unwrap();
+        forktty_core::save_workflows_to_path(&workflow_path, &workflow_store).unwrap();
+
+        let mut team_store = forktty_core::TeamStoreData::default();
+        team_store
+            .upsert_team(
+                forktty_core::TeamUpsert {
+                    team_id: "global-team".to_string(),
+                    workspace_id: None,
+                    leader_surface_id: None,
+                    name: Some("Global Team".to_string()),
+                    status: Some("active".to_string()),
+                    goal: Some("Global Router task".to_string()),
+                },
+                20,
+            )
+            .unwrap();
+        team_store
+            .upsert_worker(
+                forktty_core::TeamWorkerUpsert {
+                    team_id: "global-team".to_string(),
+                    worker_id: "global-worker".to_string(),
+                    role: Some("reviewer".to_string()),
+                    agent: Some("codex".to_string()),
+                    surface_id: None,
+                    worktree_name: None,
+                    report: None,
+                    status: Some("running".to_string()),
+                    assigned_task_id: None,
+                },
+                21,
+            )
+            .unwrap();
+        forktty_core::save_teams_to_path(&team_path, &team_store).unwrap();
+
+        let workflow =
+            latest_workflow_snapshot_for_workspace(Some(&workflow_path), Some("workspace-main"));
+        assert_eq!(workflow.workflow, "running");
+        assert_eq!(workflow.strategy_detail, "Global Router task");
+
+        let live_statuses = std::collections::HashMap::new();
+        let team = latest_team_snapshot_for_workspace(
+            Some(&team_path),
+            Some("workspace-main"),
+            &live_statuses,
+        );
+        assert_eq!(team.fanout, "1");
+        assert_eq!(team.workers, "1/1 active");
+
+        let chips = latest_team_chips_for_workspace(
+            Some(&team_path),
+            Some("workspace-main"),
+            &live_statuses,
+        );
+        assert_eq!(chips.len(), 1);
     }
 
     #[test]
