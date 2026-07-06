@@ -4,9 +4,14 @@
 
 # ForkTTY
 
-**Linux-native multi-agent terminal with a programmable local socket API, first-class git worktrees, and prompt-aware notifications.**
+**Linux-native multi-agent terminal with a visible Router rail, workflow feed,
+programmable local socket API, first-class git worktrees, and prompt-aware
+notifications.**
 
-ForkTTY runs coding agents in isolated workspaces, exposes a user-local Unix socket for automation, and can place long-running tasks in dedicated git worktrees without tying the UI to one agent vendor.
+ForkTTY runs coding agents in isolated workspaces, keeps task strategy,
+approvals, team/workflow state, and notifications visible next to the terminal,
+exposes a user-local Unix socket for automation, and can place long-running
+tasks in dedicated git worktrees without tying the UI to one agent vendor.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/Lucenx9/forktty/ci.yml?branch=main)](https://github.com/Lucenx9/forktty/actions)
@@ -32,12 +37,16 @@ For agent-oriented retrieval, start with
 on the project overview, install paths, quick start, and contributor commands.
 
 <p align="center">
-  <img src="docs/assets/forktty-alpha14.png" alt="ForkTTY with embedded Ghostty panes, workspace sidebar, split terminals, and agent status indicators" width="960" />
+  <img src="docs/assets/forktty-alpha14.png" alt="ForkTTY with embedded Ghostty panes, workspace sidebar, split terminals, and agent status indicators; the current alpha also includes a Router rail and workflow feed described below" width="960" />
 </p>
 
 ## Why ForkTTY
 
 - **Agent-agnostic automation**: the same socket API and CLI flow work for Codex, Claude Code, Pi, Antigravity CLI, OpenCode, shell scripts, and custom tools.
+- **Visible routing context**: the GTK workbench keeps Router strategy,
+  workflow-loop state, approvals, worker health, worker reports, notifications,
+  and the bottom workflow feed beside the panes instead of hiding them in
+  terminal scrollback.
 - **First-class worktree workflows**: create, attach, remove, and merge isolated worktree workspaces through native `git2` operations and optional `.forktty/setup` / `.forktty/teardown` hooks.
 - **Native Linux terminal stack**: GTK4/libadwaita shell with embedded Ghostty-backed terminals, split panes, session restore, notifications, command palette, settings, and quake mode.
 - **Local-first posture**: no crash reporting or product event tracking, an anonymous daily usage ping that can be disabled, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution. Optional update checks hit GitHub Releases at most once per day and can also be disabled.
@@ -740,7 +749,7 @@ the same local socket pipeline. Manual hook-event commands can pass
 ## Features
 
 - Native GTK4/libadwaita desktop shell with embedded Ghostty-backed terminals.
-- Recursive split panes, pane focus/close, command palette, settings dialog, notification panel, and workspace sidebar.
+- Recursive split panes, pane focus/close, command palette, settings dialog, notification panel, workspace sidebar, Router rail, and workflow feed.
 - Quake/dropdown mode through config and F12 where global shortcuts are supported.
 - Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, terminal read/capture, topology tree/top health inspection, pane-tab, notification, worktree, metadata, persisted agent-session inventory/resume, compact status summaries, context identify, read-only task strategy planning, event-stream, and capabilities; CLI wrappers add bounded lifecycle waits over read-only socket calls.
 - Agent HUD in the GTK titlebar for lifecycle, last activity, attention, focus, and resume across workspaces.
@@ -768,6 +777,8 @@ persist_terminal_processes = false
 persistent_scrollback_lines = 0
 sidebar_position = "left" # "left" or "right"
 sidebar_visible = true
+show_orchestration_rail = true
+show_workflow_feed = true
 window_mode = "normal" # "normal" or "quake"
 
 [notifications]
