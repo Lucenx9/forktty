@@ -1355,12 +1355,12 @@ fn reserve_orchestration_record_ids(state: &SocketAppState) {
         }
     }
 
-    if let Some(approvals) = state.pending_feed_approvals(usize::MAX) {
-        for approval in approvals {
-            if let Some(workspace_id) = approval.workspace_id {
+    if let Some(targets) = state.feed_record_targets_for_reservation() {
+        for target in targets {
+            if let Some(workspace_id) = target.workspace_id {
                 workspace_ids.push(workspace_id);
             }
-            if let Some(surface_id) = approval.surface_id {
+            if let Some(surface_id) = target.surface_id {
                 surface_ids.push(surface_id);
             }
         }
@@ -1713,7 +1713,7 @@ mod tests {
     }
 
     #[test]
-    fn reserves_orchestration_ids_from_pending_feed_approvals() {
+    fn reserves_orchestration_ids_from_feed_history_targets() {
         let dir = tempfile::tempdir().unwrap();
         let feed_path = dir.path().join("feed.json");
         let mut store = FeedStore::open_at(&feed_path).unwrap();

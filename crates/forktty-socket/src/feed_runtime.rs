@@ -33,7 +33,7 @@ pub(crate) fn approval_respond(
                 .map_err(|_| "Lock poisoned".to_string())?;
             entry.entry_type == FeedEntryType::Approval
                 && entry.approval_state == Some(FeedApprovalState::Pending)
-                && feed_view::feed_entry_target_is_stale(&model, &entry)
+                && feed_view::feed_entry_is_stale(&model, &entry)
         };
         if stale {
             let mut store = state

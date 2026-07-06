@@ -170,6 +170,10 @@ All notable changes to ForkTTY are documented here.
 - Fixed Router rail and Settings notification clearing so OSC 99 close reports
   are sent off the GTK callback path, preventing terminal close-report
   handshakes from freezing Clear actions.
+- Fixed persisted hook prompt approvals so `feed.list`, `context.snapshot`,
+  and UI pending-approval badges mark them stale after the originating live
+  notification is gone instead of continuing to report a pending approval after
+  restart.
 - Sanitized `forktty worktree-doctor` text output so repository paths and Git
   worktree metadata containing terminal control characters cannot emit raw
   ANSI/OSC sequences.

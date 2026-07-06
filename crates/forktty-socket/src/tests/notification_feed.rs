@@ -331,6 +331,87 @@ async fn context_snapshot_marks_missing_surface_approvals_stale() {
 }
 
 #[tokio::test]
+async fn persisted_prompt_approval_without_live_notification_is_stale() {
+    let dir = tempfile::tempdir().unwrap();
+    let feed_path = dir.path().join("feed.json");
+    let (first_state, _) = test_state();
+    let first_state = first_state.with_feed_store_path(&feed_path).unwrap();
+    let workspace_id = first_state
+        .model
+        .lock()
+        .unwrap()
+        .active_workspace_id()
+        .unwrap();
+    let surface_id = first_state
+        .model
+        .lock()
+        .unwrap()
+        .active_workspace()
+        .unwrap()
+        .focused_surface_id;
+
+    dispatch(
+        &first_state,
+        "notification.create",
+        json!({
+            "workspace_id": workspace_id,
+            "surface_id": surface_id,
+            "kind": "prompt",
+            "title": "Old hook prompt",
+            "body": "Claude is waiting for your input"
+        }),
+    )
+    .await
+    .unwrap();
+
+    let (second_state, _) = test_state();
+    let second_state = second_state.with_feed_store_path(&feed_path).unwrap();
+    let second_workspace_id = second_state
+        .model
+        .lock()
+        .unwrap()
+        .active_workspace_id()
+        .unwrap();
+
+    let feed = dispatch(
+        &second_state,
+        "feed.list",
+        json!({"workspace_id": second_workspace_id, "limit": 10}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(feed[0]["title"], "Old hook prompt");
+    assert_eq!(feed[0]["approval_state"], "stale");
+
+    let snapshot = dispatch(
+        &second_state,
+        "context.snapshot",
+        json!({"workspace_id": second_workspace_id, "tail_lines": 0}),
+    )
+    .await
+    .unwrap();
+    assert!(!snapshot["risk_flags"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("pending_approval")));
+    assert_eq!(second_state.pending_feed_approval_count(), Some(0));
+    assert_eq!(second_state.pending_feed_approvals(10), Some(Vec::new()));
+
+    let approval_id = feed[0]["id"].as_str().unwrap();
+    let err = second_state
+        .decide_feed_approval(approval_id, forktty_core::FeedApprovalState::Approved)
+        .unwrap_err();
+    assert!(err.contains("no longer active"));
+    assert_eq!(
+        forktty_core::FeedStore::open_at(&feed_path)
+            .unwrap()
+            .list(None, 10)[0]
+            .approval_state,
+        Some(forktty_core::FeedApprovalState::Stale)
+    );
+}
+
+#[tokio::test]
 async fn feed_approval_respond_rejects_stale_surface_approval() {
     let dir = tempfile::tempdir().unwrap();
     let feed_path = dir.path().join("feed.json");
