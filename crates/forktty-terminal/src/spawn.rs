@@ -10,6 +10,11 @@ use std::{
 };
 
 pub const APPIMAGE_CHILD_EXEC_SUBCOMMAND: &str = "appimage-child-exec";
+const APPIMAGE_CHILD_EXEC_TARGET_ENV_KEYS: [&str; 3] = [
+    "FORKTTY_WORKSPACE_ID",
+    "FORKTTY_SURFACE_ID",
+    "FORKTTY_SOCKET_PATH",
+];
 
 pub fn child_environment(request: &SpawnRequest) -> Vec<String> {
     let ghostty_resources = ghostty_resources_dir();
@@ -84,8 +89,9 @@ pub fn embedded_ghostty_command_argv(request: &SpawnRequest) -> Result<Vec<Strin
 /// child process tree survives a GTK UI restart (see
 /// [`forktty_core::pty_persistence`]). The wrap is inserted *after* the resolved
 /// program but *before* the `/usr/bin/env` environment atoms, so the broker and
-/// the child both inherit the same sanitized environment, and the existing
-/// control-character check still covers the broker atoms.
+/// the child both inherit the same sanitized environment. In AppImage launches,
+/// pane-targeting `FORKTTY_*` values are passed through the ForkTTY helper so
+/// they are re-applied immediately before `exec`.
 pub fn embedded_ghostty_command_argv_with_persistence(
     request: &SpawnRequest,
     persistence: Option<&PtyPersistencePlan>,
@@ -115,10 +121,22 @@ pub fn embedded_ghostty_command_argv_with_persistence(
             .wrap_command(argv)
             .map_err(|err| format!("cannot persist embedded Ghostty command: {err}"))?;
     }
-    if let Some(helper) = appimage_child_exec_helper() {
-        let mut wrapped = Vec::with_capacity(argv.len() + 3);
+    let forktty_env = request.forktty_env();
+    let appimage_helper = appimage_child_exec_helper();
+    let route_targets_via_appimage_helper = appimage_helper.is_some();
+    if let Some(helper) = appimage_helper {
+        let helper_env = forktty_env
+            .iter()
+            .filter(|(key, _)| is_appimage_child_exec_target_env(key))
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect::<Vec<_>>();
+        let mut wrapped = Vec::with_capacity(argv.len() + 3 + helper_env.len() * 2);
         wrapped.push(helper);
         wrapped.push(APPIMAGE_CHILD_EXEC_SUBCOMMAND.to_string());
+        for env in helper_env {
+            wrapped.push("--env".to_string());
+            wrapped.push(env);
+        }
         wrapped.push("--".to_string());
         wrapped.extend(argv);
         argv = wrapped;
@@ -127,9 +145,11 @@ pub fn embedded_ghostty_command_argv_with_persistence(
     let env = embedded_ghostty_appimage_env_atoms()
         .into_iter()
         .chain(
-            request
-                .forktty_env()
+            forktty_env
                 .into_iter()
+                .filter(|(key, _)| {
+                    !(route_targets_via_appimage_helper && is_appimage_child_exec_target_env(key))
+                })
                 .map(|(key, value)| format!("{key}={value}")),
         )
         .map(|value| embedded_ghostty_command_atom(&value))
@@ -143,6 +163,10 @@ pub fn embedded_ghostty_command_argv_with_persistence(
         .chain(env)
         .chain(argv)
         .collect())
+}
+
+fn is_appimage_child_exec_target_env(key: &str) -> bool {
+    APPIMAGE_CHILD_EXEC_TARGET_ENV_KEYS.contains(&key)
 }
 
 fn appimage_child_exec_helper() -> Option<String> {
@@ -1058,12 +1082,70 @@ mod tests {
             argv.get(helper_index + 1).map(String::as_str),
             Some("appimage-child-exec")
         );
-        assert_eq!(argv.get(helper_index + 2).map(String::as_str), Some("--"));
+        let separator_index = argv[helper_index + 2..]
+            .iter()
+            .position(|atom| atom == "--")
+            .map(|offset| helper_index + 2 + offset)
+            .expect("AppImage child separator is present");
         assert_eq!(
-            argv.get(helper_index + 3).map(String::as_str),
+            argv.get(separator_index + 1).map(String::as_str),
             Some("/usr/bin/dtach")
         );
-        assert!(argv[helper_index + 3..].ends_with(&[shell.to_string_lossy().into_owned()]));
+        assert!(argv[separator_index + 1..].ends_with(&[shell.to_string_lossy().into_owned()]));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn embedded_ghostty_command_argv_routes_forktty_targets_through_appimage_child_exec() {
+        let trusted = TestDir::new("appimage-env-bin");
+        let shell = trusted.path().join("bash");
+        fs::write(&shell, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&shell, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let appimage_dir = "/tmp/.mount_forktty";
+        let argv = with_env(
+            &[
+                ("PATH", Some(trusted.path().to_str().unwrap())),
+                ("APPDIR", Some(appimage_dir)),
+                ("FORKTTY_APPIMAGE_DIR", Some(appimage_dir)),
+                ("APPIMAGE", Some("/home/me/ForkTTY.AppImage")),
+            ],
+            || {
+                let mut request = spawn_request();
+                request.shell = "bash".to_string();
+                request.args.clear();
+                embedded_ghostty_command_argv(&request).expect("command argv")
+            },
+        );
+
+        let helper = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let helper_index = argv
+            .iter()
+            .position(|atom| atom == &helper)
+            .expect("AppImage child fd-cleaner helper is inserted");
+        let target_env = &argv[helper_index + 2..helper_index + 8];
+        assert_eq!(
+            target_env,
+            [
+                "--env",
+                "FORKTTY_WORKSPACE_ID=workspace-1",
+                "--env",
+                "FORKTTY_SURFACE_ID=surface-1",
+                "--env",
+                "FORKTTY_SOCKET_PATH=/run/user/1000/forktty.sock"
+            ]
+        );
+        assert_eq!(argv.get(helper_index + 8).map(String::as_str), Some("--"));
+        assert_eq!(
+            argv.get(helper_index + 9).map(String::as_str),
+            Some(shell.to_string_lossy().as_ref())
+        );
+        assert!(!argv[..helper_index]
+            .iter()
+            .any(|atom| atom.starts_with("FORKTTY_WORKSPACE_ID=")));
     }
 
     #[test]

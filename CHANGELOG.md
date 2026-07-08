@@ -4,6 +4,12 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- Fixed AppImage-launched embedded Ghostty panes so new shells receive
+  `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, and `FORKTTY_SOCKET_PATH` after
+  the AppImage child-exec helper runs, keeping hooks, MCP commands, and agents
+  targeted at the correct pane/workspace by default.
+
 ## [0.2.0-alpha.18] - 2026-07-06
 
 ### Added

@@ -5,12 +5,12 @@ mod doctor;
 mod remote_helper;
 mod socket_commands;
 
-pub use appimage_child_exec::run_appimage_child_exec;
+pub(crate) use appimage_child_exec::run_appimage_child_exec;
 pub use doctor::run_doctor;
 pub use remote_helper::{print_remote_helper_hello, run_remote_helper_pty};
 use std::ffi::OsString;
 
-use appimage_child_exec::parse_appimage_child_exec_args;
+use appimage_child_exec::{parse_appimage_child_exec_args, AppImageChildExecRequest};
 use doctor::parse_doctor_options;
 
 #[cfg(test)]
@@ -67,7 +67,7 @@ pub enum CliAction {
     GhosttyGtkProbe,
     Doctor(DoctorOptions),
     RemoteHelper(RemoteHelperCommand),
-    AppImageChildExec { argv: Vec<OsString> },
+    AppImageChildExec(AppImageChildExecRequest),
     SocketCli(Vec<OsString>),
     Unknown(String),
 }
@@ -121,7 +121,7 @@ where
         },
         Some(forktty_terminal::spawn::APPIMAGE_CHILD_EXEC_SUBCOMMAND) => {
             match parse_appimage_child_exec_args(&rest[1..]) {
-                Ok(argv) => CliAction::AppImageChildExec { argv },
+                Ok(request) => CliAction::AppImageChildExec(request),
                 Err(message) => CliAction::Unknown(message),
             }
         }
@@ -139,7 +139,7 @@ where
             CliAction::SocketCli(_)
                 | CliAction::Doctor(_)
                 | CliAction::RemoteHelper(_)
-                | CliAction::AppImageChildExec { .. }
+                | CliAction::AppImageChildExec(_)
                 | CliAction::Unknown(_)
         )
     {
@@ -259,13 +259,14 @@ mod tests {
                 "-A",
                 "/run/user/1000/forktty-pty/surface-1.sock"
             ]),
-            CliAction::AppImageChildExec {
+            CliAction::AppImageChildExec(AppImageChildExecRequest {
+                env: Vec::new(),
                 argv: vec![
                     OsString::from("/usr/bin/dtach"),
                     OsString::from("-A"),
                     OsString::from("/run/user/1000/forktty-pty/surface-1.sock")
                 ]
-            }
+            })
         );
     }
 
