@@ -10,6 +10,8 @@ All notable changes to ForkTTY are documented here.
   real signal, keeping the inspector calmer when no workflow is staged.
 
 ### Fixed
+- Improved contrast for small sidebar, Router dialog, and command-palette labels,
+  and aligned the Router dialog's empty result placeholders consistently.
 - Fixed AppImage-launched embedded Ghostty panes so new shells receive
   `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, and `FORKTTY_SOCKET_PATH` after
   the AppImage child-exec helper runs, keeping hooks, MCP commands, and agents

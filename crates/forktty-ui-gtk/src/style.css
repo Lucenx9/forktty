@@ -613,7 +613,7 @@ button.flat.header-team-chip:focus-visible {
 }
 
 .sidebar-section-label {
-  color: @ft_text_4;
+  color: @ft_text_3;
   font-weight: 600;
   font-size: 0.72em;
   letter-spacing: 0.04em;
@@ -3312,7 +3312,7 @@ entry.task-router-goal:focus-within {
 
 .task-router-result-key {
   min-width: 92px;
-  color: #777777;
+  color: @ft_text_3;
   font-size: 0.72em;
   font-weight: 700;
   text-transform: uppercase;
@@ -3331,7 +3331,7 @@ entry.task-router-goal:focus-within {
 }
 
 .command-item-hint {
-  color: @ft_text_4;
+  color: @ft_text_3;
   font-size: 0.80em;
 }
 

@@ -139,8 +139,8 @@ pub(super) fn show_task_router_dialog(parent: &adw::ApplicationWindow, state: &S
                         strategy.set_label(&summary.strategy);
                         profile.set_label(&summary.profile);
                         approvals.set_label(&summary.approvals);
-                        assignments.set_label(&summary.assignments);
-                        reasons.set_label(&summary.reason);
+                        set_task_router_multiline_result(&assignments, &summary.assignments);
+                        set_task_router_multiline_result(&reasons, &summary.reason);
                         status.set_label("Plan ready. Apply remains explicit through CLI, MCP, or a reviewed agent action.");
                     }
                     Err(err) => {
@@ -166,14 +166,13 @@ fn task_router_result_row(parent: &gtk::Box, label: &str, multiline: bool) -> gt
         .build();
     key.add_css_class("task-router-result-key");
     let value = gtk::Label::builder().label("-").hexpand(true).build();
+    value.set_xalign(1.0);
     if multiline {
-        value.set_xalign(0.0);
         value.set_wrap(true);
         value.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         value.set_lines(2);
         value.set_max_width_chars(44);
     } else {
-        value.set_xalign(1.0);
         value.set_ellipsize(gtk::pango::EllipsizeMode::End);
         value.set_single_line_mode(true);
     }
@@ -182,6 +181,11 @@ fn task_router_result_row(parent: &gtk::Box, label: &str, multiline: bool) -> gt
     row.append(&value);
     parent.append(&row);
     value
+}
+
+fn set_task_router_multiline_result(label: &gtk::Label, text: &str) {
+    label.set_xalign(0.0);
+    label.set_label(text);
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

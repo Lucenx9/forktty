@@ -2805,6 +2805,8 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(feed_source.contains("list_logs(workspace_id)"));
     assert!(router_dialog_source.contains("task_router_result_row(&result, \"assignments\", true)"));
     assert!(router_dialog_source.contains("value.set_lines(2);"));
+    assert!(router_dialog_source.contains("value.set_xalign(1.0);"));
+    assert!(router_dialog_source.contains("set_task_router_multiline_result("));
     assert!(css.contains("button.flat.header-router-crumb {"));
     assert!(css.contains("button.flat.header-apply-button {"));
     assert!(css.contains("button.flat.header-team-chip {"));
@@ -2821,6 +2823,9 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(css.contains(".orchestration-section {"));
     assert!(css.contains(".orchestration-loop-progress"));
     assert!(css.contains(".task-router-result {"));
+    assert!(css.contains(".sidebar-section-label {\n  color: @ft_text_3;"));
+    assert!(css.contains(".task-router-result-key {\n  min-width: 92px;\n  color: @ft_text_3;"));
+    assert!(css.contains(".command-item-hint {\n  color: @ft_text_3;"));
 }
 
 #[test]
