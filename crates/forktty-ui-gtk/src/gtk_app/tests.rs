@@ -2762,6 +2762,8 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(app_source.contains("router_crumb.set_action_name(Some(\"app.task-router\"));"));
     assert!(app_source.contains("apply_button.set_action_name(Some(\"app.task-router\"));"));
     assert!(app_source.contains(".label(\"Review Plan\")"));
+    assert!(!app_source.contains("header-plan-button"));
+    assert!(!css.contains("header-plan-button"));
     assert!(!app_source.contains(".label(\"Apply\")"));
     assert!(app_source.contains("orchestration_status_summary(&state)"));
     assert!(app_source.contains("build_orchestration_feed(&state)"));

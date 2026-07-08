@@ -11,6 +11,9 @@ All notable changes to ForkTTY are documented here.
   feed rows, and a Router planner that hides result scaffolding until a plan is
   available; the idle Router dialog is more compact, the empty feed reads less
   like a log row, and split-pane hairlines are subtler.
+- Simplified the workbench titlebar by removing the redundant Plan shortcut next
+  to Review Plan, leaving one primary Router action while keeping the sidebars as
+  contextual navigation/inspection surfaces.
 - Quietened the Router rail's idle state so empty decision, loop, approval,
   worker, report, notification, and meta sections stay hidden until they have
   real signal, keeping the inspector calmer when no workflow is staged.

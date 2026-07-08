@@ -214,7 +214,7 @@ pub(super) fn build_ui(app: &adw::Application) {
     header.pack_start(&brand_separator);
 
     // Router cluster: sidebar toggle, Router breadcrumb, workspace selector,
-    // Plan and review. Lives left-of-center in the titlebar like the
+    // and the single review CTA. Lives left-of-center in the titlebar like the
     // agent-workspace mockups instead of a second strip below the header.
     let router_cluster = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     router_cluster.add_css_class("header-router-cluster");
@@ -270,13 +270,6 @@ pub(super) fn build_ui(app: &adw::Application) {
     set_accessible_button_text(&workspace_title, "No active workspace", None);
     router_cluster.append(&workspace_title);
 
-    let (plan_button, _, _) = labeled_icon_button_parts("forktty-merge-symbolic", "Plan");
-    plan_button.set_has_frame(false);
-    plan_button.add_css_class("flat");
-    plan_button.add_css_class("header-plan-button");
-    plan_button.set_action_name(Some("app.task-router"));
-    plan_button.set_tooltip_text(Some("Plan routing for the next task"));
-    router_cluster.append(&plan_button);
     let apply_button = gtk::Button::builder()
         .label("Review Plan")
         .has_frame(false)

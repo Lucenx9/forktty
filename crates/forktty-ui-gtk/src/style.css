@@ -491,23 +491,6 @@ button.flat.header-workspace-chip:disabled {
   font-size: 0.8em;
 }
 
-button.flat.header-plan-button {
-  min-height: 26px;
-  padding: 0 12px;
-  border-radius: 6px;
-  color: @ft_text_1;
-  background: #1d1d1d;
-  border: 1px solid #2a2a2a;
-  font-size: 0.82em;
-  font-weight: 620;
-}
-
-button.flat.header-plan-button:hover,
-button.flat.header-plan-button:focus-visible {
-  background: @ft_line;
-  border-color: @ft_line_strong;
-}
-
 button.flat.header-apply-button {
   min-height: 26px;
   padding: 0 14px;
