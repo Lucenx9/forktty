@@ -4,6 +4,11 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Changed
+- Quietened the Router rail's idle state so empty decision, loop, approval,
+  worker, report, notification, and meta sections stay hidden until they have
+  real signal, keeping the inspector calmer when no workflow is staged.
+
 ### Fixed
 - Fixed AppImage-launched embedded Ghostty panes so new shells receive
   `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, and `FORKTTY_SOCKET_PATH` after

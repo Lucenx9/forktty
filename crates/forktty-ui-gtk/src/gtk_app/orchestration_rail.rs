@@ -24,26 +24,33 @@ pub(super) struct OrchestrationRailUi {
     status_value: gtk::Label,
     strategy_value: gtk::Label,
     strategy_detail_value: gtk::Label,
+    strategy_meta: gtk::Box,
     fanout_value: gtk::Label,
     max_loops_value: gtk::Label,
     workflow_value: gtk::Label,
+    decision_section: gtk::Box,
     router_plan_value: gtk::Label,
     router_updated_value: gtk::Label,
+    loop_section: gtk::Box,
     loop_value: gtk::Label,
     loop_caption_value: gtk::Label,
     loop_updated_value: gtk::Label,
     loop_progress: gtk::ProgressBar,
+    approvals_section: gtk::Box,
     approvals_value: gtk::Label,
     approval_rows: Vec<RailApprovalRow>,
     approvals_empty: gtk::Label,
     approvals_actions: gtk::Box,
+    workers_section: gtk::Box,
     workers_value: gtk::Label,
     health_rows: Vec<RailListRow>,
     health_overflow: gtk::Label,
+    reports_section: gtk::Box,
     reports_value: gtk::Label,
     report_rows: Vec<RailListRow>,
     reports_overflow: gtk::Label,
     reports_link: gtk::Button,
+    notifications_section: gtk::Box,
     notifications_value: gtk::Label,
     notification_rows: Vec<RailListRow>,
     notifications_clear: gtk::Button,
@@ -380,26 +387,33 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
         status_value,
         strategy_value,
         strategy_detail_value,
+        strategy_meta: meta,
         fanout_value,
         max_loops_value,
         workflow_value,
+        decision_section,
         router_plan_value,
         router_updated_value,
+        loop_section,
         loop_value,
         loop_caption_value,
         loop_updated_value,
         loop_progress,
+        approvals_section,
         approvals_value,
         approval_rows,
         approvals_empty,
         approvals_actions: auto_row,
+        workers_section,
         workers_value,
         health_rows,
         health_overflow,
+        reports_section,
         reports_value,
         report_rows,
         reports_overflow,
         reports_link,
+        notifications_section,
         notifications_value,
         notification_rows,
         notifications_clear: clear_all,
@@ -664,17 +678,24 @@ pub(super) fn refresh_orchestration_rail(ui: &OrchestrationRailUi, state: &Socke
     set_status_chip_class(&ui.status_value, &snapshot.status);
     set_rail_value(&ui.strategy_value, &snapshot.strategy);
     set_rail_value(&ui.strategy_detail_value, &snapshot.strategy_detail);
+    ui.strategy_meta
+        .set_visible(strategy_meta_visible(&snapshot));
     set_rail_value(&ui.fanout_value, &snapshot.fanout);
     set_rail_value(&ui.max_loops_value, &snapshot.max_loops);
     set_rail_value(&ui.workflow_value, &snapshot.workflow);
+    ui.decision_section
+        .set_visible(router_decision_visible(&snapshot));
     set_rail_value(&ui.router_plan_value, &snapshot.router_plan);
     set_rail_value(&ui.router_updated_value, &snapshot.router_updated);
+    ui.loop_section.set_visible(loop_section_visible(&snapshot));
     set_rail_value(&ui.loop_value, &snapshot.loop_state);
     set_rail_value(&ui.loop_caption_value, &snapshot.loop_caption);
     set_rail_value(&ui.loop_updated_value, &snapshot.loop_updated);
     ui.loop_progress
         .set_fraction(snapshot.loop_fraction.clamp(0.0, 1.0));
     ui.loop_progress.set_visible(snapshot.loop_planned);
+    ui.approvals_section
+        .set_visible(approvals_section_visible(&snapshot));
     set_rail_value(&ui.approvals_value, &snapshot.approvals);
     set_count_attention(&ui.approvals_value, snapshot.approvals_attention);
     for (index, row) in ui.approval_rows.iter().enumerate() {
@@ -702,6 +723,8 @@ pub(super) fn refresh_orchestration_rail(ui: &OrchestrationRailUi, state: &Socke
     }
     ui.approvals_actions
         .set_visible(approvals_settings_visible(&snapshot));
+    ui.workers_section
+        .set_visible(workers_section_visible(&snapshot));
     set_rail_value(&ui.workers_value, &snapshot.workers);
     set_list_rows(
         &ui.health_rows,
@@ -714,6 +737,8 @@ pub(super) fn refresh_orchestration_rail(ui: &OrchestrationRailUi, state: &Socke
         "more worker group",
         "more worker groups",
     );
+    ui.reports_section
+        .set_visible(reports_section_visible(&snapshot));
     set_rail_value(&ui.reports_value, &snapshot.reports);
     set_list_rows(&ui.report_rows, &snapshot.report_items, "No worker reports");
     set_overflow_label(
@@ -723,6 +748,8 @@ pub(super) fn refresh_orchestration_rail(ui: &OrchestrationRailUi, state: &Socke
         "more reports",
     );
     ui.reports_link.set_visible(reports_link_visible(&snapshot));
+    ui.notifications_section
+        .set_visible(notifications_section_visible(&snapshot));
     set_rail_value(&ui.notifications_value, &snapshot.notifications);
     set_count_attention(&ui.notifications_value, snapshot.notifications_attention);
     set_list_rows(
@@ -752,6 +779,34 @@ fn set_attention_summary_class(label: &gtk::Label, attention: bool) {
 
 fn approvals_settings_visible(snapshot: &RailSnapshot) -> bool {
     !snapshot.approval_items.is_empty()
+}
+
+fn strategy_meta_visible(snapshot: &RailSnapshot) -> bool {
+    snapshot.fanout != "0" || snapshot.max_loops != "-" || snapshot.workflow != "none"
+}
+
+fn router_decision_visible(snapshot: &RailSnapshot) -> bool {
+    snapshot.router_plan != "No plan selected" || snapshot.router_updated != "-"
+}
+
+fn loop_section_visible(snapshot: &RailSnapshot) -> bool {
+    snapshot.loop_planned || snapshot.loop_state != "not planned"
+}
+
+fn approvals_section_visible(snapshot: &RailSnapshot) -> bool {
+    snapshot.approvals != "0 pending"
+}
+
+fn workers_section_visible(snapshot: &RailSnapshot) -> bool {
+    !snapshot.health_items.is_empty() || snapshot.workers != "no team"
+}
+
+fn reports_section_visible(snapshot: &RailSnapshot) -> bool {
+    snapshot.report_count > 0 || snapshot.reports != "0 reports"
+}
+
+fn notifications_section_visible(snapshot: &RailSnapshot) -> bool {
+    !snapshot.notification_items.is_empty() || snapshot.notifications != "clear"
 }
 
 fn reports_link_visible(snapshot: &RailSnapshot) -> bool {
@@ -1978,6 +2033,68 @@ mod tests {
         assert!(!reports_link_visible(&empty));
         assert!(approvals_settings_visible(&with_approval));
         assert!(reports_link_visible(&with_report));
+    }
+
+    #[test]
+    fn idle_sidebar_sections_stay_quiet_until_they_have_signal() {
+        let idle = RailSnapshot {
+            strategy: "idle".to_string(),
+            strategy_detail: "No workflow staged".to_string(),
+            status: "idle".to_string(),
+            fanout: "0".to_string(),
+            max_loops: "-".to_string(),
+            workflow: "none".to_string(),
+            router_plan: "No plan selected".to_string(),
+            router_updated: "-".to_string(),
+            loop_state: "not planned".to_string(),
+            loop_caption: "No loop metadata".to_string(),
+            approvals: "0 pending".to_string(),
+            workers: "no team".to_string(),
+            reports: "0 reports".to_string(),
+            notifications: "clear".to_string(),
+            ..RailSnapshot::default()
+        };
+
+        assert!(!strategy_meta_visible(&idle));
+        assert!(!router_decision_visible(&idle));
+        assert!(!loop_section_visible(&idle));
+        assert!(!approvals_section_visible(&idle));
+        assert!(!workers_section_visible(&idle));
+        assert!(!reports_section_visible(&idle));
+        assert!(!notifications_section_visible(&idle));
+
+        let active = RailSnapshot {
+            fanout: "2".to_string(),
+            workflow: "running".to_string(),
+            router_plan: "implementer_plus_reviewer".to_string(),
+            router_updated: "now".to_string(),
+            loop_state: "Loop 1/3 - verify".to_string(),
+            loop_planned: true,
+            approvals: "1 pending".to_string(),
+            workers: "1/2 active".to_string(),
+            health_items: vec![RailListItem {
+                dot: "ok",
+                primary: "Codex".to_string(),
+                secondary: "1/1 ready".to_string(),
+            }],
+            reports: "1 report".to_string(),
+            report_count: 1,
+            notifications: "1 new".to_string(),
+            notification_items: vec![RailListItem {
+                dot: "info",
+                primary: "Build".to_string(),
+                secondary: "now".to_string(),
+            }],
+            ..idle
+        };
+
+        assert!(strategy_meta_visible(&active));
+        assert!(router_decision_visible(&active));
+        assert!(loop_section_visible(&active));
+        assert!(approvals_section_visible(&active));
+        assert!(workers_section_visible(&active));
+        assert!(reports_section_visible(&active));
+        assert!(notifications_section_visible(&active));
     }
 
     #[test]
