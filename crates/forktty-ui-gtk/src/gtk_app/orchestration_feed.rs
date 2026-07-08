@@ -264,17 +264,28 @@ pub(super) fn refresh_orchestration_feed(ui: &OrchestrationFeedUi, state: &Socke
     for (index, row) in ui.rows.iter().enumerate() {
         if let Some(line) = lines.get(index) {
             row.shell.set_visible(true);
+            row.shell.remove_css_class("empty");
+            row.time.set_visible(true);
+            row.status.set_visible(true);
+            row.body.set_xalign(0.0);
             set_feed_label(&row.time, &clock_time_label(line.at_ms));
             set_feed_label(&row.body, &line.body);
             set_feed_label(&row.status, &line.status);
             set_feed_status_class(&row.status, &line.status);
         } else if index == 0 {
             row.shell.set_visible(true);
+            row.shell.add_css_class("empty");
+            row.time.set_visible(false);
+            row.status.set_visible(false);
+            row.body.set_xalign(0.5);
             set_feed_label(&row.time, "");
             set_feed_label(&row.body, feed_empty_body(filter));
-            set_feed_label(&row.status, "idle");
-            set_feed_status_class(&row.status, "idle");
+            set_feed_label(&row.status, "");
         } else {
+            row.shell.remove_css_class("empty");
+            row.time.set_visible(true);
+            row.status.set_visible(true);
+            row.body.set_xalign(0.0);
             row.shell.set_visible(false);
         }
     }

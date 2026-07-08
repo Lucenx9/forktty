@@ -2804,6 +2804,13 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(feed_source.contains("active_workspace_id_for_state(state)"));
     assert!(feed_source.contains("list_logs(workspace_id)"));
     assert!(router_dialog_source.contains("task_router_result_row(&result, \"assignments\", true)"));
+    assert!(router_dialog_source.contains(".default_height(276)"));
+    assert!(router_dialog_source.contains("result.set_visible(false);"));
+    assert!(router_dialog_source.contains("Describe a task to preview a plan."));
+    assert!(feed_source.contains("row.shell.add_css_class(\"empty\");"));
+    assert!(feed_source.contains("row.time.set_visible(false);"));
+    assert!(feed_source.contains("row.status.set_visible(false);"));
+    assert!(feed_source.contains("row.body.set_xalign(0.5);"));
     assert!(router_dialog_source.contains("value.set_lines(2);"));
     assert!(router_dialog_source.contains("value.set_xalign(1.0);"));
     assert!(router_dialog_source.contains("set_task_router_multiline_result("));
@@ -2812,6 +2819,7 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(css.contains("button.flat.header-team-chip {"));
     assert!(css.contains(".rail-dot.ok {"));
     assert!(css.contains(".orchestration-feed {"));
+    assert!(css.contains(".orchestration-feed-row.empty {"));
     assert!(css.contains("button.flat.orchestration-feed-collapse"));
     assert!(css.contains(".orchestration-feed-tab.active"));
     assert!(css.contains(".orchestration-feed-status.err {"));
@@ -2956,6 +2964,9 @@ fn chrome_micro_polish_unifies_pane_hover_and_hairline_tone() {
     assert!(block("button.flat.terminal-pane-action:hover {").contains("background: @ft_bg_1;"));
     assert!(block("button.flat.pane-close-action:hover {").contains("background: #2f1f1f;"));
     assert!(block(".pane-action-separator {").contains("background: @ft_line;"));
+    assert!(block(".terminal-stage paned > separator {").contains("min-width: 3px;"));
+    assert!(block(".terminal-pane.active .terminal-pane-header {")
+        .contains("border-bottom-color: @ft_line;"));
 }
 
 #[test]
@@ -2967,7 +2978,7 @@ fn pane_status_uses_readable_muted_contrast() {
         .and_then(|rest| rest.split('}').next())
         .expect("pane-status block");
 
-    // Muted-but-readable status text resolves to @ft_text_3 (#8a8a8a).
+    // Muted-but-readable status text resolves to @ft_text_3 (#929292).
     assert!(pane_status.contains("color: @ft_text_3;"));
 }
 
@@ -2982,7 +2993,7 @@ fn command_palette_microtext_uses_readable_muted_contrast() {
             .unwrap_or_else(|| panic!("missing CSS block {selector}"))
     };
 
-    // Muted microtext resolves to @ft_text_3 (#8a8a8a); disabled drops to @ft_text_4 (#626262).
+    // Muted microtext resolves to @ft_text_3 (#929292); disabled drops to @ft_text_4 (#6c6c6c).
     assert!(block(".ft-menu-shortcut {").contains("color: @ft_text_3;"));
     assert!(block(".command-item .keycap {").contains("color: @ft_text_3;"));
     assert!(

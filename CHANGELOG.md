@@ -5,6 +5,12 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- Polished the dark workbench toward a quieter Linear/Cursor-style finish:
+  neutral header chips, a less saturated Review Plan CTA, softer active-pane and
+  feed accents, lower-noise shell dividers, brighter muted labels, quieter empty
+  feed rows, and a Router planner that hides result scaffolding until a plan is
+  available; the idle Router dialog is more compact, the empty feed reads less
+  like a log row, and split-pane hairlines are subtler.
 - Quietened the Router rail's idle state so empty decision, loop, approval,
   worker, report, notification, and meta sections stay hidden until they have
   real signal, keeping the inspector calmer when no workflow is staged.

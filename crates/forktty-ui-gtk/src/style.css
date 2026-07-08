@@ -38,8 +38,8 @@
 @define-color ft_text_0 #ededed;
 @define-color ft_text_1 #d7d7d7;
 @define-color ft_text_2 #b7b7b7;
-@define-color ft_text_3 #8a8a8a;
-@define-color ft_text_4 #626262;
+@define-color ft_text_3 #929292;
+@define-color ft_text_4 #6c6c6c;
 
 /* Semantic hues, independent of the accent */
 @define-color ft_success #8fcf7f;
@@ -469,11 +469,11 @@ button.flat.header-workspace-chip {
   min-height: 26px;
   padding: 0 10px;
   border-radius: 6px;
-  color: @accent_color;
-  background: #1d1d1d;
-  border: 1px solid #2a2a2a;
+  color: @ft_text_2;
+  background: #1b1b1b;
+  border: 1px solid @ft_line;
   font-size: 0.82em;
-  font-weight: 640;
+  font-weight: 620;
 }
 
 button.flat.header-workspace-chip:hover,
@@ -512,22 +512,23 @@ button.flat.header-apply-button {
   min-height: 26px;
   padding: 0 14px;
   border-radius: 6px;
-  color: #17110c;
-  background: @accent_color;
-  border: 1px solid @accent_color;
+  color: #f3b37c;
+  background: #30251d;
+  border: 1px solid alpha(@accent_color, 0.34);
   font-size: 0.82em;
-  font-weight: 700;
+  font-weight: 680;
 }
 
 button.flat.header-apply-button:hover,
 button.flat.header-apply-button:focus-visible {
-  background: #f09a5f;
-  border-color: #f09a5f;
+  color: #f4bd8d;
+  background: #37291f;
+  border-color: alpha(@accent_color, 0.50);
 }
 
 button.flat.header-apply-button:active {
-  background: #d97837;
-  border-color: #d97837;
+  background: #2a211b;
+  border-color: alpha(@accent_color, 0.42);
 }
 
 .header-team-chips {
@@ -567,8 +568,8 @@ button.flat.header-team-chip:focus-visible {
 /* Shared status dots: workers, notifications, feed, pane footers. */
 
 .rail-dot {
-  min-width: 8px;
-  min-height: 8px;
+  min-width: 6px;
+  min-height: 6px;
   border-radius: 999px;
   background: #4a4a4a;
 }
@@ -599,17 +600,17 @@ button.flat.header-team-chip:focus-visible {
 }
 
 .sidebar-shell.left {
-  border-right: 1px solid @ft_line;
+  border-right: 1px solid @ft_bg_1;
 }
 
 .sidebar-shell.right {
-  border-left: 1px solid @ft_line;
+  border-left: 1px solid @ft_bg_1;
 }
 
 .sidebar-header {
   min-height: 34px;
   padding: 0 8px 0 12px;
-  border-bottom: 1px solid @ft_line;
+  border-bottom: 1px solid @ft_bg_1;
 }
 
 .sidebar-section-label {
@@ -721,9 +722,9 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .workspace-row.active .workspace-card {
-  background: @ft_bg_1;
+  background: #1d1d1d;
   border-color: @ft_line_strong;
-  border-left-color: alpha(@accent_color, 0.72);
+  border-left-color: alpha(@accent_color, 0.42);
   box-shadow: none;
 }
 
@@ -753,7 +754,7 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .workspace-row.needs-attention .workspace-card {
-  border-left-color: @accent_color;
+  border-left-color: alpha(@accent_color, 0.62);
   box-shadow: none;
 }
 
@@ -761,7 +762,7 @@ button.flat.sidebar-add:focus-visible {
  * warning so urgency is visible without a full warning fill. */
 .workspace-row.active.needs-attention .workspace-card {
   background: #1f1f1f;
-  border-left-color: @accent_color;
+  border-left-color: alpha(@accent_color, 0.68);
   box-shadow: none;
 }
 
@@ -935,7 +936,7 @@ button.flat.sidebar-nav-row:focus-visible {
   min-height: 24px;
   padding: 0 10px 0 12px;
   background: #151515;
-  border-top: 1px solid @ft_line;
+  border-top: 1px solid @ft_bg_1;
   box-shadow: none;
   color: @ft_text_3;
   font-size: 0.76em;
@@ -1008,7 +1009,7 @@ button.flat.status-shortcut:focus-visible {
 .orchestration-rail {
   background: #101010;
   color: @ft_text_2;
-  border-left: 1px solid @ft_line;
+  border-left: 1px solid @ft_bg_1;
 }
 
 .orchestration-rail-scroll {
@@ -1025,7 +1026,7 @@ button.flat.orchestration-rail-collapsed-strip {
   border-radius: 0;
   background: #101010;
   color: @ft_text_3;
-  border-left: 1px solid @ft_line;
+  border-left: 1px solid @ft_bg_1;
 }
 
 button.flat.orchestration-rail-collapsed-strip:hover,
@@ -1062,7 +1063,7 @@ button.flat.orchestration-rail-collapsed-strip:focus-visible {
 .orchestration-panel-header {
   min-height: 48px;
   padding: 0 14px;
-  border-bottom: 1px solid #252525;
+  border-bottom: 1px solid @ft_bg_1;
 }
 
 .orchestration-panel-title {
@@ -1120,7 +1121,7 @@ button.flat.orchestration-collapse-button:focus-visible {
 
 .orchestration-section {
   padding: 12px 14px;
-  border-bottom: 1px solid #252525;
+  border-bottom: 1px solid @ft_bg_1;
 }
 
 .orchestration-attention-section {
@@ -1135,7 +1136,7 @@ button.flat.orchestration-collapse-button:focus-visible {
 }
 
 .orchestration-attention-summary.attention {
-  color: @accent_color;
+  color: @ft_warning;
 }
 
 .orchestration-section-header {
@@ -1151,9 +1152,9 @@ button.flat.orchestration-collapse-button:focus-visible {
 }
 
 .orchestration-strategy-value {
-  color: #f2f2f2;
+  color: @ft_text_1;
   font-size: 1.10em;
-  font-weight: 780;
+  font-weight: 700;
 }
 
 .orchestration-strategy-detail {
@@ -1323,13 +1324,13 @@ button.flat.orchestration-link-button:focus-visible {
 
 .orchestration-feed {
   background: #121212;
-  border-top: 1px solid @ft_line;
+  border-top: 1px solid @ft_bg_1;
 }
 
 .orchestration-feed-header {
   min-height: 34px;
   padding: 0 12px;
-  border-bottom: 1px solid @ft_line;
+  border-bottom: 1px solid @ft_bg_1;
 }
 
 button.flat.orchestration-feed-tab {
@@ -1349,7 +1350,7 @@ button.flat.orchestration-feed-tab:focus-visible {
 
 button.flat.orchestration-feed-tab.active {
   color: @ft_text_0;
-  box-shadow: inset 0 -2px 0 @accent_color;
+  box-shadow: inset 0 -1px 0 alpha(@accent_color, 0.72);
 }
 
 button.flat.orchestration-feed-clear {
@@ -1405,7 +1406,13 @@ button.flat.orchestration-feed-collapse:focus-visible {
 .orchestration-feed-row {
   min-height: 23px;
   padding: 0 12px;
-  border-bottom: 1px solid @ft_bg_1;
+  border-bottom: 1px solid alpha(@ft_line, 0.55);
+}
+
+.orchestration-feed-row.empty {
+  min-height: 42px;
+  padding: 10px 16px 0 16px;
+  border-bottom: 0;
 }
 
 .orchestration-feed-time {
@@ -1418,6 +1425,11 @@ button.flat.orchestration-feed-collapse:focus-visible {
   color: @ft_text_2;
   font-size: 0.78em;
   font-weight: 540;
+}
+
+.orchestration-feed-row.empty .orchestration-feed-body {
+  color: @ft_text_3;
+  font-weight: 520;
 }
 
 .orchestration-feed-status {
@@ -1536,24 +1548,24 @@ button.flat.orchestration-feed-collapse:focus-visible {
 
 .terminal-stage {
   padding: 0;
-  background: #141414;
+  background: #141416;
 }
 
 .terminal-stage paned > separator {
-  background: alpha(@window_fg_color, 0.075);
-  min-width: 4px;
-  min-height: 4px;
+  background: alpha(@window_fg_color, 0.042);
+  min-width: 3px;
+  min-height: 3px;
   transition: background-color 90ms ease-out;
 }
 
 .terminal-stage paned > separator:hover,
 .terminal-stage paned > separator:focus-visible {
-  background: alpha(@accent_color, 0.28);
+  background: alpha(@accent_color, 0.16);
 }
 
 /* GTK marks the separator `:active` while the divider is being dragged. */
 .terminal-stage paned > separator:active {
-  background: alpha(@accent_color, 0.56);
+  background: alpha(@accent_color, 0.34);
 }
 
 .terminal-pane {
@@ -1563,8 +1575,8 @@ button.flat.orchestration-feed-collapse:focus-visible {
 }
 
 .terminal-pane.active {
-  border-color: alpha(@accent_color, 0.34);
-  box-shadow: inset 0 1px 0 alpha(@accent_color, 0.34), 0 0 0 1px alpha(@accent_color, 0.08);
+  border-color: #34302d;
+  box-shadow: inset 0 0 0 1px alpha(@accent_color, 0.08);
 }
 
 .terminal-pane:focus-visible {
@@ -1572,14 +1584,14 @@ button.flat.orchestration-feed-collapse:focus-visible {
 }
 
 .terminal-pane.needs-attention {
-  border-color: @accent_color;
+  border-color: alpha(@accent_color, 0.70);
 }
 
 .terminal-pane-header {
   min-height: 24px;
   padding: 0 10px;
   background: @ft_bg_0;
-  border-bottom: 1px solid #222222;
+  border-bottom: 1px solid @ft_bg_1;
   color: @ft_text_3;
 }
 
@@ -1596,9 +1608,9 @@ button.flat.orchestration-feed-collapse:focus-visible {
 }
 
 .terminal-pane.active .terminal-pane-header {
-  background: #1f1f1f;
+  background: #1d1d1d;
   color: @ft_text_1;
-  border-bottom-color: @ft_line_strong;
+  border-bottom-color: @ft_line;
 }
 
 .terminal-pane.needs-attention .terminal-pane-header {
@@ -2252,8 +2264,8 @@ switch {
 }
 
 switch:checked {
-  background: @accent_color;
-  border-color: transparent;
+  background: #2f2a26;
+  border-color: #7a553b;
 }
 
 switch slider {
@@ -2263,7 +2275,7 @@ switch slider {
 }
 
 switch:checked slider {
-  background: #17110c;
+  background: @accent_color;
 }
 
 switch:focus-visible {
@@ -3207,12 +3219,12 @@ entry.search.command-search:focus-within,
 }
 
 .command-list row:selected {
-  background: #262626;
-  box-shadow: inset 0 0 0 1px #343434;
+  background: #242424;
+  box-shadow: inset 0 0 0 1px #303030;
 }
 
 .command-list row:selected:hover {
-  background: #282828;
+  background: #262626;
 }
 
 .command-list row:selected button.flat {
@@ -3297,13 +3309,13 @@ entry.task-router-goal:focus-within {
 .task-router-result {
   border-radius: 8px;
   background: @ft_bg_0;
-  border: 1px solid #282828;
+  border: 1px solid @ft_line_strong;
 }
 
 .task-router-result-row {
   min-height: 31px;
   padding: 0 10px;
-  border-bottom: 1px solid @ft_line;
+  border-bottom: 1px solid @ft_bg_1;
 }
 
 .task-router-result-row:last-child {

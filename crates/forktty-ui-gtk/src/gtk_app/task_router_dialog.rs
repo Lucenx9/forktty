@@ -10,7 +10,7 @@ pub(super) fn show_task_router_dialog(parent: &adw::ApplicationWindow, state: &S
         .modal(true)
         .resizable(true)
         .default_width(560)
-        .default_height(430)
+        .default_height(276)
         .build();
     dialog.add_css_class("ft-dialog");
     dialog.add_css_class("task-router-dialog");
@@ -53,13 +53,14 @@ pub(super) fn show_task_router_dialog(parent: &adw::ApplicationWindow, state: &S
 
     let result = gtk::Box::new(gtk::Orientation::Vertical, 0);
     result.add_css_class("task-router-result");
+    result.set_visible(false);
     let strategy = task_router_result_row(&result, "strategy", false);
     let profile = task_router_result_row(&result, "profile", false);
     let approvals = task_router_result_row(&result, "approvals", false);
     let assignments = task_router_result_row(&result, "assignments", true);
     let reasons = task_router_result_row(&result, "reason", true);
     let status = gtk::Label::builder()
-        .label("No plan yet")
+        .label("Describe a task to preview a plan.")
         .xalign(0.0)
         .wrap(true)
         .build();
@@ -106,14 +107,17 @@ pub(super) fn show_task_router_dialog(parent: &adw::ApplicationWindow, state: &S
         let goal = goal.clone();
         let review = review.clone();
         let parallel = parallel.clone();
+        let result = result.clone();
         plan.connect_clicked(move |button| {
             let goal_text = goal.text().trim().to_string();
             if goal_text.is_empty() {
+                result.set_visible(false);
                 status.set_label("Enter a task goal first.");
                 goal.grab_focus();
                 return;
             }
             button.set_sensitive(false);
+            result.set_visible(false);
             status.set_label("Planning...");
             let state = state.clone();
             let status = status.clone();
@@ -123,6 +127,7 @@ pub(super) fn show_task_router_dialog(parent: &adw::ApplicationWindow, state: &S
             let assignments = assignments.clone();
             let reasons = reasons.clone();
             let button = button.clone();
+            let result = result.clone();
             let review_requested = review.is_active();
             let parallel_requested = parallel.is_active();
             glib::spawn_future_local(async move {
@@ -141,9 +146,11 @@ pub(super) fn show_task_router_dialog(parent: &adw::ApplicationWindow, state: &S
                         approvals.set_label(&summary.approvals);
                         set_task_router_multiline_result(&assignments, &summary.assignments);
                         set_task_router_multiline_result(&reasons, &summary.reason);
+                        result.set_visible(true);
                         status.set_label("Plan ready. Apply remains explicit through CLI, MCP, or a reviewed agent action.");
                     }
                     Err(err) => {
+                        result.set_visible(false);
                         status.set_label(&format!("Planning failed: {err}"));
                     }
                 }
