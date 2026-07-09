@@ -76,11 +76,12 @@ taxonomy and the agent-facing docs aligned in the same change.
 | Pi | `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` | `pi` | `AGENTS.md`; `forktty skills setup pi` aliases the interoperable `~/.agents/skills/forktty-agent-orchestration` target that Pi scans | No verified managed hook path yet | Tool allowlists are documented; ForkTTY starts Pi review workers with read-only `--tools read,grep,find,ls` unless explicit tool args are supplied | ForkTTY does not manage a Pi MCP registration path | `--mode json`, `--mode rpc`, and `-p/--print` flows documented |
 | Antigravity CLI | See Antigravity CLI docs | `agy` | Antigravity workspace customization and user config | ForkTTY installs the verified `PreInvocation`, `PreToolUse`, and `PostToolUse` hooks via a ForkTTY-owned group plus generated wrapper scripts | Hook responses are conservative: `PreToolUse` explicitly approves; other events return `{}` | Registered in `~/.gemini/config/mcp_config.json` as `mcpServers.forktty` | CLI behavior documented by Antigravity docs |
 | OpenCode | See OpenCode install docs | `opencode` | `AGENTS.md`, OpenCode config, plugins | ForkTTY installs a generated local plugin under the OpenCode plugins directory instead of mutating `opencode.json` | OpenCode permission/event payloads are observed and bounded before forwarding | OpenCode supports MCP, but ForkTTY does not yet manage an OpenCode MCP registration path | CLI/server flows documented by provider |
+| Grok Build | See Grok Build CLI docs | `grok` | `AGENTS.md` | No verified managed hook path yet | Plan mode is documented; ForkTTY marks Grok as plan-mode capable and starts Grok review workers with `--permission-mode plan` unless explicit permission args are supplied | ForkTTY does not manage a Grok MCP registration path | Single-turn/headless flags are documented by provider |
 | Custom | User-defined | User-defined | User-defined | Unknown | Unknown | Unknown | Unknown |
 
 ## Safe integration points for ForkTTY
 
-1. **Provider identity**: keep `AgentKind` explicit (`claude_code`, `codex`, `pi`, `antigravity`, `opencode`, `custom`); removed provider names such as `gemini` deserialize as `custom`.
+1. **Provider identity**: keep `AgentKind` explicit (`claude_code`, `codex`, `pi`, `antigravity`, `opencode`, `grok`, `custom`); removed provider names such as `gemini` deserialize as `custom`.
 2. **Normalized status surface**: future UI/socket code should consume normalized states (`idle`, `running`, `needs_input`, `permission_request`, `tool_running`, `tests_running`, `done`, `failed`, `cancelled`, `unknown`) without treating unknown provider strings as success or progress.
 3. **Config discovery**: only probe documented locations/env overrides; avoid writing undocumented files.
 4. **Hook installer**: only mutate providers with documented, local JSON config paths and validated hook schemas.
@@ -105,8 +106,9 @@ taxonomy and the agent-facing docs aligned in the same change.
 - The managed skill directs hook/MCP/skill setup debugging through local
   `forktty doctor` diagnostics and setup dry runs before config writes.
 - `system.capabilities` exposes a `provider_capabilities` matrix for supported
-  launch/resume providers so socket and MCP clients can read provider support
-  directly instead of probing failed operations.
+  launch/resume providers, managed hook/MCP setup support, and plan-mode
+  support so socket and MCP clients can read provider support directly instead
+  of probing failed operations.
 - `task.strategy.plan`, CLI `forktty task-plan`, and MCP
   `task_strategy_plan` provide a read-only routing recommendation before an
   agent chooses solo work, workflow loops, reviewers, teams, worktrees, MCP,

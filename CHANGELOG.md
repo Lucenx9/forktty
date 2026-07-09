@@ -21,6 +21,10 @@ All notable changes to ForkTTY are documented here.
   rail rhythm, subtler feed separators, and calmer command-palette selection.
 
 ### Fixed
+- Reported provider-specific managed hook/MCP setup capabilities to the Router
+  instead of treating every launchable provider as hook- and MCP-managed, and
+  started Grok review workers in plan mode when no explicit Grok permission
+  mode is supplied.
 - Stopped Router loop-intent detection from treating code phrases such as
   `with loop construct` as explicit iterative workflow requests.
 - Rejected relative hook and MCP config roots during setup/removal so malformed

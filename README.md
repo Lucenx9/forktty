@@ -429,7 +429,7 @@ methods for common coordination flows: create/update the team, create the task,
 launch a fresh worker surface, assign the task after launch, queue the prompt,
 and dispatch it. Submit mode uses provider-aware terminal input: providers that
 accept it reliably receive text plus carriage-return Enter in one write, while
-Codex, Claude, and Pi receive the text, a short settle, and a separate Enter so their
+Codex, Claude, Pi, and Grok receive the text, a short settle, and a separate Enter so their
 TUIs start the staged prompt reliably. Freshly launched provider TUI workers
 also get a brief initial prompt settle before the first dispatch. Human CLI
 output names the worker, selected provider when known, task, target surface,

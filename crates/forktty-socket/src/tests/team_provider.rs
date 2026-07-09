@@ -54,7 +54,16 @@ async fn capabilities_report_provider_detection_and_team_policy() {
     );
     assert_eq!(providers["claude"]["plan_mode"], true);
     assert_eq!(providers["codex"]["plan_mode"], false);
+    assert_eq!(providers["codex"]["managed_hooks"], true);
+    assert_eq!(providers["codex"]["managed_mcp"], true);
+    assert_eq!(providers["pi"]["managed_hooks"], false);
+    assert_eq!(providers["pi"]["managed_mcp"], false);
+    assert_eq!(providers["opencode"]["managed_hooks"], true);
+    assert_eq!(providers["opencode"]["managed_mcp"], false);
     assert_eq!(providers["grok"]["program"], "grok");
+    assert_eq!(providers["grok"]["plan_mode"], true);
+    assert_eq!(providers["grok"]["managed_hooks"], false);
+    assert_eq!(providers["grok"]["managed_mcp"], false);
     assert_eq!(providers["grok"]["available_on_path"], false);
     assert_eq!(providers["grok"]["unavailable_reason"], "program_not_found");
     assert_eq!(result["pty_persistence"]["config_enabled"], false);
@@ -402,6 +411,15 @@ fn team_worker_launch_uses_read_only_tools_for_pi_review_roles() {
 }
 
 #[test]
+fn team_worker_launch_uses_plan_mode_for_grok_review_roles() {
+    let (program, args) =
+        team_worker_launch_command("grok-build", Some("code-reviewer"), Vec::new()).unwrap();
+
+    assert_eq!(program, "grok");
+    assert_eq!(args, ["--permission-mode", "plan"]);
+}
+
+#[test]
 fn team_worker_launch_does_not_add_pi_tools_for_non_review_roles() {
     let (program, args) = team_worker_launch_command("pi", Some("builder"), Vec::new()).unwrap();
 
@@ -423,6 +441,18 @@ fn team_worker_launch_preserves_explicit_pi_tool_args() {
         vec!["-nbt".to_string()],
     ] {
         let (_, actual) = team_worker_launch_command("pi", Some("reviewer"), args.clone()).unwrap();
+        assert_eq!(actual, args);
+    }
+}
+
+#[test]
+fn team_worker_launch_preserves_explicit_grok_permission_args() {
+    for args in [
+        vec!["--permission-mode".to_string(), "auto".to_string()],
+        vec!["--permission-mode=acceptEdits".to_string()],
+    ] {
+        let (_, actual) =
+            team_worker_launch_command("grok", Some("reviewer"), args.clone()).unwrap();
         assert_eq!(actual, args);
     }
 }

@@ -218,6 +218,11 @@ pub(crate) fn team_worker_launch_command_with_program(
             && !pi_args_have_tool_override(&extra_args)
         {
             vec!["--tools".to_string(), "read,grep,find,ls".to_string()]
+        } else if capability.agent == "grok"
+            && role.is_some_and(team_role_is_review)
+            && !grok_args_have_permission_override(&extra_args)
+        {
+            vec!["--permission-mode".to_string(), "plan".to_string()]
         } else {
             Vec::new()
         };
@@ -261,6 +266,13 @@ fn pi_args_have_tool_override(args: &[String]) -> bool {
                 | "--no-tools"
                 | "-nt"
         )
+    })
+}
+
+fn grok_args_have_permission_override(args: &[String]) -> bool {
+    args.iter().any(|arg| {
+        let option = arg.split_once('=').map_or(arg.as_str(), |(key, _)| key);
+        matches!(option, "--permission-mode")
     })
 }
 

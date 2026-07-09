@@ -1089,8 +1089,14 @@ fn harness_capability_from_provider(id: &str, provider: &Value) -> HarnessCapabi
         authenticated: launchable,
         supports_prompt_launch: supports_team_launch,
         supports_resume: provider["safe_resume"].as_bool().unwrap_or(false),
-        supports_hooks: true,
-        supports_mcp: true,
+        supports_hooks: provider["managed_hooks"]
+            .as_bool()
+            .or_else(|| provider["supports_hooks"].as_bool())
+            .unwrap_or(false),
+        supports_mcp: provider["managed_mcp"]
+            .as_bool()
+            .or_else(|| provider["supports_mcp"].as_bool())
+            .unwrap_or(false),
         supports_plan_mode: provider["plan_mode"]
             .as_bool()
             .or_else(|| provider["supports_plan_mode"].as_bool())

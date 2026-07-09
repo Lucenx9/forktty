@@ -1575,6 +1575,8 @@ fn task_strategy_harness_registry_uses_real_provider_capability_shape() {
                 "launchable": true,
                 "safe_resume": true,
                 "cwd_resume_flag": true,
+                "managed_hooks": true,
+                "managed_mcp": true,
                 "available_on_path": true,
                 "executable": "/usr/bin/codex",
                 "disabled_by_config": false
@@ -1584,6 +1586,8 @@ fn task_strategy_harness_registry_uses_real_provider_capability_shape() {
                 "launchable": false,
                 "safe_resume": true,
                 "cwd_resume_flag": false,
+                "managed_hooks": true,
+                "managed_mcp": true,
                 "available_on_path": false,
                 "executable": null,
                 "disabled_by_config": false
@@ -1593,6 +1597,8 @@ fn task_strategy_harness_registry_uses_real_provider_capability_shape() {
                 "launchable": false,
                 "safe_resume": true,
                 "cwd_resume_flag": false,
+                "managed_hooks": true,
+                "managed_mcp": false,
                 "available_on_path": true,
                 "executable": "/usr/bin/opencode",
                 "disabled_by_config": true
@@ -1608,6 +1614,8 @@ fn task_strategy_harness_registry_uses_real_provider_capability_shape() {
     assert!(codex.installed);
     assert_eq!(codex.health, HarnessHealth::Ready);
     assert!(codex.supports_resume);
+    assert!(codex.supports_hooks);
+    assert!(codex.supports_mcp);
     assert!(codex.supports_worktree_cwd);
     assert_eq!(codex.max_parallel_sessions, Some(4));
 
@@ -1626,7 +1634,53 @@ fn task_strategy_harness_registry_uses_real_provider_capability_shape() {
         .find(|harness| harness.id == "opencode")
         .unwrap();
     assert!(opencode.installed);
+    assert!(opencode.supports_hooks);
+    assert!(!opencode.supports_mcp);
     assert_eq!(opencode.health, HarnessHealth::Disabled);
+}
+
+#[test]
+fn task_strategy_harness_registry_maps_managed_hook_and_mcp_capabilities() {
+    let registry = crate::task_strategy_runtime::harness_registry_from_capabilities(&json!({
+        "provider_capabilities": {
+            "pi": {
+                "team_worker_launch": true,
+                "launchable": true,
+                "safe_resume": true,
+                "available_on_path": true,
+                "executable": "/usr/bin/pi",
+                "disabled_by_config": false,
+                "managed_hooks": false,
+                "managed_mcp": false
+            },
+            "antigravity": {
+                "team_worker_launch": true,
+                "launchable": true,
+                "safe_resume": true,
+                "available_on_path": true,
+                "executable": "/usr/bin/agy",
+                "disabled_by_config": false,
+                "managed_hooks": true,
+                "managed_mcp": true
+            }
+        }
+    }));
+
+    let pi = registry
+        .harnesses
+        .iter()
+        .find(|harness| harness.id == "pi")
+        .unwrap();
+    let antigravity = registry
+        .harnesses
+        .iter()
+        .find(|harness| harness.id == "antigravity")
+        .unwrap();
+
+    assert!(!pi.supports_hooks);
+    assert!(!pi.supports_mcp);
+    assert!(antigravity.supports_hooks);
+    assert!(antigravity.supports_mcp);
 }
 
 #[test]
