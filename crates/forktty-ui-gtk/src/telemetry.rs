@@ -15,6 +15,7 @@ struct TelemetryStamp {
     last_ping_date: String,
 }
 
+#[allow(dead_code)]
 pub fn maybe_start_anonymous_ping(config: &forktty_core::AppConfig) {
     maybe_start_anonymous_ping_with(config, telemetry_stamp_path(), now_unix_seconds(), true);
 }
@@ -50,12 +51,14 @@ fn maybe_start_anonymous_ping_with(
     });
 }
 
+#[allow(dead_code)]
 fn telemetry_stamp_path() -> Option<PathBuf> {
     dirs::state_dir()
         .or_else(dirs::data_local_dir)
         .map(|base| base.join("forktty").join(TELEMETRY_STAMP_FILE))
 }
 
+#[allow(dead_code)]
 fn now_unix_seconds() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
