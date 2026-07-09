@@ -17,6 +17,8 @@ All notable changes to ForkTTY are documented here.
 - Quietened the Router rail's idle state so empty decision, loop, approval,
   worker, report, notification, and meta sections stay hidden until they have
   real signal, keeping the inspector calmer when no workflow is staged.
+- Softened the workbench chrome with a quieter Review Plan CTA, tighter Router
+  rail rhythm, subtler feed separators, and calmer command-palette selection.
 
 ### Fixed
 - Rejected relative hook and MCP config roots during setup/removal so malformed
