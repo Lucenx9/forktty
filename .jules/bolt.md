@@ -1,0 +1,3 @@
+## 2023-10-27 - [Avoid redundant clone during iterator evaluation in recursive structure]
+**Learning:** When searching recursively in a tree-like structure (e.g. `PaneTree` using `PaneNode`), passing string or collection ownership via `.clone()` to an iterator predicate like `.any()` leads to unnecessary allocations. The condition may fail in multiple children, resulting in an O(N) allocation overhead just to verify a negative match.
+**Action:** When passing parameters that eventually need to be owned inside nested traversal functions, pass them as references through the call stack and invoke `.clone()` only at the exact point of true insertion/ownership.
