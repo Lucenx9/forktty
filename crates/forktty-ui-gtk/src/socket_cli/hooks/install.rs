@@ -1,8 +1,8 @@
 //! Hook installer planning, config merging, and provider-specific config paths.
 
 use super::super::integration_files::{
-    launcher_uses_appimage_runtime, read_json_file, APPIMAGE_EXTRACT_AND_RUN_ENV,
-    APPIMAGE_EXTRACT_AND_RUN_VALUE, MAX_HOOK_CONFIG_SIZE_BYTES,
+    ensure_config_path_is_absolute, launcher_uses_appimage_runtime, read_json_file,
+    APPIMAGE_EXTRACT_AND_RUN_ENV, APPIMAGE_EXTRACT_AND_RUN_VALUE, MAX_HOOK_CONFIG_SIZE_BYTES,
 };
 use super::super::{trimmed_env, CliError, CliResult};
 use super::{
@@ -55,6 +55,7 @@ pub(in crate::socket_cli) fn build_hook_setup_plan_with_profile(
     profile: HookSetupProfile,
 ) -> CliResult<HookSetupPlan> {
     let config_path = (spec.config_path)();
+    ensure_config_path_is_absolute(&config_path, "hook")?;
     match spec.install_kind {
         HookInstallKind::JsonConfig => {
             let existing = read_agent_config(spec, &config_path)?;
@@ -115,6 +116,7 @@ pub(in crate::socket_cli) fn build_hook_remove_plan(
     current_launcher: Option<&Path>,
 ) -> CliResult<HookRemovePlan> {
     let config_path = (spec.config_path)();
+    ensure_config_path_is_absolute(&config_path, "hook")?;
     match spec.install_kind {
         HookInstallKind::JsonConfig => {
             let existing = read_agent_config(spec, &config_path)?;

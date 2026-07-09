@@ -210,6 +210,30 @@ fn hook_setup_dry_run_and_option_errors_do_not_write_configs() {
 }
 
 #[test]
+fn hook_and_mcp_setup_reject_relative_config_roots() {
+    let home = tempfile::tempdir().unwrap();
+    let home_s = home.path().display().to_string();
+
+    with_env(
+        &[
+            ("CODEX_HOME", Some("relative-codex-home")),
+            ("CLAUDE_CONFIG_DIR", None),
+            ("HOME", Some(&home_s)),
+        ],
+        || {
+            assert_err_contains(
+                handle_hooks_setup(&test_context(), strings(&["--dry-run", "codex"])),
+                "hook config path must be absolute",
+            );
+            assert_err_contains(
+                handle_mcp_setup(&test_context(), strings(&["--dry-run", "codex"])),
+                "MCP config path must be absolute",
+            );
+        },
+    );
+}
+
+#[test]
 fn hook_setup_preflights_all_configs_and_prevents_partial_writes() {
     let dir = tempfile::tempdir().unwrap();
     let codex_home = dir.path().join("codex");

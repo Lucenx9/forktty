@@ -19,6 +19,10 @@ All notable changes to ForkTTY are documented here.
   real signal, keeping the inspector calmer when no workflow is staged.
 
 ### Fixed
+- Rejected relative hook and MCP config roots during setup/removal so malformed
+  `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `HOME`, or related env overrides cannot
+  make ForkTTY write agent integration config under the current working
+  directory.
 - Improved contrast for small sidebar, Router dialog, and command-palette labels,
   and aligned the Router dialog's empty result placeholders consistently.
 - Fixed AppImage-launched embedded Ghostty panes so new shells receive

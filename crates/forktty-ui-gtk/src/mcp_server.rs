@@ -656,6 +656,26 @@ mod tests {
     }
 
     #[test]
+    fn all_advertised_tools_have_valid_dispatch_examples() {
+        let mut names = std::collections::BTreeSet::new();
+        let mut failures = Vec::new();
+
+        for tool in tool_specs() {
+            assert!(names.insert(tool.name), "duplicate MCP tool {}", tool.name);
+            let arguments = example_arguments_for_schema(&tool.input_schema);
+            if let Err(err) = build_socket_call_for_test(tool.name, arguments.clone()) {
+                failures.push(format!("{} with {arguments}: {err}", tool.name));
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "advertised MCP tools must have matching socket dispatch examples:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    #[test]
     fn task_strategy_plan_tool_maps_to_socket_method() {
         let (method, params) = build_socket_call_for_test(
             "task_strategy_plan",
@@ -1576,6 +1596,74 @@ mod tests {
             .prefix("forktty-mcp-")
             .tempdir_in(base)
             .unwrap()
+    }
+
+    fn example_arguments_for_schema(schema: &Value) -> Value {
+        let mut arguments = Map::new();
+        insert_schema_required_examples(schema, schema, &mut arguments);
+        if schema
+            .get("properties")
+            .and_then(|properties| properties.get("surface_id"))
+            .is_some()
+        {
+            arguments
+                .entry("surface_id".to_string())
+                .or_insert_with(|| json!("surface-1"));
+        }
+        Value::Object(arguments)
+    }
+
+    fn insert_schema_required_examples(
+        schema: &Value,
+        root: &Value,
+        arguments: &mut Map<String, Value>,
+    ) {
+        if let Some(required) = schema.get("required").and_then(Value::as_array) {
+            for key in required.iter().filter_map(Value::as_str) {
+                arguments
+                    .entry(key.to_string())
+                    .or_insert_with(|| example_value_for_property(root, key));
+            }
+        }
+        for keyword in ["anyOf", "oneOf"] {
+            if let Some(first_alternative) = schema
+                .get(keyword)
+                .and_then(Value::as_array)
+                .and_then(|alternatives| alternatives.first())
+            {
+                insert_schema_required_examples(first_alternative, root, arguments);
+            }
+        }
+    }
+
+    fn example_value_for_property(schema: &Value, key: &str) -> Value {
+        let property = schema
+            .get("properties")
+            .and_then(|properties| properties.get(key));
+        if let Some(value) = property
+            .and_then(|property| property.get("enum"))
+            .and_then(Value::as_array)
+            .and_then(|values| values.first())
+        {
+            return value.clone();
+        }
+        match property
+            .and_then(|property| property.get("type"))
+            .and_then(Value::as_str)
+        {
+            Some("integer") => json!(1),
+            Some("boolean") => json!(true),
+            Some("array") => match property
+                .and_then(|property| property.get("items"))
+                .and_then(|items| items.get("type"))
+                .and_then(Value::as_str)
+            {
+                Some("object") => json!([{}]),
+                _ => json!(["sample"]),
+            },
+            Some("object") => json!({}),
+            _ => json!(format!("{key}-example")),
+        }
     }
 
     fn annotation(name: &str) -> Value {

@@ -204,6 +204,17 @@ pub(super) fn hook_config_write_path(path: &Path) -> CliResult<PathBuf> {
     }
 }
 
+pub(super) fn ensure_config_path_is_absolute(path: &Path, label: &str) -> CliResult<()> {
+    if path.is_absolute() {
+        Ok(())
+    } else {
+        Err(CliError::new(format!(
+            "{label} config path must be absolute: {}",
+            path.display()
+        )))
+    }
+}
+
 pub(super) fn ensure_parent_dir(path: &Path) -> CliResult<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;

@@ -5,9 +5,10 @@ use super::hooks::{
     normalize_agent_name,
 };
 use super::integration_files::{
-    atomic_write_file, backup_file, ensure_parent_dir, hook_config_write_path,
-    launcher_uses_appimage_runtime, read_json_file_with_limit, read_text_config_with_limit,
-    stable_hook_launcher_path, APPIMAGE_EXTRACT_AND_RUN_ENV, APPIMAGE_EXTRACT_AND_RUN_VALUE,
+    atomic_write_file, backup_file, ensure_config_path_is_absolute, ensure_parent_dir,
+    hook_config_write_path, launcher_uses_appimage_runtime, read_json_file_with_limit,
+    read_text_config_with_limit, stable_hook_launcher_path, APPIMAGE_EXTRACT_AND_RUN_ENV,
+    APPIMAGE_EXTRACT_AND_RUN_VALUE,
 };
 use super::{
     bool_option, parse_flags, print_json, reject_unknown_options, write_stdout_line, CliContext,
@@ -238,6 +239,7 @@ pub(super) fn build_mcp_setup_plan(
     launcher: &Path,
 ) -> CliResult<McpSetupPlan> {
     let config_path = (spec.config_path)();
+    ensure_config_path_is_absolute(&config_path, "MCP")?;
     let (changed, content) = match spec.config_kind {
         McpConfigKind::CodexToml => merge_codex_mcp_config(&config_path, launcher)?,
         McpConfigKind::JsonMcpServers => merge_json_mcp_config(&config_path, launcher)?,
@@ -252,6 +254,7 @@ pub(super) fn build_mcp_setup_plan(
 
 pub(super) fn build_mcp_remove_plan(spec: &'static McpAgentSpec) -> CliResult<McpRemovePlan> {
     let config_path = (spec.config_path)();
+    ensure_config_path_is_absolute(&config_path, "MCP")?;
     let action = match spec.config_kind {
         McpConfigKind::CodexToml => remove_codex_mcp_config(&config_path)?,
         McpConfigKind::JsonMcpServers => remove_json_mcp_config(&config_path)?,
