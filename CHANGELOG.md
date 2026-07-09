@@ -21,6 +21,8 @@ All notable changes to ForkTTY are documented here.
   rail rhythm, subtler feed separators, and calmer command-palette selection.
 
 ### Fixed
+- Stopped Router loop-intent detection from treating code phrases such as
+  `with loop construct` as explicit iterative workflow requests.
 - Rejected relative hook and MCP config roots during setup/removal so malformed
   `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `HOME`, or related env overrides cannot
   make ForkTTY write agent integration config under the current working

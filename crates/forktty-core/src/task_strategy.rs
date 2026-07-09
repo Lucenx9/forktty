@@ -812,7 +812,6 @@ fn contains_iterative_loop_intent(goal: &str) -> bool {
     });
     if lower.contains("iterative audit")
         || lower.contains("use loop")
-        || (lower.contains("with loop") && has_verification_target)
         || lower.contains("repeat verification")
         || lower.contains("repeat verify")
         || lower.contains("keep checking")
@@ -1918,6 +1917,26 @@ mod tests {
                 "{goal} should not report iterative loop intent"
             );
         }
+    }
+
+    #[test]
+    fn code_loop_phrases_do_not_count_as_iterative_workflow_intent() {
+        let plan = plan_for_goal("Check the with loop construct and verify behavior", false);
+
+        assert_ne!(plan.task_class, TaskClass::VerifyFixLoop);
+        assert!(
+            plan.reasons
+                .iter()
+                .all(|reason| !reason.contains("iterative loop intent")),
+            "code loop wording should not report iterative loop intent"
+        );
+        assert!(
+            plan.candidate_scores.iter().all(|candidate| candidate
+                .factors
+                .iter()
+                .all(|factor| factor.name != "iterative_loop_intent")),
+            "code loop wording should not score iterative loop intent"
+        );
     }
 
     #[test]
