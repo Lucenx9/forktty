@@ -822,7 +822,7 @@ fn close_active_workspace_keeps_a_terminal_when_closing_last_workspace() {
     };
     spawn_focused_surface_if_needed(&state).unwrap();
 
-    close_active_workspace(&state);
+    crate::test_env::with_isolated_user_dirs(|| close_active_workspace(&state));
 
     let workspaces = model.lock().unwrap().list_workspaces();
     assert_eq!(workspaces.len(), 1);
@@ -902,7 +902,7 @@ fn close_surface_by_id_targets_captured_surface_after_workspace_switch() {
     };
     spawn_focused_surface_if_needed(&state).unwrap();
 
-    close_surface_by_id(&state, &captured_surface_id);
+    crate::test_env::with_isolated_user_dirs(|| close_surface_by_id(&state, &captured_surface_id));
 
     let model = model.lock().unwrap();
     assert_eq!(
@@ -1292,7 +1292,9 @@ fn select_tab_in_focused_pane_wraps_and_jumps_edges() {
         (first, second, third)
     };
 
-    assert!(select_tab_in_focused_pane(&state, TabNavigation::Previous));
+    assert!(crate::test_env::with_isolated_user_dirs(|| {
+        select_tab_in_focused_pane(&state, TabNavigation::Previous)
+    }));
     assert_eq!(
         model
             .lock()
@@ -1302,7 +1304,9 @@ fn select_tab_in_focused_pane_wraps_and_jumps_edges() {
             .focused_surface_id,
         second
     );
-    assert!(select_tab_in_focused_pane(&state, TabNavigation::Next));
+    assert!(crate::test_env::with_isolated_user_dirs(|| {
+        select_tab_in_focused_pane(&state, TabNavigation::Next)
+    }));
     assert_eq!(
         model
             .lock()
@@ -1312,7 +1316,9 @@ fn select_tab_in_focused_pane_wraps_and_jumps_edges() {
             .focused_surface_id,
         third
     );
-    assert!(select_tab_in_focused_pane(&state, TabNavigation::First));
+    assert!(crate::test_env::with_isolated_user_dirs(|| {
+        select_tab_in_focused_pane(&state, TabNavigation::First)
+    }));
     assert_eq!(
         model
             .lock()
@@ -1322,7 +1328,9 @@ fn select_tab_in_focused_pane_wraps_and_jumps_edges() {
             .focused_surface_id,
         first
     );
-    assert!(select_tab_in_focused_pane(&state, TabNavigation::Last));
+    assert!(crate::test_env::with_isolated_user_dirs(|| {
+        select_tab_in_focused_pane(&state, TabNavigation::Last)
+    }));
     assert_eq!(
         model
             .lock()
@@ -1415,7 +1423,7 @@ fn close_active_terminal_does_not_spawn_terminal_for_remaining_browser() {
     };
     spawn_focused_surface_if_needed(&state).unwrap();
 
-    close_active_surface(&state);
+    crate::test_env::with_isolated_user_dirs(|| close_active_surface(&state));
 
     let model = model.lock().unwrap();
     let workspace = model.list_workspaces().remove(0);
@@ -1622,7 +1630,9 @@ fn close_workspace_by_id_targets_captured_workspace_after_workspace_switch() {
     };
     spawn_focused_surface_if_needed(&state).unwrap();
 
-    close_workspace_by_id(&state, &captured_workspace_id);
+    crate::test_env::with_isolated_user_dirs(|| {
+        close_workspace_by_id(&state, &captured_workspace_id)
+    });
 
     let model = model.lock().unwrap();
     assert_eq!(
@@ -1837,7 +1847,9 @@ fn close_tab_surface_closes_model_and_backend_for_non_last_tab() {
             .unwrap();
     }
 
-    assert!(close_tab_surface(&state, &second_surface_id));
+    assert!(crate::test_env::with_isolated_user_dirs(|| {
+        close_tab_surface(&state, &second_surface_id)
+    }));
 
     let model = model.lock().unwrap();
     assert!(model.surface(&first_surface_id).is_some());
@@ -1887,7 +1899,9 @@ fn close_tab_surface_holds_model_lock_while_closing_backend() {
             .unwrap();
     }
 
-    assert!(close_tab_surface(&state, &second_surface_id));
+    assert!(crate::test_env::with_isolated_user_dirs(|| {
+        close_tab_surface(&state, &second_surface_id)
+    }));
 
     assert!(
         !terminal.observed_model_unlocked(),
@@ -2761,7 +2775,7 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(app_source.contains("header.pack_start(&router_cluster);"));
     assert!(app_source.contains("router_crumb.set_action_name(Some(\"app.task-router\"));"));
     assert!(app_source.contains("apply_button.set_action_name(Some(\"app.task-router\"));"));
-    assert!(app_source.contains(".label(\"Review Plan\")"));
+    assert!(app_source.contains(".label(\"Plan Task\")"));
     assert!(!app_source.contains("header-plan-button"));
     assert!(!css.contains("header-plan-button"));
     assert!(!app_source.contains(".label(\"Apply\")"));

@@ -37,6 +37,12 @@ esac
 APPIMAGE_PATH="$TARGET_DIR/forktty-${VERSION}-${APPIMAGE_ARCH}.AppImage"
 APPIMAGE_ZSYNC_PATH="$APPIMAGE_PATH.zsync"
 APPIMAGE_ZSYNC_CWD_PATH="$PWD/$(basename "$APPIMAGE_ZSYNC_PATH")"
+APPIMAGE_UPDATE_CHANNEL="latest"
+if [[ "$VERSION" == *-* ]]; then
+  # Pre-release users should receive newer pre-releases and the eventual
+  # stable release; stable builds remain on the stable-only channel.
+  APPIMAGE_UPDATE_CHANNEL="latest-all"
+fi
 
 resolve_tool() {
   local env_name="$1"
@@ -476,7 +482,7 @@ if [[ "${APPIMAGE_UPDATE_INFO:-0}" == "1" ]]; then
     exit 1
   fi
   APPIMAGETOOL_ARGS=(
-    -u "gh-releases-zsync|Lucenx9|forktty|latest|forktty-*-${APPIMAGE_ARCH}.AppImage.zsync"
+    -u "gh-releases-zsync|Lucenx9|forktty|${APPIMAGE_UPDATE_CHANNEL}|forktty-*-${APPIMAGE_ARCH}.AppImage.zsync"
     "${APPIMAGETOOL_ARGS[@]}"
   )
 fi

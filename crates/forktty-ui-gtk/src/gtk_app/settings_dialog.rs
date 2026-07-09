@@ -274,7 +274,7 @@ pub(super) fn show_settings_dialog_page(
     let (provider_detection_section, provider_detection_list) =
         settings_section("Detected Providers", "");
     let check_now_row = settings_action_row(
-        "Provider readiness",
+        "Provider command availability",
         "Re-scan the configured provider commands on PATH.",
     );
     let check_now_button = gtk::Button::with_label("Check now");

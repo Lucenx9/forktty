@@ -15,7 +15,7 @@ use crate::{
     close_replacement_terminal_surface_if_present, close_surface_request,
     close_terminal_surface_if_present, close_terminal_surfaces_or_restore,
     ensure_terminal_for_active_workspace, evict_hook_session_targets_for_surfaces,
-    rollback_surface_creation, spawn_surface_terminal, store_access,
+    rollback_surface_creation, spawn_surface_terminal, spawn_terminal_surfaces, store_access,
     team_dispatch::{
         dispatch_team_message_text, send_team_message_body_when_ready,
         send_team_submit_enter_after_settle, show_team_message_surface,
@@ -179,14 +179,20 @@ pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Val
         .map(str::to_string)
         .collect::<Vec<_>>();
 
-    let closed_surfaces = close_team_finish_worker_surfaces(state, &close_targets).await?;
+    let _surface_set_guard = if close_targets.is_empty() {
+        None
+    } else {
+        Some(state.coordinator.surface_set.lock().await)
+    };
+    let prepared_closes = prepare_team_finish_surface_closes(state, &close_targets)?;
+    close_team_finish_worker_terminals(state, &prepared_closes)?;
 
-    let shutdown_worker_ids = closed_surfaces
+    let shutdown_worker_ids = prepared_closes
         .iter()
-        .map(|(worker_id, _, _)| worker_id.clone())
+        .map(|close| close.worker_id.clone())
         .collect::<Vec<_>>();
     let team_id_for_store = team_id.clone();
-    let (closed_workers, team) = store_access::team_store_access(state)?
+    let update_result = store_access::team_store_access(state)?
         .update(move |store| {
             let now_ms = forktty_core::team_now_ms();
             for worker_id in mark_closed_worker_ids {
@@ -231,8 +237,21 @@ pub(crate) async fn finish(state: &SocketAppState, params: &Value) -> Result<Val
             )?;
             Ok((closed_workers, team))
         })
-        .await
-        .map_err(DispatchError::from)?;
+        .await;
+    let (closed_workers, team) = match update_result {
+        Ok(result) => result,
+        Err(err) => {
+            let message = err.to_string();
+            if let Err(restore_err) = restore_team_finish_worker_terminals(state, &prepared_closes)
+            {
+                return Err(DispatchError::Other(format!(
+                    "{message}; terminal restore failed: {restore_err}"
+                )));
+            }
+            return Err(DispatchError::from(err));
+        }
+    };
+    let closed_surfaces = commit_team_finish_worker_surfaces(state, &prepared_closes).await?;
     let mut closed = Vec::new();
     for (worker_id, surface_id, closed_surface) in closed_surfaces {
         let worker = closed_workers
@@ -287,18 +306,16 @@ fn summary_u64(summary: &Value, key: &str) -> u64 {
     summary.get(key).and_then(Value::as_u64).unwrap_or(0)
 }
 
-async fn close_team_finish_worker_surfaces(
+fn close_team_finish_worker_terminals(
     state: &SocketAppState,
-    close_targets: &[(String, String)],
-) -> Result<Vec<(String, String, Value)>, DispatchError> {
-    if close_targets.is_empty() {
-        return Ok(Vec::new());
+    prepared: &[TeamFinishSurfaceClose],
+) -> Result<(), DispatchError> {
+    if prepared.is_empty() {
+        return Ok(());
     }
 
-    let _surface_set_guard = state.coordinator.surface_set.lock().await;
-    let prepared = prepare_team_finish_surface_closes(state, close_targets)?;
     let mut spawned_replacements = Vec::new();
-    for close in &prepared {
+    for close in prepared {
         if let Some(replacement) = close.replacement.as_ref() {
             if let Err(err) = spawn_surface_terminal(state, replacement) {
                 let mut err = err;
@@ -314,7 +331,7 @@ async fn close_team_finish_worker_surfaces(
     }
 
     let text = terminal_text_with_submit_enter("Team finished by leader. You can stop now.", true);
-    for close in &prepared {
+    for close in prepared {
         if let Err(err) = state.terminal.send_text(&close.surface_id, &text) {
             let mut err = err.to_string();
             if let Err(cleanup_err) = cleanup_team_finish_replacements(state, &spawned_replacements)
@@ -336,8 +353,43 @@ async fn close_team_finish_worker_surfaces(
         return Err(err.into());
     }
 
+    Ok(())
+}
+
+fn restore_team_finish_worker_terminals(
+    state: &SocketAppState,
+    prepared: &[TeamFinishSurfaceClose],
+) -> Result<(), String> {
+    let surfaces = prepared
+        .iter()
+        .map(|close| close.surface.clone())
+        .collect::<Vec<_>>();
+    let restore_result = spawn_terminal_surfaces(state, &surfaces);
+    let replacements = prepared
+        .iter()
+        .filter_map(|close| close.replacement.clone())
+        .collect::<Vec<_>>();
+    let cleanup_result = cleanup_team_finish_replacements(state, &replacements);
+    match (restore_result, cleanup_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(restore_err), Ok(())) => Err(restore_err),
+        (Ok(()), Err(cleanup_err)) => Err(format!("replacement cleanup failed: {cleanup_err}")),
+        (Err(restore_err), Err(cleanup_err)) => Err(format!(
+            "{restore_err}; replacement cleanup failed: {cleanup_err}"
+        )),
+    }
+}
+
+async fn commit_team_finish_worker_surfaces(
+    state: &SocketAppState,
+    prepared: &[TeamFinishSurfaceClose],
+) -> Result<Vec<(String, String, Value)>, DispatchError> {
+    if prepared.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let mut closed_surfaces = Vec::new();
-    for close in &prepared {
+    for close in prepared {
         let closed_surface = close_model_surface_after_terminal_closed(
             state,
             &close.surface_id,

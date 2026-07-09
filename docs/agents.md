@@ -32,7 +32,10 @@ the owning Rust modules and agent-facing setup docs:
   last-known-good, the planner can infer it from completed task-strategy
   workflows in the selected workspace. Last-known-good is a small advisory
   stickiness factor; cooldown is a soft assignment penalty; lockout is
-  a hard task/mode exclusion. `task.strategy.apply` stages visible
+  a hard task/mode exclusion. PATH/configured-command discovery proves only
+  launchability: auto-detected harness authentication and runtime health remain
+  unverified and score below positively verified Ready harnesses.
+  `task.strategy.apply` stages visible
   workflow/team/task/message state by default; with
   `submit=true`, supported team plans launch visible worker panes and dispatch
   prompts through the team mailbox; missing approvals can be
@@ -84,6 +87,8 @@ taxonomy and the agent-facing docs aligned in the same change.
 1. **Provider identity**: keep `AgentKind` explicit (`claude_code`, `codex`, `pi`, `antigravity`, `opencode`, `grok`, `custom`); removed provider names such as `gemini` deserialize as `custom`.
 2. **Normalized status surface**: future UI/socket code should consume normalized states (`idle`, `running`, `needs_input`, `permission_request`, `tool_running`, `tests_running`, `done`, `failed`, `cancelled`, `unknown`) without treating unknown provider strings as success or progress.
 3. **Config discovery**: only probe documented locations/env overrides; avoid writing undocumented files.
+   Executable discovery proves local launchability only; it must not be reported
+   as provider authentication, quota availability, or runtime health.
 4. **Hook installer**: only mutate providers with documented, local JSON config paths and validated hook schemas.
 5. **Doctor checks**: local-only, no network, no telemetry, no mutating agent state.
 

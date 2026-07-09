@@ -430,6 +430,63 @@ async fn team_finish_can_close_launch_owned_workers() {
 
 #[tokio::test]
 #[serial_test::serial]
+async fn team_finish_persistence_failure_keeps_launch_owned_worker_open() {
+    let bin_dir = tempfile::tempdir().unwrap();
+    let _codex = write_fake_codex(bin_dir.path());
+    let _path = EnvGuard::set("PATH", bin_dir.path().to_str().unwrap());
+    let (mut state, backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    let store_path = dir.path().join("team-v1.json");
+    state.team_store_path = Some(store_path.clone());
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({
+            "team_id": "team-1",
+            "workspace_id": workspace_id,
+            "status": "active"
+        }),
+    )
+    .await
+    .unwrap();
+    let launched = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "worker-1",
+            "agent": "codex",
+            "status": "running"
+        }),
+    )
+    .await
+    .unwrap();
+    let surface_id = launched["surface"]["id"].as_str().unwrap().to_string();
+    let blocked_tmp_path = store_path.with_extension(format!("json.tmp-{}", std::process::id()));
+    fs::create_dir(&blocked_tmp_path).unwrap();
+
+    let error = dispatch(
+        &state,
+        "team.finish",
+        json!({"team_id": "team-1", "close_workers": true}),
+    )
+    .await
+    .expect_err("team finish must report the persistence failure");
+
+    assert!(error.to_string().contains("IO error"));
+    assert!(backend.sent_text(&surface_id).is_ok());
+    let team = dispatch(&state, "team.get", json!({"team_id": "team-1"}))
+        .await
+        .unwrap();
+    assert_eq!(team["status"], "active");
+    assert_eq!(team["workers"][0]["status"], "running");
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn team_finish_close_workers_spawns_replacement_for_inactive_root_worker_surface() {
     let bin_dir = tempfile::tempdir().unwrap();
     let _codex = write_fake_codex(bin_dir.path());

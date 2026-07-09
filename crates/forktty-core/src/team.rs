@@ -373,6 +373,12 @@ impl TeamStoreData {
             },
         };
 
+        let workspace_changed = workspace_id
+            .as_ref()
+            .is_some_and(|workspace_id| updated.workspace_id.as_ref() != Some(workspace_id));
+        if workspace_changed && leader_surface_id.is_none() {
+            updated.leader_surface_id = None;
+        }
         if workspace_id.is_some() {
             updated.workspace_id = workspace_id;
         }
@@ -1583,6 +1589,41 @@ fn clean_long(field: &str, value: &str) -> Result<String, TeamError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn moving_team_to_another_workspace_clears_stale_leader_surface() {
+        let mut store = TeamStoreData::default();
+        store
+            .upsert_team(
+                TeamUpsert {
+                    team_id: "team-1".to_string(),
+                    workspace_id: Some("workspace-a".to_string()),
+                    leader_surface_id: Some("surface-a".to_string()),
+                    name: None,
+                    status: None,
+                    goal: None,
+                },
+                1,
+            )
+            .unwrap();
+
+        let moved = store
+            .upsert_team(
+                TeamUpsert {
+                    team_id: "team-1".to_string(),
+                    workspace_id: Some("workspace-b".to_string()),
+                    leader_surface_id: None,
+                    name: None,
+                    status: None,
+                    goal: None,
+                },
+                2,
+            )
+            .unwrap();
+
+        assert_eq!(moved.workspace_id.as_deref(), Some("workspace-b"));
+        assert_eq!(moved.leader_surface_id, None);
+    }
 
     #[test]
     fn team_store_tracks_workers_tasks_messages_and_summary() {

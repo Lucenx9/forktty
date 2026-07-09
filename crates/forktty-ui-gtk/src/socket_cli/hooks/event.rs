@@ -1168,11 +1168,11 @@ fn hook_notification_needs_attention(payload: &Value, message: &str) -> bool {
         Some("auth_success" | "elicitation_complete" | "elicitation_response") => false,
         Some(_) => true,
         None => {
+            // Legacy Claude payloads omitted notification_type. Preserve the
+            // conservative fallback, except for the documented background-task
+            // completion notification that does not need user attention.
             let lower = message.trim().to_ascii_lowercase();
-            lower.contains("needs your permission")
-                || lower.contains("waiting for your input")
-                || lower.contains("permission required")
-                || !lower.starts_with("background task completed:")
+            !lower.starts_with("background task completed:")
         }
     }
 }

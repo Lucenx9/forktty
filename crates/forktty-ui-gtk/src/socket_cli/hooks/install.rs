@@ -616,7 +616,7 @@ pub(in crate::socket_cli) fn merge_antigravity_hook_config(
 }
 
 pub(in crate::socket_cli) fn is_antigravity_flat_hook_event(event_name: &str) -> bool {
-    matches!(event_name, "PreInvocation" | "PostInvocation" | "Stop")
+    event_name == "PreInvocation"
 }
 
 pub(in crate::socket_cli) fn is_legacy_forktty_hook_command(

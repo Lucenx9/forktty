@@ -271,14 +271,14 @@ pub(super) fn build_ui(app: &adw::Application) {
     router_cluster.append(&workspace_title);
 
     let apply_button = gtk::Button::builder()
-        .label("Review Plan")
+        .label("Plan Task")
         .has_frame(false)
-        .tooltip_text("Review the routing plan before applying it elsewhere")
+        .tooltip_text("Plan a task with the Router")
         .build();
     apply_button.add_css_class("flat");
     apply_button.add_css_class("header-apply-button");
     apply_button.set_action_name(Some("app.task-router"));
-    set_accessible_button_text(&apply_button, "Review routing plan", None);
+    set_accessible_button_text(&apply_button, "Plan task with Router", None);
     router_cluster.append(&apply_button);
     header.pack_start(&router_cluster);
     // Suppress the default centered window title; the workspace selector

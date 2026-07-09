@@ -316,6 +316,12 @@ impl WorkflowStoreData {
                 },
             ),
         };
+        let workspace_changed = workspace_id
+            .as_ref()
+            .is_some_and(|workspace_id| updated.workspace_id.as_ref() != Some(workspace_id));
+        if workspace_changed && surface_id.is_none() {
+            updated.surface_id = None;
+        }
         if workspace_id.is_some() {
             updated.workspace_id = workspace_id;
         }
@@ -1180,6 +1186,36 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
+
+    #[test]
+    fn moving_workflow_to_another_workspace_clears_stale_surface() {
+        let mut store = WorkflowStoreData::default();
+        store
+            .upsert(
+                WorkflowUpsert {
+                    workflow_id: Some("workflow-1".to_string()),
+                    workspace_id: Some("workspace-a".to_string()),
+                    surface_id: Some("surface-a".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                1,
+            )
+            .unwrap();
+
+        let moved = store
+            .upsert(
+                WorkflowUpsert {
+                    workflow_id: Some("workflow-1".to_string()),
+                    workspace_id: Some("workspace-b".to_string()),
+                    ..WorkflowUpsert::default()
+                },
+                2,
+            )
+            .unwrap();
+
+        assert_eq!(moved.workspace_id.as_deref(), Some("workspace-b"));
+        assert_eq!(moved.surface_id, None);
+    }
 
     #[test]
     fn workflow_store_upserts_plan_evidence_and_replays() {

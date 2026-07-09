@@ -271,6 +271,9 @@ pub fn normalize_agent_status(raw: &str) -> AgentStatus {
     if lower.contains("done") || lower.contains("complete") || lower.contains("success") {
         return AgentStatus::Done;
     }
+    if lower.contains("permission denied") || lower.contains("approval denied") {
+        return AgentStatus::Running;
+    }
     if lower.contains("permission") || lower.contains("approval") {
         return AgentStatus::PermissionRequest;
     }
@@ -528,6 +531,10 @@ mod tests {
         assert_eq!(
             normalize_agent_status("Permission required"),
             AgentStatus::PermissionRequest
+        );
+        assert_eq!(
+            normalize_agent_status("Permission denied"),
+            AgentStatus::Running
         );
         assert_eq!(
             normalize_agent_status("tests running"),

@@ -510,6 +510,22 @@ fn appimage_hook_commands_use_extract_and_run_env() {
 }
 
 #[test]
+fn renamed_appimage_hook_commands_use_runtime_env_provenance() {
+    let spec = agent_spec("codex").unwrap();
+    let launcher = "/home/me/AppImages/forktty-renamed";
+
+    with_env(&[("APPIMAGE", Some(launcher))], || {
+        let command = build_hook_shell_command(Path::new(launcher), spec, "pre-tool");
+        assert!(command.contains(
+            "&& APPIMAGE_EXTRACT_AND_RUN=1 '/home/me/AppImages/forktty-renamed' hooks codex pre-tool"
+        ));
+
+        let native = build_hook_shell_command(Path::new("/usr/bin/forktty"), spec, "pre-tool");
+        assert!(!native.contains("APPIMAGE_EXTRACT_AND_RUN"));
+    });
+}
+
+#[test]
 fn parse_launcher_handles_apostrophe_in_path() {
     let spec = agent_spec("codex").unwrap();
     let command =

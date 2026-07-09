@@ -36,7 +36,8 @@ The installer writes an absolute path to the `forktty` launcher so hooks can run
 from any project. Re-run `forktty hooks setup` if the AppImage or installed
 binary moves. When that launcher is an AppImage, generated hook commands set
 `APPIMAGE_EXTRACT_AND_RUN=1` for the ForkTTY CLI child so short hooks do not
-keep a FUSE AppImage mount alive. `--dry-run` prints the would-be diff without
+keep a FUSE AppImage mount alive. Runtime provenance, not the filename suffix,
+identifies renamed AppImages. `--dry-run` prints the would-be diff without
 touching disk:
 
 ```bash
@@ -99,9 +100,10 @@ the default Codex, Claude Code, and Antigravity config locations:
 Setup and removal use the same atomic write, `.bak-*` backup, dry-run, and
 managed-entry preservation behavior as hook setup. Codex TOML setup preserves
 comments/formatting and uses the larger MCP config size budget rather than the
-smaller hook-template limit. If the registered launcher is an AppImage, the
-managed MCP server env includes `APPIMAGE_EXTRACT_AND_RUN=1` so persistent MCP
-clients do not keep a FUSE AppImage mount alive. `forktty mcp remove gemini` is
+smaller hook-template limit. If the registered launcher is an AppImage,
+including one renamed without an `.AppImage` suffix, the managed MCP server env
+includes `APPIMAGE_EXTRACT_AND_RUN=1` so persistent MCP clients do not keep a
+FUSE AppImage mount alive. `forktty mcp remove gemini` is
 legacy cleanup only for ForkTTY-managed `~/.gemini/settings.json` entries;
 Gemini MCP setup remains unsupported. OpenCode hook support remains available,
 but no verified OpenCode MCP registration path is managed yet.

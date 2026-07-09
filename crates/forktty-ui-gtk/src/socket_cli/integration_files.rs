@@ -54,10 +54,23 @@ pub(super) fn stable_hook_launcher_path_from_env(
 }
 
 pub(super) fn launcher_uses_appimage_runtime(launcher: &Path) -> bool {
-    launcher
+    let has_appimage_extension = launcher
         .extension()
         .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("appimage"))
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("appimage"));
+    if has_appimage_extension {
+        return true;
+    }
+
+    // AppImage files are ordinary executables and may be renamed without an
+    // extension. stable_hook_launcher_path() validates the mount provenance;
+    // preserve it here by recognizing the exact stable runtime path.
+    launcher.is_absolute()
+        && ["APPIMAGE", "FORKTTY_APPIMAGE"].into_iter().any(|name| {
+            std::env::var_os(name)
+                .map(PathBuf::from)
+                .is_some_and(|candidate| candidate.is_absolute() && candidate == launcher)
+        })
 }
 
 pub(super) fn read_json_file(path: &Path) -> CliResult<Value> {

@@ -6,21 +6,40 @@ All notable changes to ForkTTY are documented here.
 
 ### Changed
 - Polished the dark workbench toward a quieter Linear/Cursor-style finish:
-  neutral header chips, a less saturated Review Plan CTA, softer active-pane and
+  neutral header chips, a less saturated Plan Task CTA, softer active-pane and
   feed accents, lower-noise shell dividers, brighter muted labels, quieter empty
   feed rows, and a Router planner that hides result scaffolding until a plan is
   available; the idle Router dialog is more compact, the empty feed reads less
   like a log row, and split-pane hairlines are subtler.
 - Simplified the workbench titlebar by removing the redundant Plan shortcut next
-  to Review Plan, leaving one primary Router action while keeping the sidebars as
+  to Plan Task, leaving one primary Router action while keeping the sidebars as
   contextual navigation/inspection surfaces.
 - Quietened the Router rail's idle state so empty decision, loop, approval,
   worker, report, notification, and meta sections stay hidden until they have
   real signal, keeping the inspector calmer when no workflow is staged.
-- Softened the workbench chrome with a quieter Review Plan CTA, tighter Router
+- Softened the workbench chrome with a quieter Plan Task CTA, tighter Router
   rail rhythm, subtler feed separators, and calmer command-palette selection.
+- Router-discovered provider executables now report authentication and runtime
+  health as unverified instead of claiming they are authenticated and ready;
+  they remain eligible until concrete runtime evidence reports a lockout.
 
 ### Fixed
+- Prevented `team.finish --close-workers` from leaving persisted workers active
+  after closing their panes when the team store cannot be saved; terminal
+  closures are now restored before the error is returned.
+- Cleared stale leader/surface bindings when a team or workflow moves to another
+  workspace without an explicit replacement surface, and stopped classifying
+  legacy `Permission denied` status text as a permission request.
+- Isolated GTK session-writing tests from the real user state directory, made
+  environment guards panic-safe, and retried atomic session temp-file name
+  collisions instead of failing with `File exists`.
+- Propagated piped stdin EOF through `remote-helper pty`, so canonical commands
+  such as `cat` can finish instead of hanging after all input is consumed.
+- Preserved AppImage runtime provenance for renamed launchers in generated hook
+  and MCP commands, used the prerelease-aware zsync update channel, and aligned
+  release checksum verification with the uploaded `.zsync` artifact.
+- Renamed the workbench Router action from “Review Plan” to “Plan Task” so its
+  label matches the new-plan dialog it opens.
 - Reported provider-specific managed hook/MCP setup capabilities to the Router
   instead of treating every launchable provider as hook- and MCP-managed, and
   started Grok review workers in plan mode when no explicit Grok permission
@@ -54,7 +73,7 @@ All notable changes to ForkTTY are documented here.
   so loops start with explicit review/implementation/verification checks.
 - Task strategy apply now appends an advisory next-best-harness hint to
   assignment launchability and worker launch failures, naming the highest
-  scored other ready harness for the same role so callers can retry without
+  scored other routable harness for the same role so callers can retry without
   re-planning; apply never retries or substitutes harnesses on its own.
 - Task strategy `harness_signals` now accept an optional `cooldown_kind`
   (`quota`, `auth`, `crash`, or `timeout`) so the soft cooldown penalty scales
@@ -159,7 +178,7 @@ All notable changes to ForkTTY are documented here.
   orchestration rail" and "Show workflow feed" toggles (new
   `appearance.show_orchestration_rail` / `appearance.show_workflow_feed`
   config keys, default on), Worktrees links the worktree manager, Agents can
-  re-scan provider readiness on demand, Notifications can clear the in-app
+  re-scan provider command availability on demand, Notifications can clear the in-app
   history, and Privacy states the local-first guarantees and stored data
   locations next to the telemetry toggle.
 - `team.finish` now accepts `compact`/`--compact` to finalize teams without

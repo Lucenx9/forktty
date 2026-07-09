@@ -22,7 +22,7 @@ implemented slice includes the pure core planner, socket methods, CLI entry
 points, MCP tools, agent policy updates, repo docs, public site docs, and the
 Phase 2 apply design spec. Planner harness selection now follows
 `team_provider_policy.provider_order`, and reviewer strategies always produce a
-reviewer assignment even when only one ready harness is available. When callers
+reviewer assignment even when only one routable harness is available. When callers
 omit `repo_dirty`, `task.strategy.plan` now uses the selected surface/workspace
 effective project cwd to infer simple git dirty/conflict state before choosing
 worktree isolation. When callers omit the user-visible edit hint, the socket
@@ -257,7 +257,7 @@ ForkTTY design consequence from the OmniRoute check:
 
 - Keep `task.strategy.plan` as the `auto` entry point for agents and humans.
 - Extend the already-added strategy `candidate_scores` with harness assignment
-  scoring next: score each ready harness per role using readiness, provider
+  scoring next: score each routable harness per role using readiness, provider
   order, plan-mode support, MCP/hooks/resume support, worktree-cwd support, and
   max parallel sessions.
 - Mode-pack style policy is now represented as named router profiles, not
@@ -670,7 +670,7 @@ pub fn plan_task_strategy(input: TaskStrategyInput) -> Result<TaskStrategyPlan, 
 
     let assignments = assignments_for_strategy(&strategy, &input.harness_registry);
     if assignments.is_empty() {
-        return Err("no ready harness can satisfy the selected strategy".to_string());
+        return Err("no routable harness can satisfy the selected strategy".to_string());
     }
 
     let mut approvals = vec![TaskStrategyApproval::StartRun];
@@ -821,12 +821,20 @@ fn assignments_for_strategy(
     strategy: &TaskStrategy,
     registry: &HarnessRegistry,
 ) -> Vec<HarnessAssignment> {
-    let ready: Vec<&HarnessCapability> = registry
+    let routable: Vec<&HarnessCapability> = registry
         .harnesses
         .iter()
-        .filter(|harness| harness.installed && harness.authenticated && harness.health == HarnessHealth::Ready)
+        .filter(|harness| {
+            harness.installed
+                && harness.supports_prompt_launch
+                && ((harness.authentication_known
+                    && harness.authenticated
+                    && harness.health == HarnessHealth::Ready)
+                    || (!harness.authentication_known
+                        && harness.health == HarnessHealth::Unknown))
+        })
         .collect();
-    let Some(primary) = ready.first() else {
+    let Some(primary) = routable.first() else {
         return Vec::new();
     };
     let mut assignments = vec![HarnessAssignment {
@@ -836,23 +844,23 @@ fn assignments_for_strategy(
             _ => HarnessRole::Implementer,
         },
         harness_id: primary.id.clone(),
-        reason: "first ready harness with prompt launch support".to_string(),
+        reason: "first routable harness with prompt launch support".to_string(),
     }];
     if matches!(strategy, TaskStrategy::ImplementerPlusReviewer | TaskStrategy::TeamPipeline) {
-        if let Some(second) = ready.iter().find(|harness| harness.id != primary.id) {
+        if let Some(second) = routable.iter().find(|harness| harness.id != primary.id) {
             assignments.push(HarnessAssignment {
                 role: HarnessRole::Reviewer,
                 harness_id: second.id.clone(),
-                reason: "separate ready harness for review isolation".to_string(),
+                reason: "separate routable harness for review isolation".to_string(),
             });
         }
     }
     if matches!(strategy, TaskStrategy::ParallelResearch | TaskStrategy::ParallelExperiment) {
-        for harness in ready.iter().skip(1).take(2) {
+        for harness in routable.iter().skip(1).take(2) {
             assignments.push(HarnessAssignment {
                 role: HarnessRole::Researcher,
                 harness_id: harness.id.clone(),
-                reason: "additional ready harness for parallel context isolation".to_string(),
+                reason: "additional routable harness for parallel context isolation".to_string(),
             });
         }
         assignments.push(HarnessAssignment {
@@ -992,7 +1000,9 @@ fn task_strategy_harness_registry_uses_real_provider_capability_shape() {
 
     let codex = registry.harnesses.iter().find(|harness| harness.id == "codex").unwrap();
     assert!(codex.installed);
-    assert_eq!(codex.health, HarnessHealth::Ready);
+    assert!(!codex.authenticated);
+    assert!(!codex.authentication_known);
+    assert_eq!(codex.health, HarnessHealth::Unknown);
     assert!(codex.supports_resume);
     assert!(codex.supports_worktree_cwd);
 
@@ -1680,7 +1690,7 @@ Response:
     {
       "role": "implementer",
       "harness_id": "codex",
-      "reason": "first ready harness with prompt launch support"
+      "reason": "first routable harness with prompt launch support"
     }
   ],
   "approvals": ["start_run"],

@@ -339,7 +339,7 @@ and the MCP `task_strategy_plan` tool return whether the task should stay solo,
 use a workflow loop, add a reviewer, create a team, or isolate work in a
 worktree. The planner is read-only, returns the selected router profile
 (`balanced`, `fast`, `conservative`, `parallel`, or `review_heavy`) plus ranked
-candidate strategy scores with factor breakdowns, scores each ready harness
+candidate strategy scores with factor breakdowns, scores each eligible harness
 assignment by role with factor breakdowns, uses configured team provider order
 as the assignment tie-break, respects each harness's declared parallel session
 capacity before selecting multi-role parallel plans, infers dirty git state
@@ -351,7 +351,12 @@ intent and clear router profiles from mutating `task_kind` hints and
 high-confidence goal wording when omitted,
 infers advisory last-known-good strategy/harness evidence from completed
 task-strategy workflows when available, and keeps reviewer strategies honest by
-including a reviewer assignment. Pass
+including a reviewer assignment.
+PATH/configured-command discovery proves launchability only: the planner does
+not probe provider auth or runtime health, reports those conditions as
+unverified, and keeps the harness eligible at a lower readiness score than a
+positively verified authenticated/ready harness until concrete runtime evidence
+says otherwise. Pass
 `--task-kind <kind>` or MCP/socket `task_kind` when an agent has already
 normalized clear user intent (for example from a non-English request) into
 stable categories such as `bugfix` / `focused_bugfix`, `feature` /
@@ -454,7 +459,9 @@ unless `--force` is supplied, closes only current-runtime launch-owned
 disposable worker panes with `--close-workers`, normalizes missing worker
 surfaces as closed, and marks the team done only after all requested worker
 surface closes succeed. If a later worker close fails, any already-closed
-runtime surfaces are restored and the team store remains unchanged. Closing a
+runtime surfaces are restored and the team store remains unchanged.
+If the team store save itself fails after terminal backends close, those
+backends are restored and the team/model state remains unchanged. Closing a
 launch-owned worker pane keeps the normal `surface.close` replacement behavior,
 including replacement terminals for root panes in inactive workspaces; if that
 replacement terminal cannot be spawned, ForkTTY returns an error before closing
@@ -606,9 +613,10 @@ summaries, pane split/focus/send-text, worktree create/attach/remove/merge,
 task strategy planning/apply, notifications, and `status_set`.
 Codex MCP setup preserves hand-edited TOML comments/formatting and uses the
 larger MCP config size budget for `$CODEX_HOME/config.toml` or
-`~/.codex/config.toml`. If setup registers an AppImage launcher, the managed
-MCP server env includes `APPIMAGE_EXTRACT_AND_RUN=1` so persistent MCP clients
-do not keep a FUSE AppImage mount alive.
+`~/.codex/config.toml`. If setup registers an AppImage launcher, including one
+renamed without an `.AppImage` suffix, the managed MCP server env includes
+`APPIMAGE_EXTRACT_AND_RUN=1` so persistent MCP clients do not keep a FUSE
+AppImage mount alive.
 `XDG_RUNTIME_DIR`, `FORKTTY_SOCKET_PATH`,
 `FORKTTY_WORKSPACE_ID`, and `FORKTTY_SURFACE_ID` are honored as defaults when
 the MCP host launches from a ForkTTY pane, except `identify` treats workspace and

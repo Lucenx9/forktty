@@ -93,15 +93,16 @@ Or via the GitHub UI:
 Publishing the release triggers the `release-package` job in
 `.github/workflows/ci.yml`, which:
 
-- Builds the `.deb` and AppImage from the tagged commit.
-- Generates `SHA256SUMS` for both artifacts.
-- Uploads both artifacts and `SHA256SUMS` into the release.
+- Builds the `.deb`, AppImage, and AppImage `.zsync` metadata from the tagged commit.
+- Generates `SHA256SUMS` for all three artifacts.
+- Uploads all three artifacts and `SHA256SUMS` into the release.
 
 ## 5. Post-publish verification
 
-1. Download the `.deb`, AppImage, and `SHA256SUMS` from the published release.
+1. Download the `.deb`, AppImage, AppImage `.zsync`, and `SHA256SUMS` from the
+   published release.
 2. Run `sha256sum -c SHA256SUMS` in the download directory — it must
-   print `OK` for both artifacts.
+   print `OK` for all three artifacts.
 3. Install on a clean Debian 13/Trixie+ or Ubuntu 24.04 LTS+ VM
    (`sudo apt install ./forktty_*.deb`). Debian 12/Bookworm is below the
    packaged `.deb` baseline because it does not provide libadwaita 1.4+.

@@ -149,6 +149,37 @@ impl PtySession {
         Ok(())
     }
 
+    /// Deliver the terminal's configured EOF character to a canonical-mode
+    /// child without closing the bidirectional PTY master and losing output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the terminal attributes cannot be read, the PTY
+    /// is not in canonical mode, its EOF character is disabled, or writing the
+    /// configured EOF character fails or times out.
+    pub fn send_eof(&mut self) -> io::Result<()> {
+        use nix::sys::termios::{tcgetattr, LocalFlags, SpecialCharacterIndices, _POSIX_VDISABLE};
+
+        let termios = tcgetattr(&self.master).map_err(io_error)?;
+        if !termios.local_flags.contains(LocalFlags::ICANON) {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "cannot deliver EOF to a non-canonical PTY",
+            ));
+        }
+        let eof = termios.control_chars[SpecialCharacterIndices::VEOF as usize];
+        if eof == _POSIX_VDISABLE {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "PTY EOF character is disabled",
+            ));
+        }
+        // The first VEOF flushes a pending unterminated canonical line. The
+        // second, now at the beginning of a line, makes the slave read return
+        // zero without appending a synthetic newline.
+        self.write_all(&[eof, eof])
+    }
+
     pub fn read_available(&mut self) -> io::Result<Vec<u8>> {
         let mut out = Vec::new();
         let mut buf = [0u8; 8192];
@@ -479,8 +510,8 @@ mod tests {
         }
 
         session.write_all(&payload).unwrap();
-        // VEOF at the start of a line delivers EOF: wc prints the count.
-        session.write_all(b"\x04").unwrap();
+        // The configured VEOF delivers EOF without assuming Ctrl-D.
+        session.send_eof().unwrap();
 
         let expected = payload.len().to_string();
         let output = session

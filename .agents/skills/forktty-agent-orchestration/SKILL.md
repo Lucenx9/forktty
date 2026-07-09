@@ -177,7 +177,11 @@ Use read-only inventory before mutation:
 - Provider support: `forktty capabilities` or `system.capabilities` when
   available, especially before launching less-common providers. The capabilities
   response includes `team_provider_policy`, configured provider command
-  overrides, and PATH-based provider detection.
+  overrides, and PATH-based provider detection. PATH discovery proves only that
+  a harness is launchable; ForkTTY does not probe provider auth or runtime health
+  while planning, so treat those conditions as unverified and lower-scored than
+  a positively verified authenticated/ready harness until a visible worker,
+  hook, or user report provides concrete evidence.
   `team_worker_launch` may omit `agent` or use `agent: "auto"`; ForkTTY then
   selects from the configured provider order and returns a `selection` record.
   Use an explicit provider when the user named one or when a previous visible
@@ -202,7 +206,8 @@ Use mutating tools only for visible coordination:
   audit/debug.
 - `team_finish` verifies open tasks, pending messages, and live-looking worker
   final states, optionally closes only current-runtime launch-owned disposable
-  worker panes, and marks the team done. Prefer a dry-run before finalizing
+  worker panes, and marks the team done. A store-save failure restores terminal
+  backends and leaves the team active. Prefer a dry-run before finalizing
   non-trivial work.
 - `team_worker_nudge` and `team_worker_shutdown` send explicit text requests to
   a worker pane. Shutdown submits the request by default; use `close_surface`

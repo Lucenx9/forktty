@@ -32,15 +32,17 @@ forktty mcp setup codex
 Repeat `hooks setup` / `mcp setup` for `claude` or `antigravity` if you use
 those providers.
 
-## 3. Check provider readiness
+## 3. Check provider command availability and agent state
 
 ```bash
 forktty capabilities --json
 forktty agents --json
 ```
 
-In the GTK app, Settings > Agents shows the same provider readiness and team
-provider order.
+In the GTK app, Settings > Agents shows provider command availability and the
+team provider order. Command discovery does not prove authentication, quota, or
+runtime health; task planning keeps those signals unverified until concrete
+runtime evidence exists.
 
 ## 4. Plan before launching workers
 

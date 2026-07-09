@@ -78,24 +78,55 @@ fn run_remote_helper_pty_inner(argv: Vec<String>) -> io::Result<i32> {
     // Keep the stdin relay bounded so a child that stops draining its PTY
     // applies backpressure to the helper instead of letting queued input grow
     // without limit.
-    let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(16);
+    enum StdinRelayEvent {
+        Data(Vec<u8>),
+        Eof,
+        Error(io::Error),
+    }
+
+    let (tx, rx) = std::sync::mpsc::sync_channel::<StdinRelayEvent>(16);
     std::thread::spawn(move || {
         let mut stdin = io::stdin().lock();
         let mut buf = [0u8; 8192];
         loop {
             match stdin.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) if tx.send(buf[..n].to_vec()).is_err() => break,
+                Ok(0) => {
+                    let _ = tx.send(StdinRelayEvent::Eof);
+                    break;
+                }
+                Ok(n) if tx.send(StdinRelayEvent::Data(buf[..n].to_vec())).is_err() => break,
                 Ok(_) => {}
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
-                Err(_) => break,
+                Err(err) => {
+                    let _ = tx.send(StdinRelayEvent::Error(err));
+                    break;
+                }
             }
         }
     });
     let mut stdout = io::stdout().lock();
+    let mut stdin_eof_sent = false;
     loop {
-        for bytes in rx.try_iter() {
-            session.write_all(&bytes)?;
+        loop {
+            match rx.try_recv() {
+                Ok(StdinRelayEvent::Data(bytes)) => session.write_all(&bytes)?,
+                Ok(StdinRelayEvent::Eof) => {
+                    session.send_eof()?;
+                    stdin_eof_sent = true;
+                    break;
+                }
+                Ok(StdinRelayEvent::Error(err)) => return Err(err),
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    if !stdin_eof_sent {
+                        return Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "stdin relay disconnected before reporting EOF",
+                        ));
+                    }
+                    break;
+                }
+            }
         }
         write_pty_output(&mut session, &mut stdout)?;
         if let Some(status) = session.try_wait()? {

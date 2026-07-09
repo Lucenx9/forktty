@@ -392,10 +392,16 @@ only; goals written in other languages fall back to `repo_inspection` with the
 `router_profile`, or the other explicit hints. It never
 launches processes, mutates workflow/team/feed state, creates worktrees, sends
 terminal input, or schedules background work.
+PATH and configured-command discovery establish only that a provider harness is
+launchable. ForkTTY does not run provider auth or health probes while planning;
+auto-discovered harnesses therefore carry unverified authentication/runtime
+health in their readiness score at 25 points, below the 50 points awarded to a
+verified authenticated/ready harness. They remain eligible until concrete
+caller or workflow evidence reports a cooldown or lockout.
 Optional `harness_signals` is an object keyed by harness id. Each value can set
 `cooldown`, `cooldown_kind`, `cooldown_reason`, `locked_out`, and
 `lockout_reason`. Cooldown is a soft assignment penalty and can still be
-selected when no better ready harness exists. `cooldown_kind` classifies the
+selected when no better routable harness exists. `cooldown_kind` classifies the
 cause and requires `cooldown` to be true; it must be one of `quota`, `auth`,
 `crash`, or `timeout`, and the penalty scales with the cause (`auth` strongest,
 then `crash`, then `quota` — the default weight when no kind is given — then
@@ -424,7 +430,7 @@ usable strategy/harness evidence recorded by `task.strategy.apply`. Explicit
 `last_known_good` input wins over inferred workflow history. This history read
 does not mutate workflow/team state and planning remains read-only.
 Strategies that name a reviewer role include an explicit reviewer assignment,
-using a separate ready harness when available and a separate role on the
+using a separate routable harness when available and a separate role on the
 primary harness otherwise. Applying a returned strategy is a separate visible
 coordination step and risky actions still require later approval. Plan
 responses include `planner_version`, the ForkTTY app version that produced the
@@ -475,13 +481,13 @@ Example response:
     {
       "role": "implementer",
       "harness_id": "codex",
-      "reason": "highest-scored ready harness for implementer",
-      "score": 77,
+      "reason": "highest-scored routable harness for implementer",
+      "score": 52,
       "factors": [
         {
           "name": "harness_readiness",
-          "points": 50,
-          "reason": "harness is installed, authenticated, ready, and supports prompt launch"
+          "points": 25,
+          "reason": "provider command is locally launchable; authentication and runtime health were not probed"
         },
         {
           "name": "task_mode_lockout",
@@ -629,7 +635,7 @@ already-open worktree workspaces before creating approval requests. With
 provider harness after approvals are satisfied but before any workflow/team
 mutation. When that validation or a later worker launch fails for an
 assignment, the error message appends an advisory hint naming the next-best
-ready harness for the same role (ranked with the plan-time scorer against
+routable harness for the same role (ranked with the plan-time scorer against
 current capabilities); the hint is a retry suggestion only — apply never
 retries or substitutes harnesses on its own. A plan with
 `layers.team: true` must include at least one assignment even when staging, so
@@ -758,12 +764,12 @@ Example request:
       {
         "role": "implementer",
         "harness_id": "codex",
-        "reason": "first ready harness with prompt launch support"
+        "reason": "first routable harness with prompt launch support"
       },
       {
         "role": "reviewer",
         "harness_id": "claude",
-        "reason": "separate ready harness for review isolation"
+        "reason": "separate routable harness for review isolation"
       }
     ],
     "approvals": ["start_run", "launch_parallel_workers"],
@@ -810,9 +816,16 @@ closed runtime surfaces before returning the error. Closing launch-owned worker
 surfaces preserves normal `surface.close` replacement behavior, including
 replacement terminals for root panes in inactive workspaces; if that
 replacement terminal cannot be spawned, ForkTTY returns an error before closing
-the worker surface. With `compact: true`, non-dry-run success still returns
+the worker surface. If persistence fails after terminal backends were closed,
+ForkTTY restores those backends and leaves both the model and team store
+unchanged before returning the save error. With `compact: true`, non-dry-run
+success still returns
 ids, status fields, blockers, summaries, worker health, cleanup errors, and
 closed-worker records, but omits the full team record and mailbox bodies.
+
+When `team.upsert` or `workflow.upsert` moves an existing record to another
+workspace without an explicit replacement leader/surface id, ForkTTY clears the
+old workspace's surface binding rather than persisting a cross-workspace pair.
 `team.worker.upsert` accepts an optional bounded `report` string. A report is
 intended for the worker's final compact findings or verification summary; it is
 stored on the worker record, returned by `team.get`, counted as
@@ -943,6 +956,10 @@ socket.
 `forktty remote-helper pty -- <program> [args...]` starts the argv command in a
 PTY and relays raw stdin bytes into the PTY plus raw PTY output to stdout. It
 uses a fixed initial 80x24 PTY size and exits with the child process status.
+On stdin EOF in canonical mode it sends the PTY's configured `VEOF` twice so an
+unterminated pending line is flushed before the slave observes EOF. If canonical
+mode is disabled or `VEOF` is disabled, the helper fails explicitly rather than
+injecting ordinary bytes or hanging; PTYs do not support socket-style half-close.
 It does not frame messages, resize, reconnect, or persist remote session
 ownership.
 

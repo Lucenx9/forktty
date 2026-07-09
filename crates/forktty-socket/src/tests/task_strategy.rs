@@ -1612,7 +1612,9 @@ fn task_strategy_harness_registry_uses_real_provider_capability_shape() {
         .find(|harness| harness.id == "codex")
         .unwrap();
     assert!(codex.installed);
-    assert_eq!(codex.health, HarnessHealth::Ready);
+    assert!(!codex.authenticated);
+    assert!(!codex.authentication_known);
+    assert_eq!(codex.health, HarnessHealth::Unknown);
     assert!(codex.supports_resume);
     assert!(codex.supports_hooks);
     assert!(codex.supports_mcp);
@@ -2561,7 +2563,7 @@ fn launch_failure_suggestion_names_next_best_harness_for_role() {
     let failed = forktty_core::HarnessAssignment {
         role: HarnessRole::Reviewer,
         harness_id: "claude".to_string(),
-        reason: "highest-scored ready harness for reviewer".to_string(),
+        reason: "highest-scored routable harness for reviewer".to_string(),
         score: 0,
         factors: Vec::new(),
     };
@@ -2574,6 +2576,7 @@ fn launch_failure_suggestion_names_next_best_harness_for_role() {
     .unwrap();
     assert!(hint.contains("codex"), "{hint}");
     assert!(hint.contains("reviewer"), "{hint}");
+    assert!(hint.contains("routable"), "{hint}");
 
     let single = crate::task_strategy_runtime::harness_registry_from_capabilities(&json!({
         "provider_capabilities": {

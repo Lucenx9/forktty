@@ -1086,7 +1086,8 @@ fn harness_capability_from_provider(id: &str, provider: &Value) -> HarnessCapabi
     HarnessCapability {
         id: id.to_string(),
         installed,
-        authenticated: launchable,
+        authenticated: false,
+        authentication_known: false,
         supports_prompt_launch: supports_team_launch,
         supports_resume: provider["safe_resume"].as_bool().unwrap_or(false),
         supports_hooks: provider["managed_hooks"]
@@ -1107,7 +1108,7 @@ fn harness_capability_from_provider(id: &str, provider: &Value) -> HarnessCapabi
         health: if disabled {
             HarnessHealth::Disabled
         } else if launchable {
-            HarnessHealth::Ready
+            HarnessHealth::Unknown
         } else {
             HarnessHealth::Missing
         },
@@ -1175,9 +1176,9 @@ fn optional_signal_bool(
     }
 }
 
-/// Advisory retry hint for a failed assignment launch: the next-best ready
+/// Advisory retry hint for a failed assignment launch: the next-best routable
 /// harness for the same role, ranked with the plan-time scorer. Returns None
-/// when no other ready harness exists. It suggests only; it never retries.
+/// when no other routable harness exists. It suggests only; it never retries.
 pub(crate) fn next_best_harness_suggestion(
     failed: &HarnessAssignment,
     registry: &HarnessRegistry,
@@ -1187,7 +1188,7 @@ pub(crate) fn next_best_harness_suggestion(
         .into_iter()
         .find(|assignment| assignment.harness_id != failed.harness_id)?;
     Some(format!(
-        "next-best ready harness for {}: {}; retry the apply with that assignment",
+        "next-best routable harness for {}: {}; retry the apply with that assignment",
         role_id(&failed.role),
         next.harness_id
     ))

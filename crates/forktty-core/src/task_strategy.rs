@@ -81,6 +81,7 @@ pub enum HarnessRole {
 #[serde(rename_all = "snake_case")]
 pub enum HarnessHealth {
     Ready,
+    Unknown,
     Missing,
     Unauthenticated,
     Disabled,
@@ -138,6 +139,8 @@ pub struct HarnessCapability {
     pub id: String,
     pub installed: bool,
     pub authenticated: bool,
+    #[serde(default = "authentication_known_by_default")]
+    pub authentication_known: bool,
     pub supports_prompt_launch: bool,
     pub supports_resume: bool,
     pub supports_hooks: bool,
@@ -148,6 +151,10 @@ pub struct HarnessCapability {
     pub health: HarnessHealth,
     #[serde(default)]
     pub routing_signals: HarnessRoutingSignals,
+}
+
+const fn authentication_known_by_default() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -276,7 +283,7 @@ pub fn plan_task_strategy(input: TaskStrategyInput) -> Result<TaskStrategyPlan, 
         input.last_known_good.as_ref(),
     );
     if assignments.is_empty() {
-        return Err("no ready harness can satisfy the selected strategy".to_string());
+        return Err("no routable harness can satisfy the selected strategy".to_string());
     }
 
     let mut approvals = vec![TaskStrategyApproval::StartRun];
@@ -540,7 +547,7 @@ fn score_strategy_candidate(
             &mut factors,
             "harness_readiness",
             -1_000,
-            "no ready harness can satisfy this strategy".to_string(),
+            "no routable harness can satisfy this strategy".to_string(),
         );
     } else {
         push_score_factor(
@@ -1072,7 +1079,7 @@ fn assignments_for_strategy(
         if let Some(mut reviewer) = reviewer {
             if reviewer.harness_id == primary.harness_id {
                 reviewer.reason =
-                    "highest-scored ready harness for reviewer; same harness reused because no separate ready harness was available".to_string();
+                    "highest-scored routable harness for reviewer; same harness reused because no separate routable harness was available".to_string();
             }
             assignments.push(reviewer);
         } else {
@@ -1103,7 +1110,7 @@ fn assignments_for_strategy(
                 .collect::<Vec<_>>();
         for assignment in &mut additional_researchers {
             assignment.reason =
-                "next highest-scored ready harness for parallel context isolation".to_string();
+                "next highest-scored routable harness for parallel context isolation".to_string();
         }
         if assignments.len() + additional_researchers.len() < 2 {
             let mut existing_assignments = assignments.clone();
@@ -1127,7 +1134,7 @@ fn assignments_for_strategy(
                 }
                 let mut assignment = assignment;
                 assignment.reason =
-                    "highest-scored ready harness reused for parallel research because declared session capacity allows another lane"
+                    "highest-scored routable harness reused for parallel research because declared session capacity allows another lane"
                         .to_string();
                 existing_assignments.push(assignment.clone());
                 additional_researchers.push(assignment);
@@ -1172,7 +1179,7 @@ fn self_assignments_for_strategy(strategy: &TaskStrategy) -> Vec<HarnessAssignme
     }]
 }
 
-/// Rank the ready harnesses in `registry` for one role, best first, using the
+/// Rank the routable harnesses in `registry` for one role, best first, using the
 /// same scorer as plan-time assignment. Callers use this after a launch
 /// failure to suggest the next-best harness without re-planning; it never
 /// launches anything.
@@ -1241,9 +1248,12 @@ fn harness_has_remaining_assignment_capacity(
 
 fn harness_available_for_routing(harness: &HarnessCapability) -> bool {
     harness.installed
-        && harness.authenticated
+        && (!harness.authentication_known || harness.authenticated)
         && harness.supports_prompt_launch
-        && harness.health == HarnessHealth::Ready
+        && matches!(
+            harness.health,
+            HarnessHealth::Ready | HarnessHealth::Unknown
+        )
         && !harness.routing_signals.locked_out
 }
 
@@ -1263,7 +1273,7 @@ fn scored_harness_assignments(
                     role: role.clone(),
                     harness_id: harness.id.clone(),
                     reason: format!(
-                        "highest-scored ready harness for {}",
+                        "highest-scored routable harness for {}",
                         harness_role_id(&role)
                     ),
                     score,
@@ -1293,11 +1303,19 @@ fn score_harness_for_role(
     last_known_good: Option<&TaskStrategyLastKnownGood>,
 ) -> (i32, Vec<TaskStrategyScoreFactor>) {
     let mut factors = Vec::new();
+    let verified_ready = harness.authentication_known
+        && harness.authenticated
+        && harness.health == HarnessHealth::Ready;
     push_score_factor(
         &mut factors,
         "harness_readiness",
-        50,
-        "harness is installed, authenticated, ready, and supports prompt launch".to_string(),
+        if verified_ready { 50 } else { 25 },
+        if verified_ready {
+            "harness is installed, authenticated, ready, and supports prompt launch".to_string()
+        } else {
+            "provider command is locally launchable; authentication and runtime health were not probed"
+                .to_string()
+        },
     );
     push_score_factor(
         &mut factors,
@@ -1481,6 +1499,7 @@ mod tests {
                     id: "codex".to_string(),
                     installed: true,
                     authenticated: true,
+                    authentication_known: true,
                     supports_prompt_launch: true,
                     supports_resume: true,
                     supports_hooks: true,
@@ -1495,6 +1514,7 @@ mod tests {
                     id: "claude".to_string(),
                     installed: true,
                     authenticated: true,
+                    authentication_known: true,
                     supports_prompt_launch: true,
                     supports_resume: true,
                     supports_hooks: true,
@@ -1518,6 +1538,7 @@ mod tests {
             id: id.to_string(),
             installed: true,
             authenticated: true,
+            authentication_known: true,
             supports_prompt_launch: true,
             supports_resume: true,
             supports_hooks: true,
@@ -1535,6 +1556,59 @@ mod tests {
             routing_signals: signals,
             ..harness(id, false, true)
         }
+    }
+
+    #[test]
+    fn unprobed_launchable_harness_remains_eligible_without_claiming_authentication() {
+        let mut capability = harness("codex", false, true);
+        capability.authenticated = false;
+        capability.authentication_known = false;
+        capability.health = HarnessHealth::Unknown;
+        let registry = HarnessRegistry {
+            harnesses: vec![capability],
+        };
+
+        let assignments = ranked_harnesses_for_role(
+            &HarnessRole::Implementer,
+            &registry,
+            &TaskStrategyLayers::default(),
+        );
+
+        assert_eq!(assignments.len(), 1);
+        assert!(assignments[0]
+            .factors
+            .iter()
+            .any(|factor| factor.name == "harness_readiness"
+                && factor.points == 25
+                && factor.reason.contains("were not probed")));
+    }
+
+    #[test]
+    fn verified_ready_harness_outranks_unprobed_launchable_harness() {
+        let mut unprobed = harness("unprobed", false, true);
+        unprobed.authenticated = false;
+        unprobed.authentication_known = false;
+        unprobed.health = HarnessHealth::Unknown;
+        let verified = harness("verified", false, true);
+        let registry = HarnessRegistry {
+            harnesses: vec![unprobed, verified],
+        };
+
+        let assignments = ranked_harnesses_for_role(
+            &HarnessRole::Implementer,
+            &registry,
+            &TaskStrategyLayers::default(),
+        );
+
+        assert_eq!(assignments[0].harness_id, "verified");
+        assert!(assignments[0]
+            .factors
+            .iter()
+            .any(|factor| factor.name == "harness_readiness" && factor.points == 50));
+        assert!(assignments[1]
+            .factors
+            .iter()
+            .any(|factor| factor.name == "harness_readiness" && factor.points == 25));
     }
 
     fn plan_for_goal(goal: &str, likely_user_visible_change: bool) -> TaskStrategyPlan {
@@ -2430,6 +2504,7 @@ mod tests {
                     id: "codex".to_string(),
                     installed: true,
                     authenticated: true,
+                    authentication_known: true,
                     supports_prompt_launch: true,
                     supports_resume: true,
                     supports_hooks: true,
