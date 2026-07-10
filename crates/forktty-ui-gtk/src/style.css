@@ -19,8 +19,9 @@
  * @define-color is the ONLY token mechanism that survives; reference as @ft_*.
  * Spacing / radius / typography have no GTK variable equivalent and stay
  * consistent by convention, not tokens. Radius scale: 4px (xs controls) /
- * 6px (sm: buttons, badges) / 8px (md: cards, rows, dialogs) / 999px (pill) /
- * 50% (dot). Accent uses libadwaita's @accent_color.
+ * 4-6px (controls, badges) / 8px (cards, rows, dialogs) / 999px (true circular dots only).
+ * Avoid full pills for status — use .rail-dot + quiet text (Linear/Vercel/Cursor pattern).
+ * Accent uses libadwaita's @accent_color.
  * Migration of raw literals onto these names is progressive and pixel-neutral.
  * -------------------------------------------------------------------------- */
 
@@ -172,7 +173,8 @@ headerbar.app-header windowhandle,
 
 .app-header .header-action:active,
 .app-header menubutton.header-action > button:active {
-  background: #26211d;
+  /* Neutral, not warm accent-tinted (quieter Linear/Cursor interaction) */
+  background: #1f1f1f;
   color: @ft_text_1;
 }
 
@@ -190,16 +192,15 @@ headerbar.app-header windowhandle,
 
 .app-header .header-action.needs-attention {
   color: @ft_warning;
-  background: alpha(@accent_color, 0.10);
+  /* No background tint — attention via text color only (quiet, matches dot+text pattern). */
 }
 
 .app-header .header-action.needs-attention:hover {
   color: @ft_warning;
-  background: alpha(@accent_color, 0.22);
 }
 
 .app-header .header-action.needs-attention:focus-visible {
-  background: alpha(@accent_color, 0.18);
+  /* Rely on focus ring for visibility. */
 }
 
 .app-header .header-action-separator {
@@ -310,7 +311,8 @@ popover.ft-workspace-popover contents {
   background: @ft_bg_0;
   border: 1px solid @ft_bg_3;
   border-radius: 8px;
-  box-shadow: 0 14px 32px alpha(#000000, 0.38);
+  /* Much quieter elevation — Linear/Cursor style relies on border + subtle shadow */
+  box-shadow: 0 2px 10px alpha(#000000, 0.22);
 }
 
 popover.ft-app-menu contents {
@@ -493,8 +495,8 @@ button.flat.header-plan-task-button {
   min-height: 24px;
   padding: 0 10px;
   border-radius: 5px;
-  color: #dba474;
-  background: #211d1a;
+  color: @accent_color;
+  background: #1f1f1f;
   border: 0;
   font-size: 0.82em;
   font-weight: 650;
@@ -502,12 +504,12 @@ button.flat.header-plan-task-button {
 
 button.flat.header-plan-task-button:hover,
 button.flat.header-plan-task-button:focus-visible {
-  color: #efb27f;
-  background: #2b241f;
+  color: @accent_color;
+  background: #232323;
 }
 
 button.flat.header-plan-task-button:active {
-  background: #1c1917;
+  background: #1d1d1d;
 }
 
 .header-team-chips {
@@ -630,7 +632,8 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .sidebar-add:active {
-  background: #26211d;
+  /* Neutral gray instead of warm accent tint for routine active state */
+  background: #1f1f1f;
   color: @ft_text_1;
 }
 
@@ -661,7 +664,7 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .navigation-sidebar row:selected .workspace-card {
-  border-color: transparent;
+  /* Flat selection handled by background + left hairline above */
 }
 
 .navigation-sidebar row:drop(active),
@@ -669,26 +672,16 @@ button.flat.sidebar-add:focus-visible {
   background: transparent;
   background-image: none;
   color: @ft_text_2;
-  outline-color: alpha(@accent_color, 0.58);
-  box-shadow: none;
+  outline-color: alpha(@accent_color, 0.4);
 }
 
 .navigation-sidebar row:focus-visible .workspace-card {
-  border-color: @accent_color;
+  /* Focus via standard outline + subtle bg; no extra border on card */
 }
 
-/* Workspace cards */
-
-.workspace-card {
-  min-height: 42px;
-  padding: 7px 10px 7px 12px;
-  margin: 0 5px 2px 5px;
-  border-radius: 6px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-left: 2px solid transparent;
-  transition: background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
-}
+/* Workspace rows — Linear-style: flat, hairline indicators only where they add signal.
+ * No card borders or heavy shadows. Terminals remain the primary content.
+ * Premium, quiet, content-first. */
 
 .workspace-drag-grip {
   color: @ft_text_4;
@@ -701,55 +694,58 @@ button.flat.sidebar-add:focus-visible {
   color: @ft_text_3;
 }
 
+/* Base row is flat. Subtle background on hover only. */
 .navigation-sidebar row:hover .workspace-card {
-  background: #1d1d1d;
+  background: #1f1f1f;
 }
 
 .workspace-row.active .workspace-card {
   background: #1d1d1d;
-  border-left-color: alpha(@accent_color, 0.34);
-  box-shadow: none;
+}
+
+/* Active indicator: thin hairline on the left (Linear pattern).
+ * Only when needed — keeps the list calm and premium. */
+.workspace-row.active .workspace-card {
+  border-left: 2px solid alpha(@accent_color, 0.45);
 }
 
 .workspace-row.active:hover .workspace-card {
-  background: @ft_bg_2;
+  background: #202020;
 }
 
+/* DnD feedback: hairline + subtle bg shift. No thick inset shadows.
+ * Clean and precise. */
 .workspace-row:drop(active) .workspace-card,
 .workspace-card:drop(active) {
-  background: @ft_bg_2;
+  background: #1f1f1f;
   background-image: none;
-  border-left-color: @accent_color;
-  box-shadow: inset 2px 0 0 @accent_color;
+  border-left: 2px solid @accent_color;
 }
 
 .workspace-card.drop-before {
-  background: @ft_bg_2;
-  border-left-color: @accent_color;
-  box-shadow: inset 0 2px 0 @accent_color, inset 2px 0 0 @accent_color;
+  background: #1f1f1f;
+  border-left: 2px solid @accent_color;
 }
 
 .workspace-card.drop-after {
-  background: @ft_bg_2;
-  border-left-color: @accent_color;
-  box-shadow: inset 0 -2px 0 @accent_color, inset 2px 0 0 @accent_color;
+  background: #1f1f1f;
+  border-left: 2px solid @accent_color;
 }
 
+/* Attention uses the existing small dot in the row + this very subtle hairline.
+ * No loud border on the whole item. */
 .workspace-row.needs-attention .workspace-card {
-  border-left-color: alpha(@accent_color, 0.62);
-  box-shadow: none;
+  border-left: 2px solid alpha(@accent_color, 0.55);
 }
 
-/* Active + needs-attention: keep active selection subtle and swap the rail to
- * warning so urgency is visible without a full warning fill. */
+/* Active + needs-attention: keep it understated. */
 .workspace-row.active.needs-attention .workspace-card {
   background: #1f1f1f;
-  border-left-color: alpha(@accent_color, 0.68);
-  box-shadow: none;
+  border-left: 2px solid alpha(@accent_color, 0.65);
 }
 
 .workspace-row.active.needs-attention:hover .workspace-card {
-  background: @ft_bg_2;
+  background: #202020;
 }
 
 .workspace-name {
@@ -813,7 +809,8 @@ button.flat.sidebar-add:focus-visible {
 .workspace-count-badge {
   padding: 1px 5px;
   min-width: 0;
-  border-radius: 999px;
+  /* Small radius for premium, precise look (Linear/Vercel style). Only dots use 999px. */
+  border-radius: 6px;
   background: @ft_bg_0;
   color: @ft_text_3;
   border: 1px solid @ft_line;
@@ -849,13 +846,15 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .keycap {
-  padding: 1px 6px;
-  border-radius: 6px;
+  /* Subtle, premium treatment. Less visual weight than a full pill or bordered badge.
+   * Matches the quiet Linear/Cursor aesthetic. */
+  padding: 1px 5px;
+  border-radius: 4px;
   color: @ft_text_3;
-  background: #1c1c1c;
-  border: 1px solid @ft_line;
-  font-size: 0.72em;
-  font-weight: 600;
+  background: #181818;
+  border: 1px solid alpha(@ft_line, 0.8);
+  font-size: 0.70em;
+  font-weight: 500;
 }
 
 /* Fixed sidebar sections: TEAM, RESOURCES, and the Settings/About footer. */
@@ -928,13 +927,14 @@ button.flat.sidebar-nav-row:focus-visible {
   font-size: 0.82em;
   font-weight: 620;
   letter-spacing: 0;
-  border-radius: 999px;
+  /* Small radius — avoids pill feel. Clean and modern. */
+  border-radius: 5px;
 }
 
 .app-status-bar .keycap {
   min-height: 17px;
-  padding: 0 6px;
-  font-size: 0.72em;
+  padding: 0 5px;
+  font-size: 0.68em;
 }
 
 .status-shortcut {
@@ -1313,7 +1313,8 @@ button.flat.orchestration-feed-tab:focus-visible {
 
 button.flat.orchestration-feed-tab.active {
   color: @ft_text_0;
-  box-shadow: inset 0 -1px 0 alpha(@accent_color, 0.62);
+  /* Thin hairline underline for active tab — consistent with premium quiet tab styling (Linear/Cursor). */
+  border-bottom: 1px solid alpha(@accent_color, 0.62);
 }
 
 button.flat.orchestration-feed-clear {
@@ -1358,6 +1359,15 @@ button.flat.orchestration-feed-collapse:focus-visible {
   letter-spacing: 0.04em;
 }
 
+/* Shown only in the thin collapsed header: gives immediate awareness of the latest
+ * event without requiring the user to expand the rows area. */
+.orchestration-feed-collapsed-summary {
+  color: @ft_text_3;
+  font-size: 0.72em;
+  padding: 0 8px;
+  margin-right: 6px;
+}
+
 .orchestration-feed-rows {
   background: #101010;
 }
@@ -1395,11 +1405,13 @@ button.flat.orchestration-feed-collapse:focus-visible {
   font-weight: 520;
 }
 
-/* Kind tags read as quiet colored text, matching the sidebar/rail statuses. */
+/* Kind tags read as quiet colored text by default.
+ * High-signal states (warn/err) get subtle pill backgrounds for scannability
+ * without breaking the quiet Linear/Cursor-style tone. */
 .orchestration-feed-status {
   min-height: 18px;
-  padding: 0 2px;
-  border-radius: 4px;
+  padding: 0 3px;
+  border-radius: 3px;
   color: @ft_text_3;
   background: transparent;
   font-size: 0.66em;
@@ -1413,10 +1425,14 @@ button.flat.orchestration-feed-collapse:focus-visible {
 
 .orchestration-feed-status.warn {
   color: @ft_warning;
+  background: alpha(@ft_warning, 0.13);
+  padding: 0 5px;
 }
 
 .orchestration-feed-status.err {
   color: @ft_danger;
+  background: alpha(@ft_danger, 0.13);
+  padding: 0 5px;
 }
 
 .orchestration-feed-status.info {
@@ -1529,21 +1545,24 @@ button.flat.orchestration-feed-collapse:focus-visible {
 
 .terminal-pane {
   background: @ft_bg_0;
-  border: 1px solid @ft_bg_1;
-  transition: border-color 90ms ease-out, background-color 90ms ease-out, box-shadow 90ms ease-out;
+  /* No outer border — reduces "framed terminal" look. Splits are separated by the paned divider.
+     Matches quieter Cursor/Linear/Vercel panel philosophy. */
+  border: none;
+  transition: background-color 90ms ease-out;
 }
 
 .terminal-pane.active {
-  border-color: #34302d;
-  box-shadow: inset 0 0 0 1px alpha(@accent_color, 0.08);
+  /* No inset glow or border change — active is conveyed by header and focus */
 }
 
 .terminal-pane:focus-visible {
   outline-offset: -2px;
 }
 
+/* Attention uses the small dot in the header (see pane_chrome) + subtle header treatment.
+   Avoid strong border framing on the whole pane. */
 .terminal-pane.needs-attention {
-  border-color: alpha(@accent_color, 0.70);
+  /* no border change on the pane container */
 }
 
 .terminal-pane-header {
@@ -1567,39 +1586,42 @@ button.flat.orchestration-feed-collapse:focus-visible {
 }
 
 .terminal-pane.active .terminal-pane-header {
-  background: #1d1d1d;
   color: @ft_text_1;
   border-bottom-color: @ft_line;
+  /* No extra background shift — active conveyed by top accent hairline (Cursor-style) + text.
+   * Keeps multi-pane chrome minimal so terminals remain primary. */
 }
 
 .terminal-pane.needs-attention .terminal-pane-header {
-  border-bottom-color: alpha(@accent_color, 0.36);
+  /* Attention signaled only by the small dot in header (see pane_chrome.rs) + quiet text.
+   * No border color change — keeps pane chrome calm per Linear/Vercel/Cursor pattern. */
 }
 
 .terminal-pane-header:drop(active),
 .browser-toolbar:drop(active) {
   background: @ft_bg_2;
   background-image: none;
-  outline: 1px solid alpha(@accent_color, 0.58);
+  outline: 1px solid alpha(@accent_color, 0.3);
   outline-offset: -1px;
-  box-shadow: inset 2px 0 0 @accent_color;
+  /* Very subtle hairline feedback only. No heavy inset for calm chrome. */
 }
 
 /* Per-pane tab strip, shown when a leaf has >1 tab. Kept deliberately
  * smaller than Adwaita's app-level TabBar because it lives inside pane chrome. */
 .pane-tabstrip {
   background: @ft_bg_0;
-  border-bottom: 1px solid #222222;
+  border-bottom: 1px solid @ft_line;
   min-height: 28px;
   padding: 2px 6px 2px 7px;
   transition: background-color 90ms ease-out, border-color 90ms ease-out;
+  /* Kept minimal; in best multi-pane agent setups, tab chrome is light so terminals dominate. */
 }
 
 .pane-tabstrip:drop(active) {
   background: #1b1b1b;
   background-image: none;
-  border-bottom-color: alpha(@accent_color, 0.58);
-  box-shadow: inset 0 -1px 0 alpha(@accent_color, 0.58);
+  border-bottom-color: alpha(@accent_color, 0.3);
+  /* Very subtle hairline for DnD feedback. */
 }
 
 .pane-tab {
@@ -1626,9 +1648,9 @@ button.flat.orchestration-feed-collapse:focus-visible {
 .pane-tab.active {
   background: @ft_bg_1;
   border-color: @ft_line_strong;
-  border-top-color: alpha(@accent_color, 0.72);
+  border-top-color: alpha(@accent_color, 0.5);
   color: @ft_text_1;
-  box-shadow: inset 0 1px 0 alpha(@accent_color, 0.72);
+  /* Cursor-style top accent (hairline strength) for connection. Lower alpha for calmer multi-pane look. */
 }
 
 .pane-tab:drop(active),
@@ -1636,8 +1658,8 @@ button.flat.orchestration-feed-collapse:focus-visible {
 .pane-tab-close:drop(active) {
   background: @ft_bg_2;
   background-image: none;
-  border-color: alpha(@accent_color, 0.58);
-  outline-color: alpha(@accent_color, 0.58);
+  border-color: alpha(@accent_color, 0.5);
+  /* Subtle hairline feedback, reduced intensity for premium calm. */
 }
 
 .pane-tab.drop-before,
@@ -1647,20 +1669,21 @@ button.flat.orchestration-feed-collapse:focus-visible {
   border-color: alpha(@accent_color, 0.62);
 }
 
+/* DnD on tabs: subtle hairline only. Clean and premium, no thick colored insets. */
 .pane-tab.drop-before {
-  box-shadow: inset 3px 0 0 @accent_color;
+  border-left: 2px solid @accent_color;
 }
 
 .pane-tab.drop-after {
-  box-shadow: inset -3px 0 0 @accent_color;
+  border-right: 2px solid @accent_color;
 }
 
 .pane-tab.active.drop-before {
-  box-shadow: inset 3px 0 0 @accent_color, inset 0 1px 0 #c9793f;
+  border-left: 2px solid @accent_color;
 }
 
 .pane-tab.active.drop-after {
-  box-shadow: inset -3px 0 0 @accent_color, inset 0 1px 0 #c9793f;
+  border-right: 2px solid @accent_color;
 }
 
 .pane-tab-select {
@@ -1781,13 +1804,13 @@ button.flat.pane-tab-close:active {
 .pane-agent-badge {
   min-height: 17px;
   padding: 2px 2px;
-  color: #9a9a9a;
+  color: @ft_text_3;
   font-size: 0.68em;
   font-weight: 620;
 }
 
 .pane-agent-badge.running {
-  color: #63d67c;
+  color: @ft_success;
 }
 
 .pane-agent-badge.needs-input {
@@ -1801,11 +1824,11 @@ button.flat.pane-tab-close:active {
 .pane-agent-badge.idle,
 .pane-agent-badge.suspended,
 .pane-agent-badge.unknown {
-  color: #9a9a9a;
+  color: @ft_text_3;
 }
 
 .terminal-pane-cwd {
-  color: #777777;
+  color: @ft_text_4;
   font-size: 0.72em;
 }
 
@@ -1815,11 +1838,12 @@ button.flat.pane-tab-close:active {
   min-height: 20px;
   padding: 0 10px;
   background: @ft_bg_0;
-  border-top: 1px solid #222222;
+  /* Hairline only; no heavy framing */
+  border-top: 1px solid @ft_line;
 }
 
 .terminal-pane.active .terminal-pane-footer {
-  background: #1b1b1b;
+  background: #1d1d1d;
 }
 
 .terminal-pane-footer-shell {
@@ -1954,7 +1978,8 @@ button.flat.pane-close-action:active {
   border: 1px solid @ft_line_strong;
   border-radius: 6px;
   background: @ft_bg_2;
-  box-shadow: 0 2px 8px alpha(#000000, 0.35);
+  /* Reduced shadow for calmer search UI */
+  box-shadow: 0 1px 4px alpha(#000000, 0.18);
 }
 
 .pane-search-bar entry {
@@ -2433,32 +2458,32 @@ window.ft-dialog,
 }
 
 .about-name {
-  color: #e0e0e0;
+  color: @ft_text_1;
   font-size: 1.22em;
   font-weight: 750;
 }
 
 .about-version {
-  color: #777777;
+  color: @ft_text_4;
   font-size: 0.80em;
 }
 
 .about-description {
-  color: #969696;
+  color: @ft_text_3;
   font-size: 0.88em;
 }
 
 .about-details {
-  background: #1a1a1a;
-  border: 1px solid #2a2a2a;
+  background: @ft_bg_1;
+  border: 1px solid @ft_line;
   border-radius: 8px;
-  box-shadow: inset 0 1px 0 alpha(white, 0.03);
+  box-shadow: none;
 }
 
 .about-detail-row {
   min-height: 34px;
   padding: 7px 11px;
-  border-bottom: 1px solid #262626;
+  border-bottom: 1px solid @ft_line;
 }
 
 .about-detail-row:last-child {
@@ -2466,7 +2491,7 @@ window.ft-dialog,
 }
 
 .about-detail-label {
-  color: #6c6c6c;
+  color: @ft_text_4;
   font-size: 0.73em;
   font-weight: 700;
   text-transform: uppercase;
@@ -2589,7 +2614,8 @@ window.ft-dialog,
 .welcome-start {
   min-height: 32px;
   padding: 4px 16px;
-  border-radius: 999px;
+  /* Consistent small radius for premium modern look. */
+  border-radius: 8px;
 }
 
 .ft-section-title {
@@ -2601,15 +2627,14 @@ window.ft-dialog,
 }
 
 .settings-group {
-  background: #141414;
-  border: 1px solid @ft_bg_3;
-  border-radius: 8px;
+  background: transparent;
+  border: none;
 }
 
 .settings-row {
   min-height: 56px;
   padding: 12px 16px;
-  border-bottom: 1px solid @ft_bg_3;
+  border-bottom: 1px solid @ft_line;
 }
 
 .settings-row:last-child {
@@ -2626,14 +2651,14 @@ window.ft-dialog,
 }
 
 .settings-inline-action.primary {
-  color: #17110c;
-  background: @accent_color;
-  border-color: @accent_color;
+  color: @ft_text_1;
+  background: @ft_bg_1;
+  border: 1px solid @ft_line;
 }
 
 .settings-inline-action.primary:hover {
-  background: #f09a58;
-  border-color: #f09a58;
+  background: @ft_bg_2;
+  border-color: @ft_line_strong;
 }
 
 .settings-inline-action.subtle {
@@ -2650,31 +2675,27 @@ window.ft-dialog,
 }
 
 .settings-status-pill {
-  min-height: 22px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  font-size: 0.75em;
-  font-weight: 650;
+  min-height: 18px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.66em;
+  font-weight: 620;
 }
 
 .settings-status-pill.checking {
   color: @ft_text_3;
-  background: @ft_line;
 }
 
 .settings-status-pill.ok {
-  color: #9ac18e;
-  background: #1c2a1b;
+  color: @ft_success;
 }
 
 .settings-status-pill.warning {
-  color: #e6b173;
-  background: #302515;
+  color: @ft_warning;
 }
 
 .settings-status-pill.error {
   color: @ft_danger;
-  background: #321c1c;
 }
 
 .ft-settings-window {
@@ -2692,7 +2713,7 @@ window.ft-dialog,
   background: @ft_bg_0;
   background-color: @ft_bg_0;
   background-image: none;
-  border-bottom: 1px solid @ft_bg_3;
+  border-bottom: 1px solid @ft_line;
   box-shadow: none;
 }
 
@@ -2734,8 +2755,8 @@ window.ft-dialog,
 .settings-nav {
   min-width: 184px;
   padding: 11px 9px 15px 9px;
-  background: #141414;
-  border-right: 1px solid @ft_bg_3;
+  background: @ft_bg_0;
+  border-right: 1px solid @ft_line;
 }
 
 .settings-nav-heading {
@@ -2763,10 +2784,10 @@ window.ft-dialog,
 }
 
 .settings-nav-item:checked {
-  background: @ft_bg_2;
-  border-color: @ft_line_strong;
+  background: @ft_bg_1;
+  border: none;
+  box-shadow: none;
   color: @ft_text_1;
-  box-shadow: inset 0 1px 0 alpha(@ft_text_1, 0.04), 0 1px 0 alpha(#000000, 0.18);
 }
 
 .settings-nav-icon {
@@ -2838,10 +2859,9 @@ window.ft-dialog,
 }
 
 .settings-list {
-  background: #1b1b1b;
-  border: 1px solid @ft_line_strong;
-  border-radius: 8px;
-  box-shadow: inset 0 1px 0 alpha(@ft_text_1, 0.03);
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .settings-list row,
@@ -2850,7 +2870,7 @@ window.ft-dialog,
   padding: 0 12px;
   background: transparent;
   border-radius: 0;
-  border-bottom: 1px solid @ft_bg_3;
+  border-bottom: 1px solid @ft_line;
 }
 
 .settings-list row:first-child,
@@ -2984,7 +3004,7 @@ window.ft-dialog,
 
 .settings-list row.spin spinbutton button:hover {
   background: @ft_bg_2;
-  border-color: @ft_line_strong;
+  border: none;
   color: @ft_text_1;
 }
 
@@ -3169,12 +3189,13 @@ entry.search.command-search:focus-within,
 }
 
 .command-list row:selected {
-  background: #222222;
-  box-shadow: inset 0 0 0 1px #2c2c2c;
+  /* Premium clean selected state: subtle surface shift only.
+   * No inset shadow — Linear-style quiet selection. */
+  background: #1f1f1f;
 }
 
 .command-list row:selected:hover {
-  background: #242424;
+  background: #202020;
 }
 
 .command-list row:selected button.flat {
@@ -3192,12 +3213,12 @@ entry.search.command-search:focus-within,
 }
 
 .command-item .keycap {
-  padding: 1px 5px;
+  padding: 1px 4px;
   color: @ft_text_3;
-  background: #1b1b1b;
-  border-color: @ft_bg_3;
-  font-size: 0.70em;
-  font-weight: 600;
+  background: #181818;
+  border-color: alpha(@ft_line, 0.8);
+  font-size: 0.68em;
+  font-weight: 500;
 }
 
 .command-list row:disabled,
@@ -3362,17 +3383,17 @@ entry.task-router-goal:focus-within {
 
 .notification-list row:hover .notification-row.actionable {
   border-color: transparent;
-  background: #1e1a17;
+  background: #1f1f1f;
 }
 
 .notification-list row:hover .notification-row.current {
-  background: #1c1b18;
+  background: #1e1e1e;
 }
 
 .notification-list row:hover .notification-row.actionable.current,
 .notification-list row:hover .notification-row.actionable.unread,
 .notification-list row:hover .notification-row.current.actionable.unread {
-  background: #1e1a17;
+  background: #1f1f1f;
 }
 
 .notification-list row:focus-visible {
@@ -3380,21 +3401,21 @@ entry.task-router-goal:focus-within {
 }
 
 .notification-list row:focus-visible .notification-row {
-  border-color: alpha(@accent_color, 0.62);
-  box-shadow: inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(@accent_color, 0.18);
+  border-color: alpha(@accent_color, 0.5);
+  box-shadow: inset 0 1px 0 alpha(white, 0.03), 0 0 0 1px alpha(@accent_color, 0.12);
 }
 
 .notification-list row:focus-visible .notification-row.current {
-  box-shadow: inset 3px 0 0 alpha(#c8a75d, 0.58), inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(@accent_color, 0.18);
+  box-shadow: inset 0 1px 0 alpha(white, 0.03), 0 0 0 1px alpha(@accent_color, 0.12);
 }
 
 .notification-list row:focus-visible .notification-row.unread {
-  box-shadow: inset 3px 0 0 alpha(@accent_color, 0.82), inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(@accent_color, 0.18);
+  box-shadow: inset 0 1px 0 alpha(white, 0.03), 0 0 0 1px alpha(@accent_color, 0.12);
 }
 
 .notification-list row:focus-visible .notification-row.current.unread,
 .notification-list row:focus-visible .notification-row.current.actionable.unread {
-  box-shadow: inset 3px 0 0 alpha(@accent_color, 0.82), inset 5px 0 0 #c8a75d, inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(@accent_color, 0.18);
+  box-shadow: inset 0 1px 0 alpha(white, 0.03), 0 0 0 1px alpha(@accent_color, 0.12);
 }
 
 .notification-section {
@@ -3411,37 +3432,39 @@ entry.task-router-goal:focus-within {
   border: 1px solid transparent;
   border-radius: 8px;
   background: #1b1b1b;
-  box-shadow: inset 0 1px 0 alpha(white, 0.025);
+  box-shadow: inset 0 1px 0 alpha(white, 0.02);
 }
 
+/* Actionable and current states use neutral backgrounds (no heavy colored bars) */
 .notification-row.actionable {
   border-color: transparent;
-  background: #1e1a17;
+  background: #1f1f1f;
 }
 
 .notification-row.current {
-  background: #1c1b18;
-  box-shadow: inset 3px 0 0 alpha(#c8a75d, 0.58);
+  background: #1e1e1e;
 }
 
+/* Unread uses a very subtle left accent (quiet indicator, not a thick bar) */
 .notification-row.unread {
+  border-left: 2px solid alpha(@accent_color, 0.55);
   border-color: transparent;
-  box-shadow: inset 3px 0 0 alpha(@accent_color, 0.76);
+  border-left-color: alpha(@accent_color, 0.55);
 }
 
 .notification-row.actionable.unread {
   border-color: transparent;
-  background: #1e1a17;
+  background: #1f1f1f;
 }
 
 .notification-row.current.unread {
-  border-color: transparent;
-  box-shadow: inset 3px 0 0 alpha(@accent_color, 0.76), inset 5px 0 0 #c8a75d;
+  border-left: 2px solid alpha(@accent_color, 0.55);
+  background: #1e1e1e;
 }
 
 .notification-row.current.actionable.unread {
   border-color: transparent;
-  background: #1e1a17;
+  background: #1f1f1f;
 }
 
 .notification-title {
@@ -3565,7 +3588,7 @@ entry.task-router-goal:focus-within {
 }
 
 .agent-section {
-  color: #777777;
+  color: @ft_text_4;
   font-size: 0.72em;
   font-weight: 700;
   text-transform: uppercase;
@@ -3577,55 +3600,51 @@ entry.task-router-goal:focus-within {
   padding: 12px 12px 12px 14px;
   border: 1px solid transparent;
   border-radius: 8px;
-  background: #1b1b1b;
-  box-shadow: inset 0 1px 0 alpha(white, 0.025);
+  background: @ft_bg_1;
+  box-shadow: none;
 }
 
+/* Quieter hovers and states using hairlines + subtle surface (Linear-style) */
 .agent-list row:hover .agent-row {
-  border-color: @ft_line_strong;
-  background: #1f1f1f;
+  background: @ft_bg_2;
+  border-color: @ft_line;
 }
 
 .agent-list row:hover .agent-row.needs-input {
-  border-color: transparent;
-  background: #1e1a17;
+  background: @ft_bg_2;
+  border-left: 2px solid alpha(@accent_color, 0.4);
 }
 
 .agent-list row:hover .agent-row.current {
-  background: #1c1b18;
-}
-
-.agent-list row:hover .agent-row.needs-input.current {
-  background: #1e1a17;
+  background: @ft_bg_2;
 }
 
 .agent-list row:focus-visible .agent-row {
-  border-color: alpha(@accent_color, 0.62);
-  box-shadow: inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(@accent_color, 0.18);
+  border-color: alpha(@accent_color, 0.4);
 }
 
 .agent-list row:focus-visible .agent-row.current {
-  box-shadow: inset 3px 0 0 alpha(#c8a75d, 0.58), inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(@accent_color, 0.18);
+  border-color: alpha(@accent_color, 0.4);
 }
 
 .agent-list row:focus-visible .agent-row.needs-input {
-  box-shadow: inset 3px 0 0 alpha(@accent_color, 0.82), inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(@accent_color, 0.18);
+  border-color: alpha(@accent_color, 0.4);
 }
 
 .agent-row.needs-input {
+  border-left: 2px solid alpha(@accent_color, 0.4);
   border-color: transparent;
-  background: #1e1a17;
-  box-shadow: inset 3px 0 0 alpha(@accent_color, 0.76);
+  border-left-color: alpha(@accent_color, 0.4);
+  background: @ft_bg_1;
 }
 
 .agent-row.current {
-  background: #1c1b18;
-  box-shadow: inset 3px 0 0 alpha(#c8a75d, 0.58);
+  background: @ft_bg_1;
 }
 
 .agent-row.needs-input.current {
-  background: #1e1a17;
-  box-shadow: inset 3px 0 0 alpha(@accent_color, 0.82);
+  border-left: 2px solid alpha(@accent_color, 0.4);
+  background: @ft_bg_1;
 }
 
 .agent-row.compact {
@@ -3642,7 +3661,7 @@ entry.task-router-goal:focus-within {
 }
 
 .agent-name {
-  color: #e0e0e0;
+  color: @ft_text_1;
   font-weight: 700;
   font-size: 0.96em;
 }
@@ -3655,7 +3674,7 @@ entry.task-router-goal:focus-within {
 }
 
 .agent-title {
-  color: #adadad;
+  color: @ft_text_2;
   font-size: 0.88em;
 }
 
@@ -3670,7 +3689,7 @@ entry.task-router-goal:focus-within {
 }
 
 .agent-tail {
-  color: #9a9a9a;
+  color: @ft_text_3;
   font-family: monospace;
   font-size: 0.78em;
   margin-top: 1px;
@@ -3689,84 +3708,76 @@ entry.agent-reply {
 }
 
 .agent-lifecycle {
-  padding: 1px 7px 2px 7px;
-  border-radius: 999px;
+  padding: 1px 6px 2px 6px;
+  border-radius: 5px;
   font-size: 0.68em;
   font-weight: 600;
+  color: @ft_text_3;
+  background: transparent;
 }
 
 .agent-lifecycle.needs-input {
   color: @ft_warning;
-  background: #241a11;
 }
 
 .agent-lifecycle.running {
-  color: #8aa9c8;
-  background: #1c2732;
+  color: @ft_info;
 }
 
 .agent-lifecycle.idle {
-  color: #91bd97;
-  background: #1d2a21;
+  color: @ft_success;
 }
 
 .agent-lifecycle.suspended {
-  color: #9aa0a6;
-  background: #202427;
+  color: @ft_text_3;
 }
 
 .agent-lifecycle.unknown {
-  color: #9a9a9a;
-  background: #252525;
+  color: @ft_text_3;
 }
 
 .agent-lifecycle.ended {
-  color: @ft_text_3;
-  background: @ft_bg_2;
+  color: @ft_text_4;
 }
 
 .agent-current,
 .agent-permission,
 .agent-loop {
-  padding: 1px 7px 2px 7px;
-  border-radius: 999px;
+  padding: 1px 6px 2px 6px;
+  border-radius: 5px;
   font-size: 0.68em;
   font-weight: 600;
 }
 
 .agent-current {
-  color: #c8a75d;
-  background: #282318;
+  color: @ft_text_2;
 }
 
 .agent-permission {
-  color: #9a9a9a;
-  background: @ft_line;
+  color: @ft_text_3;
+  background: @ft_bg_2;
 }
 
 .agent-permission.risky {
-  color: #d78f8f;
-  background: #2b1d1d;
+  color: @ft_danger;
+  background: transparent;
 }
 
 .agent-loop {
-  color: #9aa0a6;
-  background: @ft_line;
+  color: @ft_text_3;
+  background: @ft_bg_2;
 }
 
 .agent-loop.running {
-  color: #8eb6d8;
-  background: #1c2630;
+  color: @ft_info;
 }
 
 .agent-loop.done {
-  color: #91bd97;
-  background: #1d2a21;
+  color: @ft_success;
 }
 
 .agent-loop.warning {
-  color: #d78f8f;
-  background: #2b1d1d;
+  color: @ft_warning;
 }
 
 button.agent-primary-action,
@@ -3784,16 +3795,16 @@ button.agent-danger-action {
 }
 
 button.agent-primary-action {
-  color: #eeeeee;
-  background: @ft_line;
+  color: @ft_text_1;
+  background: @ft_bg_1;
   border-color: @ft_line_strong;
   box-shadow: none;
   font-weight: 650;
 }
 
 button.agent-primary-action:hover {
-  background: #2a2a2a;
-  border-color: #505050;
+  background: @ft_bg_2;
+  border-color: @ft_line_strong;
 }
 
 button.agent-secondary-action,
@@ -3809,12 +3820,12 @@ button.agent-secondary-action:hover {
 }
 
 button.agent-danger-action {
-  color: #b98585;
+  color: @ft_text_3;
 }
 
 button.agent-danger-action:hover {
   color: @ft_danger;
-  background: #251b1b;
+  background: @ft_bg_1;
   border-color: transparent;
 }
 

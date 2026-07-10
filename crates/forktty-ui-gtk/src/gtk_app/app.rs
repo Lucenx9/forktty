@@ -495,6 +495,8 @@ pub(super) fn build_ui(app: &adw::Application) {
         .build();
     status_router.add_css_class("status-router");
     status_router.set_label(&orchestration_status_summary(&state));
+    // Hide redundant router summary when the workflow feed dock (better live surface) is shown.
+    status_router.set_visible(!app_config.appearance.show_workflow_feed);
     status_bar.append(&status_location);
     status_bar.append(&pane_status);
     status_bar.append(&status_spacer);
@@ -766,6 +768,7 @@ pub(super) fn build_ui(app: &adw::Application) {
             workspace_area: workspace_area_for_settings,
             orchestration_rail: orchestration_rail.shell.clone(),
             workflow_feed: orchestration_feed.shell.clone(),
+            status_router: status_router.clone(),
         },
         &controller,
         pr_model.clone(),
@@ -1085,6 +1088,7 @@ pub(super) struct WorkbenchShells {
     pub(super) workspace_area: gtk::Paned,
     pub(super) orchestration_rail: gtk::Box,
     pub(super) workflow_feed: gtk::Box,
+    pub(super) status_router: gtk::Label,
 }
 
 pub(super) fn settings_apply_callback(
@@ -1098,6 +1102,7 @@ pub(super) fn settings_apply_callback(
     let workspace_area = shells.workspace_area.clone();
     let orchestration_rail_shell = shells.orchestration_rail.clone();
     let orchestration_feed_shell = shells.workflow_feed.clone();
+    let status_router = shells.status_router.clone();
     let controller = controller.clone();
     let pr_model = pr_model.clone();
     let pr_in_flight = pr_in_flight.clone();
@@ -1112,6 +1117,9 @@ pub(super) fn settings_apply_callback(
         sidebar_shell.set_visible(config.appearance.sidebar_visible);
         orchestration_rail_shell.set_visible(config.appearance.show_orchestration_rail);
         orchestration_feed_shell.set_visible(config.appearance.show_workflow_feed);
+        // The router summary in the thin status bar duplicates the workflow feed's live view.
+        // Hide it when the feed dock (the proper awareness surface) is enabled.
+        status_router.set_visible(!config.appearance.show_workflow_feed);
         let model = {
             let controller = controller.borrow();
             for widget in controller.widgets.values() {

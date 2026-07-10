@@ -571,13 +571,14 @@ fn notification_panel_css_matches_quiet_agent_hud_tone() {
     assert!(!kind.contains("text-transform: uppercase;"));
     assert!(!kind.contains("font-weight: 700;"));
 
+    // After further quieting: actionable hovers use neutral gray; focus uses light ring not thick bars
     assert!(
         block(".notification-list row:hover .notification-row.actionable {")
-            .contains("background: #1e1a17;")
+            .contains("background: #1f1f1f;")
     );
     assert!(
         block(".notification-list row:focus-visible .notification-row.unread {")
-            .contains("inset 3px 0 0 alpha(@accent_color, 0.82)")
+            .contains("0 0 0 1px alpha(@accent_color, 0.12)")
     );
     assert!(block(".notification-kind.prompt {").contains("color: @ft_warning;"));
 }

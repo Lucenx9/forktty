@@ -26,6 +26,8 @@ pub(super) struct OrchestrationFeedUi {
     live_chip: gtk::Box,
     rows: Vec<FeedRowUi>,
     tabs: Vec<gtk::Button>,
+    collapsed_summary: gtk::Label,
+    header_spacer: gtk::Box,
     filter: Rc<Cell<u8>>,
     cleared_before_ms: Rc<RefCell<FeedClearCutoffs>>,
     collapsed: Rc<Cell<bool>>,
@@ -63,7 +65,7 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
     header.add_css_class("orchestration-feed-header");
     let mut tabs = Vec::new();
     for (label, active) in [
-        ("WORKFLOW FEED", true),
+        ("ALL", true),
         ("ATTENTION", false),
         ("EVENTS", false),
         ("LOGS", false),
@@ -78,6 +80,19 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
         header.append(&tab);
         tabs.push(tab);
     }
+
+    // Collapsed summary: shows the most recent item directly in the thin bar
+    // so the feed remains useful even when collapsed (awareness without taking rows).
+    let collapsed_summary = gtk::Label::builder()
+        .label("")
+        .xalign(0.0)
+        .hexpand(true)
+        .single_line_mode(true)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    collapsed_summary.add_css_class("orchestration-feed-collapsed-summary");
+    header.append(&collapsed_summary);
+
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     spacer.set_hexpand(true);
     header.append(&spacer);
@@ -129,7 +144,7 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
                 .label("")
                 .xalign(0.0)
                 .single_line_mode(true)
-                .width_chars(8)
+                .width_chars(9)
                 .build();
             time.add_css_class("orchestration-feed-time");
             let body = gtk::Label::builder()
@@ -175,6 +190,8 @@ pub(super) fn build_orchestration_feed(state: &SocketAppState) -> OrchestrationF
         live_chip: live,
         rows,
         tabs,
+        collapsed_summary: collapsed_summary.clone(),
+        header_spacer: spacer.clone(),
         filter: Rc::new(Cell::new(0)),
         cleared_before_ms: Rc::new(RefCell::new(FeedClearCutoffs::default())),
         collapsed: Rc::new(Cell::new(false)),
@@ -225,6 +242,8 @@ fn set_workflow_feed_collapsed(ui: &OrchestrationFeedUi, collapsed: bool) {
     ui.rows_revealer.set_reveal_child(!collapsed);
     ui.clear_button.set_visible(!collapsed);
     ui.live_chip.set_visible(!collapsed);
+    ui.collapsed_summary.set_visible(collapsed);
+    ui.header_spacer.set_visible(!collapsed);
     if collapsed {
         ui.shell.add_css_class("collapsed");
     } else {
@@ -261,6 +280,7 @@ pub(super) fn refresh_orchestration_feed(ui: &OrchestrationFeedUi, state: &Socke
             .into_iter()
             .filter(|line| feed_line_visible_after_clear(line, filter, &cleared_before_ms))
             .collect::<Vec<_>>();
+    let now = now_unix_ms();
     for (index, row) in ui.rows.iter().enumerate() {
         if let Some(line) = lines.get(index) {
             row.shell.set_visible(true);
@@ -268,7 +288,11 @@ pub(super) fn refresh_orchestration_feed(ui: &OrchestrationFeedUi, state: &Socke
             row.time.set_visible(true);
             row.status.set_visible(true);
             row.body.set_xalign(0.0);
-            set_feed_label(&row.time, &clock_time_label(line.at_ms));
+            let rel = relative_time_label(now, line.at_ms);
+            set_feed_label(&row.time, &rel);
+            // Absolute wall time in tooltip for precision (matches previous clock display)
+            row.time
+                .set_tooltip_text(Some(&clock_time_label(line.at_ms)));
             set_feed_label(&row.body, &line.body);
             set_feed_label(&row.status, &line.status);
             set_feed_status_class(&row.status, &line.status);
@@ -289,6 +313,9 @@ pub(super) fn refresh_orchestration_feed(ui: &OrchestrationFeedUi, state: &Socke
             row.shell.set_visible(false);
         }
     }
+
+    // Keep the collapsed bar useful: show a compact version of the newest item.
+    update_collapsed_summary(ui, lines.first(), now);
 }
 
 fn feed_filter_from_index(index: u8) -> FeedFilter {
@@ -433,6 +460,23 @@ fn set_feed_status_class(label: &gtk::Label, status: &str) {
         label.remove_css_class(class_name);
     }
     label.add_css_class(feed_status_class(status));
+}
+
+/// When the feed is collapsed to a thin bar, show a compact "latest event" summary
+/// so the user still gets live signal without expanding.
+fn update_collapsed_summary(ui: &OrchestrationFeedUi, top: Option<&FeedLine>, now_ms: u128) {
+    let Some(line) = top else {
+        set_feed_label(&ui.collapsed_summary, "");
+        return;
+    };
+    let rel = relative_time_label(now_ms, line.at_ms);
+    // Compact form: time · body · status
+    let summary = if line.status.is_empty() {
+        format!("{}  {}", rel, line.body)
+    } else {
+        format!("{}  {}  {}", rel, line.body, line.status)
+    };
+    set_feed_label(&ui.collapsed_summary, &summary);
 }
 
 fn orchestration_feed_lines_for_filter_in_workspace(

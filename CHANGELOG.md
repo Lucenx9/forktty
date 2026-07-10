@@ -5,6 +5,17 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- Major polish for premium, clean, Linear/Cursor/Vercel aesthetic (terminal-first, low noise):
+  - Workspace sidebar converted from bordered cards with heavy drop/inset shadows to flat rows using only hairline left indicators for active/attention/DnD (matches Linear's quiet list style).
+  - Reduced full 999px pill radii on badges, status location, welcome button, and keycaps to small precise radii (4-6px). 999px now reserved for true circular dots only.
+  - Keycaps made subtler (lighter background, thinner border, lower weight) to reduce chrome noise.
+  - Command palette selected state and several tab/workspace DnD feedbacks switched from inset box-shadows to clean hairlines + surface shifts.
+  - Header "Plan Task" CTA background neutralized (no longer warm-tinted) while keeping accent on text for action.
+- Further quieted the workbench toward Linear/Cursor/Vercel aesthetics:
+  - Reduced heavy drop shadows on popovers, context menus, command palette search, pane search bars, and notification/agent rows (now subtle 2-4px shadows or border + light inset only).
+  - Removed outer borders and inset glows from terminal panes; attention no longer paints strong accent borders on the whole pane (signal now via small header dot + subtle header treatment).
+  - Replaced warm accent-tinted routine hovers/active states (#26211d and similar #1e1a17 warm neutrals) with pure cool grays for calmer interactions.
+- Improved the bottom workflow feed: tab renamed to "ALL" for clarity, rows now show relative time ("2m", "now") with absolute clock on tooltip, high-signal statuses (warn/err) receive subtle background pills for scannability while staying quiet, the collapsed thin bar now shows the latest event inline for constant awareness, and the router summary is hidden from the absolute status bar when the feed is visible (avoids duplication). Keeps the compact fixed-row HUD character suited to a terminal-first app and the quiet Linear/Cursor/Vercel aesthetic.
 - Refined the Router rail toward a quieter Vercel/Linear-style finish: sections
   now separate with whitespace instead of stacked hairlines (only the header and
   attention summary keep a divider), uppercase section labels use wider
@@ -53,6 +64,10 @@ All notable changes to ForkTTY are documented here.
 - Router-discovered provider executables now report authentication and runtime
   health as unverified instead of claiming they are authenticated and ready;
   they remain eligible until concrete runtime evidence reports a lockout.
+- Agent HUD and About ForkTTY now use the quiet hairline + @ft_* palette
+  treatment: lifecycle/loop/permission badges use small 5px radii and quiet
+  semantic text colors (no heavy colored 999px pills), About details card is
+  recessed with @ft_line hairlines and no shadow; pane badges also cleaned.
 
 ### Fixed
 - Kept the provider selected by `team.worker.launch` authoritative for
@@ -76,6 +91,8 @@ All notable changes to ForkTTY are documented here.
 - Preserved AppImage runtime provenance for renamed launchers in generated hook
   and MCP commands, used the prerelease-aware zsync update channel, and aligned
   release checksum verification with the uploaded `.zsync` artifact.
+
+### Changed
 - Renamed the workbench Router action from “Review Plan” to “Plan Task” so its
   label matches the new-plan dialog it opens.
 - Reported provider-specific managed hook/MCP setup capabilities to the Router

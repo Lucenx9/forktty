@@ -511,13 +511,14 @@ fn agent_hud_css_preserves_attention_tints_on_hover_and_focus() {
             .unwrap_or_else(|| panic!("missing CSS block {selector}"))
     };
 
+    // Quieter attention: neutral @ft_bg_2 backgrounds + thin left accent bar (hairline focus)
     assert!(
-        block(".agent-list row:hover .agent-row.needs-input {").contains("background: #1e1a17;")
+        block(".agent-list row:hover .agent-row.needs-input {").contains("background: @ft_bg_2;")
     );
-    assert!(block(".agent-list row:hover .agent-row.current {").contains("background: #1c1b18;"));
+    assert!(block(".agent-list row:hover .agent-row.current {").contains("background: @ft_bg_2;"));
     assert!(
         block(".agent-list row:focus-visible .agent-row.needs-input {")
-            .contains("inset 3px 0 0 alpha(@accent_color")
+            .contains("border-color: alpha(@accent_color")
     );
 }
 
@@ -547,12 +548,13 @@ fn agent_hud_loop_badge_has_quiet_warning_css() {
             .unwrap_or_else(|| panic!("missing CSS block {selector}"))
     };
 
-    assert!(block(".agent-current,\n.agent-permission,\n.agent-loop {")
-        .contains("border-radius: 999px;"));
+    assert!(
+        block(".agent-current,\n.agent-permission,\n.agent-loop {").contains("border-radius: 5px;")
+    );
     assert!(!block(".agent-current,\n.agent-permission,\n.agent-loop {")
         .contains("text-transform: uppercase;"));
-    assert!(source.contains(".agent-loop {\n  color: #9aa0a6;\n  background: @ft_line;\n}"));
-    assert!(block(".agent-loop.warning {").contains("background: #2b1d1d;"));
+    assert!(source.contains(".agent-loop {\n  color: @ft_text_3;\n  background: @ft_bg_2;\n}"));
+    assert!(block(".agent-loop.warning {").contains("color: @ft_warning;"));
 }
 
 #[test]

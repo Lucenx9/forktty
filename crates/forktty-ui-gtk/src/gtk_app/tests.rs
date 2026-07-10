@@ -2812,7 +2812,7 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(rail_source.contains("current_rail_notifications(model, workspace_id)"));
     assert!(rail_source.contains("model.dismiss_notification(&notification.id)"));
     assert!(rail_source.contains("mark_notification_feed_entries_cleared(&notifications)"));
-    assert!(feed_source.contains("(\"WORKFLOW FEED\", true)"));
+    assert!(feed_source.contains("(\"ALL\", true)"));
     assert!(feed_source.contains("(\"ATTENTION\", false)"));
     assert!(feed_source.contains("set_workflow_feed_collapsed("));
     assert!(feed_source.contains("orchestration-feed-rows-shell"));
