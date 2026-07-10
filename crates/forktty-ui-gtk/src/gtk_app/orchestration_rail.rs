@@ -21,6 +21,7 @@ pub(super) struct OrchestrationRailUi {
     collapse_button: gtk::Button,
     expanded_width: Rc<Cell<i32>>,
     attention_value: gtk::Label,
+    status_dot: gtk::Box,
     status_value: gtk::Label,
     strategy_value: gtk::Label,
     strategy_detail_value: gtk::Label,
@@ -155,11 +156,18 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
         .build();
     title.add_css_class("orchestration-panel-title");
     title.set_hexpand(true);
+    // Linear-style status readout: a colored dot next to quiet text instead of
+    // a tinted pill, so the header carries one calm signal.
+    let status_shell = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    status_shell.add_css_class("orchestration-status");
+    let status_dot = rail_dot();
     let status_value = gtk::Label::builder()
         .label("")
         .single_line_mode(true)
         .build();
     status_value.add_css_class("orchestration-status-chip");
+    status_shell.append(&status_dot);
+    status_shell.append(&status_value);
     let collapse_button = gtk::Button::builder()
         .icon_name("forktty-chevron-right-symbolic")
         .has_frame(false)
@@ -169,7 +177,7 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
     collapse_button.add_css_class("orchestration-collapse-button");
     set_accessible_button_text(&collapse_button, "Collapse Router rail", None);
     header.append(&title);
-    header.append(&status_value);
+    header.append(&status_shell);
     header.append(&collapse_button);
     // Header stays outside the scroller so the collapse control never scrolls away.
     shell.append(&header);
@@ -384,6 +392,7 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
         collapse_button,
         expanded_width: Rc::new(Cell::new(RAIL_EXPANDED_MIN_WIDTH)),
         attention_value,
+        status_dot,
         status_value,
         strategy_value,
         strategy_detail_value,
@@ -675,7 +684,7 @@ pub(super) fn refresh_orchestration_rail(ui: &OrchestrationRailUi, state: &Socke
     set_rail_value(&ui.attention_value, &snapshot.attention_summary);
     set_attention_summary_class(&ui.attention_value, snapshot.attention_attention);
     set_rail_value(&ui.status_value, &snapshot.status);
-    set_status_chip_class(&ui.status_value, &snapshot.status);
+    set_status_chip_class(&ui.status_value, &ui.status_dot, &snapshot.status);
     set_rail_value(&ui.strategy_value, &snapshot.strategy);
     set_rail_value(&ui.strategy_detail_value, &snapshot.strategy_detail);
     ui.strategy_meta
@@ -813,11 +822,14 @@ fn reports_link_visible(snapshot: &RailSnapshot) -> bool {
     snapshot.report_count > 0
 }
 
-fn set_status_chip_class(label: &gtk::Label, status: &str) {
+fn set_status_chip_class(label: &gtk::Label, dot: &gtk::Box, status: &str) {
+    let class = feed_status_class(status);
     for class_name in ["ok", "run", "warn", "err", "info", "idle"] {
         label.remove_css_class(class_name);
+        dot.remove_css_class(class_name);
     }
-    label.add_css_class(feed_status_class(status));
+    label.add_css_class(class);
+    dot.add_css_class(class);
 }
 
 pub(super) fn build_orchestration_header_chips(

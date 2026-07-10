@@ -565,6 +565,10 @@ button.flat.header-team-chip:focus-visible {
   background: @ft_danger;
 }
 
+.rail-dot.run {
+  background: @ft_success;
+}
+
 .rail-dot.info {
   background: @ft_info;
 }
@@ -573,8 +577,10 @@ button.flat.header-team-chip:focus-visible {
   background: #5a5a5a;
 }
 
+/* All flanking panels (sidebar, rail, feed dock, status bar) share one
+ * recessed ground so the workbench reads as content plus one chrome tone. */
 .sidebar-shell {
-  background: #151515;
+  background: #101010;
   color: @ft_text_2;
 }
 
@@ -594,9 +600,9 @@ button.flat.header-team-chip:focus-visible {
 
 .sidebar-section-label {
   color: @ft_text_3;
-  font-weight: 600;
-  font-size: 0.72em;
-  letter-spacing: 0.04em;
+  font-weight: 620;
+  font-size: 0.68em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
 }
 
@@ -697,19 +703,16 @@ button.flat.sidebar-add:focus-visible {
 
 .navigation-sidebar row:hover .workspace-card {
   background: #1d1d1d;
-  border-color: @ft_line;
 }
 
 .workspace-row.active .workspace-card {
   background: #1d1d1d;
-  border-color: @ft_line_strong;
   border-left-color: alpha(@accent_color, 0.34);
   box-shadow: none;
 }
 
 .workspace-row.active:hover .workspace-card {
   background: @ft_bg_2;
-  border-color: @ft_line_strong;
 }
 
 .workspace-row:drop(active) .workspace-card,
@@ -764,41 +767,31 @@ button.flat.sidebar-add:focus-visible {
   font-weight: 560;
 }
 
+/* Status reads as quiet colored text, not a bordered pill. */
 .workspace-status-badge {
-  padding: 2px 7px;
-  border-radius: 6px;
-  font-size: 0.64em;
-  font-weight: 600;
+  font-size: 0.68em;
+  font-weight: 620;
   letter-spacing: 0;
-  border: 1px solid transparent;
 }
 
-/* Running/working = live: sober green over a dark tint. */
+/* Running/working = live: sober green. */
 .workspace-status-badge.running,
 .workspace-status-badge.working {
   color: #63d67c;
-  background: #16211b;
-  border-color: alpha(#3fb950, 0.26);
 }
 
 /* Needs-input/attention = warm orange, in the ForkTTY accent family. */
 .workspace-status-badge.needs-input,
 .workspace-status-badge.attention {
   color: @ft_warning;
-  background: #241a11;
-  border-color: alpha(@accent_color, 0.30);
 }
 
 .workspace-status-badge.exited {
   color: #9a9a9a;
-  background: #1c1c1e;
-  border-color: @ft_line_strong;
 }
 
 .workspace-status-badge.error {
   color: @ft_danger;
-  background: #241818;
-  border-color: alpha(@ft_danger, 0.28);
 }
 
 .workspace-meta {
@@ -846,7 +839,7 @@ button.flat.sidebar-add:focus-visible {
 
 .sidebar-empty-title {
   color: @ft_text_1;
-  font-weight: 700;
+  font-weight: 650;
   font-size: 0.92em;
   margin-bottom: 3px;
 }
@@ -908,13 +901,13 @@ button.flat.sidebar-nav-row:focus-visible {
 .sidebar-nav-count {
   color: @ft_text_3;
   font-size: 0.74em;
-  font-weight: 700;
+  font-weight: 620;
 }
 
 .app-status-bar {
   min-height: 24px;
   padding: 0 10px 0 12px;
-  background: #151515;
+  background: #101010;
   border-top: 1px solid @ft_bg_1;
   box-shadow: none;
   color: @ft_text_3;
@@ -1048,38 +1041,28 @@ button.flat.orchestration-rail-collapsed-strip:focus-visible {
 .orchestration-panel-title {
   color: @ft_text_0;
   font-size: 0.92em;
-  font-weight: 700;
+  font-weight: 650;
 }
 
+/* Status readout is a rail-dot plus this quiet text label, not a pill. */
 .orchestration-status-chip {
-  min-height: 17px;
-  padding: 0 5px;
-  border-radius: 6px;
   color: @ft_text_3;
-  background: transparent;
-  border: 1px solid transparent;
-  font-size: 0.70em;
-  font-weight: 700;
+  font-size: 0.72em;
+  font-weight: 640;
   letter-spacing: 0;
 }
 
 .orchestration-status-chip.ok,
 .orchestration-status-chip.run {
   color: @ft_success;
-  background: alpha(@ft_success, 0.10);
-  border-color: alpha(@ft_success, 0.24);
 }
 
 .orchestration-status-chip.warn {
   color: @ft_warning;
-  background: alpha(@ft_warning, 0.10);
-  border-color: alpha(@ft_warning, 0.24);
 }
 
 .orchestration-status-chip.err {
   color: @ft_danger;
-  background: alpha(@ft_danger, 0.12);
-  border-color: alpha(@ft_danger, 0.26);
 }
 
 button.flat.orchestration-collapse-button {
@@ -1099,13 +1082,13 @@ button.flat.orchestration-collapse-button:focus-visible {
 }
 
 .orchestration-section {
-  padding: 11px 13px;
-  border-bottom: 1px solid alpha(@ft_line, 0.78);
+  padding: 12px 14px;
 }
 
 .orchestration-attention-section {
-  padding-top: 9px;
-  padding-bottom: 9px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid alpha(@ft_line, 0.78);
 }
 
 .orchestration-attention-summary {
@@ -1125,9 +1108,9 @@ button.flat.orchestration-collapse-button:focus-visible {
 .orchestration-section-title {
   color: @ft_text_3;
   font-size: 0.68em;
-  font-weight: 720;
+  font-weight: 620;
   text-transform: uppercase;
-  letter-spacing: 0.045em;
+  letter-spacing: 0.09em;
 }
 
 .orchestration-strategy-value {
@@ -1192,9 +1175,9 @@ progressbar.orchestration-loop-progress progress {
 }
 
 .orchestration-section-count {
-  color: #c8c8c8;
+  color: @ft_text_3;
   font-size: 0.76em;
-  font-weight: 720;
+  font-weight: 620;
 }
 
 .orchestration-section-count.attention {
@@ -1216,15 +1199,15 @@ button.flat.orchestration-outline-button {
   padding: 0 12px;
   border-radius: 6px;
   color: @ft_text_1;
-  background: #181818;
-  border: 1px solid @ft_line;
+  background: transparent;
+  border: 1px solid alpha(@ft_line_strong, 0.85);
   font-size: 0.76em;
   font-weight: 640;
 }
 
 button.flat.orchestration-outline-button:hover,
 button.flat.orchestration-outline-button:focus-visible {
-  background: @ft_line;
+  background: #1d1d1d;
   border-color: @ft_line_strong;
 }
 
@@ -1302,7 +1285,7 @@ button.flat.orchestration-link-button:focus-visible {
  * -------------------------------------------------------------------------- */
 
 .orchestration-feed {
-  background: #121212;
+  background: #101010;
   border-top: 1px solid @ft_bg_1;
 }
 
@@ -1318,8 +1301,9 @@ button.flat.orchestration-feed-tab {
   border-radius: 0;
   background: transparent;
   color: #777777;
-  font-size: 0.72em;
-  font-weight: 720;
+  font-size: 0.70em;
+  font-weight: 620;
+  letter-spacing: 0.07em;
 }
 
 button.flat.orchestration-feed-tab:hover,
@@ -1354,7 +1338,7 @@ button.flat.orchestration-feed-collapse {
   border-radius: 6px;
   color: @ft_text_3;
   font-size: 0.74em;
-  font-weight: 720;
+  font-weight: 620;
 }
 
 button.flat.orchestration-feed-collapse:hover,
@@ -1370,16 +1354,16 @@ button.flat.orchestration-feed-collapse:focus-visible {
 .orchestration-feed-live-label {
   color: @ft_text_3;
   font-size: 0.68em;
-  font-weight: 700;
+  font-weight: 620;
   letter-spacing: 0.04em;
 }
 
 .orchestration-feed-rows {
-  background: #131313;
+  background: #101010;
 }
 
 .orchestration-feed-rows-shell {
-  background: #131313;
+  background: #101010;
 }
 
 .orchestration-feed-row {
@@ -1411,40 +1395,36 @@ button.flat.orchestration-feed-collapse:focus-visible {
   font-weight: 520;
 }
 
+/* Kind tags read as quiet colored text, matching the sidebar/rail statuses. */
 .orchestration-feed-status {
   min-height: 18px;
-  padding: 0 6px;
+  padding: 0 2px;
   border-radius: 4px;
   color: @ft_text_3;
-  background: #1d1d1d;
+  background: transparent;
   font-size: 0.66em;
-  font-weight: 690;
+  font-weight: 620;
 }
 
 .orchestration-feed-status.ok,
 .orchestration-feed-status.run {
   color: @ft_success;
-  background: alpha(@ft_success, 0.08);
 }
 
 .orchestration-feed-status.warn {
   color: @ft_warning;
-  background: alpha(@ft_warning, 0.08);
 }
 
 .orchestration-feed-status.err {
   color: @ft_danger;
-  background: alpha(@ft_danger, 0.10);
 }
 
 .orchestration-feed-status.info {
   color: #9d9d9d;
-  background: #1a1a1a;
 }
 
 .orchestration-feed-status.idle {
   color: #777777;
-  background: #1a1a1a;
 }
 
 /* Workspace popover */
@@ -1608,7 +1588,7 @@ button.flat.orchestration-feed-collapse:focus-visible {
 /* Per-pane tab strip, shown when a leaf has >1 tab. Kept deliberately
  * smaller than Adwaita's app-level TabBar because it lives inside pane chrome. */
 .pane-tabstrip {
-  background: #151515;
+  background: @ft_bg_0;
   border-bottom: 1px solid #222222;
   min-height: 28px;
   padding: 2px 6px 2px 7px;
@@ -1796,41 +1776,32 @@ button.flat.pane-tab-close:active {
   font-weight: 620;
 }
 
+/* Agent lifecycle reads as quiet colored text, matching the sidebar and rail
+ * status treatment. */
 .pane-agent-badge {
   min-height: 17px;
-  padding: 2px 7px;
-  border-radius: 6px;
+  padding: 2px 2px;
   color: #9a9a9a;
-  background: #1c1c1e;
-  border: 1px solid #2a2a2a;
   font-size: 0.68em;
-  font-weight: 650;
+  font-weight: 620;
 }
 
 .pane-agent-badge.running {
   color: #63d67c;
-  background: #16211b;
-  border-color: alpha(#3fb950, 0.26);
 }
 
 .pane-agent-badge.needs-input {
   color: @ft_warning;
-  background: #241a11;
-  border-color: alpha(@accent_color, 0.30);
 }
 
 .pane-agent-badge.ended {
   color: @ft_text_3;
-  background: #1b1b1b;
-  border-color: @ft_line;
 }
 
 .pane-agent-badge.idle,
 .pane-agent-badge.suspended,
 .pane-agent-badge.unknown {
   color: #9a9a9a;
-  background: #1c1c1e;
-  border-color: @ft_line_strong;
 }
 
 .terminal-pane-cwd {

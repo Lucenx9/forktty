@@ -5,6 +5,26 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- Refined the Router rail toward a quieter Vercel/Linear-style finish: sections
+  now separate with whitespace instead of stacked hairlines (only the header and
+  attention summary keep a divider), uppercase section labels use wider
+  tracking and lighter weight, section counts read as muted metadata, the
+  Edit/Review/Deny controls become borderless-background ghost buttons, and the
+  header status pill becomes a Linear-style colored dot with quiet text.
+- Brought pane chrome in line with the quiet workbench finish: the pane
+  header's agent lifecycle badge becomes quiet colored text instead of a
+  bordered pill, and the per-pane tab strip drops its stale off-tone background
+  for the shared pane chrome ground.
+- Unified the workbench panel grounds: the workspace sidebar, Router rail,
+  workflow feed dock, and bottom status bar now share one recessed tone instead
+  of four slightly different darks, and the feed's tabs, live label, collapse
+  control, and kind tags adopt the same quiet tracked-uppercase/colored-text
+  treatment as the rail and sidebar (kind tags lose their tinted pills).
+- Aligned the left workspace sidebar with the same quiet finish: workspace rows
+  lose their hover/active outlines and read as tinted rounded rows, the
+  workspace status badge becomes quiet colored text instead of a bordered pill,
+  and section labels/counts match the Router rail's tracked uppercase and muted
+  weight.
 - Calmed the left side of the main titlebar into a borderless Router/workspace
   location path and moved the single Plan Task action into the right-side
   action group, reducing competing card-like controls without changing
