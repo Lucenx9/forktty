@@ -213,10 +213,9 @@ pub(super) fn build_ui(app: &adw::Application) {
     header.pack_start(&app_menu);
     header.pack_start(&brand_separator);
 
-    // Router cluster: sidebar toggle, Router breadcrumb, workspace selector,
-    // and the single review CTA. Lives left-of-center in the titlebar like the
-    // agent-workspace mockups instead of a second strip below the header.
-    let router_cluster = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    // Keep orientation on the left and actions on the right: the Router and
+    // workspace read as one quiet location path instead of competing cards.
+    let router_cluster = gtk::Box::new(gtk::Orientation::Horizontal, 2);
     router_cluster.add_css_class("header-router-cluster");
     let sidebar_toggle = gtk::Button::builder()
         .icon_name("forktty-grid-symbolic")
@@ -270,16 +269,15 @@ pub(super) fn build_ui(app: &adw::Application) {
     set_accessible_button_text(&workspace_title, "No active workspace", None);
     router_cluster.append(&workspace_title);
 
-    let apply_button = gtk::Button::builder()
+    let plan_task_button = gtk::Button::builder()
         .label("Plan Task")
         .has_frame(false)
         .tooltip_text("Plan a task with the Router")
         .build();
-    apply_button.add_css_class("flat");
-    apply_button.add_css_class("header-apply-button");
-    apply_button.set_action_name(Some("app.task-router"));
-    set_accessible_button_text(&apply_button, "Plan task with Router", None);
-    router_cluster.append(&apply_button);
+    plan_task_button.add_css_class("flat");
+    plan_task_button.add_css_class("header-plan-task-button");
+    plan_task_button.set_action_name(Some("app.task-router"));
+    set_accessible_button_text(&plan_task_button, "Plan task with Router", None);
     header.pack_start(&router_cluster);
     // Suppress the default centered window title; the workspace selector
     // lives in the router cluster instead.
@@ -352,6 +350,7 @@ pub(super) fn build_ui(app: &adw::Application) {
     header.pack_end(&notifications);
     header.pack_end(&agents);
     header.pack_end(&command_palette);
+    header.pack_end(&plan_task_button);
     let orchestration_header_chips = build_orchestration_header_chips(&state);
     header.pack_end(&orchestration_header_chips.shell);
 

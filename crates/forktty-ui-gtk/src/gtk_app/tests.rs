@@ -2774,7 +2774,9 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(app_source.contains("refresh_orchestration_header_chips("));
     assert!(app_source.contains("header.pack_start(&router_cluster);"));
     assert!(app_source.contains("router_crumb.set_action_name(Some(\"app.task-router\"));"));
-    assert!(app_source.contains("apply_button.set_action_name(Some(\"app.task-router\"));"));
+    assert!(app_source.contains("plan_task_button.set_action_name(Some(\"app.task-router\"));"));
+    assert!(app_source.contains("header.pack_end(&plan_task_button);"));
+    assert!(!app_source.contains("router_cluster.append(&plan_task_button);"));
     assert!(app_source.contains(".label(\"Plan Task\")"));
     assert!(!app_source.contains("header-plan-button"));
     assert!(!css.contains("header-plan-button"));
@@ -2831,7 +2833,7 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(router_dialog_source.contains("value.set_xalign(1.0);"));
     assert!(router_dialog_source.contains("set_task_router_multiline_result("));
     assert!(css.contains("button.flat.header-router-crumb {"));
-    assert!(css.contains("button.flat.header-apply-button {"));
+    assert!(css.contains("button.flat.header-plan-task-button {"));
     assert!(css.contains("button.flat.header-team-chip {"));
     assert!(css.contains(".rail-dot.ok {"));
     assert!(css.contains(".orchestration-feed {"));

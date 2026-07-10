@@ -5,6 +5,10 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- Calmed the left side of the main titlebar into a borderless Router/workspace
+  location path and moved the single Plan Task action into the right-side
+  action group, reducing competing card-like controls without changing
+  navigation behavior or labels.
 - Polished the dark workbench toward a quieter Linear/Cursor-style finish:
   neutral header chips, a less saturated Plan Task CTA, softer active-pane and
   feed accents, lower-noise shell dividers, brighter muted labels, quieter empty

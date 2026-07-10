@@ -436,50 +436,48 @@ popover.ft-context-menu contents {
 }
 
 /* --------------------------------------------------------------------------
- * Header Router cluster (breadcrumb, workspace selector, Plan / Apply)
+ * Header location path and primary Router action
  * -------------------------------------------------------------------------- */
 
 .header-router-cluster {
-  margin-left: 2px;
+  margin-left: 0;
 }
 
 button.flat.header-router-crumb {
-  min-height: 26px;
-  padding: 0 10px;
-  border-radius: 6px;
-  color: #c8c8c8;
-  background: #1d1d1d;
-  border: 1px solid #2a2a2a;
+  min-height: 24px;
+  padding: 0 5px;
+  border-radius: 5px;
+  color: #999999;
+  background: transparent;
+  border: 0;
   font-size: 0.82em;
-  font-weight: 620;
+  font-weight: 600;
 }
 
 button.flat.header-router-crumb:hover,
 button.flat.header-router-crumb:focus-visible {
-  background: @ft_line;
-  border-color: @ft_line_strong;
+  background: #1d1d1d;
   color: @ft_text_0;
 }
 
 .header-router-chevron {
-  color: #777777;
+  color: #555555;
 }
 
 button.flat.header-workspace-chip {
-  min-height: 26px;
-  padding: 0 10px;
-  border-radius: 6px;
-  color: @ft_text_2;
-  background: #1b1b1b;
-  border: 1px solid @ft_line;
+  min-height: 24px;
+  padding: 0 6px;
+  border-radius: 5px;
+  color: #c6c6c6;
+  background: transparent;
+  border: 0;
   font-size: 0.82em;
   font-weight: 620;
 }
 
 button.flat.header-workspace-chip:hover,
 button.flat.header-workspace-chip:focus-visible {
-  background: @ft_line;
-  border-color: @ft_line_strong;
+  background: #1d1d1d;
 }
 
 button.flat.header-workspace-chip:disabled {
@@ -487,31 +485,29 @@ button.flat.header-workspace-chip:disabled {
 }
 
 .header-workspace-caret {
-  color: #777777;
+  color: #5f5f5f;
   font-size: 0.8em;
 }
 
-button.flat.header-apply-button {
-  min-height: 26px;
-  padding: 0 14px;
-  border-radius: 6px;
+button.flat.header-plan-task-button {
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 5px;
+  color: #dba474;
+  background: #211d1a;
+  border: 0;
+  font-size: 0.82em;
+  font-weight: 650;
+}
+
+button.flat.header-plan-task-button:hover,
+button.flat.header-plan-task-button:focus-visible {
   color: #efb27f;
   background: #2b241f;
-  border: 1px solid alpha(@accent_color, 0.30);
-  font-size: 0.82em;
-  font-weight: 680;
 }
 
-button.flat.header-apply-button:hover,
-button.flat.header-apply-button:focus-visible {
-  color: #f2bc8e;
-  background: #342820;
-  border-color: alpha(@accent_color, 0.44);
-}
-
-button.flat.header-apply-button:active {
-  background: #27201b;
-  border-color: alpha(@accent_color, 0.38);
+button.flat.header-plan-task-button:active {
+  background: #1c1917;
 }
 
 .header-team-chips {
