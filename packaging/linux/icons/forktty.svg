@@ -1,37 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <defs>
-    <linearGradient id="bg" x1="18" y1="10" x2="112" y2="118" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#24263a"/>
-      <stop offset="0.52" stop-color="#131720"/>
-      <stop offset="1" stop-color="#0b1118"/>
-    </linearGradient>
-    <linearGradient id="face" x1="12" y1="8" x2="116" y2="116" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.14"/>
-      <stop offset="0.46" stop-color="#ffffff" stop-opacity="0.04"/>
-      <stop offset="1" stop-color="#000000" stop-opacity="0.16"/>
-    </linearGradient>
-    <linearGradient id="prompt" x1="30" y1="41" x2="76" y2="87" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#a7b7ff"/>
-      <stop offset="1" stop-color="#67e8f9"/>
-    </linearGradient>
-    <linearGradient id="branch" x1="66" y1="43" x2="101" y2="85" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#67e8f9"/>
-      <stop offset="0.62" stop-color="#b9a8ff"/>
-      <stop offset="1" stop-color="#ff8a3d"/>
-    </linearGradient>
-  </defs>
+  <rect x="5" y="5" width="118" height="118" rx="28" fill="#181818"/>
+  <rect x="5.75" y="5.75" width="116.5" height="116.5" rx="27.25" fill="none" stroke="#333333" stroke-width="1.5"/>
 
-  <rect x="6" y="6" width="116" height="116" rx="28" fill="url(#bg)"/>
-  <rect x="7" y="7" width="114" height="114" rx="27" fill="url(#face)"/>
-  <path d="M15 92C30 110 51 117 76 113C94 110 108 100 118 83V96C118 108.15 108.15 118 96 118H32C19.85 118 10 108.15 10 96V86C11.26 88.14 12.93 90.14 15 92Z" fill="#060a0f" opacity="0.28"/>
-  <rect x="7" y="7" width="114" height="114" rx="27" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="2"/>
-  <path d="M18 9H94C109.46 9 119 18.54 119 34" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="2" stroke-linecap="round"/>
-
-  <path d="M34 43L59 64L34 85" fill="none" stroke="url(#prompt)" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M59 86H78" fill="none" stroke="#67e8f9" stroke-width="12" stroke-linecap="round"/>
-
-  <path d="M81 84V62M81 62L67 48M81 62L99 45" fill="none" stroke="url(#branch)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="67" cy="48" r="8" fill="#67e8f9"/>
-  <circle cx="99" cy="45" r="8" fill="#ff8a3d"/>
-  <circle cx="81" cy="62" r="7.5" fill="#b9a8ff"/>
+  <g fill="none" stroke="#f4f4f1" stroke-width="8" stroke-linecap="square" stroke-linejoin="round">
+    <path d="M34 42L52 61L34 80"/>
+    <path d="M61 41L75 55L89 41M75 55V86H61V98H91"/>
+  </g>
+  <path d="M84 46L89 41" fill="none" stroke="#e88745" stroke-width="8" stroke-linecap="square"/>
 </svg>

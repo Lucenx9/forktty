@@ -5,6 +5,9 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- Replaced the application icon with a flatter ForkTTY glyph that combines a
+  terminal prompt, branching path, and cursor line using the restrained dark
+  workbench palette and a single warm active-path accent.
 - Quieted Router rail list metadata: notification timestamps and worker/report
   status words no longer take on the severity color (the small status dot alone
   carries severity, matching the dot + quiet text pattern used elsewhere).

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="packaging/linux/icons/forktty.png" alt="ForkTTY" width="80" />
+<img src="packaging/linux/icons/forktty.svg" alt="ForkTTY" width="80" />
 
 # ForkTTY
 
