@@ -11,7 +11,8 @@ use super::{
     safe_string_field, sanitize_for_terminal, send_socket_request, should_read_stdin,
     socket_path_from_env, string_field, string_option, target_selector_values, trimmed_env,
     write_stdout_line, write_stdout_text, CliContext, CliError, CliResult, FlagValue,
-    AGENT_HELP_TEXT, EXAMPLES_TEXT, STATUS_HELP_TEXT, TEAM_HELP_TEXT, WORKFLOW_HELP_TEXT,
+    AGENT_HELP_TEXT, EXAMPLES_TEXT, HOOKS_HELP_TEXT, STATUS_HELP_TEXT, TEAM_HELP_TEXT,
+    WORKFLOW_HELP_TEXT,
 };
 use super::{COMPLETION_COMMANDS, STATUS_SUBCOMMANDS, TEAM_SUBCOMMANDS};
 use super::{DEFAULT_AGENT_WAIT_INTERVAL_MS, DEFAULT_AGENT_WAIT_TIMEOUT_MS};
@@ -36,6 +37,7 @@ pub(super) fn handle_help(_context: &CliContext, args: Vec<String>) -> CliResult
         "status" | "context" | "context-snapshot" => write_stdout_text(STATUS_HELP_TEXT),
         "agent" | "agents" => write_stdout_text(AGENT_HELP_TEXT),
         "workflow" | "workflows" => write_stdout_text(WORKFLOW_HELP_TEXT),
+        "hook" | "hooks" => write_stdout_text(HOOKS_HELP_TEXT),
         "examples" => write_stdout_text(EXAMPLES_TEXT),
         other => Err(CliError::new(format!("help: unknown topic {other}"))),
     }

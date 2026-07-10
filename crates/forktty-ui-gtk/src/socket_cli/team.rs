@@ -39,6 +39,7 @@ pub(super) fn handle_team(context: &CliContext, mut args: Vec<String>) -> CliRes
     }
     let subcommand = args.remove(0);
     match subcommand.as_str() {
+        "help" | "--help" | "-h" => handle_help(context, strings_vec(&["team"])),
         "ask" => ask::handle_team_ask(context, args),
         "review" => ask::handle_team_review(context, args),
         "watch" => handle_team_watch(context, args),

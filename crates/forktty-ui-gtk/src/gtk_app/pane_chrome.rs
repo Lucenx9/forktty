@@ -632,11 +632,13 @@ pub(super) fn show_close_pane_confirmation(
     parent: &adw::ApplicationWindow,
     state: &SocketAppState,
     surface_id: &str,
-) {
+) -> gtk::Window {
     let state = state.clone();
     let surface_id = surface_id.to_string();
+    let state_for_lifecycle = state.clone();
+    let surface_id_for_lifecycle = surface_id.clone();
     let confirmation = close_pane_confirmation(&state, &surface_id);
-    show_destructive_confirmation(
+    let dialog = show_destructive_confirmation(
         parent,
         confirmation.title,
         &confirmation.body,
@@ -659,6 +661,23 @@ pub(super) fn show_close_pane_confirmation(
             }
         },
     );
+    let dialog_for_lifecycle = dialog.clone();
+    glib::timeout_add_local(Duration::from_millis(100), move || {
+        if !dialog_for_lifecycle.is_visible() {
+            return glib::ControlFlow::Break;
+        }
+        let target_exists = state_for_lifecycle
+            .model
+            .lock()
+            .is_ok_and(|model| model.surface(&surface_id_for_lifecycle).is_some());
+        if target_exists {
+            glib::ControlFlow::Continue
+        } else {
+            dialog_for_lifecycle.close();
+            glib::ControlFlow::Break
+        }
+    });
+    dialog
 }
 
 pub(super) fn record_terminal_spawn_failure(
@@ -832,6 +851,42 @@ mod tests {
                 .has_css_class("pane-close-action"));
             assert!(children[children.len() - 2].has_css_class("pane-action-separator"));
             assert!(children[children.len() - 3].property::<bool>("hexpand"));
+        });
+    }
+
+    #[test]
+    fn close_pane_confirmation_closes_when_target_surface_disappears() {
+        let _ = crate::test_env::with_gtk_test(|| {
+            let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+            let target_surface_id = {
+                let mut model = model.lock().unwrap();
+                let workspace = model.create_workspace("main", Path::new("/tmp"));
+                model
+                    .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+                    .expect("split surface")
+                    .id
+            };
+            let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+            let state = SocketAppState::new(
+                model.clone(),
+                terminal,
+                "/bin/sh",
+                PathBuf::from("/tmp/forktty.sock"),
+            )
+            .with_notification_dispatch(false);
+            let parent = adw::ApplicationWindow::builder().build();
+            let dialog = show_close_pane_confirmation(&parent, &state, &target_surface_id);
+            assert!(dialog.is_visible());
+
+            model.lock().unwrap().close_surface(&target_surface_id);
+            let deadline = Instant::now() + Duration::from_millis(350);
+            while dialog.is_visible() && Instant::now() < deadline {
+                while glib::MainContext::default().iteration(false) {}
+                std::thread::sleep(Duration::from_millis(10));
+            }
+
+            assert!(!dialog.is_visible());
+            parent.close();
         });
     }
 

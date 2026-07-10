@@ -1,3 +1,4 @@
+use super::system::handle_help;
 use super::{
     build_target_params, format_option_names, format_terminal_safe_json_scalar,
     insert_optional_cli_bool_param, insert_optional_cli_string_param,
@@ -37,6 +38,7 @@ pub(super) fn handle_status(context: &CliContext, mut args: Vec<String>) -> CliR
     }
     let subcommand = args.remove(0);
     match subcommand.as_str() {
+        "help" | "--help" | "-h" => handle_help(context, vec!["status".to_string()]),
         "summary" | "line" => handle_statusline(context, args),
         "explain" => handle_status_explain(context, args),
         "watch" => handle_status_watch(context, args),

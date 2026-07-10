@@ -384,7 +384,8 @@ pub(super) fn show_destructive_confirmation<W, F>(
     body: &str,
     confirm_label: &str,
     on_confirm: F,
-) where
+) -> gtk::Window
+where
     W: IsA<gtk::Window>,
     F: Fn() + 'static,
 {
@@ -443,6 +444,7 @@ pub(super) fn show_destructive_confirmation<W, F>(
     dialog.set_child(Some(&content));
     dialog.present();
     cancel.grab_focus();
+    dialog
 }
 
 pub(super) fn show_rename_workspace_dialog<W>(

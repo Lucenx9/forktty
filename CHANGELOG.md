@@ -75,6 +75,13 @@ All notable changes to ForkTTY are documented here.
   recessed with @ft_line hairlines and no shadow; pane badges also cleaned.
 
 ### Fixed
+- Close-pane confirmations now dismiss themselves when another control or
+  socket client removes the target pane while the dialog is still open.
+- The grouped `hooks`, `team`, and `status` CLI commands now accept `help`,
+  `--help`, and `-h` without trying to contact a running ForkTTY instance.
+- Repaired the embedded-Ghostty smoke test's scrollback completion check and
+  post-restart marker assertion so successful runs no longer fail spuriously.
+- Updated `anyhow` to the patched release for RUSTSEC-2026-0190.
 - Pane tabs now expose native GTK tab accessibility semantics, update their
   selected state immediately, and return keyboard focus to the selected
   terminal instead of leaving it on the tab control.

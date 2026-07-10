@@ -255,8 +255,19 @@ fn context_snapshot_uses_env_workspace_without_surface_selector() {
 fn help_examples_and_completions_do_not_require_socket() {
     let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
     handle_help(&ctx, strings(&["team"])).unwrap();
+    handle_help(&ctx, strings(&["hooks"])).unwrap();
     handle_examples(&ctx, vec![]).unwrap();
     handle_completions(&ctx, strings(&["zsh"])).unwrap();
+}
+
+#[test]
+fn grouped_commands_accept_help_aliases_without_socket() {
+    let ctx = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+    for alias in ["--help", "-h", "help"] {
+        handle_hooks(&ctx, strings(&[alias])).unwrap();
+        handle_team(&ctx, strings(&[alias])).unwrap();
+        handle_status(&ctx, strings(&[alias])).unwrap();
+    }
 }
 
 #[test]

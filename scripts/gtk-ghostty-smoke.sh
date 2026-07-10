@@ -245,7 +245,7 @@ if (( scrollback_fill_lines + 8 >= SCROLLBACK_TAIL_LINES )); then
   echo "gtk-ghostty smoke: terminal geometry is too tall for the bounded scrollback assertion" >&2
   exit 77
 fi
-scrollback_fill_command="i=0; while [ \$i -lt $scrollback_fill_lines ]; do printf 'forktty-smoke-scroll-fill-%03d\\n' \"\$i\"; i=\$((i + 1)); done; printf 'forktty-smoke-scroll-fill-complete\\n'"
+scrollback_fill_command="i=0; while [ \$i -lt $scrollback_fill_lines ]; do printf 'forktty-smoke-scroll-fill-%03d\\n' \"\$i\"; i=\$((i + 1)); done; printf 'forktty-smoke-scroll-fill-%s\\n' complete"
 send_text_wait "$surface_id" "${scrollback_fill_command}"$'\r' "scrollback fill terminal"
 wait_surface_contains "$surface_id" "forktty-smoke-scroll-fill-complete" "scrollback fill marker"
 if surface_contains "$surface_id" "$scrollback_restore_marker"; then
@@ -331,7 +331,7 @@ if [[ "$zoom_changed" != "1" ]]; then
   echo "gtk-ghostty smoke: terminal dimensions did not change after zoom-in" >&2
   exit 1
 fi
-"$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --surface-id "$surface_id" | grep -q "forktty-smoke-ok"
+"$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --surface-id "$surface_id" | grep -q "forktty-smoke-after-restart"
 
 gapplication action dev.forktty.forktty zoom-out >/dev/null
 gapplication action dev.forktty.forktty zoom-reset >/dev/null

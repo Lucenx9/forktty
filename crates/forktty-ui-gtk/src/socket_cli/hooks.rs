@@ -7,7 +7,7 @@ use super::integration_files::{
 use super::{
     bool_option, format_doctor_path, inspect_path, parse_flags, print_json, reject_unknown_options,
     require_no_args, sanitize_for_terminal, send_socket_request, socket_path_from_env, trimmed_env,
-    write_stdout_line, CliContext, CliError, CliResult,
+    write_stdout_line, write_stdout_text, CliContext, CliError, CliResult, HOOKS_HELP_TEXT,
 };
 use serde_json::{json, Map, Value};
 use std::fs;
@@ -46,6 +46,7 @@ pub(super) use specs::{
 
 pub(super) fn handle_hooks(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     match args.first().map(String::as_str) {
+        Some("help" | "--help" | "-h") => write_stdout_text(HOOKS_HELP_TEXT),
         Some("setup") => handle_hooks_setup(context, args[1..].to_vec()),
         Some("remove") | Some("uninstall") => handle_hooks_remove(context, args[1..].to_vec()),
         Some("doctor") => handle_hooks_doctor(context, args[1..].to_vec()),

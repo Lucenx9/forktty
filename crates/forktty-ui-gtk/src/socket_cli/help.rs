@@ -175,6 +175,16 @@ ForkTTY status commands
       Direct CLI alias for the context.snapshot socket/MCP method.
 ";
 
+pub(super) const HOOKS_HELP_TEXT: &str = "\
+ForkTTY hook commands
+
+  forktty hooks setup [--full] [codex] [claude] [antigravity] [opencode]
+  forktty hooks remove [codex] [claude] [antigravity] [opencode] [gemini]
+  forktty hooks doctor <codex|claude|antigravity|opencode>
+  forktty hooks test <codex|claude|antigravity|opencode>
+  forktty hooks <agent> <event>
+";
+
 pub(super) const AGENT_HELP_TEXT: &str = "\
 ForkTTY agent commands
 
