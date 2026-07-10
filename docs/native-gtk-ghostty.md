@@ -107,7 +107,9 @@ against it.
 - Embedded Ghostty owns the child PTY and terminal widget; ForkTTY drives panes through the Ghostty GTK embedding ABI.
 - The embedded Ghostty surface starts in the ForkTTY surface cwd and exposes child PID, title, child-exit state, text input/readback, actions, and scrollback restore through the embedding ABI.
 - Linux release artifacts bundle Ghostty shell-integration resources and terminfo alongside the required embedded GTK library.
-- Prompt/metadata detection uses ForkTTY hooks and terminal events and a bounded visible-tail prompt fallback.
+- Prompt/metadata detection uses ForkTTY hooks and terminal events plus a
+  bounded full-scrollback tail when the limited text ABI is available (visible
+  fallback on older embedding libraries).
 - Native session data is written to `~/.local/share/forktty/session-v2.json`.
 - The legacy `session.json` import path exists only for migration; native saves do not overwrite that file.
 - Source-only browser panes store per-profile WebKit data under `~/.local/share/forktty/browser_profiles/<id>/`.

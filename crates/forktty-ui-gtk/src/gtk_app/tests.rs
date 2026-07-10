@@ -2966,6 +2966,36 @@ fn workspace_rows_and_pane_tabs_keep_compact_navigation_rhythm() {
 }
 
 #[test]
+fn pane_tabs_expose_native_accessible_tab_semantics() {
+    let controller_source = include_str!("controller.rs");
+
+    assert!(controller_source.contains(".accessible_role(gtk::AccessibleRole::TabList)"));
+    assert!(controller_source.contains(".accessible_role(gtk::AccessibleRole::Tab)"));
+    assert!(controller_source.contains("select.update_state(&[gtk::accessible::State::Selected"));
+    assert!(controller_source.contains("tab_update.active"));
+    assert!(controller_source.contains("gtk::accessible::Relation::Controls"));
+    assert!(controller_source.contains("queue_tab_focus_after_selection("));
+}
+
+#[test]
+fn task_router_freezes_plan_inputs_while_a_request_is_in_flight() {
+    let source = include_str!("task_router_dialog.rs");
+
+    assert!(source.contains("goal.set_sensitive(!busy);"));
+    assert!(source.contains("review.set_sensitive(!busy);"));
+    assert!(source.contains("parallel.set_sensitive(!busy);"));
+    assert!(source.contains("plan.set_sensitive(!busy);"));
+}
+
+#[test]
+fn router_rail_notification_clear_label_matches_current_view_behavior() {
+    let source = include_str!("orchestration_rail.rs");
+
+    assert!(source.contains(".label(\"Clear current view\")"));
+    assert!(source.contains("\"Clear notifications in the current workspace view\""));
+}
+
+#[test]
 fn chrome_micro_polish_keyboard_focus_matches_hover() {
     let source = include_str!("../style.css");
     let block = |selector: &str| {
@@ -3220,10 +3250,9 @@ fn tab_context_menu_accelerated_items_show_shortcuts() {
 fn pane_tab_selectors_are_keyboard_activatable() {
     let source = include_str!("controller.rs");
 
-    assert!(source.contains("let keyboard_select = gtk::EventControllerKey::new();"));
-    assert!(source.contains("gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter"));
-    assert!(source.contains("gtk::gdk::Key::space"));
-    assert!(source.contains("select.add_controller(keyboard_select);"));
+    assert!(source.contains("let select = gtk::Button::builder()"));
+    assert!(source.contains(".accessible_role(gtk::AccessibleRole::Tab)"));
+    assert!(source.contains("select.connect_clicked(move |_|"));
 }
 
 #[test]

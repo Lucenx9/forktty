@@ -316,14 +316,18 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
         .map(|_| build_list_row(&notifications_section))
         .collect::<Vec<_>>();
     let clear_all = gtk::Button::builder()
-        .label("Clear all")
+        .label("Clear current view")
         .has_frame(false)
-        .tooltip_text("Clear all notifications")
+        .tooltip_text("Clear notifications in the current workspace view")
         .build();
     clear_all.add_css_class("flat");
     clear_all.add_css_class("orchestration-link-button");
     clear_all.set_halign(gtk::Align::Start);
-    set_accessible_button_text(&clear_all, "Clear all notifications", None);
+    set_accessible_button_text(
+        &clear_all,
+        "Clear notifications in the current workspace view",
+        None,
+    );
     let state_for_clear = state.clone();
     clear_all.connect_clicked(move |_| {
         let notifications = state_for_clear

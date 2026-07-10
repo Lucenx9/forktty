@@ -116,10 +116,13 @@ pub(super) fn show_task_router_dialog(parent: &adw::ApplicationWindow, state: &S
                 goal.grab_focus();
                 return;
             }
-            button.set_sensitive(false);
+            set_task_router_form_busy(&goal, &review, &parallel, button, true);
             result.set_visible(false);
             status.set_label("Planning...");
             let state = state.clone();
+            let goal = goal.clone();
+            let review = review.clone();
+            let parallel = parallel.clone();
             let status = status.clone();
             let strategy = strategy.clone();
             let profile = profile.clone();
@@ -154,13 +157,26 @@ pub(super) fn show_task_router_dialog(parent: &adw::ApplicationWindow, state: &S
                         status.set_label(&format!("Planning failed: {err}"));
                     }
                 }
-                button.set_sensitive(true);
+                set_task_router_form_busy(&goal, &review, &parallel, &button, false);
             });
         });
     }
 
     dialog.present();
     goal.grab_focus();
+}
+
+fn set_task_router_form_busy(
+    goal: &gtk::Entry,
+    review: &gtk::CheckButton,
+    parallel: &gtk::CheckButton,
+    plan: &gtk::Button,
+    busy: bool,
+) {
+    goal.set_sensitive(!busy);
+    review.set_sensitive(!busy);
+    parallel.set_sensitive(!busy);
+    plan.set_sensitive(!busy);
 }
 
 fn task_router_result_row(parent: &gtk::Box, label: &str, multiline: bool) -> gtk::Label {

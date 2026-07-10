@@ -28,7 +28,8 @@ Ghostty in the surface cwd, and it can write explicit text bytes into an
 initialized embedded surface for ForkTTY socket input. It can also return
 bounded visible or full plain text from Ghostty's active screen so ForkTTY
 socket `read_text` and `capture_tail` requests work in embedded panes without
-materializing unbounded scrollback in the host process. ForkTTY can additionally
+materializing unbounded scrollback in the host process; `capture_tail` reads
+from the bounded end of full history when that limited ABI is present. ForkTTY can additionally
 create command-spawned embedded panes with a per-surface `scrollback-limit`
 override, keeping long agent transcripts bounded without editing the user's
 standalone Ghostty configuration file.

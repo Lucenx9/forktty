@@ -50,7 +50,7 @@ blocker) · `fail` (file a blocker) · `pending` (not yet exercised) · `n/a`.
 | 4 | Resize | Cols/rows track pane size and zoom; reflow matches classic | auto (smoke): zoom-in/out/reset asserts `cols`/`rows` change and restore | pass |
 | 5 | Input | Keystrokes and socket `send_text` reach the child PTY | auto (smoke): `send-text` then `read-screen` readback of echoed markers | pass |
 | 6 | Close | Closing a live embedded surface removes it without stale model/widget state; child exit marks closed | auto (smoke): live split `close-surface` removes the pane; child `exit` marks the pane non-writable with `Closed` | pass |
-| 7 | Restart / visible-tail restore | Restart re-spawns the embedded pane; the opt-in persisted visible text tail restores on respawn | auto (unit): `read_text(ALL)`/tail snapshot derivation, snapshot + restore decision logic; auto (smoke): restart then `capture-tail` confirms a visible pre-restart marker was restored | pass |
+| 7 | Restart / bounded-tail restore | Restart re-spawns the embedded pane; the opt-in persisted full-scrollback tail restores on respawn | auto (unit): bounded full-history tail scope, snapshot + restore decision logic; auto (smoke): push a marker beyond the visible rows, restart, then confirm it through `capture-tail` | pass |
 | 8 | Session restore | Saved workspace/pane layout reopens embedded panes on app restart | manual: local manual 2026-06-18 confirmed session restore after GUI relaunch | pass |
 | 9 | OSC 8 hyperlinks | Hyperlinks render and are clickable | manual (visual; Ghostty renders natively); rendering confirmed 2026-06-18, click deferred | deferred |
 | 10 | Right click | Terminal context/right-click behavior reaches Ghostty or ForkTTY action as configured | manual: requires trusted pointer input and clipboard/menu observation | deferred |
@@ -157,16 +157,17 @@ maintainer at a real pointer/keyboard, a working input-injection daemon, or a
   into a bounded buffer before ForkTTY copies the FFI payload. Explicit
   `read_text(all)` may still scan scrollback, but it no longer materializes
   more than the requested byte budget plus one truncation-detection byte in
-  either process. `capture_tail` for embedded panes uses the visible-text ABI
-  until a native bounded-tail embedding ABI exists.
-- **Visible-tail snapshot** — when `appearance.persistent_scrollback_lines > 0`,
-  embedded panes snapshot their visible text tail into
+  either process. `capture_tail` requests the bounded end of full scrollback
+  when this ABI is present; older embedding libraries fall back to visible
+  text instead of making an unbounded full-history allocation.
+- **Bounded-tail snapshot** — when `appearance.persistent_scrollback_lines > 0`,
+  embedded panes snapshot a bounded full-scrollback tail into
   `surface.persisted_scrollback` on child exit, on programmatic close/restart,
   and via a throttled poll (`read_text_snapshot(Tail)` +
-  `set_surface_persisted_scrollback`), so a later session save keeps recent
-  visible embedded output. The ABI read never holds the model lock, never asks
-  Ghostty for full scrollback on the polling path, and an unchanged tail skips
-  the model write.
+  `set_surface_persisted_scrollback`), so a later session save keeps the most
+  recent embedded output even when it has scrolled off screen. The ABI read
+  never holds the model lock, stays byte-bounded inside Ghostty, and an
+  unchanged tail skips the model write.
 - **Scrollback restore (gated)** — on respawn ForkTTY computes terminal-ready
   bytes from `persisted_scrollback` (same CR/LF normalization as classic panes)
   and seeds them through the optional `ghostty_gtk_surface_restore_scrollback`

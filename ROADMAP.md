@@ -71,7 +71,7 @@ This roadmap tracks the native GTK/Ghostty implementation that replaced the old 
 - [x] Agent last-activity tracking and read-only reclaim candidate planning through `agent.reclaim.plan`, `forktty agent-reclaim-plan`, and MCP `agent_reclaim_plan`.
 - [x] Compact status/HUD export through `status.summary`, `forktty statusline`, and MCP `status_summary`.
 - [x] GTK Agent HUD for persisted agent lifecycle, last activity, needs-input attention, focus, and resume.
-- [x] Prompt notifications from ForkTTY hook termprops and bounded visible-tail fallback.
+- [x] Prompt notifications from ForkTTY hook termprops and bounded scrollback-tail fallback.
 - [x] OSC 9 and basic OSC 99 title/body terminal notifications parsed from the Ghostty-owned PTY stream and rate-limited per surface, including same-id update/close, desktop replacement/closing, in-app report replies, support/alive query replies, basic same-id buttons, icon names, application/type metadata filtering, occasion filtering, urgency/expiry/sound hints, bounded `p=icon` data caching, and in-app/desktop binary icon rendering where GTK/notification servers can decode the image.
 - [x] Ghostty bell and child-exit notifications.
 - [x] Explicit notification `kind` support.

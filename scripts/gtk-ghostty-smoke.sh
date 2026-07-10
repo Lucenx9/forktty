@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${FORKTTY_SMOKE_BIN:-$ROOT_DIR/target/debug/forktty}"
+SCROLLBACK_TAIL_LINES=1000
 
 if [[ "${FORKTTY_SMOKE_BUILD:-1}" != "0" || ! -x "$BIN" ]]; then
   cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty
@@ -63,7 +64,7 @@ desktop = false
 sound = false
 
 [appearance]
-persistent_scrollback_lines = 200
+persistent_scrollback_lines = 1000
 
 [telemetry]
 anonymous_ping = false
@@ -177,7 +178,7 @@ wait_surface_contains() {
 capture_tail_contains() {
   local id="$1"
   local needle="$2"
-  "$BIN" --socket "$FORKTTY_SOCKET_PATH" capture-tail --surface-id "$id" --lines 80 2>/dev/null | grep -q "$needle"
+  "$BIN" --socket "$FORKTTY_SOCKET_PATH" capture-tail --surface-id "$id" --lines "$SCROLLBACK_TAIL_LINES" 2>/dev/null | grep -q "$needle"
 }
 
 wait_capture_tail_contains() {
@@ -191,7 +192,7 @@ wait_capture_tail_contains() {
     sleep 0.25
   done
   echo "gtk-ghostty smoke: $label did not appear in capture-tail for surface $id" >&2
-  "$BIN" --socket "$FORKTTY_SOCKET_PATH" capture-tail --surface-id "$id" --lines 80 >&2 || true
+  "$BIN" --socket "$FORKTTY_SOCKET_PATH" capture-tail --surface-id "$id" --lines "$SCROLLBACK_TAIL_LINES" >&2 || true
   exit 1
 }
 
@@ -239,6 +240,18 @@ fi
 scrollback_restore_marker="forktty-smoke-scrollback-restore-before-restart"
 send_text_wait "$surface_id" $'echo forktty-smoke-scrollback-restore-before-restart\r' "scrollback restore source terminal"
 wait_surface_contains "$surface_id" "$scrollback_restore_marker" "scrollback restore source marker"
+scrollback_fill_lines="$(( $(snapshot_field rows) + 8 ))"
+if (( scrollback_fill_lines + 8 >= SCROLLBACK_TAIL_LINES )); then
+  echo "gtk-ghostty smoke: terminal geometry is too tall for the bounded scrollback assertion" >&2
+  exit 77
+fi
+scrollback_fill_command="i=0; while [ \$i -lt $scrollback_fill_lines ]; do printf 'forktty-smoke-scroll-fill-%03d\\n' \"\$i\"; i=\$((i + 1)); done; printf 'forktty-smoke-scroll-fill-complete\\n'"
+send_text_wait "$surface_id" "${scrollback_fill_command}"$'\r' "scrollback fill terminal"
+wait_surface_contains "$surface_id" "forktty-smoke-scroll-fill-complete" "scrollback fill marker"
+if surface_contains "$surface_id" "$scrollback_restore_marker"; then
+  echo "gtk-ghostty smoke: scrollback restore marker remained visible after fill" >&2
+  exit 1
+fi
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" focus-surface "$surface_id" >/dev/null
 gapplication action dev.forktty.forktty restart-pane >/dev/null
 send_text_wait "$surface_id" $'echo forktty-smoke-after-restart\r' "restarted terminal"

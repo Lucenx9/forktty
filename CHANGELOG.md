@@ -75,6 +75,18 @@ All notable changes to ForkTTY are documented here.
   recessed with @ft_line hairlines and no shadow; pane badges also cleaned.
 
 ### Fixed
+- Pane tabs now expose native GTK tab accessibility semantics, update their
+  selected state immediately, and return keyboard focus to the selected
+  terminal instead of leaving it on the tab control.
+- Embedded Ghostty tail captures now read the bounded end of full scrollback
+  when the loaded library supports the limited text ABI; older libraries keep
+  the safe visible-text fallback.
+- The Router planner now freezes its goal and routing hints while a plan is in
+  flight, preventing a result for old inputs from appearing under an edited
+  form.
+- The Router rail notification action now says "Clear current view" so its
+  label matches the active-workspace scope it actually clears, including rows
+  beyond the four-item preview.
 - Switching Settings sections no longer flashes a whitish outline around the
   section you are leaving: checked nav items keep a transparent 1px border
   instead of `border: none`, so unchecking no longer interpolates the border

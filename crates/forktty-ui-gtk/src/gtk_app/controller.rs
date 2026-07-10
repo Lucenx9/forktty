@@ -59,7 +59,7 @@ pub(super) struct PaneTabStrip {
     stack: gtk::Stack,
     tab_widgets: Vec<gtk::Box>,
     labels: Vec<gtk::Label>,
-    select_areas: Vec<gtk::Box>,
+    select_areas: Vec<gtk::Button>,
 }
 
 fn surface_has_agent_session(surface: &forktty_core::Surface) -> bool {
@@ -133,6 +133,17 @@ fn queue_reveal_tab(scroller: &gtk::ScrolledWindow, tabstrip: &gtk::Box, tab: &g
         };
         reveal_tab(&scroller, &tabstrip, &tab);
     });
+}
+
+fn queue_tab_focus_after_selection(
+    focus_target: gtk::Widget,
+    model: Arc<Mutex<WorkspaceModel>>,
+    surface_id: String,
+) {
+    queue_focusable_descendant_focus_when(
+        focus_target,
+        Rc::new(move || model_focus_still_targets_surface(&model, &surface_id)),
+    );
 }
 
 impl TerminalController {
@@ -449,6 +460,20 @@ impl TerminalController {
         }
     }
 
+    fn tab_focus_target_for_surface(&self, surface_id: &str) -> Option<gtk::Widget> {
+        if let Some(widget) = self.widgets.get(surface_id) {
+            return Some(widget.widget());
+        }
+        if let Some(pane) = self.embedded_ghostty_panes.get(surface_id) {
+            return Some(pane.surface.clone());
+        }
+        #[cfg(feature = "browser")]
+        if let Some(pane) = self.browser_panes.borrow().get(surface_id) {
+            return Some(pane.focus_target());
+        }
+        None
+    }
+
     fn spawn_active_surfaces_if_needed(&mut self) {
         let Some(state) = self.state.clone() else {
             return;
@@ -665,6 +690,9 @@ impl TerminalController {
                             "Select tab {}",
                             tab_update.title
                         ))]);
+                        select.update_state(&[gtk::accessible::State::Selected(Some(
+                            tab_update.active,
+                        ))]);
                     }
                 }
             }
@@ -797,7 +825,10 @@ impl TerminalController {
                 .collect()
         };
 
-        let tabstrip = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let tabstrip = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .accessible_role(gtk::AccessibleRole::TabList)
+            .build();
         tabstrip.add_css_class("pane-tabstrip");
         tabstrip.set_hexpand(true);
         let tabstrip_scroller = gtk::ScrolledWindow::new();
@@ -836,55 +867,27 @@ impl TerminalController {
                 .build();
             label.add_css_class("pane-tab-label");
 
-            let select = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            let select_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            let select = gtk::Button::builder()
+                .child(&select_content)
+                .has_frame(false)
+                .accessible_role(gtk::AccessibleRole::Tab)
+                .build();
+            select.add_css_class("flat");
             select.set_hexpand(true);
             select.set_valign(gtk::Align::Center);
-            select.set_focusable(true);
             select.add_css_class("pane-tab-select");
             let grip = gtk::Image::from_icon_name("forktty-menu-symbolic");
             grip.add_css_class("pane-tab-grip");
             grip.set_tooltip_text(Some("Drag to move tab"));
             install_tab_drag_source(&grip, surface_id);
-            select.append(&grip);
-            select.append(&label);
+            select_content.append(&grip);
+            select_content.append(&label);
             update_tab_tooltip(&select, Some(title.clone()));
             select.update_property(&[gtk::accessible::Property::Label(&format!(
                 "Select tab {title}"
             ))]);
-
-            let model_for_select = self.model.clone();
-            let state_for_select = self.state.clone();
-            let stack_for_select = stack.clone();
-            let select_id = surface_id.clone();
-            let primary_click = gtk::GestureClick::new();
-            primary_click.set_button(gtk::gdk::BUTTON_PRIMARY);
-            primary_click.connect_released(move |_, _n_press, _x, _y| {
-                if select_tab_from_tabstrip(&state_for_select, &model_for_select, &select_id) {
-                    stack_for_select.set_visible_child_name(select_id.as_str());
-                }
-            });
-            select.add_controller(primary_click);
-
-            let model_for_select = self.model.clone();
-            let state_for_select = self.state.clone();
-            let stack_for_select = stack.clone();
-            let select_id = surface_id.clone();
-            let keyboard_select = gtk::EventControllerKey::new();
-            keyboard_select.connect_key_pressed(move |_, key, _keycode, _modifiers| {
-                if !matches!(
-                    key,
-                    gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter | gtk::gdk::Key::space
-                ) {
-                    return glib::Propagation::Proceed;
-                }
-                if select_tab_from_tabstrip(&state_for_select, &model_for_select, &select_id) {
-                    stack_for_select.set_visible_child_name(select_id.as_str());
-                    glib::Propagation::Stop
-                } else {
-                    glib::Propagation::Proceed
-                }
-            });
-            select.add_controller(keyboard_select);
+            select.update_state(&[gtk::accessible::State::Selected(Some(idx == active))]);
 
             let close = gtk::Button::builder()
                 .icon_name("forktty-close-symbolic")
@@ -936,9 +939,47 @@ impl TerminalController {
 
         // Keep tab children mounted and switch the visible child in-place so a
         // tab change does not rebuild the surrounding split tree.
-        for surface_id in tabs {
+        for (index, surface_id) in tabs.iter().enumerate() {
             let pane_widget = self.pane_widget_for(surface_id);
             stack.add_named(&pane_widget, Some(surface_id.as_str()));
+            if let Some(select) = select_areas.get(index) {
+                let page = stack.page(&pane_widget);
+                select
+                    .update_relation(&[gtk::accessible::Relation::Controls(&[page.upcast_ref()])]);
+                let model_for_select = self.model.clone();
+                let state_for_select = self.state.clone();
+                let stack_for_select = stack.clone();
+                let select_id = surface_id.clone();
+                let tab_widgets_for_select = tab_widgets.clone();
+                let select_areas_for_select = select_areas.clone();
+                let focus_target = self.tab_focus_target_for_surface(surface_id);
+                select.connect_clicked(move |_| {
+                    if !select_tab_from_tabstrip(&state_for_select, &model_for_select, &select_id) {
+                        return;
+                    }
+                    stack_for_select.set_visible_child_name(select_id.as_str());
+                    for (tab_index, (tab, select)) in tab_widgets_for_select
+                        .iter()
+                        .zip(select_areas_for_select.iter())
+                        .enumerate()
+                    {
+                        let active = tab_index == index;
+                        if active {
+                            tab.add_css_class("active");
+                        } else {
+                            tab.remove_css_class("active");
+                        }
+                        select.update_state(&[gtk::accessible::State::Selected(Some(active))]);
+                    }
+                    if let Some(focus_target) = focus_target.clone() {
+                        queue_tab_focus_after_selection(
+                            focus_target,
+                            model_for_select.clone(),
+                            select_id.clone(),
+                        );
+                    }
+                });
+            }
         }
         let active_id = &tabs[active.min(tabs.len().saturating_sub(1))];
         stack.set_visible_child_name(active_id.as_str());

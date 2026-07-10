@@ -525,7 +525,10 @@ impl GhosttyGtkEmbedder {
                 let text = unsafe {
                     self.read_text(
                         widget,
-                        embedded_ghostty_read_scope_for_capture(capture.clone()),
+                        embedded_ghostty_read_scope_for_capture(
+                            capture.clone(),
+                            self.supports_bounded_read_text(),
+                        ),
                         max_bytes,
                         embedded_ghostty_truncates_from_end(&capture),
                     )
@@ -569,11 +572,14 @@ impl GhosttyGtkEmbedder {
 
 fn embedded_ghostty_read_scope_for_capture(
     capture: TerminalTextCapture,
+    supports_bounded_read_text: bool,
 ) -> EmbeddedGhosttyTextScope {
     match capture {
-        TerminalTextCapture::Visible | TerminalTextCapture::Tail { .. } => {
-            EmbeddedGhosttyTextScope::Visible
+        TerminalTextCapture::Visible => EmbeddedGhosttyTextScope::Visible,
+        TerminalTextCapture::Tail { .. } if supports_bounded_read_text => {
+            EmbeddedGhosttyTextScope::All
         }
+        TerminalTextCapture::Tail { .. } => EmbeddedGhosttyTextScope::Visible,
         TerminalTextCapture::All => EmbeddedGhosttyTextScope::All,
     }
 }
@@ -1336,17 +1342,21 @@ mod tests {
     }
 
     #[test]
-    fn embedded_bounded_reads_do_not_request_full_scrollback() {
+    fn embedded_tail_reads_full_scrollback_only_when_bounded() {
         assert_eq!(
-            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::Visible),
+            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::Visible, true),
             EmbeddedGhosttyTextScope::Visible
         );
         assert_eq!(
-            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::Tail { lines: 8 }),
+            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::Tail { lines: 8 }, true),
+            EmbeddedGhosttyTextScope::All
+        );
+        assert_eq!(
+            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::Tail { lines: 8 }, false),
             EmbeddedGhosttyTextScope::Visible
         );
         assert_eq!(
-            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::All),
+            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::All, false),
             EmbeddedGhosttyTextScope::All
         );
     }
