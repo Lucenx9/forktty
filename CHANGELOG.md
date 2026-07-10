@@ -6,7 +6,7 @@ All notable changes to ForkTTY are documented here.
 
 ### Changed
 - Major polish for premium, clean, Linear/Cursor/Vercel aesthetic (terminal-first, low noise):
-  - Workspace sidebar converted from bordered cards with heavy drop/inset shadows to flat rows using only hairline left indicators for active/attention/DnD (matches Linear's quiet list style).
+  - Workspace sidebar converted from bordered cards with heavy drop shadows to compact inset navigation rows using quiet hairline indicators for active/attention/DnD.
   - Reduced full 999px pill radii on badges, status location, welcome button, and keycaps to small precise radii (4-6px). 999px now reserved for true circular dots only.
   - Keycaps made subtler (lighter background, thinner border, lower weight) to reduce chrome noise.
   - Command palette selected state and several tab/workspace DnD feedbacks switched from inset box-shadows to clean hairlines + surface shifts.
@@ -70,6 +70,10 @@ All notable changes to ForkTTY are documented here.
   recessed with @ft_line hairlines and no shadow; pane badges also cleaned.
 
 ### Fixed
+- Repaired the over-flattened workspace navigation and pane tabs: workspace
+  rows regain compact inset spacing, rounded selected surfaces, and directional
+  drag/drop hairlines, while pane tabs stay content-sized, scroll when space is
+  tight, and keep one restrained warm edge for the active context.
 - Kept the provider selected by `team.worker.launch` authoritative for
   launch-owned session attribution, so Claude-compatible hooks from Grok no
   longer make Grok workers appear as Claude in the Agent HUD and agent APIs.

@@ -642,7 +642,7 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .navigation-sidebar {
-  padding: 7px 0;
+  padding: 6px 0;
   background: transparent;
   color: @ft_text_2;
 }
@@ -664,7 +664,7 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .navigation-sidebar row:selected .workspace-card {
-  /* Flat selection handled by background + left hairline above */
+  background: @ft_bg_2;
 }
 
 .navigation-sidebar row:drop(active),
@@ -675,77 +675,93 @@ button.flat.sidebar-add:focus-visible {
   outline-color: alpha(@accent_color, 0.4);
 }
 
-.navigation-sidebar row:focus-visible .workspace-card {
-  /* Focus via standard outline + subtle bg; no extra border on card */
+.navigation-sidebar row:focus-visible {
+  outline: none;
 }
 
-/* Workspace rows — Linear-style: flat, hairline indicators only where they add signal.
- * No card borders or heavy shadows. Terminals remain the primary content.
- * Premium, quiet, content-first. */
+.navigation-sidebar row:focus-visible .workspace-card {
+  border-color: alpha(@accent_color, 0.56);
+  border-left-color: @accent_color;
+}
+
+/* Workspace rows are inset navigation items, not edge-to-edge cards. A small
+ * warm rail marks context while the surface and hairline keep the list calm. */
+
+.workspace-card {
+  min-height: 30px;
+  padding: 6px 6px 6px 12px;
+  margin: 0 6px;
+  border: 1px solid transparent;
+  border-left: 2px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  transition: background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
+}
 
 .workspace-drag-grip {
   color: @ft_text_4;
   min-width: 14px;
   -gtk-icon-size: 14px;
-  transition: color 90ms ease-out;
+  opacity: 0;
+  transition: color 90ms ease-out, opacity 90ms ease-out;
 }
 
 .navigation-sidebar row:hover .workspace-drag-grip {
   color: @ft_text_3;
+  opacity: 0.78;
 }
 
-/* Base row is flat. Subtle background on hover only. */
+.workspace-row.active .workspace-drag-grip {
+  opacity: 0.34;
+}
+
 .navigation-sidebar row:hover .workspace-card {
-  background: #1f1f1f;
+  background: @ft_bg_0;
 }
 
 .workspace-row.active .workspace-card {
-  background: #1d1d1d;
-}
-
-/* Active indicator: thin hairline on the left (Linear pattern).
- * Only when needed — keeps the list calm and premium. */
-.workspace-row.active .workspace-card {
-  border-left: 2px solid alpha(@accent_color, 0.45);
+  background: @ft_bg_2;
+  border-color: alpha(@window_fg_color, 0.055);
+  border-left-color: alpha(@accent_color, 0.62);
+  box-shadow: inset 0 1px 0 alpha(@window_fg_color, 0.025);
 }
 
 .workspace-row.active:hover .workspace-card {
-  background: #202020;
+  background: @ft_bg_2;
+  border-left-color: alpha(@accent_color, 0.76);
 }
 
-/* DnD feedback: hairline + subtle bg shift. No thick inset shadows.
- * Clean and precise. */
 .workspace-row:drop(active) .workspace-card,
 .workspace-card:drop(active) {
-  background: #1f1f1f;
+  background: @ft_bg_1;
   background-image: none;
-  border-left: 2px solid @accent_color;
+  border-left-color: @accent_color;
 }
 
-.workspace-card.drop-before {
-  background: #1f1f1f;
-  border-left: 2px solid @accent_color;
-}
-
-.workspace-card.drop-after {
-  background: #1f1f1f;
-  border-left: 2px solid @accent_color;
-}
-
-/* Attention uses the existing small dot in the row + this very subtle hairline.
- * No loud border on the whole item. */
 .workspace-row.needs-attention .workspace-card {
-  border-left: 2px solid alpha(@accent_color, 0.55);
+  border-left-color: alpha(@accent_color, 0.62);
 }
 
-/* Active + needs-attention: keep it understated. */
 .workspace-row.active.needs-attention .workspace-card {
-  background: #1f1f1f;
-  border-left: 2px solid alpha(@accent_color, 0.65);
+  background: @ft_bg_2;
+  border-left-color: alpha(@accent_color, 0.82);
 }
 
 .workspace-row.active.needs-attention:hover .workspace-card {
-  background: #202020;
+  background: @ft_bg_2;
+}
+
+.workspace-row .workspace-card.drop-before {
+  background: @ft_bg_2;
+  border-left-color: @accent_color;
+  box-shadow: inset 0 2px 0 @accent_color;
+}
+
+.workspace-row .workspace-card.drop-after {
+  background: @ft_bg_2;
+  border-left-color: @accent_color;
+  box-shadow: inset 0 -2px 0 @accent_color;
 }
 
 .workspace-name {
@@ -1608,29 +1624,33 @@ button.flat.orchestration-feed-collapse:focus-visible {
 
 /* Per-pane tab strip, shown when a leaf has >1 tab. Kept deliberately
  * smaller than Adwaita's app-level TabBar because it lives inside pane chrome. */
-.pane-tabstrip {
+.pane-tabstrip-scroll {
   background: @ft_bg_0;
   border-bottom: 1px solid @ft_line;
-  min-height: 28px;
-  padding: 2px 6px 2px 7px;
+}
+
+.pane-tabstrip {
+  background: @ft_bg_0;
+  min-height: 24px;
+  padding: 6px 6px 0;
   transition: background-color 90ms ease-out, border-color 90ms ease-out;
-  /* Kept minimal; in best multi-pane agent setups, tab chrome is light so terminals dominate. */
 }
 
 .pane-tabstrip:drop(active) {
-  background: #1b1b1b;
+  background: @ft_bg_2;
   background-image: none;
-  border-bottom-color: alpha(@accent_color, 0.3);
+  box-shadow: inset 0 -1px 0 alpha(@accent_color, 0.3);
   /* Very subtle hairline for DnD feedback. */
 }
 
 .pane-tab {
-  min-width: 72px;
-  min-height: 22px;
-  margin: 0 2px 0 0;
-  padding: 0 2px 0 7px;
+  min-width: 96px;
+  min-height: 24px;
+  margin: 0;
+  padding: 0 6px 0 12px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
   background: transparent;
   color: @ft_text_3;
   transition: background-color 90ms ease-out, border-color 90ms ease-out, color 90ms ease-out;
@@ -1638,19 +1658,19 @@ button.flat.orchestration-feed-collapse:focus-visible {
 
 .pane-tab:hover {
   background: @ft_bg_1;
-  border-color: @ft_line;
+  border-color: transparent;
   color: @ft_text_2;
 }
 
-/* Cursor-style: active tab bg matches the terminal body below so the tab
- * reads as connected to its content, marked by a thin accent on the TOP edge
- * rather than a bottom underline. */
+/* The selected tab is a compact raised surface with one warm top hairline.
+ * It stays independent from the user-owned terminal palette below. */
 .pane-tab.active {
-  background: @ft_bg_1;
-  border-color: @ft_line_strong;
-  border-top-color: alpha(@accent_color, 0.5);
+  background: @ft_bg_2;
+  border-color: @ft_line;
+  border-bottom: 0;
+  border-top-color: alpha(@accent_color, 0.72);
   color: @ft_text_1;
-  /* Cursor-style top accent (hairline strength) for connection. Lower alpha for calmer multi-pane look. */
+  box-shadow: inset 0 1px 0 alpha(@accent_color, 0.36);
 }
 
 .pane-tab:drop(active),
@@ -1687,10 +1707,10 @@ button.flat.orchestration-feed-collapse:focus-visible {
 }
 
 .pane-tab-select {
-  min-height: 20px;
-  padding: 0 4px 0 0;
+  min-height: 18px;
+  padding: 0 6px 0 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
   box-shadow: none;
   color: inherit;
@@ -1708,12 +1728,16 @@ button.flat.orchestration-feed-collapse:focus-visible {
   -gtk-icon-size: 11px;
   min-width: 14px;
   color: @ft_text_4;
-  opacity: 0.46;
+  opacity: 0.24;
+  transition: opacity 90ms ease-out, color 90ms ease-out;
 }
 
-.pane-tab:hover .pane-tab-grip,
-.pane-tab.active .pane-tab-grip {
+.pane-tab:hover .pane-tab-grip {
   opacity: 0.78;
+}
+
+.pane-tab.active .pane-tab-grip {
+  opacity: 0.42;
 }
 
 .pane-tab-label {
@@ -1766,9 +1790,8 @@ button.flat.pane-tab-close:active {
 }
 
 /* Keyboard focus only: `:focus-visible` never matches mouse clicks, so the ring
- * can't get stuck after clicking a tab. The select button is hexpand, so its
- * ring spans the whole tab interior instead of hugging the label. The generic
- * button focus border is cleared so it doesn't draw a second tight box. */
+ * can't get stuck after clicking a tab. The generic button focus border is
+ * cleared so it doesn't draw a second tight box. */
 .pane-tab-select:focus-visible {
   outline: 2px solid @accent_color;
   outline-offset: -2px;

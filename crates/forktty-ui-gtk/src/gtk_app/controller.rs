@@ -54,6 +54,8 @@ pub(super) struct TerminalController {
 #[derive(Clone)]
 pub(super) struct PaneTabStrip {
     tabs: Vec<String>,
+    scroller: gtk::ScrolledWindow,
+    tabstrip: gtk::Box,
     stack: gtk::Stack,
     tab_widgets: Vec<gtk::Box>,
     labels: Vec<gtk::Label>,
@@ -80,6 +82,57 @@ fn select_tab_from_tabstrip(
         Ok(mut model) => model.select_tab(surface_id),
         Err(_) => false,
     }
+}
+
+fn tab_scroll_target(
+    current: f64,
+    page_size: f64,
+    lower: f64,
+    upper: f64,
+    tab_start: f64,
+    tab_width: f64,
+) -> Option<f64> {
+    let tab_end = tab_start + tab_width;
+    let desired = if tab_start < current {
+        tab_start
+    } else if tab_end > current + page_size {
+        tab_end - page_size
+    } else {
+        return None;
+    };
+    Some(desired.clamp(lower, (upper - page_size).max(lower)))
+}
+
+fn reveal_tab(scroller: &gtk::ScrolledWindow, tabstrip: &gtk::Box, tab: &gtk::Box) {
+    let adjustment = scroller.hadjustment();
+    let Some((tab_start, _)) = tab.translate_coordinates(tabstrip, 0.0, 0.0) else {
+        return;
+    };
+    let Some(target) = tab_scroll_target(
+        adjustment.value(),
+        adjustment.page_size(),
+        adjustment.lower(),
+        adjustment.upper(),
+        tab_start,
+        f64::from(tab.allocated_width()),
+    ) else {
+        return;
+    };
+    adjustment.set_value(target);
+}
+
+fn queue_reveal_tab(scroller: &gtk::ScrolledWindow, tabstrip: &gtk::Box, tab: &gtk::Box) {
+    let scroller = scroller.downgrade();
+    let tabstrip = tabstrip.downgrade();
+    let tab = tab.downgrade();
+    glib::idle_add_local_once(move || {
+        let (Some(scroller), Some(tabstrip), Some(tab)) =
+            (scroller.upgrade(), tabstrip.upgrade(), tab.upgrade())
+        else {
+            return;
+        };
+        reveal_tab(&scroller, &tabstrip, &tab);
+    });
 }
 
 impl TerminalController {
@@ -590,7 +643,8 @@ impl TerminalController {
                 .stack
                 .visible_child_name()
                 .map(|name| name.to_string());
-            if previous_visible.as_deref() != Some(active_id.as_str()) {
+            let active_changed = previous_visible.as_deref() != Some(active_id.as_str());
+            if active_changed {
                 strip.stack.set_visible_child_name(active_id.as_str());
                 self.queue_focus_for_surface(active_id);
             }
@@ -611,6 +665,13 @@ impl TerminalController {
                             "Select tab {}",
                             tab_update.title
                         ))]);
+                    }
+                }
+            }
+            if active_changed {
+                if let Some(active_index) = update.tabs.iter().position(|tab| tab.active) {
+                    if let Some(tab) = strip.tab_widgets.get(active_index) {
+                        queue_reveal_tab(&strip.scroller, &strip.tabstrip, tab);
                     }
                 }
             }
@@ -739,6 +800,13 @@ impl TerminalController {
         let tabstrip = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         tabstrip.add_css_class("pane-tabstrip");
         tabstrip.set_hexpand(true);
+        let tabstrip_scroller = gtk::ScrolledWindow::new();
+        tabstrip_scroller.add_css_class("pane-tabstrip-scroll");
+        tabstrip_scroller.set_hexpand(true);
+        tabstrip_scroller.set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);
+        tabstrip_scroller.set_overlay_scrolling(true);
+        tabstrip_scroller.set_propagate_natural_height(true);
+        tabstrip_scroller.set_child(Some(&tabstrip));
         let stack = gtk::Stack::new();
         stack.set_hexpand(true);
         stack.set_vexpand(true);
@@ -748,8 +816,11 @@ impl TerminalController {
         let mut select_areas = Vec::with_capacity(tabs.len());
 
         for (idx, (surface_id, title)) in tabs.iter().zip(titles.iter()).enumerate() {
-            let tab = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+            let tab = gtk::Box::new(gtk::Orientation::Horizontal, 0);
             tab.add_css_class("pane-tab");
+            // Stop child expansion from propagating into the strip: tabs stay
+            // compact while the select area can still fill each tab hit target.
+            tab.set_hexpand(false);
             tab.set_valign(gtk::Align::Center);
             update_tab_tooltip(&tab, Some(title.clone()));
             if idx == active {
@@ -765,7 +836,7 @@ impl TerminalController {
                 .build();
             label.add_css_class("pane-tab-label");
 
-            let select = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            let select = gtk::Box::new(gtk::Orientation::Horizontal, 6);
             select.set_hexpand(true);
             select.set_valign(gtk::Align::Center);
             select.set_focusable(true);
@@ -858,7 +929,10 @@ impl TerminalController {
             self.model.clone(),
             self.state.clone(),
         );
-        outer.append(&tabstrip);
+        outer.append(&tabstrip_scroller);
+        if let Some(active_tab) = tab_widgets.get(active) {
+            queue_reveal_tab(&tabstrip_scroller, &tabstrip, active_tab);
+        }
 
         // Keep tab children mounted and switch the visible child in-place so a
         // tab change does not rebuild the surrounding split tree.
@@ -872,6 +946,8 @@ impl TerminalController {
 
         self.pane_tab_strips.borrow_mut().push(PaneTabStrip {
             tabs: tabs.to_vec(),
+            scroller: tabstrip_scroller,
+            tabstrip,
             stack,
             tab_widgets,
             labels,
@@ -1212,6 +1288,23 @@ mod tests {
         assert!(embedded_title_is_launcher_wrapper("env"));
         assert!(!embedded_title_is_launcher_wrapper("worker:codex-smoke"));
         assert!(!embedded_title_is_launcher_wrapper("Codex"));
+    }
+
+    #[test]
+    fn tab_scroll_target_reveals_hidden_edges_and_clamps_to_range() {
+        assert_eq!(tab_scroll_target(0.0, 100.0, 0.0, 300.0, 20.0, 40.0), None);
+        assert_eq!(
+            tab_scroll_target(80.0, 100.0, 0.0, 300.0, 20.0, 40.0),
+            Some(20.0)
+        );
+        assert_eq!(
+            tab_scroll_target(0.0, 100.0, 0.0, 300.0, 140.0, 40.0),
+            Some(80.0)
+        );
+        assert_eq!(
+            tab_scroll_target(100.0, 100.0, 0.0, 220.0, 200.0, 40.0),
+            Some(120.0)
+        );
     }
 
     #[test]
