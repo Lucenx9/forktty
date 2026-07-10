@@ -75,6 +75,10 @@ All notable changes to ForkTTY are documented here.
   recessed with @ft_line hairlines and no shadow; pane badges also cleaned.
 
 ### Fixed
+- Switching Settings sections no longer flashes a whitish outline around the
+  section you are leaving: checked nav items keep a transparent 1px border
+  instead of `border: none`, so unchecking no longer interpolates the border
+  color from currentColor (same latent fix applied to spin-button hover).
 - Settings rows no longer keep a stray whitish outline on the last option you
   interacted with: the focus-within row ring is gone (click focus lingers on
   toggle/combo rows), entry rows keep a quiet background while typing, and

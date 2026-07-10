@@ -2794,7 +2794,10 @@ window.ft-dialog,
 
 .settings-nav-item:checked {
   background: @ft_bg_1;
-  border: none;
+  /* Keep the 1px transparent border: `border: none` resets border-color to
+   * currentColor, and unchecking then flashes a whitish 1px ring while the
+   * inherited border-color transition runs. */
+  border-color: transparent;
   box-shadow: none;
   color: @ft_text_1;
 }
@@ -3016,7 +3019,8 @@ window.ft-dialog,
 
 .settings-list row.spin spinbutton button:hover {
   background: @ft_bg_2;
-  border: none;
+  /* Same flash hazard as the nav items: never `border: none` on a state. */
+  border-color: transparent;
   color: @ft_text_1;
 }
 
