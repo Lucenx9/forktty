@@ -2949,7 +2949,7 @@ fn chrome_micro_polish_quiets_sidebar_badges() {
 }
 
 #[test]
-fn workspace_rows_and_pane_tabs_keep_compact_navigation_rhythm() {
+fn workspace_rows_keep_uniform_height_and_pane_tabs_keep_compact_navigation_rhythm() {
     let controller_source = include_str!("controller.rs");
     let css = include_str!("../style.css");
 
@@ -2959,7 +2959,7 @@ fn workspace_rows_and_pane_tabs_keep_compact_navigation_rhythm() {
     assert!(controller_source
         .contains("set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);"));
     assert!(controller_source.contains("queue_reveal_tab(&strip.scroller, &strip.tabstrip, tab);"));
-    assert!(css.contains(".workspace-card {\n  min-height: 30px;"));
+    assert!(css.contains(".workspace-card {\n  min-height: 54px;"));
     assert!(css.contains(".workspace-row .workspace-card.drop-before {"));
     assert!(css.contains(".pane-tab {\n  min-width: 96px;"));
     assert!(css.contains(".pane-tab-grip {\n  -gtk-icon-size: 11px;\n  min-width: 14px;\n  color: @ft_text_4;\n  opacity: 0.24;"));

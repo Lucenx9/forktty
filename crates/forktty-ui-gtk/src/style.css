@@ -688,7 +688,9 @@ button.flat.sidebar-add:focus-visible {
  * warm rail marks context while the surface and hairline keep the list calm. */
 
 .workspace-card {
-  min-height: 30px;
+  min-height: 54px;
+  /* Match the intrinsic three-line variant so rows without activity summary
+   * keep the same click target and visual rhythm. */
   padding: 6px 6px 6px 12px;
   margin: 0 6px;
   border: 1px solid transparent;

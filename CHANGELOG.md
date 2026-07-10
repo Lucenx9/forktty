@@ -75,6 +75,8 @@ All notable changes to ForkTTY are documented here.
   recessed with @ft_line hairlines and no shadow; pane badges also cleaned.
 
 ### Fixed
+- Workspace rows now keep one consistent height whether or not agent activity
+  metadata is available, avoiding smaller click targets for quiet workspaces.
 - Workspace rows now fall back to persisted agent-session lifecycle when a
   provider has no current hook status row, so running/needs-input labels stay
   consistent across Codex, Claude Code, Pi, OpenCode, Antigravity, and Grok;
