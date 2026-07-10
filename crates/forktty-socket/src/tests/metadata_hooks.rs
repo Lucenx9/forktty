@@ -2,6 +2,101 @@
 
 use super::*;
 
+#[test]
+fn agent_status_keys_keep_the_exact_alias_contract() {
+    assert_eq!(
+        agent_kind_from_status_key("agent:claude-code"),
+        Some(AgentKind::ClaudeCode)
+    );
+    assert_eq!(agent_kind_from_status_key("agent: CLAUDE "), None);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn launch_owned_grok_worker_keeps_grok_identity_for_claude_compatible_hooks() {
+    let path_dir = tempfile::tempdir().unwrap();
+    write_fake_program(path_dir.path(), "grok");
+    let _path = EnvGuard::set("PATH", path_dir.path().to_str().unwrap());
+    let config_home = tempfile::tempdir().unwrap();
+    let _config_home = EnvGuard::set("XDG_CONFIG_HOME", config_home.path().to_str().unwrap());
+    let (mut state, _backend) = test_state();
+    let team_store = tempfile::tempdir().unwrap();
+    state.team_store_path = Some(team_store.path().join("team-v1.json"));
+    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspace[0]["id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "team.upsert",
+        json!({"team_id": "team-1", "workspace_id": workspace_id}),
+    )
+    .await
+    .unwrap();
+    let launched = dispatch(
+        &state,
+        "team.worker.launch",
+        json!({
+            "team_id": "team-1",
+            "worker_id": "grok-reviewer",
+            "agent": "grok",
+            "role": "reviewer"
+        }),
+    )
+    .await
+    .unwrap();
+    let surface_id = launched["surface"]["id"].as_str().unwrap();
+
+    dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "workspace_id": workspace_id,
+            "surface_id": surface_id,
+            "key": "agent:claude",
+            "label": "Claude",
+            "value": "Needs input",
+            "hook_session_id": "grok-claude-compatible-session",
+            "hook_event_name": "permission-request",
+            "hook_event_order": 100
+        }),
+    )
+    .await
+    .unwrap();
+
+    {
+        let model = state.model.lock().unwrap();
+        let session = model
+            .surface(surface_id)
+            .and_then(|surface| surface.agent_session.as_ref())
+            .unwrap();
+        assert_eq!(session.agent, AgentKind::Grok);
+        assert_eq!(session.lifecycle, AgentSessionLifecycle::NeedsInput);
+    }
+
+    dispatch(
+        &state,
+        "metadata.clear_status",
+        json!({
+            "workspace_id": workspace_id,
+            "surface_id": surface_id,
+            "key": "agent:claude",
+            "hook_session_id": "grok-claude-compatible-session",
+            "hook_event_name": "session-end",
+            "hook_event_order": 200
+        }),
+    )
+    .await
+    .unwrap();
+
+    let model = state.model.lock().unwrap();
+    let session = model
+        .surface(surface_id)
+        .and_then(|surface| surface.agent_session.as_ref())
+        .unwrap();
+    assert_eq!(session.agent, AgentKind::Grok);
+    assert_eq!(session.lifecycle, AgentSessionLifecycle::Ended);
+}
+
 #[tokio::test]
 async fn hook_session_status_learns_and_reuses_explicit_surface_target() {
     let (state, _backend) = test_state();

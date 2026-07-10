@@ -144,10 +144,10 @@ pub use dispatcher::dispatch;
 pub(crate) use dispatcher::method_allowed_from_socket;
 pub use errors::{DispatchError, SocketError};
 pub(crate) use metadata_helpers::{
-    agent_kind_from_permission_status_key, agent_kind_from_status_key, log_level_from_params,
-    notification_body_from_params, notification_kind_from_params, notification_title_from_params,
-    optional_hook_status_metadata, resolve_notification_target, resolve_workspace_id_for_metadata,
-    status_color_from_params,
+    agent_kind_from_permission_status_key, agent_kind_from_provider_alias,
+    agent_kind_from_status_key, log_level_from_params, notification_body_from_params,
+    notification_kind_from_params, notification_title_from_params, optional_hook_status_metadata,
+    resolve_notification_target, resolve_workspace_id_for_metadata, status_color_from_params,
 };
 #[cfg(test)]
 pub(crate) use param_helpers::MAX_METADATA_TEXT_BYTES;

@@ -2,6 +2,7 @@ use crate::{
     coordinator::TeamTerminalDispatchedMessage, ensure_model_surface_exists, store_access,
     DispatchError, SocketAppState,
 };
+use forktty_core::AgentKind;
 use forktty_core::{
     agents::agent_metadata_aliases, AgentSession, AgentSessionLifecycle, Surface, TeamState,
     TeamSummary, TeamWorker,
@@ -195,10 +196,21 @@ pub(crate) fn remember_team_launch_owned_surface(
     team_id: &str,
     worker_id: &str,
     surface_id: &str,
+    agent: AgentKind,
 ) -> Result<(), DispatchError> {
     state
         .coordinator
-        .remember_team_launch_owned_surface(team_id, worker_id, surface_id)
+        .remember_team_launch_owned_surface(team_id, worker_id, surface_id, agent)
+        .map_err(DispatchError::from)
+}
+
+pub(crate) fn team_launch_owned_agent_for_surface(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> Result<Option<AgentKind>, DispatchError> {
+    state
+        .coordinator
+        .team_launch_owned_agent_for_surface(surface_id)
         .map_err(DispatchError::from)
 }
 

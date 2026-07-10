@@ -11,12 +11,13 @@ use crate::{
     workspace_selector_params, DispatchError, SocketAppState, WorkspaceSelectorKind,
 };
 use forktty_core::{
-    harness_cooldown_kind_from_str, plan_task_strategy, protocol_limits, validate_worktree_name,
-    worktree, FeedApprovalState, FeedEntry, FeedEntryType, HarnessAssignment, HarnessCapability,
-    HarnessCooldownKind, HarnessHealth, HarnessRegistry, HarnessRole, HarnessRoutingSignals,
-    TaskClass, TaskRouterProfile, TaskStrategy, TaskStrategyApproval, TaskStrategyInput,
-    TaskStrategyLastKnownGood, TaskStrategyLayers, TaskStrategyPlan, TaskStrategyScoreFactor,
-    WorkflowQuery, WorkflowState, WorkspaceSelector,
+    harness_cooldown_kind_from_str, harness_readiness_signal_from_str, plan_task_strategy,
+    protocol_limits, validate_worktree_name, worktree, FeedApprovalState, FeedEntry, FeedEntryType,
+    HarnessAssignment, HarnessCapability, HarnessCooldownKind, HarnessHealth,
+    HarnessReadinessEvidence, HarnessReadinessSignal, HarnessRegistry, HarnessRole,
+    HarnessRoutingSignals, TaskClass, TaskRouterProfile, TaskStrategy, TaskStrategyApproval,
+    TaskStrategyInput, TaskStrategyLastKnownGood, TaskStrategyLayers, TaskStrategyPlan,
+    TaskStrategyScoreFactor, WorkflowQuery, WorkflowState, WorkspaceSelector,
 };
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -1150,10 +1151,31 @@ pub(crate) fn apply_harness_routing_signals(
                 "{path}.cooldown_kind requires cooldown to be true"
             )));
         }
+        let readiness = optional_signal_readiness(signal, &path)?;
+        let readiness_reason = optional_signal_reason(signal, "readiness_reason", &path)?;
+        if readiness.is_some() && readiness_reason.is_none() {
+            return Err(DispatchError::InvalidParam(format!(
+                "{path}.readiness requires readiness_reason"
+            )));
+        }
+        if readiness.is_none() && readiness_reason.is_some() {
+            return Err(DispatchError::InvalidParam(format!(
+                "{path}.readiness_reason requires readiness"
+            )));
+        }
+        let readiness = readiness
+            .zip(readiness_reason)
+            .map(|(signal, reason)| HarnessReadinessEvidence { signal, reason });
+        if let Some(evidence) = readiness.as_ref() {
+            harness
+                .apply_readiness_evidence(evidence)
+                .map_err(|err| DispatchError::InvalidParam(format!("{path}.readiness {err}")))?;
+        }
         harness.routing_signals = HarnessRoutingSignals {
             cooldown,
             cooldown_kind,
             cooldown_reason: optional_signal_reason(signal, "cooldown_reason", &path)?,
+            readiness,
             locked_out: optional_signal_bool(signal, "locked_out", &path)?,
             lockout_reason: optional_signal_reason(signal, "lockout_reason", &path)?,
         };
@@ -1242,6 +1264,23 @@ fn optional_signal_cooldown_kind(
         }
         Some(_) => Err(DispatchError::InvalidParam(format!(
             "{path}.cooldown_kind must be a string"
+        ))),
+    }
+}
+
+fn optional_signal_readiness(
+    signal: &serde_json::Map<String, Value>,
+    path: &str,
+) -> Result<Option<HarnessReadinessSignal>, DispatchError> {
+    match signal.get("readiness") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => harness_readiness_signal_from_str(value)
+            .map(Some)
+            .ok_or_else(|| {
+                DispatchError::InvalidParam(format!("{path}.readiness must be verified_ready"))
+            }),
+        Some(_) => Err(DispatchError::InvalidParam(format!(
+            "{path}.readiness must be a string"
         ))),
     }
 }

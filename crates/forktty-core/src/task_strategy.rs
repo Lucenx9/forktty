@@ -4,6 +4,7 @@
 //! agents, create worktrees, or mutate workflow/team state.
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -111,6 +112,36 @@ pub fn harness_cooldown_kind_from_str(value: &str) -> Option<HarnessCooldownKind
     }
 }
 
+/// Positive caller evidence that a provider is ready for routing.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HarnessReadinessSignal {
+    VerifiedReady,
+}
+
+/// Concrete evidence paired with a positive readiness signal.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct HarnessReadinessEvidence {
+    pub signal: HarnessReadinessSignal,
+    pub reason: String,
+}
+
+/// Rejection reasons for applying caller-supplied readiness evidence.
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
+pub enum HarnessReadinessError {
+    /// The provider cannot launch a visible prompt-driven worker.
+    #[error("requires a launchable harness")]
+    NotLaunchable,
+}
+
+/// Parse the stable JSON value accepted by task-strategy routing signals.
+pub fn harness_readiness_signal_from_str(value: &str) -> Option<HarnessReadinessSignal> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "verified_ready" => Some(HarnessReadinessSignal::VerifiedReady),
+        _ => None,
+    }
+}
+
 fn harness_cooldown_kind_id(kind: &HarnessCooldownKind) -> &'static str {
     match kind {
         HarnessCooldownKind::Quota => "quota",
@@ -129,6 +160,8 @@ pub struct HarnessRoutingSignals {
     #[serde(default)]
     pub cooldown_kind: Option<HarnessCooldownKind>,
     pub cooldown_reason: Option<String>,
+    #[serde(default)]
+    pub readiness: Option<HarnessReadinessEvidence>,
     #[serde(default)]
     pub locked_out: bool,
     pub lockout_reason: Option<String>,
@@ -151,6 +184,31 @@ pub struct HarnessCapability {
     pub health: HarnessHealth,
     #[serde(default)]
     pub routing_signals: HarnessRoutingSignals,
+}
+
+impl HarnessCapability {
+    /// Apply positive readiness evidence without allowing it to bypass launchability.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HarnessReadinessError::NotLaunchable`] when the provider is not
+    /// installed or does not support prompt-driven worker launch.
+    pub fn apply_readiness_evidence(
+        &mut self,
+        evidence: &HarnessReadinessEvidence,
+    ) -> Result<(), HarnessReadinessError> {
+        if !self.installed || !self.supports_prompt_launch {
+            return Err(HarnessReadinessError::NotLaunchable);
+        }
+        match &evidence.signal {
+            HarnessReadinessSignal::VerifiedReady => {
+                self.authenticated = true;
+                self.authentication_known = true;
+                self.health = HarnessHealth::Ready;
+            }
+        }
+        Ok(())
+    }
 }
 
 const fn authentication_known_by_default() -> bool {
@@ -1306,12 +1364,30 @@ fn score_harness_for_role(
     let verified_ready = harness.authentication_known
         && harness.authenticated
         && harness.health == HarnessHealth::Ready;
+    let readiness_reason = if verified_ready {
+        harness
+            .routing_signals
+            .readiness
+            .as_ref()
+            .map(|evidence| evidence.reason.as_str())
+    } else {
+        None
+    };
     push_score_factor(
         &mut factors,
         "harness_readiness",
         if verified_ready { 50 } else { 25 },
         if verified_ready {
-            "harness is installed, authenticated, ready, and supports prompt launch".to_string()
+            readiness_reason
+                .map(|reason| {
+                    format!(
+                        "harness is installed, authenticated, ready, and supports prompt launch; evidence: {reason}"
+                    )
+                })
+                .unwrap_or_else(|| {
+                    "harness is installed, authenticated, ready, and supports prompt launch"
+                        .to_string()
+                })
         } else {
             "provider command is locally launchable; authentication and runtime health were not probed"
                 .to_string()
@@ -1609,6 +1685,36 @@ mod tests {
             .factors
             .iter()
             .any(|factor| factor.name == "harness_readiness" && factor.points == 25));
+    }
+
+    #[test]
+    fn readiness_evidence_promotes_only_launchable_harnesses() {
+        let evidence = HarnessReadinessEvidence {
+            signal: HarnessReadinessSignal::VerifiedReady,
+            reason: "visible worker accepted the prompt".to_string(),
+        };
+        let mut launchable = harness("codex", false, true);
+        launchable.authenticated = false;
+        launchable.authentication_known = false;
+        launchable.health = HarnessHealth::Unknown;
+
+        assert_eq!(launchable.apply_readiness_evidence(&evidence), Ok(()));
+        assert!(launchable.authenticated);
+        assert!(launchable.authentication_known);
+        assert_eq!(launchable.health, HarnessHealth::Ready);
+
+        let mut unavailable = launchable.clone();
+        unavailable.supports_prompt_launch = false;
+        unavailable.authenticated = false;
+        unavailable.authentication_known = false;
+        unavailable.health = HarnessHealth::Missing;
+        assert_eq!(
+            unavailable.apply_readiness_evidence(&evidence),
+            Err(HarnessReadinessError::NotLaunchable)
+        );
+        assert!(!unavailable.authenticated);
+        assert!(!unavailable.authentication_known);
+        assert_eq!(unavailable.health, HarnessHealth::Missing);
     }
 
     fn plan_for_goal(goal: &str, likely_user_visible_change: bool) -> TaskStrategyPlan {
@@ -2797,6 +2903,7 @@ mod tests {
         assert!(!signals.locked_out);
         assert_eq!(signals.cooldown_kind, None);
         assert_eq!(signals.cooldown_reason, None);
+        assert_eq!(signals.readiness, None);
 
         let registry: HarnessRegistry = serde_json::from_value(serde_json::json!({})).unwrap();
         assert!(registry.harnesses.is_empty());

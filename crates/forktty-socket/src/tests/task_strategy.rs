@@ -2558,6 +2558,46 @@ fn task_strategy_harness_signals_apply_cooldown_and_lockout_separately() {
 }
 
 #[test]
+fn task_strategy_harness_signals_promote_verified_ready_provider() {
+    let mut registry = cooldown_inference_registry();
+
+    crate::task_strategy_runtime::apply_harness_routing_signals(
+        &mut registry,
+        &json!({
+            "codex": {
+                "readiness": "verified_ready",
+                "readiness_reason": "visible worker accepted the task prompt"
+            }
+        }),
+    )
+    .unwrap();
+
+    let codex = registry
+        .harnesses
+        .iter()
+        .find(|harness| harness.id == "codex")
+        .unwrap();
+    assert!(codex.authentication_known);
+    assert!(codex.authenticated);
+    assert_eq!(codex.health, HarnessHealth::Ready);
+
+    let assignments = forktty_core::ranked_harnesses_for_role(
+        &HarnessRole::Implementer,
+        &registry,
+        &forktty_core::TaskStrategyLayers::default(),
+    );
+    let readiness = assignments[0]
+        .factors
+        .iter()
+        .find(|factor| factor.name == "harness_readiness")
+        .unwrap();
+    assert_eq!(readiness.points, 50);
+    assert!(readiness
+        .reason
+        .contains("visible worker accepted the task prompt"));
+}
+
+#[test]
 fn launch_failure_suggestion_names_next_best_harness_for_role() {
     let registry = cooldown_inference_registry();
     let failed = forktty_core::HarnessAssignment {
@@ -2647,6 +2687,42 @@ fn harness_signals_parse_and_validate_cooldown_kind() {
     )
     .unwrap_err();
     assert!(err.to_string().contains("requires cooldown"), "{err}");
+}
+
+#[test]
+fn harness_signals_validate_verified_readiness_evidence() {
+    for signal in [
+        json!({ "readiness": "ready", "readiness_reason": "worker responded" }),
+        json!({ "readiness": "verified_ready" }),
+        json!({ "readiness_reason": "worker responded" }),
+    ] {
+        let mut registry = cooldown_inference_registry();
+        let err = crate::task_strategy_runtime::apply_harness_routing_signals(
+            &mut registry,
+            &json!({ "codex": signal }),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("readiness"), "{err}");
+    }
+
+    let mut registry = cooldown_inference_registry();
+    let codex = registry
+        .harnesses
+        .iter_mut()
+        .find(|harness| harness.id == "codex")
+        .unwrap();
+    codex.supports_prompt_launch = false;
+    let err = crate::task_strategy_runtime::apply_harness_routing_signals(
+        &mut registry,
+        &json!({
+            "codex": {
+                "readiness": "verified_ready",
+                "readiness_reason": "worker responded"
+            }
+        }),
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("launchable harness"), "{err}");
 }
 
 fn cooldown_inference_registry() -> forktty_core::HarnessRegistry {

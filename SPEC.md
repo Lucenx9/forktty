@@ -396,18 +396,22 @@ PATH and configured-command discovery establish only that a provider harness is
 launchable. ForkTTY does not run provider auth or health probes while planning;
 auto-discovered harnesses therefore carry unverified authentication/runtime
 health in their readiness score at 25 points, below the 50 points awarded to a
-verified authenticated/ready harness. They remain eligible until concrete
-caller or workflow evidence reports a cooldown or lockout.
+verified authenticated/ready harness. They remain eligible while unverified.
 Optional `harness_signals` is an object keyed by harness id. Each value can set
-`cooldown`, `cooldown_kind`, `cooldown_reason`, `locked_out`, and
-`lockout_reason`. Cooldown is a soft assignment penalty and can still be
+`readiness`, `readiness_reason`, `cooldown`, `cooldown_kind`,
+`cooldown_reason`, `locked_out`, and `lockout_reason`. `readiness` currently
+accepts only `verified_ready` and requires a non-empty `readiness_reason`; it is
+a caller attestation backed by concrete visible-worker, hook, or user-report
+evidence and promotes a launchable harness from the unverified 25-point factor
+to the verified 50-point factor. ForkTTY still does not probe provider auth or
+runtime health automatically. Cooldown is a soft assignment penalty and can still be
 selected when no better routable harness exists. `cooldown_kind` classifies the
 cause and requires `cooldown` to be true; it must be one of `quota`, `auth`,
 `crash`, or `timeout`, and the penalty scales with the cause (`auth` strongest,
 then `crash`, then `quota` — the default weight when no kind is given — then
-`timeout`). Lockout is a hard task/mode exclusion for assignment. These
-signals are separate from provider capability health/readiness and should only
-be supplied by callers that have concrete runtime evidence.
+`timeout`). Lockout is a hard task/mode exclusion for assignment. Cooldown and
+lockout signals are separate from provider capability health/readiness; all
+caller signals should be supplied only with concrete runtime evidence.
 For harnesses without caller-supplied signals, ForkTTY also infers an advisory
 cooldown from its own workflow history: at least two failed task-strategy
 workflows naming that harness within the last 30 minutes, with no newer
@@ -421,9 +425,10 @@ It can include `strategy`, `harness_id`, and `reason`; matching candidates get
 a small explainable score factor named `last_known_good_strategy` or
 `last_known_good_harness`. This is stickiness, not a hard override: readiness,
 cooldown, lockout, task fit, approvals, and visibility rules still win.
-Explicit `last_known_good.reason`, `cooldown_reason`, and `lockout_reason`
-strings are capped at 512 UTF-8 bytes because they are echoed in plan score
-explanations, and they are rejected when they contain control characters.
+Explicit `last_known_good.reason`, `readiness_reason`, `cooldown_reason`, and
+`lockout_reason` strings are capped at 512 UTF-8 bytes because they are echoed
+in plan score explanations, and they are rejected when they contain control
+characters.
 When `last_known_good` is omitted, the planner best-effort reads completed
 `task_strategy` workflows for the selected workspace and infers the most recent
 usable strategy/harness evidence recorded by `task.strategy.apply`. Explicit
@@ -452,6 +457,10 @@ Example request:
     "reason": "last successful bugfix run in this repo"
   },
   "harness_signals": {
+    "codex": {
+      "readiness": "verified_ready",
+      "readiness_reason": "visible worker accepted the previous task prompt"
+    },
     "claude": {
       "cooldown": true,
       "cooldown_reason": "recent quota error"
@@ -482,12 +491,12 @@ Example response:
       "role": "implementer",
       "harness_id": "codex",
       "reason": "highest-scored routable harness for implementer",
-      "score": 52,
+      "score": 77,
       "factors": [
         {
           "name": "harness_readiness",
-          "points": 25,
-          "reason": "provider command is locally launchable; authentication and runtime health were not probed"
+          "points": 50,
+          "reason": "harness is installed, authenticated, ready, and supports prompt launch; evidence: visible worker accepted the previous task prompt"
         },
         {
           "name": "task_mode_lockout",
@@ -884,6 +893,13 @@ compaction.
 Agent rows from `agent.list`, `agent.health`, `status.summary`, and `context.snapshot` include `lifecycle_evidence` as diagnostic metadata, not as a second source of lifecycle truth. The block repeats the persisted lifecycle source, last activity, observation time, nullable age, matching workspace/provider status key/value/source/scope when present, and permission mode when present. `status_scope: "workspace_provider"` means the status row is shared by same-provider sessions in that workspace and is not per-session live proof. `agent.health` additionally includes `ready` and `readiness_reason` in that block so clients can explain stale-looking or non-resumable rows without joining separate response fields.
 
 `system.capabilities` includes `provider_capabilities` with the supported provider program, configured command override when present, aliases, resume features, managed hook/MCP setup support (`managed_hooks`, `managed_mcp`), plan-mode reviewer support, PATH detection (`available_on_path`, `executable`), launchability, and disabled/missing reason, plus `team_provider_policy` mirroring the active `[team]` provider-selection config including `provider_commands`. It also includes `pty_persistence`, a read-only diagnostic block with `config_enabled`, `available`, `active`, broker name/executable when present, scope, and unavailable reason so clients can distinguish "configured but no broker installed" from active process persistence. `team.worker.launch` accepts optional `agent`; omitted or `auto` selects the first configured provider that is not disabled and whose default program or configured command is currently resolvable. An explicit provider still uses the same argv-only validation and returns `precondition_failed` if disabled or missing. Successful launches return a `selection` object with the requested agent, selected provider, selected program, default program, configured command, executable path, reason, and considered candidates. ForkTTY does not preflight provider quota/auth by calling model CLIs; those states appear in the visible worker TUI and hooks, and users can change Settings or pass an explicit provider for the next launch.
+
+For a current-runtime launch-owned worker surface, the canonical provider from
+`team.worker.launch` is authoritative when binding hook session metadata.
+Compatibility hooks may still supply lifecycle, session id, cwd, and permission
+metadata under another provider's hook key, but they do not relabel the worker
+in the Agent HUD, `agent.list`, `agent.health`, or context snapshots. Manually
+created surfaces continue to derive their provider identity from their hook key.
 
 Claude Code `team.worker.launch` calls add documented permission-mode defaults unless the caller already supplied Claude permission args: review roles start with `--permission-mode dontAsk` plus pre-approved built-in read tools (`Read`, `Grep`, and `Glob`), while other Claude workers start with `--permission-mode auto`. Pi review workers start with read-only `--tools read,grep,find,ls` unless explicit Pi tool args are supplied. Grok review workers start with `--permission-mode plan` unless an explicit Grok permission mode is supplied.
 

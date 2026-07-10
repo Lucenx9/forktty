@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 const TASK_PLAN_HELP: &str = "\
 usage: forktty task-plan <goal> [options] [--json]
 options: --workspace-id <id>, --workspace-name <name>, --worktree-name <name>, --surface-id <id>, --cwd <repo>, --strategy <strategy>, --task-kind <kind>, --profile balanced|fast|conservative|parallel|review_heavy, --last-known-good-json <json>, --harness-signals-json <json>, --repo-dirty[=true|false], --parallel[=true|false], --review[=true|false], --user-visible[=true|false]
+harness readiness: readiness=verified_ready requires readiness_reason with concrete worker, hook, or user evidence
 ";
 
 const TASK_APPLY_HELP: &str = "\

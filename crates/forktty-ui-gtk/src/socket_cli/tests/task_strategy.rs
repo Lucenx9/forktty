@@ -112,7 +112,7 @@ fn task_plan_requests_task_strategy_plan() {
                     "--last-known-good-json",
                     r#"{"strategy":"solo_with_verify_loop","harness_id":"claude","reason":"last successful run"}"#,
                     "--harness-signals-json",
-                    r#"{"codex":{"cooldown":true,"cooldown_reason":"recent quota error"}}"#,
+                    r#"{"codex":{"cooldown":true,"cooldown_reason":"recent quota error"},"claude":{"readiness":"verified_ready","readiness_reason":"visible worker accepted the prompt"}}"#,
                     "--repo-dirty",
                     "--parallel",
                     "--review=false",
@@ -149,6 +149,14 @@ fn task_plan_requests_task_strategy_plan() {
     assert_eq!(
         request["params"]["harness_signals"]["codex"]["cooldown_reason"],
         "recent quota error"
+    );
+    assert_eq!(
+        request["params"]["harness_signals"]["claude"]["readiness"],
+        "verified_ready"
+    );
+    assert_eq!(
+        request["params"]["harness_signals"]["claude"]["readiness_reason"],
+        "visible worker accepted the prompt"
     );
     assert_eq!(request["params"]["repo_dirty"], true);
     assert_eq!(request["params"]["user_requested_parallelism"], true);
@@ -482,6 +490,7 @@ fn task_plan_help_names_goal_cwd_and_json() {
     assert_eq!(err.exit, 0);
     assert!(err.message.contains("forktty task-plan <goal>"));
     assert!(err.message.contains("--cwd <repo>"));
+    assert!(err.message.contains("readiness=verified_ready"));
     assert!(err.message.contains("--json"));
 }
 

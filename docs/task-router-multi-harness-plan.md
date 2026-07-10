@@ -48,6 +48,10 @@ soft assignment penalty that preserves a harness as a fallback; `locked_out`
 is a hard task/mode exclusion. These signals are separate from provider
 capability health/readiness and are exposed through socket, CLI
 `--harness-signals-json`, and MCP `harness_signals`.
+Callers with concrete visible-worker, hook, or user-report evidence can also
+set `readiness: "verified_ready"` with a required `readiness_reason` to promote
+an auto-discovered launchable harness from the unverified to the verified
+readiness factor; executable discovery alone remains unverified.
 Planner inputs now also accept advisory `last_known_good` evidence through
 socket, CLI `--last-known-good-json`, and MCP. A matching strategy or harness
 gets a small score factor; readiness, cooldown, lockout, task fit, approvals,

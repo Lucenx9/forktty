@@ -652,6 +652,7 @@ async fn team_finish_close_workers_keeps_root_worker_when_replacement_spawn_fail
         "team-1",
         "worker-1",
         &worker_surface_id,
+        AgentKind::Codex,
     )
     .unwrap();
 

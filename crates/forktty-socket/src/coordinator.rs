@@ -1,3 +1,4 @@
+use forktty_core::AgentKind;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -17,6 +18,7 @@ struct TeamLaunchOwnedSurface {
     team_id: String,
     worker_id: String,
     surface_id: String,
+    agent: AgentKind,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -67,15 +69,19 @@ impl SocketCoordinator {
         team_id: &str,
         worker_id: &str,
         surface_id: &str,
+        agent: AgentKind,
     ) -> Result<(), String> {
-        self.team_launch_owned_surfaces
+        let mut owned_surfaces = self
+            .team_launch_owned_surfaces
             .lock()
-            .map_err(|_| "Lock poisoned".to_string())?
-            .insert(TeamLaunchOwnedSurface {
-                team_id: team_id.to_string(),
-                worker_id: worker_id.to_string(),
-                surface_id: surface_id.to_string(),
-            });
+            .map_err(|_| "Lock poisoned".to_string())?;
+        owned_surfaces.retain(|owned| owned.surface_id != surface_id);
+        owned_surfaces.insert(TeamLaunchOwnedSurface {
+            team_id: team_id.to_string(),
+            worker_id: worker_id.to_string(),
+            surface_id: surface_id.to_string(),
+            agent,
+        });
         Ok(())
     }
 
@@ -89,11 +95,25 @@ impl SocketCoordinator {
             .team_launch_owned_surfaces
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?
-            .contains(&TeamLaunchOwnedSurface {
-                team_id: team_id.to_string(),
-                worker_id: worker_id.to_string(),
-                surface_id: surface_id.to_string(),
+            .iter()
+            .any(|owned| {
+                owned.team_id == team_id
+                    && owned.worker_id == worker_id
+                    && owned.surface_id == surface_id
             }))
+    }
+
+    pub(crate) fn team_launch_owned_agent_for_surface(
+        &self,
+        surface_id: &str,
+    ) -> Result<Option<AgentKind>, String> {
+        Ok(self
+            .team_launch_owned_surfaces
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?
+            .iter()
+            .find(|owned| owned.surface_id == surface_id)
+            .map(|owned| owned.agent))
     }
 
     pub(crate) fn forget_team_launch_owned_surface_for_surface(

@@ -27,14 +27,17 @@ the owning Rust modules and agent-facing setup docs:
   profiles from the goal when those hints are omitted. It also returns the
   selected router profile, ranked candidate strategy scores, and role-specific
   harness assignment scores with factor breakdowns, and accepts optional
-  last-known-good plus per-harness cooldown/lockout signals so agents can
+  last-known-good plus per-harness verified-readiness/cooldown/lockout signals so agents can
   inspect the router decision before applying it. When callers omit
   last-known-good, the planner can infer it from completed task-strategy
   workflows in the selected workspace. Last-known-good is a small advisory
   stickiness factor; cooldown is a soft assignment penalty; lockout is
   a hard task/mode exclusion. PATH/configured-command discovery proves only
   launchability: auto-detected harness authentication and runtime health remain
-  unverified and score below positively verified Ready harnesses.
+  unverified and score below positively verified Ready harnesses. Concrete
+  worker, hook, or user evidence can be passed as
+  `readiness: "verified_ready"` plus `readiness_reason`; executable discovery
+  alone must not set it.
   `task.strategy.apply` stages visible
   workflow/team/task/message state by default; with
   `submit=true`, supported team plans launch visible worker panes and dispatch
@@ -114,6 +117,10 @@ taxonomy and the agent-facing docs aligned in the same change.
   launch/resume providers, managed hook/MCP setup support, and plan-mode
   support so socket and MCP clients can read provider support directly instead
   of probing failed operations.
+- Current-runtime team workers keep the provider selected by
+  `team.worker.launch` as their canonical session identity. Compatible hook
+  keys from another provider still update lifecycle metadata without
+  relabeling the worker in the Agent HUD or agent APIs.
 - `task.strategy.plan`, CLI `forktty task-plan`, and MCP
   `task_strategy_plan` provide a read-only routing recommendation before an
   agent chooses solo work, workflow loops, reviewers, teams, worktrees, MCP,

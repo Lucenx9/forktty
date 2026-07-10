@@ -370,8 +370,10 @@ evidence can pass `--last-known-good-json`/`last_known_good` to override or
 enrich the inferred advisory stickiness for a previously successful strategy or
 harness, and per-harness
 `--harness-signals-json`/`harness_signals`:
-`cooldown` is a soft assignment penalty, while `locked_out` excludes that
-harness for the current task/mode. Last-known-good only adds a small
+`readiness: "verified_ready"` plus a required `readiness_reason` promotes a
+launchable harness to the verified readiness score after concrete worker, hook,
+or user evidence; `cooldown` is a soft assignment penalty, while `locked_out`
+excludes that harness for the current task/mode. Last-known-good only adds a small
 explainable score factor; readiness, cooldown, lockout, task fit, and approvals
 still win. After review, `forktty task-apply
 --run-id <id> --plan-json '<plan-json>' --cwd <repo> --approved start_run "<goal>"` and the
@@ -538,6 +540,10 @@ permission mode, and resume-readiness reason when available. For Antigravity CLI
 `resume_cwd` comes from the hook payload's `workspacePaths`, because `agy`
 executes the generated wrapper scripts from `~/.gemini/config` rather than from
 the project directory.
+For a current-runtime team worker, the provider selected by
+`team.worker.launch` remains the session identity even when a compatible
+provider emits another provider's hook keys; for example, Grok's
+Claude-compatible hooks still appear as Grok in the Agent HUD and agent APIs.
 After a ForkTTY restart, restored terminal panes with a supported persisted
 agent session respawn through the provider's argv-only resume command, such as
 `codex resume -C <resume_cwd> <session-id>` when Codex hook metadata recorded

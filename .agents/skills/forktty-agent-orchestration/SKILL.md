@@ -50,7 +50,9 @@ work. For small local code changes, read and edit the repo directly.
    have stronger concrete prior-success evidence, pass `last_known_good` for a
    small strategy/harness stickiness score; it is not an override. If you have
    concrete runtime evidence for a harness, pass
-   `harness_signals`: `cooldown` is a soft penalty (optionally classify the
+   `harness_signals`: `readiness: "verified_ready"` plus a non-empty
+   `readiness_reason` promotes a launchable harness only after visible-worker,
+   hook, or user-report evidence; `cooldown` is a soft penalty (optionally classify the
    cause with `cooldown_kind`: `quota`, `auth`, `crash`, or `timeout`, so the
    penalty scales with it), while `locked_out`
    excludes that harness for the current task/mode. For harnesses you do not
@@ -181,7 +183,10 @@ Use read-only inventory before mutation:
   a harness is launchable; ForkTTY does not probe provider auth or runtime health
   while planning, so treat those conditions as unverified and lower-scored than
   a positively verified authenticated/ready harness until a visible worker,
-  hook, or user report provides concrete evidence.
+  hook, or user report provides concrete evidence. Pass that evidence to the
+  planner as `harness_signals.<id>.readiness = "verified_ready"` with a bounded
+  `readiness_reason`; never infer positive readiness from executable discovery
+  alone.
   `team_worker_launch` may omit `agent` or use `agent: "auto"`; ForkTTY then
   selects from the configured provider order and returns a `selection` record.
   Use an explicit provider when the user named one or when a previous visible
@@ -256,6 +261,9 @@ or parallel workers:
    plan-mode reviewer support and parallel session capacity for router scoring.
    If the user did not name a provider, prefer auto-selection and report the
    returned `selection` summary.
+   Treat that selected provider as the canonical identity of the current-runtime
+   launch-owned worker. Compatibility hooks may report another provider key,
+   but ForkTTY keeps HUD and agent-session attribution on the selected provider.
    Do not run real provider probes just to test quota or auth; those conditions
    must come from the visible worker TUI, hooks, or an explicit user report. Keep
    prompts scoped and include:

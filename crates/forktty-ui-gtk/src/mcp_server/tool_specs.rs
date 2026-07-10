@@ -108,7 +108,7 @@ pub(super) fn tool_specs() -> Vec<ToolSpec> {
                     },
                     "harness_signals": {
                         "type": "object",
-                        "description": format!("Optional per-harness routing signals keyed by harness id. Each value may include cooldown, cooldown_kind (quota|auth|crash|timeout, requires cooldown=true; the soft penalty scales with the cause), cooldown_reason, locked_out, and lockout_reason; reason fields are capped at {} UTF-8 bytes and cannot contain control characters. Cooldown is a soft penalty; locked_out excludes that harness from assignments. For harnesses not named here, ForkTTY infers an advisory soft cooldown from recent failed task-strategy workflow history; explicit signals replace inference for that harness.", protocol_limits::SOCKET_TASK_STRATEGY_REASON_MAX_BYTES),
+                        "description": format!("Optional per-harness routing signals keyed by harness id. readiness=verified_ready requires readiness_reason and promotes a launchable harness only after concrete worker, hook, or user evidence. Values may also include cooldown, cooldown_kind (quota|auth|crash|timeout, requires cooldown=true), cooldown_reason, locked_out, and lockout_reason; reason fields are capped at {} UTF-8 bytes and reject control characters. Cooldown is soft; locked_out excludes assignments. Explicit signals replace inferred cooldown for that harness.", protocol_limits::SOCKET_TASK_STRATEGY_REASON_MAX_BYTES),
                         "additionalProperties": true
                     },
                     "workspace_id": string_prop("Workspace id whose focused surface/project cwd should inform planning. Defaults from the ForkTTY caller context when available."),

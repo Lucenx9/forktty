@@ -4,16 +4,17 @@ use crate::team_provider::{
 };
 use crate::team_state::{
     create_team_worker_surface, ensure_team_message_not_terminal_dispatched,
-    ensure_team_worker_can_launch, forget_team_message_terminal_body_sent,
-    forget_team_message_terminal_dispatched, remember_team_launch_owned_surface,
-    remember_team_message_terminal_body_sent, remember_team_message_terminal_dispatched,
-    runtime_team_summary_value, team_message_dispatch_target, team_message_terminal_body_sent,
+    ensure_team_worker_can_launch, forget_team_launch_owned_surface_for_surface,
+    forget_team_message_terminal_body_sent, forget_team_message_terminal_dispatched,
+    remember_team_launch_owned_surface, remember_team_message_terminal_body_sent,
+    remember_team_message_terminal_dispatched, runtime_team_summary_value,
+    team_message_dispatch_target, team_message_terminal_body_sent,
     team_terminal_dispatched_message, team_worker_agent, team_worker_health_rows,
     team_worker_launch_owned_surface_id, team_worker_surface_id,
 };
 use crate::{
-    close_replacement_terminal_surface_if_present, close_surface_request,
-    close_terminal_surface_if_present, close_terminal_surfaces_or_restore,
+    agent_kind_from_provider_alias, close_replacement_terminal_surface_if_present,
+    close_surface_request, close_terminal_surface_if_present, close_terminal_surfaces_or_restore,
     ensure_terminal_for_active_workspace, evict_hook_session_targets_for_surfaces,
     rollback_surface_creation, spawn_surface_terminal, spawn_terminal_surfaces, store_access,
     team_dispatch::{
@@ -619,10 +620,25 @@ pub(crate) async fn worker_launch(
         request.cwd.as_deref(),
     )
     .await?;
+    let selected_agent_kind = agent_kind_from_provider_alias(&selection.selected_agent)
+        .ok_or_else(|| {
+            DispatchError::Other("selected team provider has no agent kind".to_string())
+        })?;
+    if let Err(err) = remember_team_launch_owned_surface(
+        state,
+        &request.team_id,
+        &request.worker_id,
+        &surface.id,
+        selected_agent_kind,
+    ) {
+        rollback_surface_creation(state, &surface.id)?;
+        return Err(err);
+    }
     let spawn_request =
         SpawnRequest::for_surface(&surface, program.clone(), state.socket_path.clone())
             .with_args(args.clone());
     if let Err(err) = state.terminal.spawn(spawn_request) {
+        let _ = forget_team_launch_owned_surface_for_surface(state, &surface.id);
         rollback_surface_creation(state, &surface.id)?;
         return Err(err.into());
     }
@@ -636,9 +652,6 @@ pub(crate) async fn worker_launch(
         cwd: request.cwd,
         assigned_task_id: request.assigned_task_id,
     };
-    let launch_team_id = launch.team_id.clone();
-    let launch_worker_id = launch.worker_id.clone();
-    let launch_surface_id = launch.surface_id.clone();
     let worker = match store_access::team_store_access(state)?
         .update(move |store| store.launch_worker(launch, forktty_core::team_now_ms()))
         .await
@@ -646,16 +659,11 @@ pub(crate) async fn worker_launch(
         Ok(worker) => worker,
         Err(err) => {
             let _ = close_terminal_surface_if_present(state, &surface.id);
+            let _ = forget_team_launch_owned_surface_for_surface(state, &surface.id);
             rollback_surface_creation(state, &surface.id)?;
             return Err(DispatchError::from(err));
         }
     };
-    remember_team_launch_owned_surface(
-        state,
-        &launch_team_id,
-        &launch_worker_id,
-        &launch_surface_id,
-    )?;
     let argv = std::iter::once(program).chain(args).collect::<Vec<_>>();
     Ok(json!({
         "surface": surface,

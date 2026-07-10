@@ -632,6 +632,15 @@ mod tests {
                 "{name} description should stay compact; put long policy in the operating guide resource/prompt"
             );
         }
+        let plan = tool_specs()
+            .into_iter()
+            .find(|spec| spec.name == "task_strategy_plan")
+            .expect("task strategy plan tool exists");
+        assert!(
+            plan.input_schema["properties"]["harness_signals"]["description"]
+                .as_str()
+                .is_some_and(|description| description.contains("readiness=verified_ready"))
+        );
     }
 
     #[test]

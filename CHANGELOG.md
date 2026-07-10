@@ -24,6 +24,13 @@ All notable changes to ForkTTY are documented here.
   they remain eligible until concrete runtime evidence reports a lockout.
 
 ### Fixed
+- Kept the provider selected by `team.worker.launch` authoritative for
+  launch-owned session attribution, so Claude-compatible hooks from Grok no
+  longer make Grok workers appear as Claude in the Agent HUD and agent APIs.
+- Allowed callers with concrete worker, hook, or user evidence to promote an
+  auto-discovered Router harness from unverified to verified-ready through
+  `harness_signals.readiness = "verified_ready"` plus a required bounded
+  `readiness_reason`, making the documented 50-point readiness score reachable.
 - Prevented `team.finish --close-workers` from leaving persisted workers active
   after closing their panes when the team store cannot be saved; terminal
   closures are now restored before the error is returned.
