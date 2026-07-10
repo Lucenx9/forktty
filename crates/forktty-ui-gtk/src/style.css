@@ -999,6 +999,7 @@ button.flat.orchestration-rail-collapsed-strip {
   background: #101010;
   color: @ft_text_3;
   border-left: 1px solid @ft_bg_1;
+  transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
 button.flat.orchestration-rail-collapsed-strip:hover,
@@ -1072,7 +1073,8 @@ button.flat.orchestration-collapse-button {
   border-radius: 6px;
   color: @ft_text_3;
   font-size: 0.72em;
-  font-weight: 720;
+  font-weight: 620;
+  transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
 button.flat.orchestration-collapse-button:hover,
@@ -1133,14 +1135,12 @@ button.flat.orchestration-collapse-button:focus-visible {
   min-height: 38px;
 }
 
-.orchestration-meta-key,
-.orchestration-inline-key {
+.orchestration-meta-key {
   color: #727272;
   font-size: 0.72em;
 }
 
-.orchestration-meta-value,
-.orchestration-inline-value {
+.orchestration-meta-value {
   color: @ft_text_0;
   font-size: 0.78em;
   font-weight: 680;

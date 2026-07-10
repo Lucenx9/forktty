@@ -28,10 +28,7 @@ pub(super) struct OrchestrationRailUi {
     strategy_meta: gtk::Box,
     fanout_value: gtk::Label,
     max_loops_value: gtk::Label,
-    workflow_value: gtk::Label,
-    decision_section: gtk::Box,
-    router_plan_value: gtk::Label,
-    router_updated_value: gtk::Label,
+    updated_value: gtk::Label,
     loop_section: gtk::Box,
     loop_value: gtk::Label,
     loop_caption_value: gtk::Label,
@@ -50,7 +47,6 @@ pub(super) struct OrchestrationRailUi {
     reports_value: gtk::Label,
     report_rows: Vec<RailListRow>,
     reports_overflow: gtk::Label,
-    reports_link: gtk::Button,
     notifications_section: gtk::Box,
     notifications_value: gtk::Label,
     notification_rows: Vec<RailListRow>,
@@ -89,8 +85,6 @@ struct RailSnapshot {
     status: String,
     fanout: String,
     max_loops: String,
-    workflow: String,
-    router_plan: String,
     router_updated: String,
     loop_state: String,
     loop_caption: String,
@@ -224,13 +218,8 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
     meta.add_css_class("orchestration-meta-grid");
     let fanout_value = rail_meta(&meta, "Fan-out");
     let max_loops_value = rail_meta(&meta, "Max loops");
-    let workflow_value = rail_meta(&meta, "Workflow");
+    let updated_value = rail_meta(&meta, "Updated");
     strategy_section.append(&meta);
-
-    let decision_section = rail_section(&body);
-    rail_section_header(&decision_section, "ROUTER DECISION");
-    let router_plan_value = rail_inline_value(&decision_section, "Plan");
-    let router_updated_value = rail_inline_value(&decision_section, "Updated");
 
     let loop_section = rail_section(&body);
     rail_section_header(&loop_section, "LOOP STATE");
@@ -318,8 +307,6 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
         .map(|_| build_list_row(&reports_section))
         .collect::<Vec<_>>();
     let reports_overflow = rail_overflow_label(&reports_section);
-    let reports_link = rail_link_row("Open worker reports", "app.agents");
-    reports_section.append(&reports_link);
 
     let notifications_section = rail_section(&body);
     let notifications_header = rail_section_header(&notifications_section, "NOTIFICATIONS");
@@ -399,10 +386,7 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
         strategy_meta: meta,
         fanout_value,
         max_loops_value,
-        workflow_value,
-        decision_section,
-        router_plan_value,
-        router_updated_value,
+        updated_value,
         loop_section,
         loop_value,
         loop_caption_value,
@@ -421,7 +405,6 @@ pub(super) fn build_orchestration_rail(state: &SocketAppState) -> OrchestrationR
         reports_value,
         report_rows,
         reports_overflow,
-        reports_link,
         notifications_section,
         notifications_value,
         notification_rows,
@@ -691,11 +674,7 @@ pub(super) fn refresh_orchestration_rail(ui: &OrchestrationRailUi, state: &Socke
         .set_visible(strategy_meta_visible(&snapshot));
     set_rail_value(&ui.fanout_value, &snapshot.fanout);
     set_rail_value(&ui.max_loops_value, &snapshot.max_loops);
-    set_rail_value(&ui.workflow_value, &snapshot.workflow);
-    ui.decision_section
-        .set_visible(router_decision_visible(&snapshot));
-    set_rail_value(&ui.router_plan_value, &snapshot.router_plan);
-    set_rail_value(&ui.router_updated_value, &snapshot.router_updated);
+    set_rail_value(&ui.updated_value, &snapshot.router_updated);
     ui.loop_section.set_visible(loop_section_visible(&snapshot));
     set_rail_value(&ui.loop_value, &snapshot.loop_state);
     set_rail_value(&ui.loop_caption_value, &snapshot.loop_caption);
@@ -756,7 +735,6 @@ pub(super) fn refresh_orchestration_rail(ui: &OrchestrationRailUi, state: &Socke
         "more report",
         "more reports",
     );
-    ui.reports_link.set_visible(reports_link_visible(&snapshot));
     ui.notifications_section
         .set_visible(notifications_section_visible(&snapshot));
     set_rail_value(&ui.notifications_value, &snapshot.notifications);
@@ -791,11 +769,7 @@ fn approvals_settings_visible(snapshot: &RailSnapshot) -> bool {
 }
 
 fn strategy_meta_visible(snapshot: &RailSnapshot) -> bool {
-    snapshot.fanout != "0" || snapshot.max_loops != "-" || snapshot.workflow != "none"
-}
-
-fn router_decision_visible(snapshot: &RailSnapshot) -> bool {
-    snapshot.router_plan != "No plan selected" || snapshot.router_updated != "-"
+    snapshot.fanout != "0" || snapshot.max_loops != "-" || snapshot.router_updated != "-"
 }
 
 fn loop_section_visible(snapshot: &RailSnapshot) -> bool {
@@ -816,10 +790,6 @@ fn reports_section_visible(snapshot: &RailSnapshot) -> bool {
 
 fn notifications_section_visible(snapshot: &RailSnapshot) -> bool {
     !snapshot.notification_items.is_empty() || snapshot.notifications != "clear"
-}
-
-fn reports_link_visible(snapshot: &RailSnapshot) -> bool {
-    snapshot.report_count > 0
 }
 
 fn set_status_chip_class(label: &gtk::Label, dot: &gtk::Box, status: &str) {
@@ -972,29 +942,6 @@ fn rail_meta(parent: &gtk::Box, label: &str) -> gtk::Label {
     value
 }
 
-fn rail_inline_value(parent: &gtk::Box, label: &str) -> gtk::Label {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    row.add_css_class("orchestration-inline-row");
-    let key = gtk::Label::builder()
-        .label(label)
-        .xalign(0.0)
-        .single_line_mode(true)
-        .build();
-    key.add_css_class("orchestration-inline-key");
-    let value = gtk::Label::builder()
-        .label("")
-        .xalign(1.0)
-        .hexpand(true)
-        .single_line_mode(true)
-        .ellipsize(gtk::pango::EllipsizeMode::End)
-        .build();
-    value.add_css_class("orchestration-inline-value");
-    row.append(&key);
-    row.append(&value);
-    parent.append(&row);
-    value
-}
-
 fn multiline_value(lines: i32) -> gtk::Label {
     let value = gtk::Label::builder()
         .label("")
@@ -1082,8 +1029,6 @@ fn orchestration_rail_snapshot(state: &SocketAppState) -> RailSnapshot {
         status: workflow.status,
         fanout: team.fanout,
         max_loops: workflow.max_loops,
-        workflow: workflow.workflow,
-        router_plan: workflow.router_plan,
         router_updated: workflow.router_updated,
         loop_state: workflow.loop_state,
         loop_caption: workflow.loop_caption,
@@ -1115,8 +1060,6 @@ struct WorkflowRailSnapshot {
     strategy_detail: String,
     status: String,
     max_loops: String,
-    workflow: String,
-    router_plan: String,
     router_updated: String,
     loop_state: String,
     loop_caption: String,
@@ -1166,7 +1109,7 @@ fn latest_workflow_snapshot_for_workspace(
         .unwrap_or_else(|| "-".to_string());
     let loop_iteration_display = loop_iteration_display(workflow);
     WorkflowRailSnapshot {
-        strategy: strategy.clone(),
+        strategy,
         strategy_detail: workflow
             .goal
             .as_deref()
@@ -1175,8 +1118,6 @@ fn latest_workflow_snapshot_for_workspace(
             .to_string(),
         status,
         max_loops,
-        workflow: workflow.status.clone(),
-        router_plan: strategy,
         router_updated: relative_time_label(now_ms, u128::from(workflow.updated_at_ms)),
         loop_state: format_loop_state(workflow),
         loop_caption: format_loop_caption(workflow),
@@ -1196,8 +1137,6 @@ fn workflow_fallback(strategy: &str, detail: &str) -> WorkflowRailSnapshot {
         strategy_detail: detail.to_string(),
         status: "idle".to_string(),
         max_loops: "-".to_string(),
-        workflow: "none".to_string(),
-        router_plan: "No plan selected".to_string(),
         router_updated: "-".to_string(),
         loop_state: "not planned".to_string(),
         loop_caption: "No loop metadata".to_string(),
@@ -1361,10 +1300,19 @@ fn format_attention_summary(
     if attention_count == 0 {
         return "All clear".to_string();
     }
-    format!(
-        "Attention {attention_count} · Running {} · Reports {} · Errors {}",
-        team.active_workers, team.report_count, team.error_groups
-    )
+    // Zero-valued segments are noise next to a live attention count; only
+    // surface the dimensions that actually have signal.
+    let mut parts = vec![format!("Attention {attention_count}")];
+    if team.active_workers > 0 {
+        parts.push(format!("Running {}", team.active_workers));
+    }
+    if team.report_count > 0 {
+        parts.push(format!("Reports {}", team.report_count));
+    }
+    if team.error_groups > 0 {
+        parts.push(format!("Errors {}", team.error_groups));
+    }
+    parts.join(" · ")
 }
 
 fn worker_status_is_active(status: &str) -> bool {
@@ -2042,9 +1990,8 @@ mod tests {
         };
 
         assert!(!approvals_settings_visible(&empty));
-        assert!(!reports_link_visible(&empty));
         assert!(approvals_settings_visible(&with_approval));
-        assert!(reports_link_visible(&with_report));
+        assert!(reports_section_visible(&with_report));
     }
 
     #[test]
@@ -2055,8 +2002,6 @@ mod tests {
             status: "idle".to_string(),
             fanout: "0".to_string(),
             max_loops: "-".to_string(),
-            workflow: "none".to_string(),
-            router_plan: "No plan selected".to_string(),
             router_updated: "-".to_string(),
             loop_state: "not planned".to_string(),
             loop_caption: "No loop metadata".to_string(),
@@ -2068,7 +2013,6 @@ mod tests {
         };
 
         assert!(!strategy_meta_visible(&idle));
-        assert!(!router_decision_visible(&idle));
         assert!(!loop_section_visible(&idle));
         assert!(!approvals_section_visible(&idle));
         assert!(!workers_section_visible(&idle));
@@ -2077,8 +2021,6 @@ mod tests {
 
         let active = RailSnapshot {
             fanout: "2".to_string(),
-            workflow: "running".to_string(),
-            router_plan: "implementer_plus_reviewer".to_string(),
             router_updated: "now".to_string(),
             loop_state: "Loop 1/3 - verify".to_string(),
             loop_planned: true,
@@ -2101,7 +2043,6 @@ mod tests {
         };
 
         assert!(strategy_meta_visible(&active));
-        assert!(router_decision_visible(&active));
         assert!(loop_section_visible(&active));
         assert!(approvals_section_visible(&active));
         assert!(workers_section_visible(&active));
@@ -2217,7 +2158,7 @@ mod tests {
         let workflow =
             latest_workflow_snapshot_for_workspace(Some(&workflow_path), Some("workspace-main"));
         assert_eq!(workflow.strategy, "idle");
-        assert_eq!(workflow.workflow, "none");
+        assert_eq!(workflow.router_updated, "-");
 
         let live_statuses = std::collections::HashMap::new();
         let team = latest_team_snapshot_for_workspace(
@@ -2292,7 +2233,7 @@ mod tests {
 
         let workflow =
             latest_workflow_snapshot_for_workspace(Some(&workflow_path), Some("workspace-main"));
-        assert_eq!(workflow.workflow, "running");
+        assert_eq!(workflow.status, "running");
         assert_eq!(workflow.strategy_detail, "Global Router task");
 
         let live_statuses = std::collections::HashMap::new();
@@ -2348,7 +2289,7 @@ mod tests {
         let workflow =
             latest_workflow_snapshot_for_workspace(Some(&workflow_path), Some("workspace-1"));
 
-        assert_eq!(workflow.workflow, "running");
+        assert_eq!(workflow.status, "running");
         assert_eq!(workflow.strategy_detail, "Active router audit");
     }
 

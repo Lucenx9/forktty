@@ -2790,7 +2790,8 @@ fn orchestration_workbench_has_router_header_and_dialog_action() {
     assert!(actions_source.contains("show_task_router_dialog(&window, &state)"));
     assert!(rail_source.contains(".label(\"Router\")"));
     assert!(rail_source.contains("rail_section_header(&strategy_section, \"STRATEGY\")"));
-    assert!(rail_source.contains("rail_section_header(&decision_section, \"ROUTER DECISION\")"));
+    assert!(rail_source.contains("rail_meta(&meta, \"Updated\")"));
+    assert!(!rail_source.contains("ROUTER DECISION"));
     assert!(rail_source.contains("rail_section_header(&loop_section, \"LOOP STATE\")"));
     assert!(rail_source.contains("rail_section_header(&approvals_section, \"APPROVALS\")"));
     assert!(rail_source.contains("rail_section_header(&workers_section, \"WORKER HEALTH\")"));

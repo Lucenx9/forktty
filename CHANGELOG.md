@@ -11,6 +11,13 @@ All notable changes to ForkTTY are documented here.
   tracking and lighter weight, section counts read as muted metadata, the
   Edit/Review/Deny controls become borderless-background ghost buttons, and the
   header status pill becomes a Linear-style colored dot with quiet text.
+- Decluttered the Router rail's information layout: the ROUTER DECISION
+  section is gone (its plan text duplicated STRATEGY and its timestamp now
+  lives in the strategy meta row as "Updated", replacing the "Workflow" cell
+  that duplicated the header status), the attention summary only shows
+  dimensions with signal instead of padding zeros, and the duplicate
+  "Open worker reports" link is dropped in favor of the single
+  "View all workers" entry point.
 - Brought pane chrome in line with the quiet workbench finish: the pane
   header's agent lifecycle badge becomes quiet colored text instead of a
   bordered pill, and the per-pane tab strip drops its stale off-tone background
