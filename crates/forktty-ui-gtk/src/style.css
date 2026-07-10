@@ -1274,26 +1274,12 @@ button.flat.orchestration-link-button:focus-visible {
   font-weight: 640;
 }
 
+/* Quiet metadata: the rail-dot alone carries severity; timestamps and status
+ * words stay muted (Linear/Vercel dot + quiet text pattern). */
 .orchestration-list-secondary {
   color: @ft_text_3;
   font-size: 0.74em;
   font-weight: 680;
-}
-
-.orchestration-list-secondary.ok {
-  color: @ft_success;
-}
-
-.orchestration-list-secondary.warn {
-  color: @ft_warning;
-}
-
-.orchestration-list-secondary.err {
-  color: @ft_danger;
-}
-
-.orchestration-list-secondary.info {
-  color: @ft_info;
 }
 
 /* --------------------------------------------------------------------------
@@ -2946,9 +2932,12 @@ window.ft-dialog,
   box-shadow: none;
 }
 
-.settings-list row:focus-within {
+/* Only entry rows mark focus-within (useful while typing). Toggle/combo rows
+ * must not: click focus lingers after interacting, and the old whitish inset
+ * ring read as a stray white outline stuck on the previously used row.
+ * Keyboard navigation keeps the accent :focus-visible outline. */
+.settings-list row.entry:focus-within {
   background: @ft_bg_1;
-  box-shadow: inset 0 0 0 1px alpha(@ft_text_1, 0.06);
 }
 
 .settings-list row image {

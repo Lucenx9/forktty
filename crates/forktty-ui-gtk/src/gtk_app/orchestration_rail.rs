@@ -619,10 +619,6 @@ fn set_list_rows(rows: &[RailListRow], items: &[RailListItem], empty: &str) {
             set_dot_class(&row.dot, item.dot);
             set_rail_value(&row.primary, &item.primary);
             set_rail_value(&row.secondary, &item.secondary);
-            for class_name in ["ok", "warn", "err", "info", "idle"] {
-                row.secondary.remove_css_class(class_name);
-            }
-            row.secondary.add_css_class(item.dot);
         } else if index == 0 && items.is_empty() {
             row.shell.set_visible(true);
             row.dot.set_visible(false);

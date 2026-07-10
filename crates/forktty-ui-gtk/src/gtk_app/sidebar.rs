@@ -283,7 +283,8 @@ pub(super) fn refresh_sidebar(
             .label("New Workspace")
             .has_frame(true)
             .build();
-        create.add_css_class("suggested-action");
+        // Neutral on purpose: the stage's Router button is the single accent
+        // CTA in the no-workspace view (one primary action per view).
         create.set_action_name(Some("app.new-workspace"));
         set_accessible_button_text(&create, "New Workspace", Some("Ctrl+Shift+N"));
         empty.append(&icon);
@@ -1278,7 +1279,9 @@ pub(super) fn build_sidebar_sections(state: &SocketAppState) -> SidebarSectionsU
     let ui = SidebarSectionsUi {
         team_shell,
         team_rows,
-        team_signature: Rc::new(RefCell::new(String::new())),
+        // Sentinel that no real signature (possibly "") can match, so the
+        // first refresh always applies visibility and hides the empty section.
+        team_signature: Rc::new(RefCell::new(String::from("\u{0}unset"))),
         resources_shell,
         git_repos_row,
         footer_shell,

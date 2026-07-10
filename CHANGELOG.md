@@ -5,6 +5,11 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- Quieted Router rail list metadata: notification timestamps and worker/report
+  status words no longer take on the severity color (the small status dot alone
+  carries severity, matching the dot + quiet text pattern used elsewhere).
+- The no-workspace sidebar "New Workspace" button becomes a neutral button so
+  the stage's Router action stays the single accent CTA in the empty state.
 - Major polish for premium, clean, Linear/Cursor/Vercel aesthetic (terminal-first, low noise):
   - Workspace sidebar converted from bordered cards with heavy drop shadows to compact inset navigation rows using quiet hairline indicators for active/attention/DnD.
   - Reduced full 999px pill radii on badges, status location, welcome button, and keycaps to small precise radii (4-6px). 999px now reserved for true circular dots only.
@@ -70,6 +75,13 @@ All notable changes to ForkTTY are documented here.
   recessed with @ft_line hairlines and no shadow; pane badges also cleaned.
 
 ### Fixed
+- Settings rows no longer keep a stray whitish outline on the last option you
+  interacted with: the focus-within row ring is gone (click focus lingers on
+  toggle/combo rows), entry rows keep a quiet background while typing, and
+  keyboard navigation still shows the accent focus ring.
+- The sidebar TEAM section header no longer lingers on screen when there are no
+  team workers; the empty section now hides on startup instead of only after a
+  team appears once.
 - Repaired the over-flattened workspace navigation and pane tabs: workspace
   rows regain compact inset spacing, rounded selected surfaces, and directional
   drag/drop hairlines, while pane tabs stay content-sized, scroll when space is
