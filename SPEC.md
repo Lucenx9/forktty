@@ -958,12 +958,28 @@ boolean, and — for `hooks test` — per-method `{method, ok, error?}` entries 
 a real socket round-trip that always includes `notification.create`. Both
 commands exit 0 when every check passes and 1 otherwise, so CI can gate on the
 exit code alone; the human-readable output is rendered from the same report.
+For Codex setup summaries, `requiresTrustReview` and `trustReviewCommand`
+(`"/hooks"`) report when changed hook definitions need user review. Codex
+doctor `trustCheck` reports recorded/unrecorded events and
+`currentHashesVerified: false`: trust is bound to the current hook hash, and
+ForkTTY does not reproduce Codex's hash verification. App auto-refresh
+notifications therefore direct the user to `/hooks` whenever Codex hook
+definitions change.
 Hook metadata events that omit an explicit workspace/surface target but include
 a `hook_session_id` and unique live-surface `hook_session_cwd` are scoped to
 that matching surface and teach the in-memory hook-session target cache for
 later events. Ambiguous cwd matches are rejected rather than defaulting to the
 currently active workspace, avoiding false agent `Working`/`needs input` state
 in the Router rail and workspace list.
+
+The workspace sidebar derives its compact activity summary and status badge
+from visible hook status/progress first. When an active persisted session has
+no primary `agent:<provider>` status row, it synthesizes a presentation-only
+fallback from actionable lifecycle: `running` becomes `Working` and
+`needs_input` becomes `Input`. This applies to Codex, Claude Code, Pi, OpenCode,
+Antigravity, and Grok; permission-mode rows do not suppress the fallback, real
+primary hook status takes precedence, and idle, suspended, ended, or unknown
+sessions do not create a working badge.
 
 `forktty remote-helper hello` is a no-socket stdio handshake intended to run
 through SSH as `ssh <host> forktty remote-helper hello`. It emits one JSON

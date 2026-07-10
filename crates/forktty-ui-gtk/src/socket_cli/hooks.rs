@@ -138,6 +138,10 @@ pub(super) fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> Cli
         if plan.spec.key == "claude" {
             summary["profile"] = json!(hook_setup_profile_name(profile));
         }
+        if plan.spec.key == "codex" {
+            summary["requiresTrustReview"] = json!(plan.changed);
+            summary["trustReviewCommand"] = json!("/hooks");
+        }
         summaries.push(summary);
     }
 
@@ -159,6 +163,16 @@ pub(super) fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> Cli
         write_stdout_line(&format!("{agent}: {verb} at {config_path}"))?;
         if let Some(backup) = summary["backupPath"].as_str() {
             write_stdout_line(&format!("  backup: {backup}"))?;
+        }
+        if summary["requiresTrustReview"].as_bool() == Some(true) {
+            let prefix = if dry_run {
+                "  after updating"
+            } else {
+                "  action required"
+            };
+            write_stdout_line(&format!(
+                "{prefix}: run /hooks inside Codex to review the changed hook definitions"
+            ))?;
         }
     }
     Ok(())
@@ -378,6 +392,10 @@ pub(super) fn format_codex_trust_check(check: &Value) -> Option<String> {
         "partial" | "none_recorded" => Some(format!(
             "hook trust: no Codex trust record yet for {unrecorded}; if those hooks seem inactive, run /hooks inside Codex to review approval."
         )),
+        "all_recorded" => Some(
+            "hook trust: records exist, but ForkTTY cannot verify that they match the current hook hashes; after a hook update, run /hooks inside Codex to review approval."
+                .to_string(),
+        ),
         _ => None,
     }
 }
@@ -538,7 +556,8 @@ pub(super) fn codex_hook_trust_report(
         "configPath": config_toml,
         "recordedEvents": recorded,
         "unrecordedEvents": unrecorded,
-        "hint": "Codex asks for approval before running hooks it has no trust record for; run /hooks inside Codex to review.",
+        "currentHashesVerified": false,
+        "hint": "Codex ties approval to each hook's current hash. ForkTTY can detect trust records but cannot verify those hashes; after hook definitions change, run /hooks inside Codex to review.",
     })
 }
 

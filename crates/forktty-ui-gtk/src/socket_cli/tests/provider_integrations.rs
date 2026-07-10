@@ -255,6 +255,8 @@ fn codex_trust_report_classifies_recorded_and_unrecorded_events() {
     .unwrap();
     let report = codex_hook_trust_report(config_toml, hooks_json, CODEX_HOOK_ENTRIES, Some(&state));
     assert_eq!(report["status"], json!("partial"));
+    assert_eq!(report["currentHashesVerified"], json!(false));
+    assert!(report["hint"].as_str().unwrap().contains("current hash"));
     assert_eq!(report["recordedEvents"], json!(["PreToolUse"]));
     assert!(report["unrecordedEvents"]
         .as_array()
@@ -263,6 +265,23 @@ fn codex_trust_report_classifies_recorded_and_unrecorded_events() {
 
     let report = codex_hook_trust_report(config_toml, hooks_json, CODEX_HOOK_ENTRIES, None);
     assert_eq!(report["status"], json!("none_recorded"));
+}
+
+#[test]
+fn codex_trust_summary_never_claims_current_hashes_are_verified() {
+    let report = json!({
+        "status": "all_recorded",
+        "recordedEvents": CODEX_HOOK_ENTRIES
+            .iter()
+            .map(|entry| entry.event_name)
+            .collect::<Vec<_>>(),
+        "unrecordedEvents": [],
+        "currentHashesVerified": false,
+    });
+
+    let summary = format_codex_trust_check(&report).unwrap();
+    assert!(summary.contains("cannot verify"));
+    assert!(summary.contains("/hooks"));
 }
 
 #[test]

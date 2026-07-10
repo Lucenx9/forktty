@@ -1400,27 +1400,11 @@ pub(super) fn start_agent_integration_auto_refresh(state: &SocketAppState) {
     let state = state.clone();
     glib::timeout_add_local(Duration::from_millis(250), move || match rx.try_recv() {
         Ok(outcome) => {
-            if !outcome.hooks_updated.is_empty()
-                || !outcome.mcp_updated.is_empty()
-                || !outcome.skills_updated.is_empty()
-            {
-                let mut parts = Vec::new();
-                if !outcome.hooks_updated.is_empty() {
-                    parts.push(format!("hooks: {}", outcome.hooks_updated.join(", ")));
-                }
-                if !outcome.mcp_updated.is_empty() {
-                    parts.push(format!("MCP: {}", outcome.mcp_updated.join(", ")));
-                }
-                if !outcome.skills_updated.is_empty() {
-                    parts.push(format!("skills: {}", outcome.skills_updated.join(", ")));
-                }
+            if let Some(message) = agent_integration_refresh_message(&outcome) {
                 create_global_notification(
                     &state,
                     "Agent Integrations Updated",
-                    &format!(
-                        "Refreshed managed ForkTTY integrations ({})",
-                        parts.join("; ")
-                    ),
+                    &message,
                     NotificationKind::Info,
                 );
             }

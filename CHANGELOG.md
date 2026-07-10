@@ -75,6 +75,12 @@ All notable changes to ForkTTY are documented here.
   recessed with @ft_line hairlines and no shadow; pane badges also cleaned.
 
 ### Fixed
+- Workspace rows now fall back to persisted agent-session lifecycle when a
+  provider has no current hook status row, so running/needs-input labels stay
+  consistent across Codex, Claude Code, Pi, OpenCode, Antigravity, and Grok;
+  real hook status remains authoritative. Codex hook refreshes now also call
+  out the required `/hooks` trust review, and doctor no longer implies that a
+  recorded approval proves the current hook hash is trusted.
 - Close-pane confirmations now dismiss themselves when another control or
   socket client removes the target pane while the dialog is still open.
 - The grouped `hooks`, `team`, and `status` CLI commands now accept `help`,

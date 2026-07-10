@@ -303,6 +303,142 @@ fn sidebar_activity_summary_ignores_inactive_agent_metadata() {
 }
 
 #[test]
+fn sidebar_uses_running_session_fallback_for_every_supported_harness() {
+    let harnesses = [
+        (forktty_core::AgentKind::Codex, "Codex"),
+        (forktty_core::AgentKind::ClaudeCode, "Claude"),
+        (forktty_core::AgentKind::Pi, "Pi"),
+        (forktty_core::AgentKind::OpenCode, "OpenCode"),
+        (forktty_core::AgentKind::Antigravity, "Antigravity"),
+        (forktty_core::AgentKind::Grok, "Grok"),
+    ];
+
+    for (index, (agent, label)) in harnesses.into_iter().enumerate() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace(format!("harness-{index}"), "/tmp");
+        let workspace_id = workspace.id.clone();
+        assert!(model.set_surface_agent_session(
+            &workspace.focused_surface_id,
+            agent,
+            format!("session-{index}"),
+        ));
+        let workspace = model
+            .list_workspaces()
+            .into_iter()
+            .find(|candidate| candidate.id == workspace_id)
+            .unwrap();
+
+        let (statuses, progress) = sidebar_visible_metadata(&model, &workspace, &[], &[]);
+        assert_eq!(statuses.len(), 1, "missing {label} lifecycle status");
+        assert_eq!(statuses[0].label, label);
+        assert_eq!(statuses[0].value, "Running");
+        assert!(progress.is_empty());
+
+        let badge = workspace_status_badge(&workspace, &statuses, &progress, None).unwrap();
+        assert_eq!(badge.label, "Working", "wrong {label} badge");
+        assert_eq!(
+            format_workspace_activity_summary(&statuses, &progress, None, None),
+            format!("{label}: Working"),
+        );
+    }
+}
+
+#[test]
+fn sidebar_lifecycle_fallback_yields_to_primary_hook_status() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let workspace_id = workspace.id.clone();
+    assert!(model.set_surface_agent_session(
+        &workspace.focused_surface_id,
+        forktty_core::AgentKind::Codex,
+        "codex-session",
+    ));
+    model
+        .set_status(
+            &workspace_id,
+            "agent:codex:permission",
+            "Codex mode",
+            "full-auto",
+            Some("red".to_string()),
+        )
+        .unwrap();
+    let workspace = model.list_workspaces().remove(0);
+
+    let (statuses, _) =
+        sidebar_visible_metadata(&model, &workspace, &model.list_status(&workspace_id), &[]);
+    assert_eq!(statuses.len(), 2);
+    assert!(statuses.iter().any(|status| {
+        status.key == "agent:codex" && status.label == "Codex" && status.value == "Running"
+    }));
+
+    model
+        .set_status(
+            &workspace_id,
+            "agent:codex",
+            "Codex",
+            "Running tool",
+            Some("blue".to_string()),
+        )
+        .unwrap();
+    let (statuses, _) =
+        sidebar_visible_metadata(&model, &workspace, &model.list_status(&workspace_id), &[]);
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| status.key == "agent:codex")
+            .count(),
+        1
+    );
+    assert!(statuses
+        .iter()
+        .any(|status| status.key == "agent:codex" && status.value == "Running tool"));
+}
+
+#[test]
+fn sidebar_lifecycle_fallback_only_badges_actionable_sessions() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let workspace_id = workspace.id.clone();
+    let surface_id = workspace.focused_surface_id.clone();
+    assert!(model.set_surface_agent_session(
+        &surface_id,
+        forktty_core::AgentKind::Codex,
+        "codex-session",
+    ));
+    let workspace = model.list_workspaces().remove(0);
+
+    assert!(model.set_surface_agent_session_lifecycle(
+        &surface_id,
+        forktty_core::AgentSessionLifecycle::NeedsInput,
+    ));
+    let (statuses, progress) = sidebar_visible_metadata(&model, &workspace, &[], &[]);
+    assert_eq!(statuses[0].value, "Needs input");
+    assert_eq!(
+        workspace_status_badge(&workspace, &statuses, &progress, None)
+            .unwrap()
+            .label,
+        "Input"
+    );
+
+    assert!(model.set_surface_agent_session_lifecycle(
+        &surface_id,
+        forktty_core::AgentSessionLifecycle::Idle,
+    ));
+    let (statuses, progress) = sidebar_visible_metadata(&model, &workspace, &[], &[]);
+    assert!(statuses.is_empty());
+    assert!(workspace_status_badge(&workspace, &statuses, &progress, None).is_none());
+
+    assert!(model.set_surface_agent_session_lifecycle(
+        &surface_id,
+        forktty_core::AgentSessionLifecycle::Ended,
+    ));
+    let (statuses, progress) = sidebar_visible_metadata(&model, &workspace, &[], &[]);
+    assert!(statuses.is_empty());
+    assert!(workspace_status_badge(&workspace, &statuses, &progress, None).is_none());
+    assert!(model.list_status(&workspace_id).is_empty());
+}
+
+#[test]
 fn stale_surface_notification_does_not_target_workspace() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");

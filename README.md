@@ -529,8 +529,11 @@ sessions that need input, and can focus or resume a tracked agent. The GTK HUD
 and sidebar collapse raw lifecycle values into scan-friendly labels such as
 Working, Needs input, Done, and Idle; the socket/CLI surfaces keep the raw
 lifecycle values (`running`, `idle`, `needs_input`, `ended`, or `unknown`) when
-a provider session id has been persisted. Hook events drive the live state, and
-terminal child exit marks attached sessions `ended`. `forktty agents` and
+a provider session id has been persisted. If no primary hook status row is
+available, workspace rows fall back to actionable persisted lifecycle
+(`running` or `needs_input`) for Codex, Claude Code, Pi, OpenCode, Antigravity,
+and Grok; a real hook status row takes precedence. Hook events drive the live
+state, and terminal child exit marks attached sessions `ended`. `forktty agents` and
 `forktty agent-health` also expose persisted `resume_cwd`, `last_activity_ms`,
 `source`, response `observed_at_ms`, and nullable `age_ms` so delayed
 agent state can be compared with terminal evidence. Agent rows also include
@@ -722,6 +725,10 @@ blocking per-tool hooks on every tool call; pass `--full` to include
 Re-running setup migrates Claude to
 the lifecycle profile unless `--full` is passed. `hooks remove` removes only
 ForkTTY-managed entries/plugins and leaves unrelated agent hooks in place.
+Codex ties non-managed hook approval to the hook definition's current hash:
+after `hooks setup` changes Codex entries, open `/hooks` inside Codex to review
+them. ForkTTY reports whether trust records exist but cannot verify that their
+stored hashes match the current definitions.
 `hooks remove gemini` is kept only to clean legacy ForkTTY-managed
 `~/.gemini/settings.json` entries from older releases; Gemini setup remains
 unsupported.

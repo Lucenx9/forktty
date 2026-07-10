@@ -52,6 +52,10 @@ Each setup run writes the agent config or generated plugin atomically
 (tmp + rename) and, when content changes, leaves a timestamped `.bak-*`
 backup next to the original. The OpenCode file is intentionally generated
 under its plugins directory so `opencode.json` does not need to be edited.
+When Codex hook definitions change, setup output and the GTK auto-refresh
+notification direct the user to `/hooks` inside Codex: Codex approves each
+non-managed hook by its current definition hash, so a previous approval may no
+longer apply after an update.
 `forktty hooks remove` deletes only ForkTTY-managed entries or the generated
 OpenCode plugin; custom hook commands are preserved. `forktty hooks remove
 gemini` is retained only to remove ForkTTY-managed entries from legacy
@@ -202,8 +206,9 @@ records per-hook trust approvals under `[hooks.state]` in its `config.toml`,
 and an installed hook with no record silently does nothing until it is
 approved via `/hooks` inside Codex. `trustCheck.status` is `all_recorded`,
 `partial`, or `none_recorded`, with the affected events listed in
-`unrecordedEvents`. This is informational — the approval semantics belong to
-Codex.
+`unrecordedEvents`. `currentHashesVerified` is always `false`: ForkTTY can
+detect trust records but cannot prove that their hashes match the current hook
+definitions. This is informational — the approval semantics belong to Codex.
 
 ## Status entries published by hooks
 

@@ -981,7 +981,7 @@ pub(super) fn sidebar_visible_metadata(
 ) -> (Vec<StatusEntry>, Vec<ProgressEntry>) {
     let workspace_surface_ids = collect_leaves(&workspace.pane_tree);
     let active_agent_aliases = active_agent_metadata_aliases(model, &workspace.id);
-    let statuses = statuses
+    let mut statuses = statuses
         .iter()
         .filter(|status| {
             sidebar_metadata_key_is_visible(
@@ -992,6 +992,7 @@ pub(super) fn sidebar_visible_metadata(
         })
         .cloned()
         .collect::<Vec<_>>();
+    append_agent_lifecycle_statuses(model, &workspace.id, &mut statuses);
     let progress = progress
         .iter()
         .filter(|progress| {
@@ -1004,6 +1005,84 @@ pub(super) fn sidebar_visible_metadata(
         .cloned()
         .collect::<Vec<_>>();
     (statuses, progress)
+}
+
+fn append_agent_lifecycle_statuses(
+    model: &forktty_core::WorkspaceModel,
+    workspace_id: &str,
+    statuses: &mut Vec<StatusEntry>,
+) {
+    let sessions = model
+        .list_surfaces(Some(workspace_id))
+        .into_iter()
+        .filter_map(|surface| surface.agent_session)
+        .collect::<Vec<_>>();
+
+    for agent in [
+        forktty_core::AgentKind::Codex,
+        forktty_core::AgentKind::ClaudeCode,
+        forktty_core::AgentKind::Pi,
+        forktty_core::AgentKind::OpenCode,
+        forktty_core::AgentKind::Antigravity,
+        forktty_core::AgentKind::Grok,
+        forktty_core::AgentKind::Custom,
+    ] {
+        let aliases = forktty_core::agents::agent_metadata_aliases(agent);
+        let has_primary_status = statuses.iter().any(|status| {
+            status
+                .key
+                .strip_prefix("agent:")
+                .is_some_and(|key| aliases.contains(&key))
+        });
+        if has_primary_status {
+            continue;
+        }
+
+        let lifecycle = sessions
+            .iter()
+            .filter(|session| session.agent == agent)
+            .map(|session| session.lifecycle)
+            .min_by_key(|lifecycle| match lifecycle {
+                forktty_core::AgentSessionLifecycle::NeedsInput => 0,
+                forktty_core::AgentSessionLifecycle::Running => 1,
+                _ => 2,
+            });
+        let Some((value, color)) = lifecycle.and_then(agent_lifecycle_sidebar_status) else {
+            continue;
+        };
+        let (key, label) = sidebar_agent_identity(agent);
+        statuses.push(StatusEntry {
+            key: format!("agent:{key}"),
+            label: label.to_string(),
+            value: value.to_string(),
+            color: Some(color.to_string()),
+        });
+    }
+}
+
+fn agent_lifecycle_sidebar_status(
+    lifecycle: forktty_core::AgentSessionLifecycle,
+) -> Option<(&'static str, &'static str)> {
+    match lifecycle {
+        forktty_core::AgentSessionLifecycle::Running => Some(("Running", "blue")),
+        forktty_core::AgentSessionLifecycle::NeedsInput => Some(("Needs input", "yellow")),
+        forktty_core::AgentSessionLifecycle::Idle
+        | forktty_core::AgentSessionLifecycle::Suspended
+        | forktty_core::AgentSessionLifecycle::Ended
+        | forktty_core::AgentSessionLifecycle::Unknown => None,
+    }
+}
+
+fn sidebar_agent_identity(agent: forktty_core::AgentKind) -> (&'static str, &'static str) {
+    match agent {
+        forktty_core::AgentKind::ClaudeCode => ("claude", "Claude"),
+        forktty_core::AgentKind::Codex => ("codex", "Codex"),
+        forktty_core::AgentKind::Antigravity => ("antigravity", "Antigravity"),
+        forktty_core::AgentKind::Grok => ("grok", "Grok"),
+        forktty_core::AgentKind::Pi => ("pi", "Pi"),
+        forktty_core::AgentKind::OpenCode => ("opencode", "OpenCode"),
+        forktty_core::AgentKind::Custom => ("custom", "Agent"),
+    }
 }
 
 fn active_agent_metadata_aliases(

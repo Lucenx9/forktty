@@ -45,6 +45,31 @@ pub(super) struct AgentSetupAutoRefresh {
     pub(super) errors: Vec<String>,
 }
 
+pub(super) fn agent_integration_refresh_message(outcome: &AgentSetupAutoRefresh) -> Option<String> {
+    let mut parts = Vec::new();
+    if !outcome.hooks_updated.is_empty() {
+        parts.push(format!("hooks: {}", outcome.hooks_updated.join(", ")));
+    }
+    if !outcome.mcp_updated.is_empty() {
+        parts.push(format!("MCP: {}", outcome.mcp_updated.join(", ")));
+    }
+    if !outcome.skills_updated.is_empty() {
+        parts.push(format!("skills: {}", outcome.skills_updated.join(", ")));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+
+    let mut message = format!(
+        "Refreshed managed ForkTTY integrations ({})",
+        parts.join("; ")
+    );
+    if outcome.hooks_updated.iter().any(|agent| agent == "codex") {
+        message.push_str(". Open /hooks inside Codex to review the changed hook definitions.");
+    }
+    Some(message)
+}
+
 /// Run setup subcommands against this same binary. These commands are
 /// dispatched by the CLI layer before any GUI launch, so they write provider
 /// config files and skill directories without touching the socket server.
@@ -400,5 +425,27 @@ mod tests {
 
         assert_eq!(status.kind, AgentSetupStatusKind::UpdateAvailable);
         assert_eq!(status.action_label(), "Update");
+    }
+
+    #[test]
+    fn refresh_message_calls_out_codex_hook_trust_review() {
+        let outcome = AgentSetupAutoRefresh {
+            hooks_updated: vec!["codex".to_string(), "claude".to_string()],
+            mcp_updated: vec!["codex".to_string()],
+            ..AgentSetupAutoRefresh::default()
+        };
+
+        let message = agent_integration_refresh_message(&outcome).unwrap();
+        assert!(message.contains("hooks: codex, claude"));
+        assert!(message.contains("Open /hooks inside Codex"));
+
+        let outcome = AgentSetupAutoRefresh {
+            hooks_updated: vec!["claude".to_string()],
+            ..AgentSetupAutoRefresh::default()
+        };
+        assert!(!agent_integration_refresh_message(&outcome)
+            .unwrap()
+            .contains("/hooks"));
+        assert!(agent_integration_refresh_message(&AgentSetupAutoRefresh::default()).is_none());
     }
 }
