@@ -75,10 +75,17 @@ fn for_each_char_match_start(
         return;
     }
     let mut index = 0;
+    let first_needle = needle[0];
     while index + needle.len() <= haystack.len() {
-        let matched = haystack[index..index + needle.len()]
+        // Fast path: avoid slice slicing and zipping iterator overhead for the vast
+        // majority of positions where the first character doesn't even match.
+        if !chars_eq_ignore_case(haystack[index], first_needle) {
+            index += 1;
+            continue;
+        }
+        let matched = haystack[index + 1..index + needle.len()]
             .iter()
-            .zip(needle)
+            .zip(&needle[1..])
             .all(|(a, b)| chars_eq_ignore_case(*a, *b));
         if matched {
             if !visit(index) {
