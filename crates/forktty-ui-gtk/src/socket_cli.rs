@@ -81,6 +81,7 @@ use help::{
 use hooks::event::*;
 #[cfg(test)]
 use hooks::handle_hooks;
+#[cfg(feature = "gtk-ghostty")]
 pub(crate) use hooks::hook_setup_reminder_message;
 #[cfg(test)]
 use hooks::install::*;
