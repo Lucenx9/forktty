@@ -190,8 +190,8 @@ fn spawn_request_reapplies_persisted_bypass_permission_mode() {
     assert_eq!(request.cwd, PathBuf::from("/tmp/forktty-project"));
 }
 
-#[test]
 #[serial_test::serial]
+#[test]
 fn spawn_request_uses_codex_session_cwd_fallback_when_not_persisted() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project");

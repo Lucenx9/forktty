@@ -125,8 +125,8 @@ fn agent_health_marks_resume_command_ready_when_provider_is_on_path() {
     );
 }
 
-#[test]
 #[serial_test::serial]
+#[test]
 fn agent_health_uses_codex_session_cwd_fallback_when_not_persisted() {
     use std::io::Write as _;
     use std::os::unix::fs::PermissionsExt as _;
