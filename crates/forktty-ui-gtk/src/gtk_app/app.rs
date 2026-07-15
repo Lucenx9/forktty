@@ -3,7 +3,7 @@
 use super::*;
 
 const TERMINAL_FRAME_INTERVAL: Duration = Duration::from_millis(16);
-const TERMINAL_LAYOUT_SYNC_INTERVAL: Duration = Duration::from_millis(500);
+const WORKBENCH_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
 
 pub(super) fn install_gtk_runtime_defaults() {
     if std::env::var_os("GSK_RENDERER").is_none() {
@@ -578,59 +578,38 @@ pub(super) fn build_ui(app: &adw::Application) {
         }
         glib::ControlFlow::Continue
     });
-    let controller_for_layout_timer = controller.clone();
-    let alive_for_layout_timer = ui_alive.clone();
-    glib::timeout_add_local(TERMINAL_LAYOUT_SYNC_INTERVAL, move || {
-        if !alive_for_layout_timer.get() {
+    refresh_sidebar(&sidebar_ui, &state, &controller, true);
+    let state_for_workbench_refresh = state.clone();
+    let controller_for_workbench_refresh = controller.clone();
+    let sidebar_ui_for_workbench_refresh = sidebar_ui.clone();
+    let notifications_for_workbench_refresh = notifications.clone();
+    let agents_for_workbench_refresh = agents.clone();
+    let agent_badge_for_workbench_refresh = agent_badge.clone();
+    let alive_for_workbench_refresh = ui_alive.clone();
+    glib::timeout_add_local(WORKBENCH_REFRESH_INTERVAL, move || {
+        if !alive_for_workbench_refresh.get() {
             return glib::ControlFlow::Break;
         }
-        // Keep socket/model-driven focus or title changes visible without
-        // rewriting chrome widgets every frame. The controller skips unchanged
-        // chrome signatures, so idle windows do no GTK label/class churn.
-        controller_for_layout_timer
+        // Keep socket/model-driven state visible without four independent
+        // timers waking at the same cadence. Each renderer skips unchanged
+        // signatures or values, so idle windows do no GTK widget churn.
+        controller_for_workbench_refresh
             .borrow_mut()
             .ensure_layout_current();
-        glib::ControlFlow::Continue
-    });
-    refresh_sidebar(&sidebar_ui, &state, &controller, true);
-    let state_for_sidebar = state.clone();
-    let controller_for_sidebar = controller.clone();
-    let sidebar_ui_for_timer = sidebar_ui.clone();
-    let alive_for_sidebar_timer = ui_alive.clone();
-    glib::timeout_add_local(Duration::from_millis(500), move || {
-        if !alive_for_sidebar_timer.get() {
-            return glib::ControlFlow::Break;
-        }
         refresh_sidebar(
-            &sidebar_ui_for_timer,
-            &state_for_sidebar,
-            &controller_for_sidebar,
+            &sidebar_ui_for_workbench_refresh,
+            &state_for_workbench_refresh,
+            &controller_for_workbench_refresh,
             false,
         );
-        glib::ControlFlow::Continue
-    });
-    let notifications_for_timer = notifications.clone();
-    let state_for_notifications_timer = state.clone();
-    let alive_for_notifications_timer = ui_alive.clone();
-    glib::timeout_add_local(Duration::from_millis(500), move || {
-        if !alive_for_notifications_timer.get() {
-            return glib::ControlFlow::Break;
-        }
-        refresh_notification_indicator(&notifications_for_timer, &state_for_notifications_timer);
-        glib::ControlFlow::Continue
-    });
-    let agents_for_timer = agents.clone();
-    let agent_badge_for_timer = agent_badge.clone();
-    let state_for_agents_timer = state.clone();
-    let alive_for_agents_timer = ui_alive.clone();
-    glib::timeout_add_local(Duration::from_millis(500), move || {
-        if !alive_for_agents_timer.get() {
-            return glib::ControlFlow::Break;
-        }
+        refresh_notification_indicator(
+            &notifications_for_workbench_refresh,
+            &state_for_workbench_refresh,
+        );
         refresh_agent_indicator(
-            &agents_for_timer,
-            &agent_badge_for_timer,
-            &state_for_agents_timer,
+            &agents_for_workbench_refresh,
+            &agent_badge_for_workbench_refresh,
+            &state_for_workbench_refresh,
         );
         glib::ControlFlow::Continue
     });

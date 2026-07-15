@@ -201,7 +201,7 @@ pub(super) fn show_settings_dialog_page(
     stack.add_named(&worktrees_page, Some("worktrees"));
 
     let (agents_page, agents_content) = settings_page("Agents", "Agent integrations.");
-    let (agent_setup_section, agent_setup_list) = settings_section("Recommended", "");
+    let (agent_setup_section, agent_setup_list) = settings_section("Optional", "");
     let all_setup_row = settings_action_row(
         "Agent hooks",
         "Install lifecycle and notification hooks for supported coding agents.",
@@ -298,7 +298,7 @@ pub(super) fn show_settings_dialog_page(
     let (local_first_section, local_first_list) = settings_section("Local-first by design", "");
     for line in [
         "All workspace and session data stays on this machine.",
-        "Agent coordination runs over an owner-only local Unix socket.",
+        "Terminal automation and agent lifecycle metadata use an owner-only local Unix socket.",
         "No cloud sync; anonymous daily ping is controlled below.",
     ] {
         let row = settings_action_row(line, "");

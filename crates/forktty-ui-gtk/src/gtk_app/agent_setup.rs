@@ -1,6 +1,6 @@
 use super::*;
 use serde::Deserialize;
-use std::fs;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AgentSetupStatusKind {
@@ -30,9 +30,8 @@ impl AgentSetupStatus {
 
 #[derive(Debug, Deserialize)]
 struct SetupSummary {
+    agent: String,
     changed: bool,
-    #[serde(rename = "configPath")]
-    config_path: PathBuf,
 }
 
 /// Run setup subcommands against this same binary. These commands are
@@ -44,7 +43,18 @@ pub(super) fn run_agent_integrations_setup() -> Result<(), String> {
 
 pub(super) fn run_agent_hooks_setup() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|err| err.to_string())?;
-    run_setup_subcommand(&exe, &["hooks", "setup"])
+    let remove_output =
+        run_setup_subcommand_output(&exe, &["--json", "hooks", "remove", "--dry-run"])?;
+    let removal_summaries: Vec<SetupSummary> =
+        serde_json::from_slice(&remove_output).map_err(|err| err.to_string())?;
+    if removal_summaries.is_empty() {
+        return Err("Agent hooks status returned no integrations.".to_string());
+    }
+    let installed_agents = removal_summaries
+        .into_iter()
+        .filter_map(|summary| summary.changed.then_some(summary.agent))
+        .collect::<Vec<_>>();
+    run_setup_subcommand(&exe, &hook_setup_args(&installed_agents))
 }
 
 pub(super) fn inspect_agent_integrations_setup() -> AgentSetupStatus {
@@ -59,7 +69,13 @@ pub(super) fn inspect_agent_hooks_setup() -> AgentSetupStatus {
     )
 }
 
-fn run_setup_subcommand(exe: &Path, args: &[&str]) -> Result<(), String> {
+fn hook_setup_args(installed_agents: &[String]) -> Vec<String> {
+    let mut args = vec!["hooks".to_string(), "setup".to_string()];
+    args.extend(installed_agents.iter().cloned());
+    args
+}
+
+fn run_setup_subcommand(exe: &Path, args: &[String]) -> Result<(), String> {
     let output = Command::new(exe)
         .args(args)
         .stdin(Stdio::null())
@@ -78,13 +94,17 @@ fn run_setup_subcommand(exe: &Path, args: &[&str]) -> Result<(), String> {
 }
 
 fn inspect_setup_subcommand(label: &str, detail_label: &str, args: &[&str]) -> AgentSetupStatus {
-    let result = (|| -> Result<Vec<SetupSummary>, String> {
+    let result = (|| -> Result<(Vec<SetupSummary>, Vec<SetupSummary>), String> {
         let exe = std::env::current_exe().map_err(|err| err.to_string())?;
-        let output = run_setup_subcommand_output(&exe, args)?;
-        serde_json::from_slice(&output).map_err(|err| err.to_string())
+        let setup_output = run_setup_subcommand_output(&exe, args)?;
+        let remove_output =
+            run_setup_subcommand_output(&exe, &["--json", "hooks", "remove", "--dry-run"])?;
+        let setup = serde_json::from_slice(&setup_output).map_err(|err| err.to_string())?;
+        let remove = serde_json::from_slice(&remove_output).map_err(|err| err.to_string())?;
+        Ok((setup, remove))
     })();
     match result {
-        Ok(summaries) => classify_setup_summaries(label, detail_label, &summaries),
+        Ok((setup, remove)) => classify_setup_summaries(label, detail_label, &setup, &remove),
         Err(err) => AgentSetupStatus {
             kind: AgentSetupStatusKind::CheckFailed,
             label: "Check failed".to_string(),
@@ -114,37 +134,54 @@ fn run_setup_subcommand_output(exe: &Path, args: &[&str]) -> Result<Vec<u8>, Str
 fn classify_setup_summaries(
     label: &str,
     detail_label: &str,
-    summaries: &[SetupSummary],
+    setup_summaries: &[SetupSummary],
+    removal_summaries: &[SetupSummary],
 ) -> AgentSetupStatus {
-    if summaries.is_empty() {
+    if setup_summaries.is_empty() || removal_summaries.is_empty() {
         return AgentSetupStatus {
             kind: AgentSetupStatusKind::CheckFailed,
             label: "Check failed".to_string(),
             detail: format!("{detail_label} status returned no integrations."),
         };
     }
-    if summaries.iter().all(|summary| !summary.changed) {
+    if !removal_summaries.iter().any(|summary| summary.changed) {
         return AgentSetupStatus {
-            kind: AgentSetupStatusKind::UpToDate,
-            label: "Up to date".to_string(),
-            detail: format!("{detail_label} are installed for this ForkTTY build."),
-        };
-    }
-    if summaries
-        .iter()
-        .any(|summary| fs::symlink_metadata(&summary.config_path).is_ok())
-    {
-        AgentSetupStatus {
-            kind: AgentSetupStatusKind::UpdateAvailable,
-            label: "Update available".to_string(),
-            detail: format!("Re-run setup to refresh managed {label} entries."),
-        }
-    } else {
-        AgentSetupStatus {
             kind: AgentSetupStatusKind::NotInstalled,
             label: "Not installed".to_string(),
             detail: format!("{detail_label} are not installed yet."),
-        }
+        };
+    }
+    let installed_agents = removal_summaries
+        .iter()
+        .filter(|summary| summary.changed)
+        .map(|summary| summary.agent.as_str())
+        .collect::<HashSet<_>>();
+    if !installed_agents.iter().all(|agent| {
+        setup_summaries
+            .iter()
+            .any(|summary| summary.agent == *agent)
+    }) {
+        return AgentSetupStatus {
+            kind: AgentSetupStatusKind::CheckFailed,
+            label: "Check failed".to_string(),
+            detail: format!("{detail_label} status returned inconsistent integrations."),
+        };
+    }
+    if setup_summaries
+        .iter()
+        .filter(|summary| installed_agents.contains(summary.agent.as_str()))
+        .all(|summary| !summary.changed)
+    {
+        return AgentSetupStatus {
+            kind: AgentSetupStatusKind::UpToDate,
+            label: "Up to date".to_string(),
+            detail: format!("Installed {detail_label} are current for this ForkTTY build."),
+        };
+    }
+    AgentSetupStatus {
+        kind: AgentSetupStatusKind::UpdateAvailable,
+        label: "Update available".to_string(),
+        detail: format!("Re-run setup to refresh managed {label} entries."),
     }
 }
 
@@ -152,20 +189,20 @@ fn classify_setup_summaries(
 mod tests {
     use super::*;
 
-    fn summary(path: PathBuf, changed: bool) -> SetupSummary {
+    fn summary(agent: &str, changed: bool) -> SetupSummary {
         SetupSummary {
+            agent: agent.to_string(),
             changed,
-            config_path: path,
         }
     }
 
     #[test]
     fn setup_status_is_up_to_date_when_dry_run_has_no_changes() {
-        let dir = tempfile::tempdir().expect("tempdir");
         let status = classify_setup_summaries(
             "Hooks",
             "Agent hooks",
-            &[summary(dir.path().join("hooks.json"), false)],
+            &[summary("codex", false)],
+            &[summary("codex", true)],
         );
 
         assert_eq!(status.kind, AgentSetupStatusKind::UpToDate);
@@ -173,12 +210,12 @@ mod tests {
     }
 
     #[test]
-    fn setup_status_is_not_installed_when_dry_run_would_create_missing_configs() {
-        let dir = tempfile::tempdir().expect("tempdir");
+    fn setup_status_is_not_installed_when_provider_config_exists_without_managed_hooks() {
         let status = classify_setup_summaries(
             "Hooks",
             "Agent hooks",
-            &[summary(dir.path().join("missing-hooks.json"), true)],
+            &[summary("codex", true)],
+            &[summary("codex", false)],
         );
 
         assert_eq!(status.kind, AgentSetupStatusKind::NotInstalled);
@@ -187,12 +224,30 @@ mod tests {
 
     #[test]
     fn setup_status_is_update_available_when_existing_configs_would_change() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("hooks.json");
-        fs::write(&path, "{}").expect("write config");
-        let status = classify_setup_summaries("Hooks", "Agent hooks", &[summary(path, true)]);
+        let status = classify_setup_summaries(
+            "Hooks",
+            "Agent hooks",
+            &[summary("codex", true)],
+            &[summary("codex", true)],
+        );
 
         assert_eq!(status.kind, AgentSetupStatusKind::UpdateAvailable);
         assert_eq!(status.action_label(), "Update");
+    }
+
+    #[test]
+    fn setup_status_ignores_intentionally_absent_providers() {
+        let status = classify_setup_summaries(
+            "Hooks",
+            "Agent hooks",
+            &[summary("codex", false), summary("claude", true)],
+            &[summary("codex", true), summary("claude", false)],
+        );
+
+        assert_eq!(status.kind, AgentSetupStatusKind::UpToDate);
+        assert_eq!(
+            hook_setup_args(&["codex".to_string()]),
+            ["hooks", "setup", "codex"]
+        );
     }
 }

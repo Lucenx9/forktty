@@ -2793,10 +2793,31 @@ fn settings_dialog_covers_workbench_layout_and_privacy_sections() {
         .contains("show_worktree_dialog(&parent_for_worktrees, &state_for_worktrees)"));
     assert!(settings_source.contains("model.clear_notifications()"));
     assert!(settings_source.contains("run_agent_integrations_setup"));
+    assert!(settings_source.contains("settings_section(\"Optional\", \"\")"));
     assert!(settings_source.contains("settings_section(\"Local-first by design\", \"\")"));
+    assert!(settings_source.contains(
+        "Terminal automation and agent lifecycle metadata use an owner-only local Unix socket."
+    ));
+    assert!(!settings_source.contains("Agent coordination runs"));
     assert!(settings_source.contains("No cloud sync; anonymous daily ping is controlled below."));
     assert!(!settings_source.contains("No cloud sync. No analytics."));
     assert!(settings_source.contains("settings_section(\"Stored data locations\", \"\")"));
+}
+
+#[test]
+fn workbench_state_uses_one_periodic_refresh_source() {
+    let app_source = include_str!("app.rs");
+
+    assert_eq!(
+        app_source
+            .matches("timeout_add_local(WORKBENCH_REFRESH_INTERVAL")
+            .count(),
+        1
+    );
+    assert!(!app_source.contains("alive_for_layout_timer"));
+    assert!(!app_source.contains("alive_for_sidebar_timer"));
+    assert!(!app_source.contains("alive_for_notifications_timer"));
+    assert!(!app_source.contains("alive_for_agents_timer"));
 }
 
 #[test]

@@ -22,6 +22,8 @@ All notable changes to ForkTTY are documented here.
   primitives remain available through the owner-only Unix socket and CLI.
 - Agent hooks are now explicitly opt-in: GTK may show a setup reminder, but it
   never installs or refreshes hook configuration in the background.
+- Consolidated the four identical 500 ms workbench refresh sources into one
+  callback for layout, sidebar, notification badge, and agent badge updates.
 - Reframed the workbench around the embedded Ghostty terminal, workspace
   sidebar, tabs/splits, navigation, notifications, and status bar; removed
   orchestration-only chrome and its periodic refresh work.
@@ -51,6 +53,11 @@ All notable changes to ForkTTY are documented here.
   recessed with @ft_line hairlines and no shadow; pane badges also cleaned.
 
 ### Fixed
+- Agent integration settings now distinguish an existing provider config from
+  installed ForkTTY hooks, so a clean system shows `Not installed` instead of
+  the misleading `Update available`; updates and repairs preserve intentionally
+  absent providers, the section is labelled optional, and it no longer
+  describes the removed coordination layer.
 - Bounded `context.snapshot` to the newest 100 matching notifications and
   omitted binary terminal icon data while evaluating prompt risk across the
   full matching set, preventing untrusted OSC icon payloads from exceeding the
