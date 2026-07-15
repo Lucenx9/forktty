@@ -13,43 +13,27 @@ mod context_runtime;
 mod coordinator;
 mod dispatcher;
 mod errors;
-mod feed_events;
-mod feed_params;
-mod feed_runtime;
-mod feed_view;
 mod hook_session;
 mod metadata_helpers;
 mod metadata_params;
 mod metadata_runtime;
 mod methods;
 mod notification_dispatch;
-mod orchestration_cleanup_runtime;
 mod param_helpers;
 mod path_resolver;
 mod project_action_params;
 mod project_action_runtime;
-mod provider_runtime;
 mod remote;
 mod response_encoding;
 mod socket_bind;
 mod status_runtime;
-mod store_access;
 mod surface_lifecycle;
 mod surface_runtime;
 mod system_runtime;
-mod task_strategy_params;
-mod task_strategy_runtime;
-mod team_dispatch;
-mod team_params;
-mod team_provider;
-mod team_runtime;
-mod team_state;
 mod terminal_text_params;
 mod topology_params;
 mod topology_runtime;
 mod topology_view;
-mod workflow_params;
-mod workflow_runtime;
 mod workspace_runtime;
 mod worktree_params;
 mod worktree_runtime;
@@ -81,14 +65,9 @@ use forktty_core::AgentKind;
 use forktty_core::AgentSessionLifecycle;
 #[cfg(test)]
 use forktty_core::JsonRpcResponse;
-#[cfg(test)]
-use forktty_core::SplitAxis;
 #[cfg(all(test, feature = "browser"))]
 use forktty_core::MAX_BROWSER_URL_BYTES;
-use forktty_core::{
-    BrowserCommand, FeedApprovalState, FeedEntry, FeedEntryType, FeedStore, NotificationItem,
-    NotificationKind, WorkspaceModel,
-};
+use forktty_core::{BrowserCommand, WorkspaceModel};
 use forktty_terminal::SharedTerminalBackend;
 #[cfg(test)]
 use forktty_terminal::SpawnRequest;
@@ -105,7 +84,9 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener as StdUnixListener;
 #[cfg(test)]
 use std::os::unix::net::UnixStream as StdUnixStream;
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::atomic::Ordering;
 #[cfg(test)]
@@ -144,17 +125,16 @@ pub use dispatcher::dispatch;
 pub(crate) use dispatcher::method_allowed_from_socket;
 pub use errors::{DispatchError, SocketError};
 pub(crate) use metadata_helpers::{
-    agent_kind_from_permission_status_key, agent_kind_from_provider_alias,
-    agent_kind_from_status_key, log_level_from_params, notification_body_from_params,
-    notification_kind_from_params, notification_title_from_params, optional_hook_status_metadata,
-    resolve_notification_target, resolve_workspace_id_for_metadata, status_color_from_params,
+    agent_kind_from_permission_status_key, agent_kind_from_status_key, log_level_from_params,
+    notification_body_from_params, notification_kind_from_params, notification_title_from_params,
+    optional_hook_status_metadata, resolve_notification_target, resolve_workspace_id_for_metadata,
+    status_color_from_params,
 };
 #[cfg(test)]
 pub(crate) use param_helpers::MAX_METADATA_TEXT_BYTES;
 pub(crate) use param_helpers::{
     ensure_max_text_size, format_param_names, optional_bool_param, optional_f64,
-    optional_limit_param, optional_non_blank_string_param, optional_string_array_param,
-    optional_string_param, optional_surface_id_param, optional_u64_param,
+    optional_non_blank_string_param, optional_surface_id_param, optional_u64_param,
     optional_workspace_create_name_from_params, required_f64, required_string,
     required_string_param, required_surface_id, required_trimmed_string, split_axis_from_params,
     workspace_selector_from_params, workspace_selector_params, WorkspaceSelectorKind,
@@ -178,8 +158,6 @@ pub(crate) use surface_lifecycle::{
     spawn_surface_terminal, spawn_terminal_surfaces, spawn_workspace_terminal,
     surface_effective_project_cwd,
 };
-#[cfg(test)]
-pub(crate) use team_provider::{team_worker_launch_command, CLAUDE_TEAM_REVIEW_ALLOWED_TOOLS};
 pub(crate) use terminal_text_params::{
     terminal_tail_lines_from_params, terminal_text_capture_from_params,
     terminal_text_max_bytes_from_params, MAX_CAPTURE_TAIL_LINES, MAX_TERMINAL_TEXT_BYTES,
@@ -190,6 +168,7 @@ const MAX_SEND_TEXT_BYTES: usize = protocol_limits::SOCKET_SEND_TEXT_MAX_BYTES;
 const DEFAULT_CONTEXT_SNAPSHOT_TAIL_LINES: usize = 40;
 const DEFAULT_CONTEXT_SNAPSHOT_TAIL_MAX_BYTES: usize =
     protocol_limits::DEFAULT_CONTEXT_SNAPSHOT_TAIL_MAX_BYTES;
+const MAX_CONTEXT_SNAPSHOT_NOTIFICATIONS: usize = 100;
 const MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_SURFACES: usize = 16;
 const MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES: usize =
     protocol_limits::MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES;
@@ -218,7 +197,6 @@ const EVENTS_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const RESPONSE_WRITE_TIMEOUT: Duration = protocol_limits::SOCKET_RESPONSE_WRITE_TIMEOUT;
 const HOOK_SESSION_TARGET_CAPACITY: usize = 256;
 const DEFAULT_AGENT_RECLAIM_MIN_IDLE_MS: u64 = 10 * 60 * 1_000;
-const DEFAULT_TEAM_WORKER_STALE_MS: u64 = 5 * 60 * 1_000;
 
 #[derive(Clone)]
 pub struct SocketAppState {
@@ -227,9 +205,7 @@ pub struct SocketAppState {
     pub terminal: SharedTerminalBackend,
     pub shell: String,
     pub socket_path: PathBuf,
-    pub workflow_store_path: Option<PathBuf>,
     pub notification_dispatch: bool,
-    pub team_store_path: Option<PathBuf>,
     /// Broadcast channel feeding `events.subscribe` connections. The background
     /// tick task in [`serve`] is the sole producer.
     pub events: broadcast::Sender<ModelEvent>,
@@ -237,7 +213,6 @@ pub struct SocketAppState {
     /// engine is wired (no `browser` feature, or headless), in which case the
     /// browser scripting verbs report unavailable.
     pub browser_cmd: Option<async_channel::Sender<BrowserCommand>>,
-    feed_store: Arc<Mutex<Option<FeedStore>>>,
     hook_session_targets: Arc<Mutex<hook_session::HookSessionTargets>>,
     coordinator: Arc<SocketCoordinator>,
 }
@@ -256,16 +231,9 @@ impl SocketAppState {
             terminal,
             shell: shell.into(),
             socket_path: socket_path.into(),
-            workflow_store_path: forktty_core::workflow_store_path().ok(),
             notification_dispatch: true,
-            team_store_path: if cfg!(test) {
-                None
-            } else {
-                forktty_core::team_store_path().ok()
-            },
             events,
             browser_cmd: None,
-            feed_store: Arc::new(Mutex::new(None)),
             hook_session_targets: Arc::new(Mutex::new(hook_session::HookSessionTargets::default())),
             coordinator: Arc::new(SocketCoordinator::default()),
         }
@@ -280,207 +248,6 @@ impl SocketAppState {
         self.browser_cmd = Some(sender);
         self
     }
-
-    pub fn with_workflow_store_path(mut self, path: impl Into<PathBuf>) -> Self {
-        self.workflow_store_path = Some(path.into());
-        self
-    }
-
-    pub fn with_default_feed_store(self) -> Self {
-        match FeedStore::open_default() {
-            Ok(Some(store)) => self.with_feed_store(store),
-            Ok(None) => self,
-            Err(err) => {
-                eprintln!("forktty feed history disabled: {err}");
-                self
-            }
-        }
-    }
-
-    pub fn with_feed_store_path(self, path: impl AsRef<Path>) -> Result<Self, String> {
-        FeedStore::open_at(path)
-            .map(|store| self.with_feed_store(store))
-            .map_err(|err| err.to_string())
-    }
-
-    fn with_feed_store(self, store: FeedStore) -> Self {
-        if let Ok(mut feed_store) = self.feed_store.lock() {
-            *feed_store = Some(store);
-        }
-        self
-    }
-
-    pub fn mark_notification_feed_entries_cleared(&self, notifications: &[NotificationItem]) {
-        let prompt_ids = notifications
-            .iter()
-            .filter(|notification| notification.kind == NotificationKind::Prompt)
-            .map(feed_events::feed_notification_entry_id)
-            .collect::<Vec<_>>();
-        let notification_ids = notifications
-            .iter()
-            .filter(|notification| notification.kind != NotificationKind::Prompt)
-            .map(feed_events::feed_notification_entry_id)
-            .collect::<Vec<_>>();
-        if prompt_ids.is_empty() && notification_ids.is_empty() {
-            return;
-        }
-        let Ok(mut store) = self.feed_store.lock() else {
-            return;
-        };
-        let Some(store) = store.as_mut() else {
-            return;
-        };
-        if let Err(err) = store.mark_approvals(prompt_ids, FeedApprovalState::Dismissed) {
-            eprintln!("forktty feed history dismiss update failed: {err}");
-        }
-        if let Err(err) = store.mark_notifications_read(notification_ids) {
-            eprintln!("forktty feed history read update failed: {err}");
-        }
-    }
-
-    pub fn pending_feed_approval_count(&self) -> Option<usize> {
-        Some(self.pending_feed_approval_entries(usize::MAX)?.len())
-    }
-
-    pub fn pending_feed_approval_summaries(&self, limit: usize) -> Option<Vec<String>> {
-        Some(
-            self.pending_feed_approvals(limit)?
-                .into_iter()
-                .map(|approval| approval.title)
-                .collect(),
-        )
-    }
-
-    /// Newest-first pending approval requests with the identifiers needed to
-    /// decide them from a visible UI action.
-    pub fn pending_feed_approvals(&self, limit: usize) -> Option<Vec<PendingFeedApproval>> {
-        Some(
-            self.pending_feed_approval_entries(limit.max(1))?
-                .into_iter()
-                .map(|entry| {
-                    let title = if entry.title.trim().is_empty() {
-                        entry.id.clone()
-                    } else {
-                        entry.title
-                    };
-                    PendingFeedApproval {
-                        id: entry.id,
-                        title,
-                        workspace_id: entry.workspace_id,
-                        surface_id: entry.surface_id,
-                        created_at_ms: entry.created_at_ms,
-                    }
-                })
-                .collect(),
-        )
-    }
-
-    fn pending_feed_approval_entries(&self, limit: usize) -> Option<Vec<FeedEntry>> {
-        let entries = {
-            let store = self.feed_store.lock().ok()?;
-            let store = store.as_ref()?;
-            store.list(None, usize::MAX)
-        };
-        let model = self.model.lock().ok()?;
-        Some(
-            entries
-                .into_iter()
-                .filter(|entry| {
-                    entry.entry_type == FeedEntryType::Approval
-                        && entry.approval_state == Some(FeedApprovalState::Pending)
-                        && !feed_view::feed_entry_is_stale(&model, entry)
-                })
-                .take(limit)
-                .collect(),
-        )
-    }
-
-    /// Feed history target identifiers, shaped for session bootstrap id
-    /// reservation. Unlike [`SocketAppState::pending_feed_approvals`], this
-    /// includes stale or finalized entries because even non-actionable history
-    /// should not be confused with a newly generated workspace or surface id.
-    pub fn feed_record_targets_for_reservation(&self) -> Option<Vec<FeedRecordTarget>> {
-        let store = self.feed_store.lock().ok()?;
-        let store = store.as_ref()?;
-        Some(
-            store
-                .list(None, usize::MAX)
-                .into_iter()
-                .filter_map(|entry| {
-                    if entry.workspace_id.is_none() && entry.surface_id.is_none() {
-                        return None;
-                    }
-                    Some(FeedRecordTarget {
-                        workspace_id: entry.workspace_id,
-                        surface_id: entry.surface_id,
-                    })
-                })
-                .collect(),
-        )
-    }
-
-    pub fn decide_feed_approval(&self, id: &str, state: FeedApprovalState) -> Result<(), String> {
-        let entry = {
-            let store = self
-                .feed_store
-                .lock()
-                .map_err(|_| "feed store lock poisoned".to_string())?;
-            let store = store
-                .as_ref()
-                .ok_or_else(|| "feed store not configured".to_string())?;
-            store
-                .list(None, usize::MAX)
-                .into_iter()
-                .find(|entry| entry.id == id && entry.entry_type == FeedEntryType::Approval)
-        };
-        if let Some(entry) = entry {
-            let model = self
-                .model
-                .lock()
-                .map_err(|_| "model lock poisoned".to_string())?;
-            if entry.approval_state == Some(FeedApprovalState::Pending)
-                && feed_view::feed_entry_is_stale(&model, &entry)
-            {
-                let mut store = self
-                    .feed_store
-                    .lock()
-                    .map_err(|_| "feed store lock poisoned".to_string())?;
-                let store = store
-                    .as_mut()
-                    .ok_or_else(|| "feed store not configured".to_string())?;
-                let _ = store.mark_approvals([id], FeedApprovalState::Stale);
-                return Err(format!("feed approval {id} is no longer active"));
-            }
-        }
-        let mut store = self
-            .feed_store
-            .lock()
-            .map_err(|_| "feed store lock poisoned".to_string())?;
-        let store = store
-            .as_mut()
-            .ok_or_else(|| "feed store not configured".to_string())?;
-        store
-            .decide_approval(id, state)
-            .map(|_| ())
-            .map_err(|err| err.to_string())
-    }
-}
-
-/// One pending Feed approval request, shaped for UI listing and decisions.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PendingFeedApproval {
-    pub id: String,
-    pub title: String,
-    pub workspace_id: Option<String>,
-    pub surface_id: Option<String>,
-    pub created_at_ms: u128,
-}
-
-/// One feed-history target reference used to reserve generated model ids.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FeedRecordTarget {
-    pub workspace_id: Option<String>,
-    pub surface_id: Option<String>,
 }
 
 pub async fn serve(listener: StdUnixListener, state: SocketAppState) -> Result<(), SocketError> {
@@ -582,9 +349,6 @@ fn spawn_event_tick(state: SocketAppState) {
                 Err(std::sync::TryLockError::Poisoned(_)) => continue,
             };
             let events = events::diff(&prev, &next);
-            if let Err(err) = feed_events::record_feed_events(&state, &events) {
-                eprintln!("forktty feed history update failed: {err}");
-            }
             for event in events {
                 let _ = state.events.send(event);
             }
@@ -627,7 +391,7 @@ mod tests {
     #[cfg(feature = "browser")]
     use std::sync::Barrier;
     use std::sync::{Arc, Mutex};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     mod agent_session;
@@ -638,20 +402,12 @@ mod tests {
     mod metadata;
     mod metadata_hooks;
     mod notification_feed;
-    mod orchestration_cleanup;
     mod protocol_dispatch;
     mod remote;
     mod socket_bind;
     mod spawn_request;
     mod surface_pane;
     mod system;
-    mod task_strategy;
-    mod team_health_finish;
-    mod team_message_dispatch;
-    mod team_provider;
-    mod team_state;
-    mod team_worker_runtime;
-    mod workflow;
     mod workspace_surface;
     mod worktree_project;
 
@@ -725,27 +481,6 @@ mod tests {
         assert_eq!(observed_path, original_path);
     }
 
-    #[test]
-    fn optional_limit_param_clamps_and_preserves_none() {
-        assert_eq!(optional_limit_param(&json!({}), "limit").unwrap(), None);
-        assert_eq!(
-            optional_limit_param(&json!({"limit": null}), "limit").unwrap(),
-            None
-        );
-        assert_eq!(
-            optional_limit_param(&json!({"limit": 5}), "limit").unwrap(),
-            Some(5)
-        );
-        assert_eq!(
-            optional_limit_param(&json!({"limit": u64::MAX}), "limit").unwrap(),
-            Some(10_000)
-        );
-        assert!(matches!(
-            optional_limit_param(&json!({"limit": "5"}), "limit"),
-            Err(DispatchError::InvalidParam(_))
-        ));
-    }
-
     /// RAII guard that sets an environment variable for the duration of a test
     /// and restores the previous value (or removes it) on drop, even on panic.
     ///
@@ -800,14 +535,13 @@ mod tests {
     fn test_state() -> (SocketAppState, Arc<HeadlessTerminalBackend>) {
         let model = Arc::new(Mutex::new(WorkspaceModel::new()));
         let backend = Arc::new(HeadlessTerminalBackend::new());
-        let mut state = SocketAppState::new(
+        let state = SocketAppState::new(
             model,
             backend.clone(),
             "/bin/sh",
             PathBuf::from("/tmp/forktty.sock"),
         )
         .with_notification_dispatch(false);
-        state.workflow_store_path = None;
         bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
         (state, backend)
     }
@@ -894,257 +628,6 @@ mod tests {
                 .values()
                 .cloned()
                 .collect())
-        }
-    }
-
-    #[derive(Debug, Default)]
-    struct ShowReadyBackend {
-        inner: HeadlessTerminalBackend,
-        not_ready_sends_after_show: AtomicUsize,
-        shown_surfaces: Mutex<Vec<String>>,
-    }
-
-    impl ShowReadyBackend {
-        fn with_not_ready_sends_after_show(count: usize) -> Self {
-            Self {
-                inner: HeadlessTerminalBackend::new(),
-                not_ready_sends_after_show: AtomicUsize::new(count),
-                shown_surfaces: Mutex::new(Vec::new()),
-            }
-        }
-
-        fn sent_text(&self, surface_id: &str) -> Result<Vec<String>, TerminalError> {
-            self.inner.sent_text(surface_id)
-        }
-
-        fn shown_surfaces(&self) -> Vec<String> {
-            self.shown_surfaces.lock().unwrap().clone()
-        }
-    }
-
-    impl TerminalBackend for ShowReadyBackend {
-        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
-            self.inner.spawn(request)
-        }
-
-        fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
-            if !self
-                .shown_surfaces
-                .lock()
-                .map_err(|_| TerminalError::LockPoisoned)?
-                .iter()
-                .any(|shown| shown == surface_id)
-            {
-                return Err(TerminalError::NotReady(surface_id.to_string()));
-            }
-            if self.not_ready_sends_after_show.load(Ordering::SeqCst) > 0 {
-                self.not_ready_sends_after_show
-                    .fetch_sub(1, Ordering::SeqCst);
-                return Err(TerminalError::NotReady(surface_id.to_string()));
-            }
-            self.inner.send_text(surface_id, text)
-        }
-
-        fn show_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
-            self.shown_surfaces
-                .lock()
-                .map_err(|_| TerminalError::LockPoisoned)?
-                .push(surface_id.to_string());
-            Ok(())
-        }
-
-        fn read_text(
-            &self,
-            surface_id: &str,
-            capture: TerminalTextCapture,
-            max_bytes: usize,
-        ) -> Result<TerminalTextSnapshot, TerminalError> {
-            self.inner.read_text(surface_id, capture, max_bytes)
-        }
-
-        fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
-            self.inner.resize(surface_id, cols, rows)
-        }
-
-        fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
-            self.inner.close(surface_id)
-        }
-
-        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
-            self.inner.surfaces()
-        }
-    }
-
-    #[derive(Debug, Default)]
-    struct FailingEnterBackend {
-        inner: HeadlessTerminalBackend,
-    }
-
-    impl FailingEnterBackend {
-        fn sent_text(&self, surface_id: &str) -> Result<Vec<String>, TerminalError> {
-            self.inner.sent_text(surface_id)
-        }
-    }
-
-    impl TerminalBackend for FailingEnterBackend {
-        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
-            self.inner.spawn(request)
-        }
-
-        fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
-            self.inner.send_text(surface_id, text)
-        }
-
-        fn send_enter(&self, _surface_id: &str) -> Result<(), TerminalError> {
-            Err(TerminalError::Backend("enter failed".to_string()))
-        }
-
-        fn read_text(
-            &self,
-            surface_id: &str,
-            capture: TerminalTextCapture,
-            max_bytes: usize,
-        ) -> Result<TerminalTextSnapshot, TerminalError> {
-            self.inner.read_text(surface_id, capture, max_bytes)
-        }
-
-        fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
-            self.inner.resize(surface_id, cols, rows)
-        }
-
-        fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
-            self.inner.close(surface_id)
-        }
-
-        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
-            self.inner.surfaces()
-        }
-    }
-
-    #[derive(Debug, Default)]
-    struct RecordingEnterBackend {
-        inner: HeadlessTerminalBackend,
-        entered_surfaces: Mutex<Vec<String>>,
-    }
-
-    impl RecordingEnterBackend {
-        fn sent_text(&self, surface_id: &str) -> Result<Vec<String>, TerminalError> {
-            self.inner.sent_text(surface_id)
-        }
-
-        fn entered_surfaces(&self) -> Vec<String> {
-            self.entered_surfaces.lock().unwrap().clone()
-        }
-    }
-
-    #[derive(Debug)]
-    struct BlockingFirstSendBackend {
-        inner: HeadlessTerminalBackend,
-        first_send_started: Mutex<Option<mpsc::Sender<()>>>,
-        release_first_send: Mutex<mpsc::Receiver<()>>,
-    }
-
-    impl BlockingFirstSendBackend {
-        fn new(
-            first_send_started: mpsc::Sender<()>,
-            release_first_send: mpsc::Receiver<()>,
-        ) -> Self {
-            Self {
-                inner: HeadlessTerminalBackend::new(),
-                first_send_started: Mutex::new(Some(first_send_started)),
-                release_first_send: Mutex::new(release_first_send),
-            }
-        }
-
-        fn sent_text(&self, surface_id: &str) -> Result<Vec<String>, TerminalError> {
-            self.inner.sent_text(surface_id)
-        }
-    }
-
-    impl TerminalBackend for BlockingFirstSendBackend {
-        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
-            self.inner.spawn(request)
-        }
-
-        fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
-            if let Some(started) = self
-                .first_send_started
-                .lock()
-                .map_err(|_| TerminalError::LockPoisoned)?
-                .take()
-            {
-                let _ = started.send(());
-                self.release_first_send
-                    .lock()
-                    .map_err(|_| TerminalError::LockPoisoned)?
-                    .recv()
-                    .map_err(|err| TerminalError::Backend(err.to_string()))?;
-            }
-            self.inner.send_text(surface_id, text)
-        }
-
-        fn show_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
-            self.inner.show_surface(surface_id)
-        }
-
-        fn read_text(
-            &self,
-            surface_id: &str,
-            capture: TerminalTextCapture,
-            max_bytes: usize,
-        ) -> Result<TerminalTextSnapshot, TerminalError> {
-            self.inner.read_text(surface_id, capture, max_bytes)
-        }
-
-        fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
-            self.inner.resize(surface_id, cols, rows)
-        }
-
-        fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
-            self.inner.close(surface_id)
-        }
-
-        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
-            self.inner.surfaces()
-        }
-    }
-
-    impl TerminalBackend for RecordingEnterBackend {
-        fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
-            self.inner.spawn(request)
-        }
-
-        fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
-            self.inner.send_text(surface_id, text)
-        }
-
-        fn send_enter(&self, surface_id: &str) -> Result<(), TerminalError> {
-            self.entered_surfaces
-                .lock()
-                .map_err(|_| TerminalError::LockPoisoned)?
-                .push(surface_id.to_string());
-            Ok(())
-        }
-
-        fn read_text(
-            &self,
-            surface_id: &str,
-            capture: TerminalTextCapture,
-            max_bytes: usize,
-        ) -> Result<TerminalTextSnapshot, TerminalError> {
-            self.inner.read_text(surface_id, capture, max_bytes)
-        }
-
-        fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
-            self.inner.resize(surface_id, cols, rows)
-        }
-
-        fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
-            self.inner.close(surface_id)
-        }
-
-        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
-            self.inner.surfaces()
         }
     }
 

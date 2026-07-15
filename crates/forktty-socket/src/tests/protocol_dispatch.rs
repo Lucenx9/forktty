@@ -451,16 +451,18 @@ async fn capabilities_lists_only_dispatchable_methods() {
     let methods = result["methods"].as_array().unwrap();
     assert!(methods.iter().any(|m| m == "system.ping"));
     assert!(methods.iter().any(|m| m == "events.subscribe"));
-    let providers = &result["provider_capabilities"];
-    assert_eq!(providers["codex"]["team_worker_launch"], true);
-    assert_eq!(providers["codex"]["safe_resume"], true);
-    assert_eq!(providers["claude"]["cwd_resume_flag"], false);
-    assert_eq!(providers["antigravity"]["program"], "agy");
-    assert_eq!(providers["grok"]["program"], "grok");
-    assert_eq!(providers["grok"]["cwd_resume_flag"], true);
-    assert_eq!(providers["pi"]["program"], "pi");
-    assert_eq!(providers["pi"]["safe_resume"], true);
-    assert!(providers.get("gemini").is_none());
+    for removed_prefix in [
+        "task.strategy.",
+        "team.",
+        "workflow.",
+        "feed.",
+        "orchestration.",
+    ] {
+        assert!(!methods.iter().any(|method| method
+            .as_str()
+            .is_some_and(|method| method.starts_with(removed_prefix))));
+    }
+    assert!(result.get("provider_capabilities").is_none());
     #[cfg(not(feature = "browser"))]
     assert!(!methods.iter().any(|m| {
         m.as_str()

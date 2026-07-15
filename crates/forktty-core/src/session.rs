@@ -54,8 +54,7 @@ pub struct SessionData {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub surfaces: Vec<Surface>,
     /// Monotonic high-water mark for generated workspace ids. This prevents a
-    /// closed workspace id from being reused after restart while durable
-    /// workflow/team records may still reference the old id.
+    /// closed workspace id from being reused after restart.
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub next_workspace: u64,
     /// Monotonic high-water mark for generated surface ids. See

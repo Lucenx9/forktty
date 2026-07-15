@@ -4,10 +4,10 @@ use std::time::Duration;
 pub const SOCKET_REQUEST_MAX_BYTES: usize = 1_048_576;
 /// Maximum size accepted by official socket clients for one JSON-RPC response.
 pub const OFFICIAL_SOCKET_RESPONSE_MAX_BYTES: usize = 64 * 1024 * 1024;
-/// Timeout used by official CLI and MCP socket clients.
+/// Timeout used by official socket CLI clients.
 pub const OFFICIAL_SOCKET_TIMEOUT: Duration = Duration::from_secs(35);
 
-/// Maximum text payload accepted by `surface.send_text` and team dispatch.
+/// Maximum text payload accepted by `surface.send_text`.
 pub const SOCKET_SEND_TEXT_MAX_BYTES: usize = 262_144;
 /// Maximum terminal text bytes returned by read/capture operations.
 pub const SOCKET_TERMINAL_TEXT_MAX_BYTES: usize = 512 * 1024;
@@ -17,19 +17,6 @@ pub const DEFAULT_CONTEXT_SNAPSHOT_TAIL_MAX_BYTES: usize = 16 * 1024;
 pub const MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES: usize = 1024 * 1024;
 /// Maximum text stored by metadata log/status/progress methods.
 pub const SOCKET_METADATA_TEXT_MAX_BYTES: usize = 16_384;
-/// Maximum UTF-8 bytes accepted for task strategy goals before they are copied
-/// into workflow, team task, and worker prompt state.
-pub const SOCKET_TASK_STRATEGY_GOAL_MAX_BYTES: usize = 4_096;
-/// Maximum UTF-8 bytes accepted for optional task strategy explanation hints
-/// that are echoed in score factors and plan reasons.
-pub const SOCKET_TASK_STRATEGY_REASON_MAX_BYTES: usize = 512;
-/// Maximum assignment lanes accepted by `task.strategy.apply`; this matches
-/// the visible team worker cap so submit retries cannot fail after partial
-/// worker creation solely because a client supplied too many assignments.
-pub const SOCKET_TASK_STRATEGY_ASSIGNMENT_MAX_COUNT: usize = 64;
-
-/// Maximum size of one JSON-RPC MCP stdio message.
-pub const MCP_MESSAGE_MAX_BYTES: usize = SOCKET_REQUEST_MAX_BYTES;
 /// Maximum text read from stdin or files by socket CLI helpers.
 pub const CLI_STDIN_TEXT_MAX_BYTES: usize = SOCKET_REQUEST_MAX_BYTES;
 

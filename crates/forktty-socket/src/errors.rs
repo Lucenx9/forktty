@@ -123,23 +123,6 @@ impl From<forktty_core::worktree::WorktreeError> for DispatchError {
     }
 }
 
-impl From<forktty_core::TeamError> for DispatchError {
-    fn from(err: forktty_core::TeamError) -> Self {
-        use forktty_core::TeamError as T;
-        match err {
-            T::TeamNotFound(_) => DispatchError::NotFound("team".to_string()),
-            T::WorkerNotFound(_) => DispatchError::NotFound("worker".to_string()),
-            T::TaskNotFound(_) => DispatchError::NotFound("task".to_string()),
-            T::MessageNotFound(_) => DispatchError::NotFound("message".to_string()),
-            T::Conflict(message) => DispatchError::Conflict(message),
-            T::Invalid(message) => DispatchError::InvalidParam(message),
-            T::UnsupportedVersion(_) | T::Json(_) | T::Io(_) => {
-                DispatchError::Other(err.to_string())
-            }
-        }
-    }
-}
-
 impl From<TerminalError> for DispatchError {
     fn from(err: TerminalError) -> Self {
         match err {

@@ -31,7 +31,7 @@ use std::path::PathBuf;
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const HELP_TEXT: &str = "\
-forktty — Linux-native multi-agent terminal
+forktty — Linux-native terminal workspace
 
 USAGE:
     forktty                 Launch the GTK app (default).
@@ -39,11 +39,8 @@ USAGE:
                            Options: --json, --strict, --hooks, --socket, --packaging.
     forktty ghostty-gtk-probe
                            Launch the experimental upstream Ghostty GTK widget probe.
-    forktty hooks setup     Install Codex, Claude Code, Antigravity, and OpenCode hooks.
+    forktty hooks setup     Optionally install Codex, Claude Code, Antigravity, and OpenCode hooks.
     forktty hooks remove    Remove ForkTTY-managed agent hooks.
-    forktty mcp             Run the ForkTTY MCP stdio server.
-    forktty skills setup    Install ForkTTY's agent orchestration skill.
-    forktty team ...        High-level team ask/watch/finish/review wrappers.
     forktty status ...      Explain/watch agent status from context snapshots.
     forktty examples        Show common automation examples.
     forktty completions     Print bash, zsh, or fish shell completions.
@@ -55,8 +52,8 @@ USAGE:
     forktty --version, -V   Print version and exit.
     forktty --help, -h      Print this help and exit.
 
-Socket automation, agent hooks, MCP, and skills are built into this binary.
-Run `forktty hooks setup --dry-run` or `forktty skills setup --dry-run` to inspect changes before writing.
+Socket automation and optional hook tooling are built into this binary.
+Run `forktty hooks setup --dry-run` to inspect changes before writing.
 ";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -376,10 +373,6 @@ mod tests {
             ])
         );
         assert_eq!(
-            parse::<_, &str>(["forktty", "skills", "setup"]),
-            CliAction::SocketCli(vec![OsString::from("skills"), OsString::from("setup")])
-        );
-        assert_eq!(
             parse::<_, &str>(["forktty", "--socket", "/tmp/forktty.sock", "ping"]),
             CliAction::SocketCli(vec![
                 OsString::from("--socket"),
@@ -444,15 +437,6 @@ mod tests {
             ])
         );
         assert_eq!(
-            parse::<_, &str>(["forktty", "team", "ask", "team-1", "worker-1"]),
-            CliAction::SocketCli(vec![
-                OsString::from("team"),
-                OsString::from("ask"),
-                OsString::from("team-1"),
-                OsString::from("worker-1")
-            ])
-        );
-        assert_eq!(
             parse::<_, &str>(["forktty", "status", "explain"]),
             CliAction::SocketCli(vec![OsString::from("status"), OsString::from("explain")])
         );
@@ -468,10 +452,51 @@ mod tests {
             parse::<_, &str>(["forktty", "completions", "zsh"]),
             CliAction::SocketCli(vec![OsString::from("completions"), OsString::from("zsh")])
         );
-        assert_eq!(
-            parse::<_, &str>(["forktty", "help", "team"]),
-            CliAction::SocketCli(vec![OsString::from("help"), OsString::from("team")])
-        );
+    }
+
+    #[test]
+    fn removed_mcp_and_managed_skill_commands_are_not_advertised_or_routed() {
+        for command in ["mcp", "skills", "skill"] {
+            assert_eq!(
+                parse::<_, &str>(["forktty", command]),
+                CliAction::Unknown(format!("unknown argument: {command}"))
+            );
+            assert!(!is_socket_cli_command(command));
+        }
+        assert!(!HELP_TEXT.contains("forktty mcp"));
+        assert!(!HELP_TEXT.contains("forktty skills"));
+    }
+
+    #[test]
+    fn removed_task_router_commands_are_not_advertised_or_routed() {
+        for command in ["task-plan", "task:plan", "task.strategy.plan", "task-apply"] {
+            assert_eq!(
+                parse::<_, &str>(["forktty", command]),
+                CliAction::Unknown(format!("unknown argument: {command}"))
+            );
+            assert!(!is_socket_cli_command(command));
+        }
+        assert!(!HELP_TEXT.contains("task-plan"));
+        assert!(!HELP_TEXT.contains("task-apply"));
+    }
+
+    #[test]
+    fn removed_orchestration_commands_are_not_advertised_or_routed() {
+        for command in [
+            "team",
+            "teams",
+            "workflow-loop-set",
+            "workflows",
+            "feed",
+            "orchestration-cleanup",
+        ] {
+            assert_eq!(
+                parse::<_, &str>(["forktty", command]),
+                CliAction::Unknown(format!("unknown argument: {command}"))
+            );
+            assert!(!is_socket_cli_command(command));
+            assert!(!HELP_TEXT.contains(&format!("forktty {command}")));
+        }
     }
 
     #[test]
@@ -483,20 +508,12 @@ mod tests {
         assert!(is_socket_cli_command("capabilities"));
         assert!(is_socket_cli_command("events"));
         assert!(is_socket_cli_command("ssh"));
-        assert!(is_socket_cli_command("team"));
         assert!(is_socket_cli_command("status"));
         assert!(is_socket_cli_command("context-snapshot"));
         assert!(is_socket_cli_command("context:snapshot"));
         assert!(is_socket_cli_command("context.snapshot"));
         assert!(is_socket_cli_command("examples"));
         assert!(is_socket_cli_command("completions"));
-        assert!(is_socket_cli_command("workflow-loop-set"));
-        assert!(is_socket_cli_command("workflow:loop:set"));
-        assert!(is_socket_cli_command("workflow.loop.set"));
-        assert!(is_socket_cli_command("loop-set"));
-        assert!(is_socket_cli_command("workflow-loop-gate"));
-        assert!(is_socket_cli_command("workflow-loop-step-done"));
-        assert!(is_socket_cli_command("workflow-loop-publish"));
         assert!(!is_socket_cli_command("explode"));
     }
 
@@ -535,28 +552,6 @@ mod tests {
             "statusline",
             "status-line",
             "status:summary",
-            "feed",
-            "feed-list",
-            "feed:list",
-            "workflows",
-            "workflow-list",
-            "workflow:list",
-            "workflow.list",
-            "workflow-get",
-            "workflow:get",
-            "workflow.get",
-            "workflow-upsert",
-            "workflow:upsert",
-            "workflow.upsert",
-            "workflow-plan-set",
-            "workflow:plan-set",
-            "workflow.plan.set",
-            "workflow-evidence-add",
-            "workflow:evidence-add",
-            "workflow.evidence.add",
-            "workflow-replay",
-            "workflow:replay",
-            "workflow.replay",
             "actions",
             "project-actions",
             "project:action:list",
@@ -575,90 +570,6 @@ mod tests {
                 OsString::from("agent-reclaim-plan"),
                 OsString::from("--min-idle-ms"),
                 OsString::from("5000")
-            ])
-        );
-        assert_eq!(
-            parse::<_, &str>(["forktty", "feed", "--limit", "5"]),
-            CliAction::SocketCli(vec![
-                OsString::from("feed"),
-                OsString::from("--limit"),
-                OsString::from("5")
-            ])
-        );
-    }
-
-    #[test]
-    fn team_commands_are_recognized_as_socket_cli_commands() {
-        for command in [
-            "teams",
-            "team-list",
-            "team:list",
-            "team.list",
-            "team-get",
-            "team:get",
-            "team.get",
-            "team-upsert",
-            "team:upsert",
-            "team.upsert",
-            "team-worker-upsert",
-            "team:worker-upsert",
-            "team.worker.upsert",
-            "team-worker-heartbeat",
-            "team:worker-heartbeat",
-            "team.worker.heartbeat",
-            "team-worker-launch",
-            "team:worker-launch",
-            "team.worker.launch",
-            "team-worker-health",
-            "team:worker-health",
-            "team.worker.health",
-            "team-worker-nudge",
-            "team:worker-nudge",
-            "team.worker.nudge",
-            "team-worker-shutdown",
-            "team:worker-shutdown",
-            "team.worker.shutdown",
-            "team-task-upsert",
-            "team:task-upsert",
-            "team.task.upsert",
-            "team-message-send",
-            "team:message-send",
-            "team.message.send",
-            "team-message-dispatch",
-            "team:message-dispatch",
-            "team.message.dispatch",
-            "team-message-ack",
-            "team:message-ack",
-            "team.message.ack",
-            "team-inbox",
-            "team:inbox",
-            "team.inbox",
-            "team-summary",
-            "team:summary",
-            "team.summary",
-            "team-events",
-            "team:events",
-            "team.events",
-        ] {
-            assert!(is_socket_cli_command(command), "{command}");
-        }
-        assert_eq!(
-            parse::<_, &str>([
-                "forktty",
-                "team-message-send",
-                "team-1",
-                "--from",
-                "leader",
-                "--body",
-                "go"
-            ]),
-            CliAction::SocketCli(vec![
-                OsString::from("team-message-send"),
-                OsString::from("team-1"),
-                OsString::from("--from"),
-                OsString::from("leader"),
-                OsString::from("--body"),
-                OsString::from("go")
             ])
         );
     }

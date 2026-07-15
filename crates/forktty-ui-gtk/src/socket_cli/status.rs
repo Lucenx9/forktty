@@ -1,13 +1,12 @@
 use super::system::handle_help;
 use super::{
     build_target_params, format_option_names, format_terminal_safe_json_scalar,
-    insert_optional_cli_bool_param, insert_optional_cli_string_param,
-    insert_optional_cli_u64_param, is_supported_status_color, non_blank_string_option,
-    parse_finite_number, parse_flags, parse_u64_option, print_json, print_result_or_json,
-    read_stdin_text, reject_unknown_options, require_no_args, safe_string_field,
-    sanitize_for_terminal, send_socket_request, should_read_stdin, string_field, string_option,
-    target_selector_values, trimmed_env, write_stdout_line, CliContext, CliError, CliResult,
-    FlagValue,
+    insert_optional_cli_string_param, insert_optional_cli_u64_param, is_supported_status_color,
+    non_blank_string_option, parse_finite_number, parse_flags, parse_u64_option, print_json,
+    print_result_or_json, read_stdin_text, reject_unknown_options, require_no_args,
+    safe_string_field, sanitize_for_terminal, send_socket_request, should_read_stdin, string_field,
+    string_option, target_selector_values, trimmed_env, write_stdout_line, CliContext, CliError,
+    CliResult, FlagValue,
 };
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
@@ -131,9 +130,6 @@ pub(super) fn context_snapshot_params(
             "surface-id",
             "tail-lines",
             "tail-max-bytes",
-            "include-team-details",
-            "include-workflow-details",
-            "include-feed-trace",
         ],
         command,
     )?;
@@ -168,24 +164,6 @@ fn context_snapshot_params_from_options(
     insert_optional_cli_string_param(&mut params, options, "surface-id", "surface_id")?;
     insert_optional_cli_u64_param(&mut params, options, "tail-lines", "tail_lines")?;
     insert_optional_cli_u64_param(&mut params, options, "tail-max-bytes", "tail_max_bytes")?;
-    insert_optional_cli_bool_param(
-        &mut params,
-        options,
-        "include-team-details",
-        "include_team_details",
-    )?;
-    insert_optional_cli_bool_param(
-        &mut params,
-        options,
-        "include-workflow-details",
-        "include_workflow_details",
-    )?;
-    insert_optional_cli_bool_param(
-        &mut params,
-        options,
-        "include-feed-trace",
-        "include_feed_trace",
-    )?;
     Ok(params)
 }
 

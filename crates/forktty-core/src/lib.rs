@@ -5,7 +5,6 @@ pub mod browser_history;
 pub mod command_safety;
 pub mod config;
 pub mod events;
-pub mod feed;
 pub mod model;
 pub mod notification;
 pub mod ports;
@@ -16,10 +15,7 @@ pub mod protocol;
 pub mod protocol_limits;
 pub mod pty_persistence;
 pub mod session;
-pub mod task_strategy;
-pub mod team;
 pub mod update;
-pub mod workflow;
 pub mod worktree;
 
 pub use agents::{
@@ -31,13 +27,9 @@ pub use agents::{
 pub use browser_cmd::{
     BrowserCmdError, BrowserCommand, BrowserOp, CmdResult, MAX_BROWSER_RESULT_BYTES,
 };
-pub use command_safety::{validate_worktree_name, WorktreeNameError};
-pub use feed::{FeedApprovalState, FeedEntry, FeedEntryType, FeedError, FeedStore};
-
 pub use browser_history::{Bookmark, BookmarkStore, HistoryError, HistoryStore, Visit};
-pub use config::{
-    AppConfig, AppearanceConfig, GeneralConfig, NotificationConfig, TeamConfig, UpdateConfig,
-};
+pub use command_safety::{validate_worktree_name, WorktreeNameError};
+pub use config::{AppConfig, AppearanceConfig, GeneralConfig, NotificationConfig, UpdateConfig};
 pub use model::{
     has_uri_scheme, normalize_browser_url, validated_browser_url, AgentSession,
     AgentSessionLifecycle, ClearedAgentMetadata, ClearedAgentSession, LogEntry, LogLevel,
@@ -55,27 +47,4 @@ pub use project_actions::{
     ProjectActionError,
 };
 pub use protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
-pub use task_strategy::{
-    harness_cooldown_kind_from_str, harness_readiness_signal_from_str,
-    phase_one_classifier_reachable_classes, plan_task_strategy, ranked_harnesses_for_role,
-    task_class_from_hint, HarnessAssignment, HarnessCapability, HarnessCooldownKind, HarnessHealth,
-    HarnessReadinessError, HarnessReadinessEvidence, HarnessReadinessSignal, HarnessRegistry,
-    HarnessRole, HarnessRoutingSignals, TaskClass, TaskRouterProfile, TaskStrategy,
-    TaskStrategyApproval, TaskStrategyCandidateScore, TaskStrategyInput, TaskStrategyLastKnownGood,
-    TaskStrategyLayers, TaskStrategyPlan, TaskStrategyScoreFactor,
-};
-pub use team::{
-    load_teams, load_teams_from_path, now_ms as team_now_ms, save_teams_to_path, team_store_path,
-    update_teams, update_teams_at_path, TeamError, TeamEvent, TeamEventQuery, TeamHeartbeat,
-    TeamInboxQuery, TeamMessage, TeamMessageAck, TeamMessageSend, TeamMessagesSupersede, TeamQuery,
-    TeamState, TeamStoreData, TeamSummary, TeamTask, TeamTaskUpsert, TeamUpsert, TeamWorker,
-    TeamWorkerAction, TeamWorkerLaunch, TeamWorkerUpsert,
-};
 pub use update::{select_newest_update, AssetKind, AvailableUpdate, ReleaseAsset, TargetArch};
-pub use workflow::{
-    load_workflows, load_workflows_from_path, now_ms as workflow_now_ms, save_workflows_to_path,
-    update_workflows, update_workflows_at_path, workflow_store_path, WorkflowError, WorkflowEvent,
-    WorkflowEvidence, WorkflowEvidenceInput, WorkflowLoopGate, WorkflowLoopGateInput,
-    WorkflowLoopStateInput, WorkflowPlanStep, WorkflowPlanStepInput, WorkflowQuery,
-    WorkflowReplayQuery, WorkflowState, WorkflowStoreData, WorkflowUpsert,
-};

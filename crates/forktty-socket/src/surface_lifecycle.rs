@@ -1,6 +1,6 @@
 //! Terminal-backed surface lifecycle helpers.
 
-use crate::{agent_runtime::effective_agent_resume_cwd, team_state, DispatchError, SocketAppState};
+use crate::{agent_runtime::effective_agent_resume_cwd, DispatchError, SocketAppState};
 use forktty_core::{
     agent_resume_command_with_cwd_and_permission_mode, command_safety::is_valid_ssh_host,
     AgentSessionLifecycle, WorkspaceSelector,
@@ -299,7 +299,6 @@ fn evict_hook_session_targets_for_surface(
         .lock()
         .map_err(|_| "Lock poisoned".to_string())?
         .remove_surface(surface_id);
-    team_state::forget_team_launch_owned_surface_for_surface(state, surface_id)?;
     Ok(())
 }
 
@@ -314,8 +313,6 @@ pub(crate) fn evict_hook_session_targets_for_surfaces(
     for surface_id in surface_ids {
         targets.remove_surface(surface_id);
     }
-    drop(targets);
-    team_state::forget_team_launch_owned_surfaces_for_surfaces(state, surface_ids)?;
     Ok(())
 }
 

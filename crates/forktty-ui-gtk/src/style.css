@@ -438,32 +438,11 @@ popover.ft-context-menu contents {
 }
 
 /* --------------------------------------------------------------------------
- * Header location path and primary Router action
+ * Header location path
  * -------------------------------------------------------------------------- */
 
-.header-router-cluster {
+.header-location-cluster {
   margin-left: 0;
-}
-
-button.flat.header-router-crumb {
-  min-height: 24px;
-  padding: 0 5px;
-  border-radius: 5px;
-  color: #999999;
-  background: transparent;
-  border: 0;
-  font-size: 0.82em;
-  font-weight: 600;
-}
-
-button.flat.header-router-crumb:hover,
-button.flat.header-router-crumb:focus-visible {
-  background: #1d1d1d;
-  color: @ft_text_0;
-}
-
-.header-router-chevron {
-  color: #555555;
 }
 
 button.flat.header-workspace-chip {
@@ -491,62 +470,8 @@ button.flat.header-workspace-chip:disabled {
   font-size: 0.8em;
 }
 
-button.flat.header-plan-task-button {
-  min-height: 24px;
-  padding: 0 10px;
-  border-radius: 5px;
-  color: @accent_color;
-  background: #1f1f1f;
-  border: 0;
-  font-size: 0.82em;
-  font-weight: 650;
-}
 
-button.flat.header-plan-task-button:hover,
-button.flat.header-plan-task-button:focus-visible {
-  color: @accent_color;
-  background: #232323;
-}
-
-button.flat.header-plan-task-button:active {
-  background: #1d1d1d;
-}
-
-.header-team-chips {
-  margin-right: 4px;
-}
-
-button.flat.header-team-chip {
-  min-height: 26px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: #1d1d1d;
-  border: 1px solid @ft_line_strong;
-}
-
-button.flat.header-team-chip:hover,
-button.flat.header-team-chip:focus-visible {
-  background: #222222;
-  border-color: @ft_line_strong;
-}
-
-.header-team-chip-name {
-  color: @ft_text_1;
-  font-size: 0.78em;
-  font-weight: 680;
-}
-
-.header-team-chip-count {
-  min-width: 15px;
-  padding: 0 5px;
-  border-radius: 999px;
-  color: @ft_bg_0;
-  background: #c8c8c8;
-  font-size: 0.72em;
-  font-weight: 760;
-}
-
-/* Shared status dots: workers, notifications, feed, pane footers. */
+/* Shared status dots for pane footers. */
 
 .rail-dot {
   min-width: 6px;
@@ -579,8 +504,8 @@ button.flat.header-team-chip:focus-visible {
   background: #5a5a5a;
 }
 
-/* All flanking panels (sidebar, rail, feed dock, status bar) share one
- * recessed ground so the workbench reads as content plus one chrome tone. */
+/* Sidebar and status bar share one recessed ground so the workbench reads as
+ * terminal content plus one chrome tone. */
 .sidebar-shell {
   background: #101010;
   color: @ft_text_2;
@@ -875,7 +800,7 @@ button.flat.sidebar-add:focus-visible {
   font-weight: 500;
 }
 
-/* Fixed sidebar sections: TEAM, RESOURCES, and the Settings/About footer. */
+/* Fixed sidebar sections: Resources and the Settings/About footer. */
 
 .sidebar-fixed-section {
   padding: 6px 5px 8px 5px;
@@ -931,12 +856,6 @@ button.flat.sidebar-nav-row:focus-visible {
   font-size: 0.76em;
 }
 
-.status-router {
-  color: #9d9d9d;
-  font-size: 0.9em;
-  font-weight: 620;
-}
-
 .status-location {
   padding: 0 7px;
   background: transparent;
@@ -990,461 +909,6 @@ button.flat.status-shortcut:focus-visible {
 .status-location:disabled {
   color: @ft_text_4;
   background: transparent;
-}
-
-/* --------------------------------------------------------------------------
- * Orchestration rail
- * -------------------------------------------------------------------------- */
-
-.orchestration-rail {
-  background: #101010;
-  color: @ft_text_2;
-  border-left: 1px solid @ft_bg_1;
-}
-
-.orchestration-rail-scroll {
-  background: #101010;
-}
-
-.orchestration-rail-body {
-  background: #101010;
-}
-
-button.flat.orchestration-rail-collapsed-strip {
-  min-width: 48px;
-  padding: 0;
-  border-radius: 0;
-  background: #101010;
-  color: @ft_text_3;
-  border-left: 1px solid @ft_bg_1;
-  transition: background-color 90ms ease-out, color 90ms ease-out;
-}
-
-button.flat.orchestration-rail-collapsed-strip:hover,
-button.flat.orchestration-rail-collapsed-strip:focus-visible {
-  background: @ft_bg_0;
-  color: @ft_text_0;
-}
-
-.orchestration-rail-strip-content {
-  margin-top: 14px;
-}
-
-.orchestration-rail-strip-badge {
-  min-width: 22px;
-  min-height: 18px;
-  padding: 0 4px;
-  border-radius: 4px;
-  font-size: 0.70em;
-  font-weight: 720;
-}
-
-.orchestration-rail-strip-badge.warn {
-  color: @ft_warning;
-  background: alpha(@ft_warning, 0.14);
-  border: 1px solid alpha(@ft_warning, 0.26);
-}
-
-.orchestration-rail-strip-badge.info {
-  color: @ft_info;
-  background: alpha(@ft_info, 0.14);
-  border: 1px solid alpha(@ft_info, 0.26);
-}
-
-.orchestration-panel-header {
-  min-height: 46px;
-  padding: 0 13px;
-  border-bottom: 1px solid alpha(@ft_line, 0.78);
-}
-
-.orchestration-panel-title {
-  color: @ft_text_0;
-  font-size: 0.92em;
-  font-weight: 650;
-}
-
-/* Status readout is a rail-dot plus this quiet text label, not a pill. */
-.orchestration-status-chip {
-  color: @ft_text_3;
-  font-size: 0.72em;
-  font-weight: 640;
-  letter-spacing: 0;
-}
-
-.orchestration-status-chip.ok,
-.orchestration-status-chip.run {
-  color: @ft_success;
-}
-
-.orchestration-status-chip.warn {
-  color: @ft_warning;
-}
-
-.orchestration-status-chip.err {
-  color: @ft_danger;
-}
-
-button.flat.orchestration-collapse-button {
-  min-width: 24px;
-  min-height: 24px;
-  padding: 0;
-  border-radius: 6px;
-  color: @ft_text_3;
-  font-size: 0.72em;
-  font-weight: 620;
-  transition: background-color 90ms ease-out, color 90ms ease-out;
-}
-
-button.flat.orchestration-collapse-button:hover,
-button.flat.orchestration-collapse-button:focus-visible {
-  color: @ft_text_1;
-  background: @ft_bg_1;
-}
-
-.orchestration-section {
-  padding: 12px 14px;
-}
-
-.orchestration-attention-section {
-  padding-top: 10px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid alpha(@ft_line, 0.78);
-}
-
-.orchestration-attention-summary {
-  color: @ft_text_1;
-  font-size: 0.82em;
-  font-weight: 720;
-}
-
-.orchestration-attention-summary.attention {
-  color: @ft_warning;
-}
-
-.orchestration-section-header {
-  min-height: 22px;
-}
-
-.orchestration-section-title {
-  color: @ft_text_3;
-  font-size: 0.68em;
-  font-weight: 620;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-}
-
-.orchestration-strategy-value {
-  color: @ft_text_1;
-  font-size: 1.06em;
-  font-weight: 680;
-}
-
-.orchestration-strategy-detail {
-  color: @ft_text_2;
-  font-size: 0.80em;
-  line-height: 1.38;
-}
-
-.orchestration-meta-grid {
-  margin-top: 1px;
-}
-
-.orchestration-meta {
-  min-height: 38px;
-}
-
-.orchestration-meta-key {
-  color: #727272;
-  font-size: 0.72em;
-}
-
-.orchestration-meta-value {
-  color: @ft_text_0;
-  font-size: 0.78em;
-  font-weight: 680;
-}
-
-.orchestration-loop-value {
-  color: @ft_text_0;
-  font-size: 0.88em;
-  font-weight: 650;
-}
-
-.orchestration-loop-progress {
-  min-height: 6px;
-  margin: 2px 0 1px 0;
-}
-
-progressbar.orchestration-loop-progress trough {
-  min-height: 5px;
-  border-radius: 999px;
-  background: @ft_line;
-}
-
-progressbar.orchestration-loop-progress progress {
-  min-height: 5px;
-  border-radius: 999px;
-  background: @accent_color;
-}
-
-.orchestration-muted-caption {
-  color: @ft_text_3;
-  font-size: 0.76em;
-}
-
-.orchestration-section-count {
-  color: @ft_text_3;
-  font-size: 0.76em;
-  font-weight: 620;
-}
-
-.orchestration-section-count.attention {
-  color: @accent_color;
-}
-
-.orchestration-list-value {
-  color: @ft_text_2;
-  font-size: 0.78em;
-  line-height: 1.42;
-}
-
-.orchestration-section-actions {
-  margin-top: 1px;
-}
-
-button.flat.orchestration-outline-button {
-  min-height: 24px;
-  padding: 0 12px;
-  border-radius: 6px;
-  color: @ft_text_1;
-  background: transparent;
-  border: 1px solid alpha(@ft_line_strong, 0.85);
-  font-size: 0.76em;
-  font-weight: 640;
-}
-
-button.flat.orchestration-outline-button:hover,
-button.flat.orchestration-outline-button:focus-visible {
-  background: #1d1d1d;
-  border-color: @ft_line_strong;
-}
-
-button.flat.orchestration-deny-button {
-  color: #e08a80;
-  border-color: alpha(#e06c5f, 0.34);
-}
-
-button.flat.orchestration-deny-button:hover,
-button.flat.orchestration-deny-button:focus-visible {
-  color: #f0a89f;
-  background: alpha(#e06c5f, 0.12);
-  border-color: alpha(#e06c5f, 0.48);
-}
-
-button.flat.orchestration-link-button {
-  min-height: 24px;
-  padding: 0 2px;
-  border-radius: 6px;
-  color: #9d9d9d;
-  font-size: 0.78em;
-  font-weight: 600;
-}
-
-button.flat.orchestration-link-button:hover,
-button.flat.orchestration-link-button:focus-visible {
-  color: @ft_text_1;
-  background: #1b1b1b;
-}
-
-.orchestration-approval-row {
-  min-height: 34px;
-}
-
-.orchestration-approval-title {
-  color: @ft_text_1;
-  font-size: 0.8em;
-  font-weight: 620;
-}
-
-.orchestration-list-row {
-  min-height: 24px;
-}
-
-.orchestration-list-primary {
-  color: @ft_text_1;
-  font-size: 0.81em;
-  font-weight: 640;
-}
-
-/* Quiet metadata: the rail-dot alone carries severity; timestamps and status
- * words stay muted (Linear/Vercel dot + quiet text pattern). */
-.orchestration-list-secondary {
-  color: @ft_text_3;
-  font-size: 0.74em;
-  font-weight: 680;
-}
-
-/* --------------------------------------------------------------------------
- * Orchestration feed dock
- * -------------------------------------------------------------------------- */
-
-.orchestration-feed {
-  background: #101010;
-  border-top: 1px solid @ft_bg_1;
-}
-
-.orchestration-feed-header {
-  min-height: 33px;
-  padding: 0 12px;
-  border-bottom: 1px solid @ft_bg_1;
-}
-
-button.flat.orchestration-feed-tab {
-  min-height: 34px;
-  padding: 0 10px;
-  border-radius: 0;
-  background: transparent;
-  color: #777777;
-  font-size: 0.70em;
-  font-weight: 620;
-  letter-spacing: 0.07em;
-}
-
-button.flat.orchestration-feed-tab:hover,
-button.flat.orchestration-feed-tab:focus-visible {
-  color: @ft_text_2;
-}
-
-button.flat.orchestration-feed-tab.active {
-  color: @ft_text_0;
-  /* Thin hairline underline for active tab — consistent with premium quiet tab styling (Linear/Cursor). */
-  border-bottom: 1px solid alpha(@accent_color, 0.62);
-}
-
-button.flat.orchestration-feed-clear {
-  min-height: 22px;
-  padding: 0 10px;
-  border-radius: 6px;
-  color: #9d9d9d;
-  font-size: 0.74em;
-  font-weight: 620;
-}
-
-button.flat.orchestration-feed-clear:hover,
-button.flat.orchestration-feed-clear:focus-visible {
-  color: @ft_text_1;
-  background: @ft_bg_1;
-}
-
-button.flat.orchestration-feed-collapse {
-  min-width: 24px;
-  min-height: 22px;
-  padding: 0 7px;
-  border-radius: 6px;
-  color: @ft_text_3;
-  font-size: 0.74em;
-  font-weight: 620;
-}
-
-button.flat.orchestration-feed-collapse:hover,
-button.flat.orchestration-feed-collapse:focus-visible {
-  color: @ft_text_1;
-  background: @ft_bg_1;
-}
-
-.orchestration-feed-live {
-  padding: 0 2px;
-}
-
-.orchestration-feed-live-label {
-  color: @ft_text_3;
-  font-size: 0.68em;
-  font-weight: 620;
-  letter-spacing: 0.04em;
-}
-
-/* Shown only in the thin collapsed header: gives immediate awareness of the latest
- * event without requiring the user to expand the rows area. */
-.orchestration-feed-collapsed-summary {
-  color: @ft_text_3;
-  font-size: 0.72em;
-  padding: 0 8px;
-  margin-right: 6px;
-}
-
-.orchestration-feed-rows {
-  background: #101010;
-}
-
-.orchestration-feed-rows-shell {
-  background: #101010;
-}
-
-.orchestration-feed-row {
-  min-height: 23px;
-  padding: 0 12px;
-  border-bottom: 1px solid alpha(@ft_line, 0.42);
-}
-
-.orchestration-feed-row.empty {
-  min-height: 42px;
-  padding: 10px 16px 0 16px;
-  border-bottom: 0;
-}
-
-.orchestration-feed-time {
-  color: #777777;
-  font-size: 0.74em;
-  font-weight: 560;
-}
-
-.orchestration-feed-body {
-  color: @ft_text_2;
-  font-size: 0.78em;
-  font-weight: 540;
-}
-
-.orchestration-feed-row.empty .orchestration-feed-body {
-  color: @ft_text_3;
-  font-weight: 520;
-}
-
-/* Kind tags read as quiet colored text by default.
- * High-signal states (warn/err) get subtle pill backgrounds for scannability
- * without breaking the quiet Linear/Cursor-style tone. */
-.orchestration-feed-status {
-  min-height: 18px;
-  padding: 0 3px;
-  border-radius: 3px;
-  color: @ft_text_3;
-  background: transparent;
-  font-size: 0.66em;
-  font-weight: 620;
-}
-
-.orchestration-feed-status.ok,
-.orchestration-feed-status.run {
-  color: @ft_success;
-}
-
-.orchestration-feed-status.warn {
-  color: @ft_warning;
-  background: alpha(@ft_warning, 0.13);
-  padding: 0 5px;
-}
-
-.orchestration-feed-status.err {
-  color: @ft_danger;
-  background: alpha(@ft_danger, 0.13);
-  padding: 0 5px;
-}
-
-.orchestration-feed-status.info {
-  color: #9d9d9d;
-}
-
-.orchestration-feed-status.idle {
-  color: #777777;
 }
 
 /* Workspace popover */
@@ -3264,73 +2728,6 @@ entry.search.command-search:focus-within,
   border-color: @ft_line_strong;
 }
 
-/* --------------------------------------------------------------------------
- * Task router dialog
- * -------------------------------------------------------------------------- */
-
-.task-router-dialog .ft-dialog-body {
-  padding-top: 14px;
-}
-
-.task-router-body {
-  background: #151515;
-}
-
-entry.task-router-goal {
-  min-height: 34px;
-  border-radius: 8px;
-  background: @ft_bg_1;
-  border: 1px solid @ft_line_strong;
-  color: @ft_text_1;
-}
-
-entry.task-router-goal:focus,
-entry.task-router-goal:focus-within {
-  border-color: alpha(@accent_color, 0.58);
-  box-shadow: 0 0 0 2px alpha(@accent_color, 0.14);
-}
-
-.task-router-hints checkbutton {
-  color: @ft_text_2;
-  font-size: 0.82em;
-}
-
-.task-router-result {
-  border-radius: 8px;
-  background: @ft_bg_0;
-  border: 1px solid @ft_line_strong;
-}
-
-.task-router-result-row {
-  min-height: 31px;
-  padding: 0 10px;
-  border-bottom: 1px solid @ft_bg_1;
-}
-
-.task-router-result-row:last-child {
-  border-bottom: 0;
-}
-
-.task-router-result-key {
-  min-width: 92px;
-  color: @ft_text_3;
-  font-size: 0.72em;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-}
-
-.task-router-result-value {
-  color: @ft_text_1;
-  font-size: 0.8em;
-  font-weight: 600;
-}
-
-.task-router-status {
-  color: @ft_text_3;
-  font-size: 0.8em;
-}
-
 .command-item-hint {
   color: @ft_text_3;
   font-size: 0.80em;
@@ -3759,8 +3156,7 @@ entry.agent-reply {
 }
 
 .agent-current,
-.agent-permission,
-.agent-loop {
+.agent-permission {
   padding: 1px 6px 2px 6px;
   border-radius: 5px;
   font-size: 0.68em;
@@ -3779,23 +3175,6 @@ entry.agent-reply {
 .agent-permission.risky {
   color: @ft_danger;
   background: transparent;
-}
-
-.agent-loop {
-  color: @ft_text_3;
-  background: @ft_bg_2;
-}
-
-.agent-loop.running {
-  color: @ft_info;
-}
-
-.agent-loop.done {
-  color: @ft_success;
-}
-
-.agent-loop.warning {
-  color: @ft_warning;
 }
 
 button.agent-primary-action,

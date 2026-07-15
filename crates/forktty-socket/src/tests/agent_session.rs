@@ -354,14 +354,13 @@ async fn agent_hibernate_close_failure_rolls_back_visible_state() {
     let _path = EnvGuard::set("PATH", dir.path().to_str().unwrap());
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let backend = Arc::new(FailingCloseBackend::default());
-    let mut state = SocketAppState::new(
+    let state = SocketAppState::new(
         model,
         backend.clone(),
         "/bin/sh",
         PathBuf::from("/tmp/forktty.sock"),
     )
     .with_notification_dispatch(false);
-    state.workflow_store_path = None;
     bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
     let surface_id = {
         let mut model = state.model.lock().unwrap();

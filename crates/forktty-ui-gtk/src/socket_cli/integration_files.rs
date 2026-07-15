@@ -1,4 +1,4 @@
-//! Shared file and launcher helpers for agent hook, MCP, and skill installers.
+//! Shared file and launcher helpers for agent hook installers.
 
 use super::{next_file_nonce, CliError, CliResult};
 use serde_json::{json, Value};
@@ -139,67 +139,6 @@ pub(super) fn read_json_file_with_limit(
     } else {
         serde_json::from_str(&text).map_err(Into::into)
     }
-}
-
-pub(super) fn read_text_config(path: &Path, label: &str) -> CliResult<Option<String>> {
-    read_text_config_with_limit(path, label, MAX_HOOK_CONFIG_SIZE_BYTES)
-}
-
-pub(super) fn read_text_config_with_limit(
-    path: &Path,
-    label: &str,
-    max_bytes: u64,
-) -> CliResult<Option<String>> {
-    let link_meta = match fs::symlink_metadata(path) {
-        Ok(meta) => meta,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(err.into()),
-    };
-    let followed = if link_meta.file_type().is_symlink() {
-        match fs::metadata(path) {
-            Ok(meta) => meta,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                eprintln!(
-                    "warning: {} is a broken symlink; replacing with a fresh file",
-                    path.display()
-                );
-                return Ok(None);
-            }
-            Err(err) => return Err(err.into()),
-        }
-    } else {
-        link_meta
-    };
-    if !followed.is_file() {
-        return Err(CliError::new(format!(
-            "{label} exists but is not a regular file"
-        )));
-    }
-    let file = File::open(path)?;
-    let stat = file.metadata()?;
-    if !stat.is_file() {
-        return Err(CliError::new(format!(
-            "{label} exists but is not a regular file"
-        )));
-    }
-    if stat.len() > max_bytes {
-        return Err(CliError::new(format!(
-            "{label} is too large ({} bytes; max {} bytes)",
-            stat.len(),
-            max_bytes
-        )));
-    }
-    let mut text = String::new();
-    let mut limited = file.take(max_bytes + 1);
-    limited.read_to_string(&mut text)?;
-    if text.len() as u64 > max_bytes {
-        return Err(CliError::new(format!(
-            "{label} is too large ({} bytes; max {} bytes)",
-            text.len(),
-            max_bytes
-        )));
-    }
-    Ok(Some(text))
 }
 
 pub(super) fn hook_config_write_path(path: &Path) -> CliResult<PathBuf> {

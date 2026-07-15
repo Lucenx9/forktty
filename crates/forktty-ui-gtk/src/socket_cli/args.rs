@@ -357,39 +357,6 @@ pub(super) fn should_read_stdin(
     !matches!(options.get(text_option), Some(FlagValue::String(_))) && positionals.is_empty()
 }
 
-pub(super) fn required_positionals(
-    positionals: &[String],
-    command: &str,
-    labels: &[&str],
-) -> CliResult<Vec<String>> {
-    if positionals.len() < labels.len() {
-        return Err(CliError::new(format!(
-            "{command} requires {}",
-            labels[positionals.len()]
-        )));
-    }
-    if positionals.len() > labels.len() {
-        return Err(CliError::new(format!(
-            "{command}: unexpected argument {}",
-            positionals[labels.len()]
-        )));
-    }
-    positionals
-        .iter()
-        .zip(labels.iter())
-        .map(|(value, label)| trimmed_positional(value, command, label))
-        .collect()
-}
-
-pub(super) fn trimmed_positional(value: &str, command: &str, label: &str) -> CliResult<String> {
-    let value = value.trim();
-    if value.is_empty() {
-        Err(CliError::new(format!("{command} requires {label}")))
-    } else {
-        Ok(value.to_string())
-    }
-}
-
 pub(super) fn insert_optional_cli_string_param(
     params: &mut Map<String, Value>,
     options: &BTreeMap<String, FlagValue>,
@@ -398,18 +365,6 @@ pub(super) fn insert_optional_cli_string_param(
 ) -> CliResult<()> {
     if let Some(value) = non_blank_string_option(options, option, &format!("--{option}"))? {
         params.insert(field.to_string(), Value::String(value.trim().to_string()));
-    }
-    Ok(())
-}
-
-pub(super) fn insert_optional_cli_raw_string_param(
-    params: &mut Map<String, Value>,
-    options: &BTreeMap<String, FlagValue>,
-    option: &str,
-    field: &str,
-) -> CliResult<()> {
-    if let Some(value) = string_option(options, option, &format!("--{option}"))? {
-        params.insert(field.to_string(), Value::String(value.to_string()));
     }
     Ok(())
 }
@@ -424,45 +379,4 @@ pub(super) fn insert_optional_cli_u64_param(
         params.insert(field.to_string(), json!(value));
     }
     Ok(())
-}
-
-pub(super) fn insert_optional_cli_bool_param(
-    params: &mut Map<String, Value>,
-    options: &BTreeMap<String, FlagValue>,
-    option: &str,
-    field: &str,
-) -> CliResult<()> {
-    let Some(raw) = options.get(option) else {
-        return Ok(());
-    };
-    let value = match raw {
-        FlagValue::Bool => true,
-        FlagValue::String(value) if value == "true" => true,
-        FlagValue::String(value) if value == "false" => false,
-        FlagValue::String(_) => {
-            return Err(CliError::new(format!("--{option} expects true or false")));
-        }
-    };
-    params.insert(field.to_string(), Value::Bool(value));
-    Ok(())
-}
-
-pub(super) fn comma_list_option(
-    options: &BTreeMap<String, FlagValue>,
-    key: &str,
-    option_name: &str,
-) -> CliResult<Option<Vec<String>>> {
-    let Some(raw) = non_blank_string_option(options, key, option_name)? else {
-        return Ok(None);
-    };
-    let values = raw
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    if values.is_empty() {
-        return Err(CliError::new(format!("{option_name} requires a value")));
-    }
-    Ok(Some(values))
 }

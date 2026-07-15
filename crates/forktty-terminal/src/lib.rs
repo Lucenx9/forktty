@@ -36,7 +36,7 @@ pub struct SpawnRequest {
     pub extra_env: Vec<(String, String)>,
     /// Whether this spawn is an explicitly plain interactive terminal shell
     /// eligible for opt-in PTY process persistence. Command launches that are
-    /// not ordinary shells (project actions, team workers, SSH, and agent
+    /// not ordinary shells (project actions, remote commands, SSH, and agent
     /// resumes) must keep this false so their process trees do not survive the
     /// visible pane lifecycle unexpectedly.
     #[serde(default)]

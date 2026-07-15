@@ -3,7 +3,6 @@
 use crate::backup::BackupReservationKind;
 use crate::command_safety::{is_executable_file, is_shell_trampoline};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 #[cfg(unix)]
@@ -41,8 +40,6 @@ pub struct AppConfig {
     pub appearance: AppearanceConfig,
     #[serde(default)]
     pub notifications: NotificationConfig,
-    #[serde(default)]
-    pub team: TeamConfig,
     #[serde(default)]
     pub updates: UpdateConfig,
     #[serde(default)]
@@ -83,12 +80,6 @@ pub struct AppearanceConfig {
     pub sidebar_position: String,
     #[serde(default = "default_sidebar_visible")]
     pub sidebar_visible: bool,
-    /// Right-side Router/orchestration rail in the main workbench.
-    #[serde(default = "default_true")]
-    pub show_orchestration_rail: bool,
-    /// Bottom workflow feed dock in the main workbench.
-    #[serde(default = "default_true")]
-    pub show_workflow_feed: bool,
     #[serde(default = "default_terminal_renderer", skip_serializing)]
     pub terminal_renderer: String,
     #[serde(default = "default_terminal_theme", skip_serializing)]
@@ -112,20 +103,6 @@ pub struct NotificationConfig {
     pub blocked_terminal_apps: Vec<String>,
     #[serde(default)]
     pub blocked_terminal_types: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct TeamConfig {
-    #[serde(default = "default_team_default_agent")]
-    pub default_agent: String,
-    #[serde(default = "default_team_provider_order")]
-    pub provider_order: Vec<String>,
-    #[serde(default = "default_true")]
-    pub auto_fallback: bool,
-    #[serde(default)]
-    pub disabled_agents: Vec<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub provider_commands: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -154,9 +131,6 @@ pub const TERMINAL_THEME_CHOICES: &[&str] = &[
     TERMINAL_THEME_DRACULA,
     TERMINAL_THEME_GRUVBOX_DARK,
 ];
-pub const TEAM_AGENT_AUTO: &str = "auto";
-pub const TEAM_PROVIDER_CHOICES: &[&str] =
-    &["codex", "claude", "pi", "opencode", "antigravity", "grok"];
 pub const MAX_PERSISTENT_SCROLLBACK_LINES: u32 = 1_000;
 
 const MAX_CONFIG_SIZE_BYTES: u64 = 1024 * 1024;
@@ -187,8 +161,6 @@ impl Default for AppearanceConfig {
             terminal_audible_bell: default_terminal_audible_bell(),
             sidebar_position: default_sidebar_position(),
             sidebar_visible: default_sidebar_visible(),
-            show_orchestration_rail: true,
-            show_workflow_feed: true,
             terminal_renderer: default_terminal_renderer(),
             terminal_theme: default_terminal_theme(),
             window_mode: default_window_mode(),
@@ -204,18 +176,6 @@ impl Default for NotificationConfig {
             sound: true,
             blocked_terminal_apps: Vec::new(),
             blocked_terminal_types: Vec::new(),
-        }
-    }
-}
-
-impl Default for TeamConfig {
-    fn default() -> Self {
-        Self {
-            default_agent: default_team_default_agent(),
-            provider_order: default_team_provider_order(),
-            auto_fallback: true,
-            disabled_agents: Vec::new(),
-            provider_commands: BTreeMap::new(),
         }
     }
 }
@@ -554,7 +514,6 @@ pub fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
         &config.notifications.blocked_terminal_types,
     )?;
     validate_notification_command(&config.general.notification_command)?;
-    validate_team_config(&config.team)?;
     Ok(())
 }
 
@@ -624,116 +583,7 @@ fn normalize_loaded_config(mut config: AppConfig) -> AppConfig {
         normalize_notification_filter_values(config.notifications.blocked_terminal_apps);
     config.notifications.blocked_terminal_types =
         normalize_notification_filter_values(config.notifications.blocked_terminal_types);
-    config.team = normalize_team_config(config.team);
     config
-}
-
-fn normalize_team_config(mut team: TeamConfig) -> TeamConfig {
-    team.default_agent =
-        normalize_team_agent_choice(&team.default_agent).unwrap_or_else(default_team_default_agent);
-    team.provider_order = normalize_team_provider_list(team.provider_order);
-    if team.provider_order.is_empty() {
-        team.provider_order = default_team_provider_order();
-    }
-    team.disabled_agents = normalize_team_provider_list(team.disabled_agents);
-    team.provider_commands = normalize_team_provider_commands(team.provider_commands);
-    if team.default_agent != TEAM_AGENT_AUTO && team.disabled_agents.contains(&team.default_agent) {
-        team.default_agent = TEAM_AGENT_AUTO.to_string();
-    }
-    team
-}
-
-fn normalize_team_provider_list(values: Vec<String>) -> Vec<String> {
-    let mut normalized = Vec::new();
-    for value in values {
-        let Some(agent) = canonical_team_provider(&value) else {
-            continue;
-        };
-        if !normalized.iter().any(|item| item == agent) {
-            normalized.push(agent.to_string());
-        }
-    }
-    normalized
-}
-
-fn normalize_team_provider_commands(
-    commands: BTreeMap<String, String>,
-) -> BTreeMap<String, String> {
-    commands
-        .into_iter()
-        .filter_map(|(provider, command)| {
-            let provider = canonical_team_provider(&provider)?;
-            let command = command.trim();
-            (!command.is_empty()).then(|| (provider.to_string(), command.to_string()))
-        })
-        .collect()
-}
-
-pub fn normalize_team_agent_choice(value: &str) -> Option<String> {
-    let normalized = value.trim().to_ascii_lowercase();
-    if normalized == TEAM_AGENT_AUTO {
-        return Some(TEAM_AGENT_AUTO.to_string());
-    }
-    canonical_team_provider(&normalized).map(str::to_string)
-}
-
-pub fn canonical_team_provider(value: &str) -> Option<&'static str> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "codex" => Some("codex"),
-        "claude" | "claude_code" | "claude-code" => Some("claude"),
-        "opencode" | "open_code" | "open-code" => Some("opencode"),
-        "antigravity" | "agy" => Some("antigravity"),
-        "grok" | "grok_build" | "grok-build" => Some("grok"),
-        "pi" => Some("pi"),
-        _ => None,
-    }
-}
-
-pub fn team_provider_program(provider: &str) -> Option<&'static str> {
-    match canonical_team_provider(provider)? {
-        "codex" => Some("codex"),
-        "claude" => Some("claude"),
-        "pi" => Some("pi"),
-        "opencode" => Some("opencode"),
-        "antigravity" => Some("agy"),
-        "grok" => Some("grok"),
-        _ => None,
-    }
-}
-
-pub fn team_provider_command<'a>(team: &'a TeamConfig, provider: &str) -> Option<&'a str> {
-    let provider = canonical_team_provider(provider)?;
-    team.provider_commands.get(provider).map(String::as_str)
-}
-
-pub fn validate_team_provider_command_value(command: &str) -> Result<(), String> {
-    let command = command.trim();
-    if command.is_empty() {
-        return Err("must not be empty".to_string());
-    }
-    if command.len() > 4096 {
-        return Err("must be 4096 bytes or fewer".to_string());
-    }
-    if command.chars().any(char::is_control) {
-        return Err("must not contain control characters".to_string());
-    }
-    let path = Path::new(command);
-    if path.is_absolute() {
-        return Ok(());
-    }
-    if command.starts_with('-') {
-        return Err("must not be flag-like".to_string());
-    }
-    if command.chars().any(char::is_whitespace) {
-        return Err(
-            "must be a bare command name or absolute path; arguments belong in the launch args"
-                .to_string(),
-        );
-    }
-    if path.components().count() > 1 {
-        return Err("must be a bare command name or absolute path".to_string());
-    }
-    Ok(())
 }
 
 fn normalize_notification_filter_values(values: Vec<String>) -> Vec<String> {
@@ -784,75 +634,6 @@ fn validate_notification_command(command: &str) -> Result<(), ConfigError> {
         return Err(ConfigError::Invalid(format!(
             "general.notification_command must start with an absolute path to an executable file: {program}"
         )));
-    }
-    Ok(())
-}
-
-fn validate_team_config(team: &TeamConfig) -> Result<(), ConfigError> {
-    if normalize_team_agent_choice(&team.default_agent).as_deref() != Some(&team.default_agent) {
-        return Err(ConfigError::Invalid(
-            "team.default_agent must be auto, codex, claude, pi, opencode, antigravity, or grok"
-                .to_string(),
-        ));
-    }
-    validate_team_provider_list("team.provider_order", &team.provider_order, true)?;
-    validate_team_provider_list("team.disabled_agents", &team.disabled_agents, false)?;
-    validate_team_provider_commands(&team.provider_commands)?;
-    if team.default_agent != TEAM_AGENT_AUTO && team.disabled_agents.contains(&team.default_agent) {
-        return Err(ConfigError::Invalid(
-            "team.default_agent must not also appear in team.disabled_agents".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_team_provider_list(
-    name: &str,
-    values: &[String],
-    require_non_empty: bool,
-) -> Result<(), ConfigError> {
-    if require_non_empty && values.is_empty() {
-        return Err(ConfigError::Invalid(format!("{name} must not be empty")));
-    }
-    if values.len() > TEAM_PROVIDER_CHOICES.len() {
-        return Err(ConfigError::Invalid(format!(
-            "{name} must contain {} entries or fewer",
-            TEAM_PROVIDER_CHOICES.len()
-        )));
-    }
-    let mut seen = Vec::new();
-    for value in values {
-        if canonical_team_provider(value) != Some(value.as_str()) {
-            return Err(ConfigError::Invalid(format!(
-                "{name} entries must be canonical provider names: codex, claude, pi, opencode, antigravity, grok"
-            )));
-        }
-        if seen
-            .iter()
-            .any(|item: &&String| item.as_str() == value.as_str())
-        {
-            return Err(ConfigError::Invalid(format!(
-                "{name} entries must not contain duplicates"
-            )));
-        }
-        seen.push(value);
-    }
-    Ok(())
-}
-
-fn validate_team_provider_commands(commands: &BTreeMap<String, String>) -> Result<(), ConfigError> {
-    for (provider, command) in commands {
-        if canonical_team_provider(provider) != Some(provider.as_str()) {
-            return Err(ConfigError::Invalid(
-                "team.provider_commands keys must be canonical provider names: codex, claude, pi, opencode, antigravity, grok"
-                    .to_string(),
-            ));
-        }
-        if let Err(err) = validate_team_provider_command_value(command) {
-            return Err(ConfigError::Invalid(format!(
-                "team.provider_commands.{provider} {err}"
-            )));
-        }
     }
     Ok(())
 }
@@ -945,15 +726,6 @@ fn default_shell_from_env(shell_env: Option<String>) -> String {
 }
 fn default_worktree_layout() -> String {
     "nested".to_string()
-}
-fn default_team_default_agent() -> String {
-    TEAM_AGENT_AUTO.to_string()
-}
-pub fn default_team_provider_order() -> Vec<String> {
-    TEAM_PROVIDER_CHOICES
-        .iter()
-        .map(|provider| (*provider).to_string())
-        .collect()
 }
 fn default_font_family() -> String {
     String::new()

@@ -92,7 +92,7 @@ pub(super) fn show_welcome_dialog(
         .build();
     integration_title.add_css_class("welcome-integration-title");
     let integration_subtitle = gtk::Label::builder()
-        .label("Hooks, local MCP bridge, and agent skills.")
+        .label("Lifecycle and notification hooks for supported agents.")
         .xalign(0.0)
         .build();
     integration_subtitle.add_css_class("welcome-integration-subtitle");
@@ -107,7 +107,7 @@ pub(super) fn show_welcome_dialog(
     setup_button.add_css_class("welcome-setup");
     integration_row.append(&setup_button);
     let setup_status = gtk::Label::builder()
-        .label("Review install status, update managed entries, or set up providers.")
+        .label("Review install status or configure optional agent hooks.")
         .wrap(true)
         .justify(gtk::Justification::Left)
         .xalign(0.0)

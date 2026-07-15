@@ -6,12 +6,8 @@ use super::agent::{
 };
 #[cfg(feature = "browser")]
 use super::browser::handle_browser;
-use super::cleanup::{handle_cleanup, handle_orchestration_cleanup};
-use super::feed::handle_feed;
 use super::hooks::handle_hooks;
-use super::mcp::handle_mcp;
 use super::remote::{handle_remote_status, handle_remotes};
-use super::skills::handle_skills;
 use super::status::{
     handle_clear_logs, handle_clear_notifications, handle_clear_progress, handle_clear_status,
     handle_context_snapshot, handle_list_progress, handle_list_status, handle_log, handle_logs,
@@ -25,20 +21,6 @@ use super::surface::{
 use super::system::{
     handle_capabilities, handle_completions, handle_events, handle_examples, handle_help,
     handle_identify, handle_notify, handle_ping, handle_socket_doctor, handle_wait,
-};
-use super::task::{handle_task_apply, handle_task_plan};
-use super::team::{
-    handle_team, handle_team_events, handle_team_get, handle_team_inbox, handle_team_list,
-    handle_team_message_ack, handle_team_message_dispatch, handle_team_message_send,
-    handle_team_summary, handle_team_task_upsert, handle_team_upsert, handle_team_worker_health,
-    handle_team_worker_heartbeat, handle_team_worker_launch, handle_team_worker_nudge,
-    handle_team_worker_shutdown, handle_team_worker_upsert,
-};
-use super::workflow::{
-    handle_workflow_evidence_add, handle_workflow_get, handle_workflow_loop_gate,
-    handle_workflow_loop_iteration_done, handle_workflow_loop_iteration_start,
-    handle_workflow_loop_publish, handle_workflow_loop_set, handle_workflow_loop_step_done,
-    handle_workflow_plan_set, handle_workflow_replay, handle_workflow_upsert, handle_workflows,
 };
 use super::workspace::{
     handle_close_workspace, handle_create_workspace, handle_focus, handle_list, handle_ssh,
@@ -74,43 +56,6 @@ pub(super) fn dispatch_command(
             handle_reclaim_agents(context, args)
         }
         "resume-agent" | "agent-resume" | "agent:resume" => handle_resume_agent(context, args),
-        "team" => handle_team(context, args),
-        "teams" | "team-list" | "team:list" | "team.list" => handle_team_list(context, args),
-        "team-get" | "team:get" | "team.get" => handle_team_get(context, args),
-        "team-upsert" | "team:upsert" | "team.upsert" => handle_team_upsert(context, args),
-        "team-worker-upsert" | "team:worker-upsert" | "team.worker.upsert" => {
-            handle_team_worker_upsert(context, args)
-        }
-        "team-worker-heartbeat" | "team:worker-heartbeat" | "team.worker.heartbeat" => {
-            handle_team_worker_heartbeat(context, args)
-        }
-        "team-worker-launch" | "team:worker-launch" | "team.worker.launch" => {
-            handle_team_worker_launch(context, args)
-        }
-        "team-worker-health" | "team:worker-health" | "team.worker.health" => {
-            handle_team_worker_health(context, args)
-        }
-        "team-worker-nudge" | "team:worker-nudge" | "team.worker.nudge" => {
-            handle_team_worker_nudge(context, args)
-        }
-        "team-worker-shutdown" | "team:worker-shutdown" | "team.worker.shutdown" => {
-            handle_team_worker_shutdown(context, args)
-        }
-        "team-task-upsert" | "team:task-upsert" | "team.task.upsert" => {
-            handle_team_task_upsert(context, args)
-        }
-        "team-message-send" | "team:message-send" | "team.message.send" => {
-            handle_team_message_send(context, args)
-        }
-        "team-message-dispatch" | "team:message-dispatch" | "team.message.dispatch" => {
-            handle_team_message_dispatch(context, args)
-        }
-        "team-message-ack" | "team:message-ack" | "team.message.ack" => {
-            handle_team_message_ack(context, args)
-        }
-        "team-inbox" | "team:inbox" | "team.inbox" => handle_team_inbox(context, args),
-        "team-summary" | "team:summary" | "team.summary" => handle_team_summary(context, args),
-        "team-events" | "team:events" | "team.events" => handle_team_events(context, args),
         "split-surface" | "surface-split" | "surface:split" => handle_split_surface(context, args),
         "focus-surface" | "surface-focus" | "surface:focus" => handle_focus_surface(context, args),
         "close-surface" | "surface-close" | "surface:close" => handle_close_surface(context, args),
@@ -163,51 +108,6 @@ pub(super) fn dispatch_command(
         "context-snapshot" | "context_snapshot" | "context:snapshot" | "context.snapshot" => {
             handle_context_snapshot(context, args)
         }
-        "feed" | "feed-list" | "feed:list" => handle_feed(context, args),
-        "cleanup" => handle_cleanup(context, args),
-        "orchestration-cleanup" | "orchestration:cleanup" | "orchestration.cleanup" => {
-            handle_orchestration_cleanup(context, args)
-        }
-        "task-plan" | "task:plan" | "task.strategy.plan" => handle_task_plan(context, args),
-        "task-apply" | "task:apply" | "task.strategy.apply" => handle_task_apply(context, args),
-        "workflows" | "workflow-list" | "workflow:list" | "workflow.list" => {
-            handle_workflows(context, args)
-        }
-        "workflow-get" | "workflow:get" | "workflow.get" => handle_workflow_get(context, args),
-        "workflow-upsert" | "workflow:upsert" | "workflow.upsert" => {
-            handle_workflow_upsert(context, args)
-        }
-        "workflow-loop-set" | "workflow:loop:set" | "workflow.loop.set" | "loop-set" => {
-            handle_workflow_loop_set(context, args)
-        }
-        "workflow-loop-gate" | "workflow:loop:gate" | "workflow.loop.gate" | "loop-gate" => {
-            handle_workflow_loop_gate(context, args)
-        }
-        "workflow-loop-step-done"
-        | "workflow:loop:step-done"
-        | "workflow.loop.step_done"
-        | "loop-step-done" => handle_workflow_loop_step_done(context, args),
-        "workflow-loop-iteration-start"
-        | "workflow:loop:iteration-start"
-        | "workflow.loop.iteration_start"
-        | "loop-iteration-start" => handle_workflow_loop_iteration_start(context, args),
-        "workflow-loop-iteration-done"
-        | "workflow:loop:iteration-done"
-        | "workflow.loop.iteration_done"
-        | "loop-iteration-done" => handle_workflow_loop_iteration_done(context, args),
-        "workflow-loop-publish"
-        | "workflow:loop:publish"
-        | "workflow.loop.publish"
-        | "loop-publish" => handle_workflow_loop_publish(context, args),
-        "workflow-plan-set" | "workflow:plan-set" | "workflow.plan.set" => {
-            handle_workflow_plan_set(context, args)
-        }
-        "workflow-evidence-add" | "workflow:evidence-add" | "workflow.evidence.add" => {
-            handle_workflow_evidence_add(context, args)
-        }
-        "workflow-replay" | "workflow:replay" | "workflow.replay" => {
-            handle_workflow_replay(context, args)
-        }
         "log" => handle_log(context, args),
         "logs" | "list-logs" => handle_logs(context, args),
         "clear-logs" => handle_clear_logs(context, args),
@@ -216,8 +116,6 @@ pub(super) fn dispatch_command(
             handle_clear_notifications(context, args)
         }
         "hooks" => handle_hooks(context, args),
-        "mcp" => handle_mcp(context, args),
-        "skills" | "skill" => handle_skills(context, args),
         "doctor" => handle_socket_doctor(context, args),
         "ping" => handle_ping(context, args),
         "identify" | "system-identify" | "system:identify" | "system.identify" => {

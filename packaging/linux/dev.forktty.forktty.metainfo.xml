@@ -4,11 +4,11 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>AGPL-3.0-only</project_license>
   <name>ForkTTY</name>
-  <summary>Linux-native multi-agent terminal</summary>
+  <summary>Linux-native workspace terminal</summary>
   <description>
     <p>
-      ForkTTY is a GTK4 terminal for multi-agent workflows, programmable socket
-      automation, and git worktree isolation.
+      ForkTTY is a GTK4 terminal for workspaces, programmable socket automation,
+      and git worktree isolation.
     </p>
   </description>
   <launchable type="desktop-id">dev.forktty.forktty.desktop</launchable>

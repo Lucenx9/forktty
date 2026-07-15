@@ -159,7 +159,7 @@ fn hook_remove_cleans_legacy_gemini_config_without_enabling_setup() {
                     "forktty": {
                         "command": "/usr/bin/forktty",
                         "args": ["mcp"],
-                        "env": { MCP_MANAGED_ENV: MCP_SERVER_NAME }
+                        "env": { "FORKTTY_MCP_MANAGED": "forktty" }
                     }
                 },
                 "theme": "dark"

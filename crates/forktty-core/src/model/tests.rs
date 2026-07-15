@@ -1175,7 +1175,7 @@ fn restored_session_keeps_closed_workspace_and_surface_ids_reserved() {
 }
 
 #[test]
-fn reserved_orchestration_ids_are_not_reused_by_fresh_sessions() {
+fn reserved_ids_are_not_reused_by_fresh_sessions() {
     let mut model = WorkspaceModel::new();
     model.reserve_workspace_id("workspace-3");
     model.reserve_surface_id("surface-5");

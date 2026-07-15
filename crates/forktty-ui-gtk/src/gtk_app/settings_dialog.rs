@@ -86,8 +86,7 @@ pub(super) fn show_settings_dialog_page(
         "Worktrees",
         "Workspaces and sessions",
     );
-    let agents_nav =
-        settings_nav_button("forktty-terminal-symbolic", "Agents", "Hooks, MCP, skills");
+    let agents_nav = settings_nav_button("forktty-terminal-symbolic", "Agents", "Lifecycle hooks");
     let alerts_nav = settings_nav_button(
         "forktty-notifications-symbolic",
         "Notifications",
@@ -100,7 +99,7 @@ pub(super) fn show_settings_dialog_page(
     advanced_nav.set_group(Some(&interface_nav));
     nav.append(&settings_nav_heading("Essentials"));
     nav.append(&interface_nav);
-    nav.append(&settings_nav_heading("Workflow"));
+    nav.append(&settings_nav_heading("Workspace"));
     nav.append(&agents_nav);
     nav.append(&worktrees_nav);
     #[cfg(feature = "browser")]
@@ -144,20 +143,6 @@ pub(super) fn show_settings_dialog_page(
         &loaded.appearance.sidebar_position,
     );
     sidebar_list.append(&sidebar_position);
-    let show_orchestration_rail = adw::SwitchRow::builder()
-        .title("Show orchestration rail")
-        .subtitle("Show the Router and orchestration panel on the right.")
-        .active(loaded.appearance.show_orchestration_rail)
-        .build();
-    show_orchestration_rail.add_css_class("settings-row");
-    sidebar_list.append(&show_orchestration_rail);
-    let show_workflow_feed = adw::SwitchRow::builder()
-        .title("Show workflow feed")
-        .subtitle("Show live workflow, team, and notification events below the panes.")
-        .active(loaded.appearance.show_workflow_feed)
-        .build();
-    show_workflow_feed.add_css_class("settings-row");
-    sidebar_list.append(&show_workflow_feed);
     interface_content.append(&sidebar_section);
     stack.add_named(&interface_page, Some("interface"));
 
@@ -218,8 +203,8 @@ pub(super) fn show_settings_dialog_page(
     let (agents_page, agents_content) = settings_page("Agents", "Agent integrations.");
     let (agent_setup_section, agent_setup_list) = settings_section("Recommended", "");
     let all_setup_row = settings_action_row(
-        "Agent integration",
-        "Hooks, MCP, and skills for supported coding agents. Ghostty config is untouched.",
+        "Agent hooks",
+        "Install lifecycle and notification hooks for supported coding agents.",
     );
     all_setup_row.add_css_class("settings-primary-row");
     let all_setup_button = settings_setup_button("Set Up");
@@ -230,97 +215,6 @@ pub(super) fn show_settings_dialog_page(
     agent_setup_list.append(&all_setup_row);
     agents_content.append(&agent_setup_section);
 
-    let (team_provider_section, team_provider_list) = settings_section("Team workers", "");
-    let team_default_agent = settings_combo_row(
-        "Default provider",
-        "Auto uses the provider order below and skips disabled and unavailable providers.",
-        TEAM_DEFAULT_AGENT_ITEMS,
-        &loaded.team.default_agent,
-    );
-    team_provider_list.append(&team_default_agent);
-    let team_auto_fallback = adw::SwitchRow::builder()
-        .title("Fallback to next provider")
-        .subtitle("When the default is unavailable, try the next detected provider.")
-        .active(loaded.team.auto_fallback)
-        .build();
-    team_auto_fallback.add_css_class("settings-row");
-    team_provider_list.append(&team_auto_fallback);
-    let team_provider_order = adw::EntryRow::builder()
-        .title("Provider order")
-        .text(team_provider_list_text(&loaded.team.provider_order))
-        .show_apply_button(true)
-        .tooltip_text("Comma-separated providers: codex, claude, pi, opencode, antigravity, grok")
-        .build();
-    team_provider_order.add_css_class("settings-row");
-    team_provider_list.append(&team_provider_order);
-    let team_disabled_agents = adw::EntryRow::builder()
-        .title("Disabled providers")
-        .text(team_provider_list_text(&loaded.team.disabled_agents))
-        .show_apply_button(true)
-        .tooltip_text("Comma-separated providers to skip for team worker launch")
-        .build();
-    team_disabled_agents.add_css_class("settings-row");
-    team_provider_list.append(&team_disabled_agents);
-    let team_provider_commands = adw::EntryRow::builder()
-        .title("Provider commands")
-        .text(team_provider_commands_text(&loaded.team.provider_commands))
-        .show_apply_button(true)
-        .tooltip_text("Comma-separated overrides, for example codex=/opt/codex/bin/codex. Values are direct commands, not shell snippets.")
-        .build();
-    team_provider_commands.add_css_class("settings-row");
-    team_provider_list.append(&team_provider_commands);
-    agents_content.append(&team_provider_section);
-
-    let (provider_detection_section, provider_detection_list) =
-        settings_section("Detected Providers", "");
-    let check_now_row = settings_action_row(
-        "Provider command availability",
-        "Re-scan the configured provider commands on PATH.",
-    );
-    let check_now_button = gtk::Button::with_label("Check now");
-    check_now_button.add_css_class("settings-inline-action");
-    check_now_row.add_suffix(&check_now_button);
-    check_now_row.set_activatable_widget(Some(&check_now_button));
-    let check_now_list = gtk::ListBox::new();
-    check_now_list.add_css_class("settings-list");
-    check_now_list.set_selection_mode(gtk::SelectionMode::None);
-    check_now_list.append(&check_now_row);
-    // Insert between the section header and the detection list so refreshes
-    // that clear the detection list never touch this row.
-    provider_detection_section.insert_child_after(
-        &check_now_list,
-        provider_detection_section.first_child().as_ref(),
-    );
-    append_team_provider_detection_rows(&provider_detection_list, &loaded.team);
-    agents_content.append(&provider_detection_section);
-    check_now_button.connect_clicked({
-        let list = provider_detection_list.clone();
-        let current = current.clone();
-        let dialog = dialog.clone();
-        move |_| {
-            refresh_team_provider_detection_rows(&list, &current.borrow().team);
-            dialog.add_toast(adw::Toast::new("Provider detection refreshed."));
-        }
-    });
-
-    let (agent_advanced_section, agent_advanced_list) = settings_section("Advanced", "");
-    let hooks_row = settings_action_row("Agent hooks", "Install provider hook entries.");
-    hooks_row.add_css_class("settings-secondary-row");
-    let hooks_button = settings_setup_button("Hooks");
-    let hooks_status = settings_setup_status_label();
-    hooks_row.add_suffix(&hooks_status);
-    hooks_row.add_suffix(&hooks_button);
-    hooks_row.set_activatable_widget(Some(&hooks_button));
-    agent_advanced_list.append(&hooks_row);
-    let mcp_row = settings_action_row("MCP bridge", "Register the local stdio MCP server.");
-    mcp_row.add_css_class("settings-secondary-row");
-    let mcp_button = settings_setup_button("MCP");
-    let mcp_status = settings_setup_status_label();
-    mcp_row.add_suffix(&mcp_status);
-    mcp_row.add_suffix(&mcp_button);
-    mcp_row.set_activatable_widget(Some(&mcp_button));
-    agent_advanced_list.append(&mcp_row);
-    agents_content.append(&agent_advanced_section);
     stack.add_named(&agents_page, Some("agents"));
 
     #[cfg(feature = "browser")]
@@ -406,7 +300,6 @@ pub(super) fn show_settings_dialog_page(
         "All workspace and session data stays on this machine.",
         "Agent coordination runs over an owner-only local Unix socket.",
         "No cloud sync; anonymous daily ping is controlled below.",
-        "The MCP bridge is stdio-only and local.",
     ] {
         let row = settings_action_row(line, "");
         row.set_activatable(false);
@@ -480,19 +373,8 @@ pub(super) fn show_settings_dialog_page(
     let refresh_agent_setup_statuses = {
         let all_setup_status = all_setup_status.clone();
         let all_setup_button = all_setup_button.clone();
-        let hooks_status = hooks_status.clone();
-        let hooks_button = hooks_button.clone();
-        let mcp_status = mcp_status.clone();
-        let mcp_button = mcp_button.clone();
         Rc::new(move || {
-            refresh_settings_setup_statuses(
-                &all_setup_status,
-                &all_setup_button,
-                &hooks_status,
-                &hooks_button,
-                &mcp_status,
-                &mcp_button,
-            );
+            refresh_settings_setup_statuses(&all_setup_status, &all_setup_button);
         })
     };
     refresh_agent_setup_statuses.as_ref()();
@@ -504,7 +386,7 @@ pub(super) fn show_settings_dialog_page(
             run_settings_setup(
                 button,
                 &dialog,
-                "Agent integrations configured.",
+                "Agent hooks configured.",
                 run_agent_integrations_setup,
                 {
                     let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
@@ -513,39 +395,6 @@ pub(super) fn show_settings_dialog_page(
             );
         }
     });
-    hooks_button.connect_clicked({
-        let dialog = dialog.clone();
-        let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
-        move |button| {
-            run_settings_setup(
-                button,
-                &dialog,
-                "Agent hooks configured.",
-                run_agent_hooks_setup,
-                {
-                    let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
-                    move || refresh_agent_setup_statuses.as_ref()()
-                },
-            );
-        }
-    });
-    mcp_button.connect_clicked({
-        let dialog = dialog.clone();
-        let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
-        move |button| {
-            run_settings_setup(
-                button,
-                &dialog,
-                "MCP bridge configured.",
-                run_mcp_bridge_setup,
-                {
-                    let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
-                    move || refresh_agent_setup_statuses.as_ref()()
-                },
-            );
-        }
-    });
-
     window_mode.connect_selected_notify({
         let dialog = dialog.clone();
         let current = current.clone();
@@ -601,42 +450,6 @@ pub(super) fn show_settings_dialog_page(
                 &on_apply,
                 |config| config.appearance.sidebar_visible = row.is_active(),
                 "Sidebar visibility updated.",
-            );
-        }
-    });
-    show_orchestration_rail.connect_notify_local(Some("active"), {
-        let dialog = dialog.clone();
-        let current = current.clone();
-        let on_apply = on_apply.clone();
-        let suppress_updates = suppress_updates.clone();
-        move |row: &adw::SwitchRow, _| {
-            if suppress_updates.get() {
-                return;
-            }
-            persist_settings_change(
-                &dialog,
-                &current,
-                &on_apply,
-                |config| config.appearance.show_orchestration_rail = row.is_active(),
-                "Orchestration rail visibility updated.",
-            );
-        }
-    });
-    show_workflow_feed.connect_notify_local(Some("active"), {
-        let dialog = dialog.clone();
-        let current = current.clone();
-        let on_apply = on_apply.clone();
-        let suppress_updates = suppress_updates.clone();
-        move |row: &adw::SwitchRow, _| {
-            if suppress_updates.get() {
-                return;
-            }
-            persist_settings_change(
-                &dialog,
-                &current,
-                &on_apply,
-                |config| config.appearance.show_workflow_feed = row.is_active(),
-                "Workflow feed visibility updated.",
             );
         }
     });
@@ -704,169 +517,6 @@ pub(super) fn show_settings_dialog_page(
                         "Detached terminal persistence sessions cleaned up.",
                     ));
                 }
-            }
-        }
-    });
-    team_default_agent.connect_selected_notify({
-        let dialog = dialog.clone();
-        let current = current.clone();
-        let on_apply = on_apply.clone();
-        let suppress_updates = suppress_updates.clone();
-        let team_disabled_agents = team_disabled_agents.clone();
-        move |row| {
-            if suppress_updates.get() {
-                return;
-            }
-            if let Some(agent) = settings_choice_value(TEAM_DEFAULT_AGENT_ITEMS, row.selected()) {
-                persist_settings_change(
-                    &dialog,
-                    &current,
-                    &on_apply,
-                    |config| {
-                        config.team.default_agent = agent.to_string();
-                        if agent != config::TEAM_AGENT_AUTO {
-                            config
-                                .team
-                                .disabled_agents
-                                .retain(|provider| provider != agent);
-                        }
-                    },
-                    "Team provider default saved.",
-                );
-                team_disabled_agents.set_text(&team_provider_list_text(
-                    &current.borrow().team.disabled_agents,
-                ));
-            }
-        }
-    });
-    team_auto_fallback.connect_notify_local(Some("active"), {
-        let dialog = dialog.clone();
-        let current = current.clone();
-        let on_apply = on_apply.clone();
-        let suppress_updates = suppress_updates.clone();
-        move |row: &adw::SwitchRow, _| {
-            if suppress_updates.get() {
-                return;
-            }
-            persist_settings_change(
-                &dialog,
-                &current,
-                &on_apply,
-                |config| config.team.auto_fallback = row.is_active(),
-                "Team provider fallback updated.",
-            );
-        }
-    });
-    team_provider_order.connect_changed(|row| {
-        row.remove_css_class("error");
-    });
-    team_provider_order.connect_apply({
-        let dialog = dialog.clone();
-        let current = current.clone();
-        let on_apply = on_apply.clone();
-        move |row: &adw::EntryRow| {
-            let providers = match normalized_team_provider_entry(row, false) {
-                Ok(providers) => providers,
-                Err(err) => {
-                    row.add_css_class("error");
-                    dialog.add_toast(adw::Toast::new(&err));
-                    return;
-                }
-            };
-            let saved = persist_settings_change(
-                &dialog,
-                &current,
-                &on_apply,
-                |config| config.team.provider_order = providers,
-                "Team provider order saved.",
-            );
-            if saved {
-                row.remove_css_class("error");
-            } else {
-                row.add_css_class("error");
-            }
-        }
-    });
-    team_disabled_agents.connect_changed(|row| {
-        row.remove_css_class("error");
-    });
-    team_disabled_agents.connect_apply({
-        let dialog = dialog.clone();
-        let current = current.clone();
-        let on_apply = on_apply.clone();
-        let suppress_updates = suppress_updates.clone();
-        let team_default_agent = team_default_agent.clone();
-        move |row: &adw::EntryRow| {
-            let providers = match normalized_team_provider_entry(row, true) {
-                Ok(providers) => providers,
-                Err(err) => {
-                    row.add_css_class("error");
-                    dialog.add_toast(adw::Toast::new(&err));
-                    return;
-                }
-            };
-            let saved = persist_settings_change(
-                &dialog,
-                &current,
-                &on_apply,
-                |config| {
-                    config.team.disabled_agents = providers;
-                    if config.team.default_agent != config::TEAM_AGENT_AUTO
-                        && config
-                            .team
-                            .disabled_agents
-                            .contains(&config.team.default_agent)
-                    {
-                        config.team.default_agent = config::TEAM_AGENT_AUTO.to_string();
-                    }
-                },
-                "Disabled team providers saved.",
-            );
-            if saved {
-                row.remove_css_class("error");
-                suppress_updates.set(true);
-                team_default_agent.set_selected(settings_choice_index(
-                    TEAM_DEFAULT_AGENT_ITEMS,
-                    &current.borrow().team.default_agent,
-                ));
-                suppress_updates.set(false);
-            } else {
-                row.add_css_class("error");
-            }
-        }
-    });
-    team_provider_commands.connect_changed(|row| {
-        row.remove_css_class("error");
-    });
-    team_provider_commands.connect_apply({
-        let dialog = dialog.clone();
-        let current = current.clone();
-        let on_apply = on_apply.clone();
-        let provider_detection_list = provider_detection_list.clone();
-        move |row: &adw::EntryRow| {
-            let commands = match normalized_team_provider_commands_entry(row) {
-                Ok(commands) => commands,
-                Err(err) => {
-                    row.add_css_class("error");
-                    dialog.add_toast(adw::Toast::new(&err));
-                    return;
-                }
-            };
-            let saved = persist_settings_change(
-                &dialog,
-                &current,
-                &on_apply,
-                |config| config.team.provider_commands = commands,
-                "Team provider commands saved.",
-            );
-            if saved {
-                row.remove_css_class("error");
-                refresh_team_provider_detection_rows(
-                    &provider_detection_list,
-                    &current.borrow().team,
-                );
-            } else {
-                row.add_css_class("error");
             }
         }
     });
@@ -964,17 +614,9 @@ pub(super) fn show_settings_dialog_page(
             let window_mode_for_reset = window_mode.clone();
             let sidebar_position_for_reset = sidebar_position.clone();
             let sidebar_visible_for_reset = sidebar_visible.clone();
-            let show_orchestration_rail_for_reset = show_orchestration_rail.clone();
-            let show_workflow_feed_for_reset = show_workflow_feed.clone();
             let worktree_layout_for_reset = worktree_layout.clone();
             let pr_lookup_for_reset = pr_lookup.clone();
             let persist_terminal_processes_for_reset = persist_terminal_processes.clone();
-            let team_default_agent_for_reset = team_default_agent.clone();
-            let team_auto_fallback_for_reset = team_auto_fallback.clone();
-            let team_provider_order_for_reset = team_provider_order.clone();
-            let team_disabled_agents_for_reset = team_disabled_agents.clone();
-            let team_provider_commands_for_reset = team_provider_commands.clone();
-            let provider_detection_list_for_reset = provider_detection_list.clone();
             let notification_command_for_reset = notification_command.clone();
             let desktop_notifications_for_reset = desktop_notifications.clone();
             let notification_sound_for_reset = notification_sound.clone();
@@ -982,7 +624,7 @@ pub(super) fn show_settings_dialog_page(
             show_destructive_confirmation(
                 &confirmation_parent,
                 "Reset Settings?",
-                "Restore ForkTTY settings to their default values. This changes appearance, workspace, team provider preferences, privacy, and notification preferences.",
+                "Restore ForkTTY settings to their default values. This changes appearance, workspace, privacy, and notification preferences.",
                 "Reset Settings",
                 move || {
                     let defaults = config::AppConfig::default();
@@ -1025,9 +667,6 @@ pub(super) fn show_settings_dialog_page(
                         &defaults.appearance.sidebar_position,
                     ));
                     sidebar_visible_for_reset.set_active(defaults.appearance.sidebar_visible);
-                    show_orchestration_rail_for_reset
-                        .set_active(defaults.appearance.show_orchestration_rail);
-                    show_workflow_feed_for_reset.set_active(defaults.appearance.show_workflow_feed);
                     worktree_layout_for_reset.set_selected(settings_choice_index(
                         WORKTREE_LAYOUT_ITEMS,
                         &defaults.general.worktree_layout,
@@ -1035,24 +674,6 @@ pub(super) fn show_settings_dialog_page(
                     pr_lookup_for_reset.set_active(defaults.general.enable_pr_lookup);
                     persist_terminal_processes_for_reset
                         .set_active(defaults.general.persist_terminal_processes);
-                    team_default_agent_for_reset.set_selected(settings_choice_index(
-                        TEAM_DEFAULT_AGENT_ITEMS,
-                        &defaults.team.default_agent,
-                    ));
-                    team_auto_fallback_for_reset.set_active(defaults.team.auto_fallback);
-                    team_provider_order_for_reset
-                        .set_text(&team_provider_list_text(&defaults.team.provider_order));
-                    team_provider_order_for_reset.remove_css_class("error");
-                    team_disabled_agents_for_reset
-                        .set_text(&team_provider_list_text(&defaults.team.disabled_agents));
-                    team_disabled_agents_for_reset.remove_css_class("error");
-                    team_provider_commands_for_reset
-                        .set_text(&team_provider_commands_text(&defaults.team.provider_commands));
-                    team_provider_commands_for_reset.remove_css_class("error");
-                    refresh_team_provider_detection_rows(
-                        &provider_detection_list_for_reset,
-                        &defaults.team,
-                    );
                     notification_command_for_reset.set_text(&defaults.general.notification_command);
                     notification_command_for_reset.remove_css_class("error");
                     desktop_notifications_for_reset.set_active(defaults.notifications.desktop);
@@ -1265,37 +886,20 @@ fn settings_setup_status_label() -> gtk::Label {
     label
 }
 
-fn refresh_settings_setup_statuses(
-    all_status: &gtk::Label,
-    all_button: &gtk::Button,
-    hooks_status: &gtk::Label,
-    hooks_button: &gtk::Button,
-    mcp_status: &gtk::Label,
-    mcp_button: &gtk::Button,
-) {
+fn refresh_settings_setup_statuses(all_status: &gtk::Label, all_button: &gtk::Button) {
     apply_pending_setup_status(all_status, all_button);
-    apply_pending_setup_status(hooks_status, hooks_button);
-    apply_pending_setup_status(mcp_status, mcp_button);
 
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let hooks = inspect_agent_hooks_setup();
-        let mcp = inspect_mcp_bridge_setup();
         let all = inspect_agent_integrations_setup();
-        let _ = tx.send((all, hooks, mcp));
+        let _ = tx.send(all);
     });
 
     let all_status = all_status.clone();
     let all_button = all_button.clone();
-    let hooks_status = hooks_status.clone();
-    let hooks_button = hooks_button.clone();
-    let mcp_status = mcp_status.clone();
-    let mcp_button = mcp_button.clone();
     glib::timeout_add_local(SETTINGS_SETUP_POLL_INTERVAL, move || match rx.try_recv() {
-        Ok((all, hooks, mcp)) => {
+        Ok(all) => {
             apply_setup_status(&all_status, &all_button, &all);
-            apply_setup_status(&hooks_status, &hooks_button, &hooks);
-            apply_setup_status(&mcp_status, &mcp_button, &mcp);
             glib::ControlFlow::Break
         }
         Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
@@ -1306,8 +910,6 @@ fn refresh_settings_setup_statuses(
                 detail: "Setup status check stopped before completing.".to_string(),
             };
             apply_setup_status(&all_status, &all_button, &status);
-            apply_setup_status(&hooks_status, &hooks_button, &status);
-            apply_setup_status(&mcp_status, &mcp_button, &status);
             glib::ControlFlow::Break
         }
     });
@@ -1425,139 +1027,6 @@ pub(super) const WORKTREE_LAYOUT_ITEMS: &[(&str, &str)] = &[
     ("sibling", "Sibling"),
     ("outer-nested", "Outer nested"),
 ];
-pub(super) const TEAM_DEFAULT_AGENT_ITEMS: &[(&str, &str)] = &[
-    ("auto", "Auto"),
-    ("codex", "Codex"),
-    ("claude", "Claude"),
-    ("pi", "Pi"),
-    ("opencode", "OpenCode"),
-    ("antigravity", "Antigravity"),
-    ("grok", "Grok"),
-];
-
-fn team_provider_label(provider: &str) -> &'static str {
-    match provider {
-        "codex" => "Codex",
-        "claude" => "Claude",
-        "pi" => "Pi",
-        "opencode" => "OpenCode",
-        "antigravity" => "Antigravity",
-        "grok" => "Grok",
-        _ => "Provider",
-    }
-}
-
-fn team_provider_list_text(providers: &[String]) -> String {
-    providers.join(", ")
-}
-
-fn team_provider_commands_text(commands: &std::collections::BTreeMap<String, String>) -> String {
-    commands
-        .iter()
-        .map(|(provider, command)| format!("{provider}={command}"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn normalized_team_provider_entry(
-    row: &adw::EntryRow,
-    allow_empty: bool,
-) -> Result<Vec<String>, String> {
-    let text = normalized_settings_entry_text(row);
-    let mut providers = Vec::new();
-    let mut invalid = Vec::new();
-    for item in text.split(',') {
-        let item = item.trim();
-        if item.is_empty() {
-            continue;
-        };
-        let Some(provider) = config::canonical_team_provider(item) else {
-            invalid.push(item.to_string());
-            continue;
-        };
-        if !providers.iter().any(|candidate| candidate == provider) {
-            providers.push(provider.to_string());
-        }
-    }
-    if !invalid.is_empty() {
-        return Err(format!("Unknown team provider: {}", invalid.join(", ")));
-    }
-    if providers.is_empty() && !allow_empty {
-        providers = config::default_team_provider_order();
-    }
-    row.set_text(&team_provider_list_text(&providers));
-    Ok(providers)
-}
-
-fn normalized_team_provider_commands_entry(
-    row: &adw::EntryRow,
-) -> Result<std::collections::BTreeMap<String, String>, String> {
-    let text = normalized_settings_entry_text(row);
-    let mut commands = std::collections::BTreeMap::new();
-    for item in text.split(',') {
-        let item = item.trim();
-        if item.is_empty() {
-            continue;
-        }
-        let Some((provider, command)) = item.split_once('=') else {
-            return Err("Provider commands must use provider=command entries.".to_string());
-        };
-        let provider = provider.trim();
-        let command = command.trim();
-        let Some(provider) = config::canonical_team_provider(provider) else {
-            return Err(format!("Unknown team provider: {provider}"));
-        };
-        if let Err(err) = config::validate_team_provider_command_value(command) {
-            return Err(format!("Invalid command for {provider}: {err}"));
-        }
-        commands.insert(provider.to_string(), command.to_string());
-    }
-    row.set_text(&team_provider_commands_text(&commands));
-    Ok(commands)
-}
-
-fn refresh_team_provider_detection_rows(list: &gtk::ListBox, team: &config::TeamConfig) {
-    while let Some(child) = list.first_child() {
-        list.remove(&child);
-    }
-    append_team_provider_detection_rows(list, team);
-}
-
-fn append_team_provider_detection_rows(list: &gtk::ListBox, team: &config::TeamConfig) {
-    let path = std::env::var_os("PATH");
-    for provider in config::TEAM_PROVIDER_CHOICES {
-        let default_program = config::team_provider_program(provider).unwrap_or(provider);
-        let configured = config::team_provider_command(team, provider);
-        let program = configured.unwrap_or(default_program);
-        let executable = forktty_terminal::spawn::resolve_child_program(program, path.as_deref());
-        let row = settings_action_row(
-            team_provider_label(provider),
-            &executable
-                .as_ref()
-                .map(|path| path.to_string_lossy().into_owned())
-                .unwrap_or_else(|| {
-                    if configured.is_some() {
-                        format!("Configured command not executable or not found: {program}")
-                    } else {
-                        format!("{program} not found on PATH")
-                    }
-                }),
-        );
-        let status = gtk::Label::new(Some(if executable.is_some() && configured.is_some() {
-            "Configured"
-        } else if executable.is_some() {
-            "Found"
-        } else {
-            "Missing"
-        }));
-        status.add_css_class("settings-status-pill");
-        status.set_valign(gtk::Align::Center);
-        set_setup_status_class(&status, if executable.is_some() { "ok" } else { "error" });
-        row.add_suffix(&status);
-        list.append(&row);
-    }
-}
-
 fn clear_notification_history_from_settings(state: &SocketAppState) -> usize {
     let notifications = if let Ok(mut model) = state.model.lock() {
         let notifications = model.list_notifications();
@@ -1566,7 +1035,6 @@ fn clear_notification_history_from_settings(state: &SocketAppState) -> usize {
     } else {
         Vec::new()
     };
-    state.mark_notification_feed_entries_cleared(&notifications);
     for notification in &notifications {
         close_desktop_notification(&notification.id);
     }

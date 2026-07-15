@@ -283,8 +283,7 @@ pub(super) fn refresh_sidebar(
             .label("New Workspace")
             .has_frame(true)
             .build();
-        // Neutral on purpose: the stage's Router button is the single accent
-        // CTA in the no-workspace view (one primary action per view).
+        create.add_css_class("suggested-action");
         create.set_action_name(Some("app.new-workspace"));
         set_accessible_button_text(&create, "New Workspace", Some("Ctrl+Shift+N"));
         empty.append(&icon);
@@ -1320,75 +1319,36 @@ fn format_status_summary_part(status: &StatusEntry) -> String {
     format!("{}: {}", status.label, value)
 }
 
-/// Fixed sidebar sections below the workspace list: TEAM (latest team
-/// workers grouped by agent), RESOURCES project shortcuts, and the Settings/About
-/// footer, mirroring the agent-workspace layout.
+/// Fixed sidebar sections below the workspace list: project shortcuts and the
+/// Settings/About footer.
 #[derive(Clone)]
 pub(super) struct SidebarSectionsUi {
-    pub(super) team_shell: gtk::Box,
-    team_rows: gtk::Box,
-    team_signature: Rc<RefCell<String>>,
     pub(super) resources_shell: gtk::Box,
     pub(super) git_repos_row: gtk::Button,
     pub(super) footer_shell: gtk::Box,
     pub(super) about_row: gtk::Button,
 }
 
-pub(super) fn build_sidebar_sections(state: &SocketAppState) -> SidebarSectionsUi {
-    let team_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    team_shell.add_css_class("sidebar-fixed-section");
-    team_shell.append(&sidebar_section_label("Team"));
-    let team_rows = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    team_shell.append(&team_rows);
-
+pub(super) fn build_sidebar_sections() -> SidebarSectionsUi {
     let resources_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
     resources_shell.add_css_class("sidebar-fixed-section");
     resources_shell.append(&sidebar_section_label("Resources"));
-    let git_repos_row = sidebar_nav_row("forktty-merge-symbolic", "Worktrees", None);
+    let git_repos_row = sidebar_nav_row("forktty-merge-symbolic", "Worktrees");
     resources_shell.append(&git_repos_row);
 
     let footer_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
     footer_shell.add_css_class("sidebar-footer");
-    let settings_row = sidebar_nav_row("forktty-settings-symbolic", "Settings", None);
+    let settings_row = sidebar_nav_row("forktty-settings-symbolic", "Settings");
     settings_row.set_action_name(Some("app.settings"));
     footer_shell.append(&settings_row);
-    let about_row = sidebar_nav_row("forktty-info-symbolic", "About ForkTTY", None);
+    let about_row = sidebar_nav_row("forktty-info-symbolic", "About ForkTTY");
     footer_shell.append(&about_row);
 
-    let ui = SidebarSectionsUi {
-        team_shell,
-        team_rows,
-        // Sentinel that no real signature (possibly "") can match, so the
-        // first refresh always applies visibility and hides the empty section.
-        team_signature: Rc::new(RefCell::new(String::from("\u{0}unset"))),
+    SidebarSectionsUi {
         resources_shell,
         git_repos_row,
         footer_shell,
         about_row,
-    };
-    refresh_sidebar_team_section(&ui, state);
-    ui
-}
-
-pub(super) fn refresh_sidebar_team_section(ui: &SidebarSectionsUi, state: &SocketAppState) {
-    let chips = latest_team_chips_for_state(state);
-    let signature = chips
-        .iter()
-        .map(|chip| format!("{}:{}:{}", chip.label, chip.count, chip.dot))
-        .collect::<Vec<_>>()
-        .join("|");
-    if *ui.team_signature.borrow() == signature {
-        return;
-    }
-    *ui.team_signature.borrow_mut() = signature;
-    while let Some(child) = ui.team_rows.first_child() {
-        ui.team_rows.remove(&child);
-    }
-    ui.team_shell.set_visible(!chips.is_empty());
-    for chip in &chips {
-        let row = sidebar_nav_row("forktty-terminal-symbolic", &chip.label, Some(chip));
-        row.set_action_name(Some("app.agents"));
-        ui.team_rows.append(&row);
     }
 }
 
@@ -1403,7 +1363,7 @@ fn sidebar_section_label(title: &str) -> gtk::Label {
     label
 }
 
-fn sidebar_nav_row(icon: &str, label: &str, chip: Option<&TeamChip>) -> gtk::Button {
+fn sidebar_nav_row(icon: &str, label: &str) -> gtk::Button {
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let icon = gtk::Image::from_icon_name(icon);
     icon.add_css_class("sidebar-nav-icon");
@@ -1417,19 +1377,6 @@ fn sidebar_nav_row(icon: &str, label: &str, chip: Option<&TeamChip>) -> gtk::But
         .build();
     text.add_css_class("sidebar-nav-label");
     content.append(&text);
-    if let Some(chip) = chip {
-        let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        dot.add_css_class("rail-dot");
-        dot.add_css_class(chip.dot);
-        dot.set_valign(gtk::Align::Center);
-        content.append(&dot);
-        let count = gtk::Label::builder()
-            .label(chip.count.to_string())
-            .single_line_mode(true)
-            .build();
-        count.add_css_class("sidebar-nav-count");
-        content.append(&count);
-    }
     let button = gtk::Button::builder()
         .child(&content)
         .has_frame(false)

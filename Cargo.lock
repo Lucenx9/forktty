@@ -771,7 +771,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
- "toml_edit",
  "ureq",
  "webkit6",
 ]
@@ -2519,7 +2518,6 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
- "toml_writer",
  "winnow",
 ]
 

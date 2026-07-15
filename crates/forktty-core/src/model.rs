@@ -653,7 +653,7 @@ impl WorkspaceModel {
     }
 
     /// Reserve a generated workspace id that may still be referenced outside
-    /// the GTK session, such as durable workflow/team orchestration records.
+    /// the current model snapshot.
     ///
     /// This does not create a workspace. It only advances the monotonic id
     /// high-water mark so a later `create_workspace` cannot recycle the same

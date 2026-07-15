@@ -22,12 +22,8 @@ use install::{
     agent_spec, antigravity_script_path, build_hook_remove_plan, build_hook_setup_plan,
     build_hook_setup_plan_with_profile, default_hook_setup_agents,
     ensure_private_antigravity_hook_dirs, hook_setup_profile_name, is_claude_high_frequency_event,
-    is_forktty_managed_entry, read_opencode_plugin_file, supported_agents,
+    is_forktty_managed_entry, normalize_agent_name, read_opencode_plugin_file, supported_agents,
     supported_hook_remove_agents, HookRemoveAction,
-};
-pub(super) use install::{
-    antigravity_config_dir, codex_home_dir, home_dir, legacy_gemini_config_path,
-    normalize_agent_name,
 };
 
 pub(super) use event::{

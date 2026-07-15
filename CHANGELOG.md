@@ -4,86 +4,60 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Removed
+- Simplified ForkTTY back to a terminal-workspace core by removing the built-in
+  task Router, provider-neutral Team/Workflow/Feed stores and socket methods,
+  the right Router rail, Team sidebar section, bottom workflow feed, built-in
+  MCP stdio server/setup, managed agent-skill installer, provider-selection
+  settings, and automatic hook updates. Existing unknown config keys are
+  ignored on load and omitted on the next save. Existing MCP registrations and
+  installed skills are not changed automatically; follow the
+  [upgrade cleanup](README.md#upgrading-from-orchestration-builds) to remove
+  only ForkTTY-managed entries.
+
 ### Changed
+- Reduced the core socket contract from 79 to 50 public/connection-level
+  methods. Workspace, pane, surface, terminal-text, notifications, metadata,
+  worktrees, remotes, project actions, events, and thin agent lifecycle
+  primitives remain available through the owner-only Unix socket and CLI.
+- Agent hooks are now explicitly opt-in: GTK may show a setup reminder, but it
+  never installs or refreshes hook configuration in the background.
+- Reframed the workbench around the embedded Ghostty terminal, workspace
+  sidebar, tabs/splits, navigation, notifications, and status bar; removed
+  orchestration-only chrome and its periodic refresh work.
 - Replaced the application icon with a flatter ForkTTY glyph that combines a
   terminal prompt, branching path, and cursor line using the restrained dark
   workbench palette and a single warm active-path accent.
-- Quieted Router rail list metadata: notification timestamps and worker/report
-  status words no longer take on the severity color (the small status dot alone
-  carries severity, matching the dot + quiet text pattern used elsewhere).
-- The no-workspace sidebar "New Workspace" button becomes a neutral button so
-  the stage's Router action stays the single accent CTA in the empty state.
 - Major polish for premium, clean, Linear/Cursor/Vercel aesthetic (terminal-first, low noise):
   - Workspace sidebar converted from bordered cards with heavy drop shadows to compact inset navigation rows using quiet hairline indicators for active/attention/DnD.
   - Reduced full 999px pill radii on badges, status location, welcome button, and keycaps to small precise radii (4-6px). 999px now reserved for true circular dots only.
   - Keycaps made subtler (lighter background, thinner border, lower weight) to reduce chrome noise.
   - Command palette selected state and several tab/workspace DnD feedbacks switched from inset box-shadows to clean hairlines + surface shifts.
-  - Header "Plan Task" CTA background neutralized (no longer warm-tinted) while keeping accent on text for action.
 - Further quieted the workbench toward Linear/Cursor/Vercel aesthetics:
   - Reduced heavy drop shadows on popovers, context menus, command palette search, pane search bars, and notification/agent rows (now subtle 2-4px shadows or border + light inset only).
   - Removed outer borders and inset glows from terminal panes; attention no longer paints strong accent borders on the whole pane (signal now via small header dot + subtle header treatment).
   - Replaced warm accent-tinted routine hovers/active states (#26211d and similar #1e1a17 warm neutrals) with pure cool grays for calmer interactions.
-- Improved the bottom workflow feed: tab renamed to "ALL" for clarity, rows now show relative time ("2m", "now") with absolute clock on tooltip, high-signal statuses (warn/err) receive subtle background pills for scannability while staying quiet, the collapsed thin bar now shows the latest event inline for constant awareness, and the router summary is hidden from the absolute status bar when the feed is visible (avoids duplication). Keeps the compact fixed-row HUD character suited to a terminal-first app and the quiet Linear/Cursor/Vercel aesthetic.
-- Refined the Router rail toward a quieter Vercel/Linear-style finish: sections
-  now separate with whitespace instead of stacked hairlines (only the header and
-  attention summary keep a divider), uppercase section labels use wider
-  tracking and lighter weight, section counts read as muted metadata, the
-  Edit/Review/Deny controls become borderless-background ghost buttons, and the
-  header status pill becomes a Linear-style colored dot with quiet text.
-- Decluttered the Router rail's information layout: the ROUTER DECISION
-  section is gone (its plan text duplicated STRATEGY and its timestamp now
-  lives in the strategy meta row as "Updated", replacing the "Workflow" cell
-  that duplicated the header status), the attention summary only shows
-  dimensions with signal instead of padding zeros, and the duplicate
-  "Open worker reports" link is dropped in favor of the single
-  "View all workers" entry point.
 - Brought pane chrome in line with the quiet workbench finish: the pane
   header's agent lifecycle badge becomes quiet colored text instead of a
   bordered pill, and the per-pane tab strip drops its stale off-tone background
   for the shared pane chrome ground.
-- Unified the workbench panel grounds: the workspace sidebar, Router rail,
-  workflow feed dock, and bottom status bar now share one recessed tone instead
-  of four slightly different darks, and the feed's tabs, live label, collapse
-  control, and kind tags adopt the same quiet tracked-uppercase/colored-text
-  treatment as the rail and sidebar (kind tags lose their tinted pills).
 - Aligned the left workspace sidebar with the same quiet finish: workspace rows
   lose their hover/active outlines and read as tinted rounded rows, the
   workspace status badge becomes quiet colored text instead of a bordered pill,
-  and section labels/counts match the Router rail's tracked uppercase and muted
-  weight.
-- Calmed the left side of the main titlebar into a borderless Router/workspace
-  location path and moved the single Plan Task action into the right-side
-  action group, reducing competing card-like controls without changing
-  navigation behavior or labels.
-- Polished the dark workbench toward a quieter Linear/Cursor-style finish:
-  neutral header chips, a less saturated Plan Task CTA, softer active-pane and
-  feed accents, lower-noise shell dividers, brighter muted labels, quieter empty
-  feed rows, and a Router planner that hides result scaffolding until a plan is
-  available; the idle Router dialog is more compact, the empty feed reads less
-  like a log row, and split-pane hairlines are subtler.
-- Simplified the workbench titlebar by removing the redundant Plan shortcut next
-  to Plan Task, leaving one primary Router action while keeping the sidebars as
-  contextual navigation/inspection surfaces.
-- Quietened the Router rail's idle state so empty decision, loop, approval,
-  worker, report, notification, and meta sections stay hidden until they have
-  real signal, keeping the inspector calmer when no workflow is staged.
-- Softened the workbench chrome with a quieter Plan Task CTA, tighter Router
-  rail rhythm, subtler feed separators, and calmer command-palette selection.
-- Router-discovered provider executables now report authentication and runtime
-  health as unverified instead of claiming they are authenticated and ready;
-  they remain eligible until concrete runtime evidence reports a lockout.
+  and section labels/counts use tracked uppercase and muted weight.
 - Agent HUD and About ForkTTY now use the quiet hairline + @ft_* palette
-  treatment: lifecycle/loop/permission badges use small 5px radii and quiet
+  treatment: lifecycle and permission badges use small 5px radii and quiet
   semantic text colors (no heavy colored 999px pills), About details card is
   recessed with @ft_line hairlines and no shadow; pane badges also cleaned.
 
 ### Fixed
+- Bounded `context.snapshot` to the newest 100 matching notifications and
+  omitted binary terminal icon data while evaluating prompt risk across the
+  full matching set, preventing untrusted OSC icon payloads from exceeding the
+  official client response limit.
 - Codex and Claude Code `SubagentStop` events no longer mark the parent session
   idle, and Claude Code `TeammateIdle` now publishes the same ready/idle state
   persisted for the teammate session.
-- Workflows using the supported terminal status `finished` now receive the
-  same cleanup, context consistency warnings, and Agent HUD done styling as
-  other terminal workflows.
 - Workspace rows now keep one consistent height whether or not agent activity
   metadata is available, avoiding smaller click targets for quiet workspaces.
 - Workspace rows now fall back to persisted agent-session lifecycle when a
@@ -94,7 +68,7 @@ All notable changes to ForkTTY are documented here.
   recorded approval proves the current hook hash is trusted.
 - Close-pane confirmations now dismiss themselves when another control or
   socket client removes the target pane while the dialog is still open.
-- The grouped `hooks`, `team`, and `status` CLI commands now accept `help`,
+- The grouped `hooks` and `status` CLI commands now accept `help`,
   `--help`, and `-h` without trying to contact a running ForkTTY instance.
 - Repaired the embedded-Ghostty smoke test's scrollback completion check and
   post-restart marker assertion so successful runs no longer fail spuriously.
@@ -105,12 +79,6 @@ All notable changes to ForkTTY are documented here.
 - Embedded Ghostty tail captures now read the bounded end of full scrollback
   when the loaded library supports the limited text ABI; older libraries keep
   the safe visible-text fallback.
-- The Router planner now freezes its goal and routing hints while a plan is in
-  flight, preventing a result for old inputs from appearing under an edited
-  form.
-- The Router rail notification action now says "Clear current view" so its
-  label matches the active-workspace scope it actually clears, including rows
-  beyond the four-item preview.
 - Switching Settings sections no longer flashes a whitish outline around the
   section you are leaving: checked nav items keep a transparent 1px border
   instead of `border: none`, so unchecking no longer interpolates the border
@@ -119,53 +87,28 @@ All notable changes to ForkTTY are documented here.
   interacted with: the focus-within row ring is gone (click focus lingers on
   toggle/combo rows), entry rows keep a quiet background while typing, and
   keyboard navigation still shows the accent focus ring.
-- The sidebar TEAM section header no longer lingers on screen when there are no
-  team workers; the empty section now hides on startup instead of only after a
-  team appears once.
 - Repaired the over-flattened workspace navigation and pane tabs: workspace
   rows regain compact inset spacing, rounded selected surfaces, and directional
   drag/drop hairlines, while pane tabs stay content-sized, scroll when space is
   tight, and keep one restrained warm edge for the active context.
-- Kept the provider selected by `team.worker.launch` authoritative for
-  launch-owned session attribution, so Claude-compatible hooks from Grok no
-  longer make Grok workers appear as Claude in the Agent HUD and agent APIs.
-- Allowed callers with concrete worker, hook, or user evidence to promote an
-  auto-discovered Router harness from unverified to verified-ready through
-  `harness_signals.readiness = "verified_ready"` plus a required bounded
-  `readiness_reason`, making the documented 50-point readiness score reachable.
-- Prevented `team.finish --close-workers` from leaving persisted workers active
-  after closing their panes when the team store cannot be saved; terminal
-  closures are now restored before the error is returned.
-- Cleared stale leader/surface bindings when a team or workflow moves to another
-  workspace without an explicit replacement surface, and stopped classifying
-  legacy `Permission denied` status text as a permission request.
 - Isolated GTK session-writing tests from the real user state directory, made
   environment guards panic-safe, and retried atomic session temp-file name
   collisions instead of failing with `File exists`.
 - Propagated piped stdin EOF through `remote-helper pty`, so canonical commands
   such as `cat` can finish instead of hanging after all input is consumed.
 - Preserved AppImage runtime provenance for renamed launchers in generated hook
-  and MCP commands, used the prerelease-aware zsync update channel, and aligned
+  commands, used the prerelease-aware zsync update channel, and aligned
   release checksum verification with the uploaded `.zsync` artifact.
 
 ### Changed
-- Renamed the workbench Router action from “Review Plan” to “Plan Task” so its
-  label matches the new-plan dialog it opens.
-- Reported provider-specific managed hook/MCP setup capabilities to the Router
-  instead of treating every launchable provider as hook- and MCP-managed, and
-  started Grok review workers in plan mode when no explicit Grok permission
-  mode is supplied.
-- Stopped Router loop-intent detection from treating code phrases such as
-  `with loop construct` as explicit iterative workflow requests.
-- Rejected relative hook and MCP config roots during setup/removal so malformed
+- Rejected relative hook config roots during setup/removal so malformed
   `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `HOME`, or related env overrides cannot
   make ForkTTY write agent integration config under the current working
   directory.
-- Improved contrast for small sidebar, Router dialog, and command-palette labels,
-  and aligned the Router dialog's empty result placeholders consistently.
+- Improved contrast for small sidebar and command-palette labels.
 - Fixed AppImage-launched embedded Ghostty panes so new shells receive
   `FORKTTY_WORKSPACE_ID`, `FORKTTY_SURFACE_ID`, and `FORKTTY_SOCKET_PATH` after
-  the AppImage child-exec helper runs, keeping hooks, MCP commands, and agents
+  the AppImage child-exec helper runs, keeping hooks and agents
   targeted at the correct pane/workspace by default.
 
 ## [0.2.0-alpha.18] - 2026-07-06

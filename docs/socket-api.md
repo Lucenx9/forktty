@@ -19,7 +19,7 @@ surface.
 
 ## Stable-for-alpha Core
 
-Use these first for scripts, MCP clients, hooks, and agent coordination:
+Use these first for scripts, hooks, and terminal automation:
 
 | Area | Methods |
 | ---- | ------- |
@@ -30,24 +30,18 @@ Use these first for scripts, MCP clients, hooks, and agent coordination:
 | Pane tabs | `pane.new_tab`, `pane.select_tab` |
 | Worktree reads | `worktree.list`, `worktree.status` |
 | Notifications | `notification.create`, `notification.list`, `notification.clear` |
-| Agent state | `agent.list`, `agent.health`, `agent.resume` |
+| Agent lifecycle | `agent.list`, `agent.health`, `agent.resume` |
 | Status and logs | `status.summary`, `metadata.set_status`, `metadata.list_status`, `metadata.clear_status`, `metadata.set_progress`, `metadata.list_progress`, `metadata.clear_progress`, `metadata.log`, `metadata.list_logs`, `metadata.clear_logs` |
 | Project actions | `project.action.list`, `project.action.run` |
 | Topology and remotes | `topology.tree`, `remote.list`, `remote.status` |
-| Feed reads and responses | `feed.list`, `feed.approval.respond` |
 
-## Alpha Orchestration and Mutation
+## Alpha Mutation and Lifecycle
 
-These are public, tested, and user-facing, but still evolving with the router,
-workflow loop, and team model:
+These are public, tested, and user-facing, but still evolving:
 
 | Area | Methods |
 | ---- | ------- |
-| Task router | `task.strategy.plan`, `task.strategy.apply` |
 | Worktree mutation | `worktree.create`, `worktree.attach`, `worktree.remove`, `worktree.merge` |
-| Workflow | `workflow.list`, `workflow.get`, `workflow.upsert`, `workflow.plan.set`, `workflow.loop.set`, `workflow.evidence.add`, `workflow.replay` |
-| Team | `team.list`, `team.get`, `team.upsert`, `team.finish`, `team.worker.upsert`, `team.worker.heartbeat`, `team.worker.launch`, `team.worker.health`, `team.worker.nudge`, `team.worker.shutdown`, `team.task.upsert`, `team.message.send`, `team.message.dispatch`, `team.message.ack`, `team.inbox`, `team.summary`, `team.events` |
-| Cleanup | `orchestration.cleanup` |
 | Events | `events.subscribe` |
 | Agent lifecycle maintenance | `agent.hibernate`, `agent.reclaim.plan`, `agent.reclaim` |
 
@@ -62,16 +56,35 @@ in AppImage or Debian release artifacts:
 `browser.history.list`, `browser.history.search`, `browser.history.clear`,
 `browser.bookmark.add`, `browser.bookmark.list`, `browser.bookmark.remove`.
 
+## Removed Orchestration Migration
+
+The terminal-core release removes the former router, task strategy, team,
+workflow, feed, MCP, and managed-skill methods. Calls now return
+`method_not_found`, and the matching CLI commands are no longer routed.
+
+Older releases may have registered `forktty mcp` in Codex, Claude Code, or
+Antigravity and installed the `forktty-agent-orchestration` skill. ForkTTY does
+not rewrite external agent configuration during startup. Before upgrading, use
+the older binary's `forktty mcp remove --dry-run`, legacy
+`forktty mcp remove gemini --dry-run`, and `forktty skills remove --dry-run`,
+then apply those removal commands. The former skill remover leaves marker-owned
+`forktty-agent-orchestration.bak-*` sibling directories, which must also be
+removed after inspecting their `SKILL.md` without following symlinks. If that
+binary is unavailable, follow the ownership-marker checks in the
+[README migration guide](../README.md#upgrading-from-orchestration-builds).
+
 ## Change Rules
 
 - Additive response fields are allowed in any tier.
 - Removing a method, renaming a method, changing required parameters, or changing
   the meaning of a stable-for-alpha response field requires a `CHANGELOG.md`
   entry and a SPEC update.
-- MCP tool schemas, CLI wrappers, `SPEC.md`, this file, and
-  `forktty-site` agent context should move together when a public method's
-  behavior changes.
+- CLI wrappers, `SPEC.md`, this file, and `forktty-site` agent context should
+  move together when a public method's behavior changes.
 - Prefer `system.identify` before mutating calls so stale workspace or surface
   ids are detected early.
 - Prefer `context.snapshot` for agent monitoring and `surface.read_text` /
   `surface.capture_tail` only when terminal text is actually needed.
+- `context.snapshot` returns at most the newest 100 matching notifications and
+  omits binary terminal icon data; risk flags still inspect the full matching
+  set.

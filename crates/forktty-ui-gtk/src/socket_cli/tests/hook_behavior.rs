@@ -214,77 +214,21 @@ fn formatting_and_target_helpers_match_cli_contract() {
     );
 
     let snapshot_params = context_snapshot_params(
-        vec![
-            "--surface-id".to_string(),
-            "surface-1".to_string(),
-            "--include-team-details".to_string(),
-            "--include-workflow-details".to_string(),
-            "--include-feed-trace".to_string(),
-        ],
+        vec!["--surface-id".to_string(), "surface-1".to_string()],
         "context-snapshot",
     )
     .unwrap();
-    assert_eq!(snapshot_params["include_team_details"], Value::Bool(true));
-    assert_eq!(
-        snapshot_params["include_workflow_details"],
-        Value::Bool(true)
-    );
-    assert_eq!(snapshot_params["include_feed_trace"], Value::Bool(true));
-    let compact_snapshot_params = context_snapshot_params(
-        vec![
-            "--surface-id".to_string(),
-            "surface-1".to_string(),
-            "--include-team-details=false".to_string(),
-            "--include-workflow-details=false".to_string(),
-            "--include-feed-trace=false".to_string(),
-        ],
-        "context-snapshot",
-    )
-    .unwrap();
-    assert_eq!(
-        compact_snapshot_params["include_team_details"],
-        Value::Bool(false)
-    );
-    assert_eq!(
-        compact_snapshot_params["include_workflow_details"],
-        Value::Bool(false)
-    );
-    assert_eq!(
-        compact_snapshot_params["include_feed_trace"],
-        Value::Bool(false)
-    );
+    assert_eq!(snapshot_params["surface_id"], "surface-1");
     assert_err_contains(
         context_snapshot_params(
             vec![
                 "--surface-id".to_string(),
                 "surface-1".to_string(),
-                "--include-team-details=maybe".to_string(),
+                "--include-team-details".to_string(),
             ],
             "context-snapshot",
         ),
-        "--include-team-details expects true or false",
-    );
-    assert_err_contains(
-        context_snapshot_params(
-            vec![
-                "--surface-id".to_string(),
-                "surface-1".to_string(),
-                "--include-workflow-details=maybe".to_string(),
-            ],
-            "context-snapshot",
-        ),
-        "--include-workflow-details expects true or false",
-    );
-    assert_err_contains(
-        context_snapshot_params(
-            vec![
-                "--surface-id".to_string(),
-                "surface-1".to_string(),
-                "--include-feed-trace=maybe".to_string(),
-            ],
-            "context-snapshot",
-        ),
-        "--include-feed-trace expects true or false",
+        "unknown option --include-team-details",
     );
 }
 
@@ -627,15 +571,11 @@ fn hook_response_adds_context_only_for_supported_claude_events() {
     assert!(context.contains("surface-9"));
     assert!(context.contains("forktty.sock"));
     assert!(context.contains("Feature Shell on branch feature/mcp"));
-    assert!(context.contains("context_snapshot gives a compact read-only view"));
-    assert!(context.contains("workspace_list, surface_list, topology_tree"));
-    assert!(context.contains("surface_read_text"));
-    assert!(context.contains("worktree_create creates an isolated git worktree"));
-    assert!(context.contains("SSH remote inventory"));
-    assert!(context.contains("remote_list/status"));
-    assert!(context.contains(
-        "For ordinary edits in the current repo, work normally; do not call ForkTTY tools just to edit files."
-    ));
+    assert!(context.contains("context-snapshot gives a compact read-only view"));
+    assert!(context.contains("list, surfaces, tree, read-screen, and capture-tail"));
+    assert!(context.contains("forktty worktree-create opens an isolated git worktree workspace"));
+    assert!(context.contains("forktty set-status, set-progress, log, and notify"));
+    assert!(context.contains("For ordinary edits in the current repository, work normally"));
     assert_eq!(
         response["hookSpecificOutput"]["sessionTitle"],
         "Feature Shell"
@@ -1191,11 +1131,7 @@ fn doctor_supported_events_track_installed_entries_per_provider() {
 }
 
 #[test]
-fn pi_and_grok_team_providers_do_not_install_hook_notifications() {
-    let team_providers = forktty_core::config::TEAM_PROVIDER_CHOICES;
-    assert!(team_providers.contains(&"pi"));
-    assert!(team_providers.contains(&"grok"));
-
+fn unsupported_hook_agents_are_not_installed() {
     let hook_agents = AGENTS.iter().map(|spec| spec.key).collect::<Vec<_>>();
     assert_eq!(
         hook_agents,

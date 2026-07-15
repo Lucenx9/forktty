@@ -6,13 +6,9 @@ use crate::metadata_params::{
 use crate::{
     agent_kind_from_permission_status_key, agent_kind_from_status_key,
     agent_session_lifecycle_from_hook, current_unix_epoch_ms,
-    feed_events::{feed_entry_from_notification, record_feed_entry},
-    feed_view,
-    notification_dispatch::dispatch_notification_with_loaded_config,
-    team_state::team_launch_owned_agent_for_surface,
-    DispatchError, SocketAppState,
+    notification_dispatch::dispatch_notification_with_loaded_config, DispatchError, SocketAppState,
 };
-use forktty_core::{close_desktop_notification, AgentKind, AgentSessionLifecycle};
+use forktty_core::{close_desktop_notification, AgentSessionLifecycle};
 use serde_json::{json, Value};
 
 pub(crate) fn notification_create(
@@ -36,9 +32,6 @@ pub(crate) fn notification_create(
     if state.notification_dispatch {
         dispatch_notification_with_loaded_config(&item);
     }
-    if let Err(err) = record_feed_entry(state, feed_entry_from_notification(&item)) {
-        eprintln!("forktty feed history update failed: {err}");
-    }
     Ok(json!(item))
 }
 
@@ -60,10 +53,8 @@ pub(crate) fn notification_clear(state: &SocketAppState) -> Result<Value, Dispat
         model.clear_notifications();
         notifications
     };
-    state.mark_notification_feed_entries_cleared(&notifications);
     for notification in &notifications {
         close_desktop_notification(&notification.id);
-        feed_view::send_terminal_notification_close_report(state, notification);
     }
     Ok(json!({"cleared": true}))
 }
@@ -74,16 +65,8 @@ pub(crate) fn set_status(state: &SocketAppState, params: &Value) -> Result<Value
         &request.value,
         request.hook.as_ref().map(|hook| hook.event.as_str()),
     );
-    let agent = effective_hook_agent_for_surface(
-        state,
-        request.surface_id.as_deref(),
-        agent_kind_from_status_key(&request.key),
-    )?;
-    let permission_agent = effective_hook_agent_for_surface(
-        state,
-        request.surface_id.as_deref(),
-        agent_kind_from_permission_status_key(&request.key),
-    )?;
+    let agent = agent_kind_from_status_key(&request.key);
+    let permission_agent = agent_kind_from_permission_status_key(&request.key);
     let last_activity_ms = current_unix_epoch_ms();
     let status = {
         let mut model = state
@@ -165,11 +148,7 @@ pub(crate) fn clear_status(state: &SocketAppState, params: &Value) -> Result<Val
                 .is_some_and(|hook| hook.event.trim().eq_ignore_ascii_case("session-end"))
         })
         .and_then(agent_kind_from_status_key);
-    let session_end_agent = effective_hook_agent_for_surface(
-        state,
-        request.surface_id.as_deref(),
-        reported_session_end_agent,
-    )?;
+    let session_end_agent = reported_session_end_agent;
     let last_activity_ms = current_unix_epoch_ms();
     let cleared = {
         let mut model = state
@@ -215,21 +194,6 @@ pub(crate) fn clear_status(state: &SocketAppState, params: &Value) -> Result<Val
     } else {
         Err(DispatchError::NotFound("workspace".to_string()))
     }
-}
-
-fn effective_hook_agent_for_surface(
-    state: &SocketAppState,
-    surface_id: Option<&str>,
-    reported_agent: Option<AgentKind>,
-) -> Result<Option<AgentKind>, DispatchError> {
-    let Some(reported_agent) = reported_agent else {
-        return Ok(None);
-    };
-    let Some(surface_id) = surface_id else {
-        return Ok(Some(reported_agent));
-    };
-    let launch_owned_agent = team_launch_owned_agent_for_surface(state, surface_id)?;
-    Ok(launch_owned_agent.or(Some(reported_agent)))
 }
 
 pub(crate) fn set_progress(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {

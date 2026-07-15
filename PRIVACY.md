@@ -37,8 +37,8 @@ with a link to this notice before any ping is sent: the first ping is deferred
 until you dismiss that dialog, so you always see and can change the setting
 before data leaves the machine.
 
-The ping is sent only by GTK startup. CLI invocations, agent hooks, socket
-clients, and the local MCP bridge do not send telemetry pings.
+The ping is sent only by GTK startup. CLI invocations, agent hooks, and socket
+clients do not send telemetry pings.
 
 Optional features can make user-directed network requests:
 

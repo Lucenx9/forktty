@@ -93,7 +93,7 @@ Native session file:
 ~/.local/share/forktty/session-v2.json
 ```
 
-The native session includes workspace order, active workspace, pane tree, focused surface, cwd, branch, worktree metadata, generated workspace/surface id high-water marks, and opt-in bounded plain-text tails when `appearance.persistent_scrollback_lines` is greater than zero. Embedded Ghostty panes source those tails from the bounded end of full scrollback when `ghostty_gtk_surface_read_text_limited` is available, and fall back to recent visible text with older embedding libraries. It does not serialize running PTY process handles; the session file records only durable identifiers (surface ids, agent resume metadata). Process survival across a UI restart is a separate, opt-in mechanism (`general.persist_terminal_processes`) described under [PTY process persistence](#pty-process-persistence), keyed by the persisted surface id rather than by any serialized handle. On restore or fresh bootstrap, ForkTTY also reserves workspace/surface id suffixes referenced by durable workflow/team records before creating new GTK workspaces, so a prior orchestration record cannot be adopted merely because a new session would otherwise recycle the same `workspace-N` or `surface-N` id.
+The native session includes workspace order, active workspace, pane tree, focused surface, cwd, branch, worktree metadata, generated workspace/surface id high-water marks, and opt-in bounded plain-text tails when `appearance.persistent_scrollback_lines` is greater than zero. Embedded Ghostty panes source those tails from the bounded end of full scrollback when `ghostty_gtk_surface_read_text_limited` is available, and fall back to recent visible text with older embedding libraries. It does not serialize running PTY process handles; the session file records only durable identifiers (surface ids and agent resume metadata). Process survival across a UI restart is a separate, opt-in mechanism (`general.persist_terminal_processes`) described under [PTY process persistence](#pty-process-persistence), keyed by the persisted surface id rather than by any serialized handle.
 
 Browser panes persist their surface URL and profile ID in the same session
 model. WebKit processes, in-memory page state, and terminal PTY state are
@@ -127,8 +127,7 @@ if no daemon survived (the program exited), the broker creates a fresh session.
 Scope and boundaries: persistence applies only to spawns explicitly marked as
 plain interactive `Terminal` shells. Agent panes persist through provider
 resume, SSH surfaces are already remote, browser surfaces are not terminals,
-and project actions/team-worker launches are delegated command executions, so
-none of them are wrapped. The
+and project actions are delegated command executions, so none of them are wrapped. The
 behavior is unchanged when the flag is off or no broker is installed. Broker
 sockets live under `$XDG_RUNTIME_DIR/forktty-pty/` with owner-only (`0700`)
 directory permissions, the surface id is validated as a safe filename component
@@ -166,8 +165,6 @@ persist_terminal_processes = false
 persistent_scrollback_lines = 0
 sidebar_position = "left"
 sidebar_visible = true
-show_orchestration_rail = true
-show_workflow_feed = true
 window_mode = "normal"
 
 [notifications]
@@ -183,7 +180,30 @@ auto_check = true
 anonymous_ping = true
 ```
 
-Config files are regular-file checked and capped at 1 MiB. Malformed or invalid config content is quarantined; transient I/O errors are reported without renaming the file. Config load validates and normalizes `general.shell` from manual TOML edits, but the Settings dialog does not expose a shell editor. Saved settings validate worktree layout, terminal-process persistence, persistent scrollback bounds (max 1,000 lines), sidebar position, window mode, PR lookup toggle, update auto-check toggle, telemetry anonymous-ping toggle, notification filters, notification command, and team provider selection. `appearance.show_orchestration_rail` and `appearance.show_workflow_feed` (both default `true`) toggle the right-side Router/orchestration rail and the bottom workflow feed dock in the GTK workbench; Settings > Interface exposes them and applies changes live. Settings > Worktrees exposes `general.persist_terminal_processes` as "Persist terminal processes" and reports whether `dtach` is currently detectable on the ForkTTY process `PATH`. The `[team]` config section controls visible team worker launches: `default_agent` is `auto` or one of `codex`, `claude`, `pi`, `opencode`, `antigravity`, `grok`; `provider_order` is a non-empty deduplicated ordered list of those providers; `auto_fallback` controls whether a configured non-auto default can fall through to the next available provider; `disabled_agents` excludes providers from launch until re-enabled; and `provider_commands` is an optional canonical-provider map of direct command names or absolute executable paths for harnesses installed outside the ForkTTY process `PATH` (for example `{ codex = "/opt/codex/bin/codex" }`). Provider command overrides are single argv programs, not shell snippets or argument strings; launch args still come from the launch request. Provider aliases such as `claude-code`, `open-code`, `agy`, and `grok-build` normalize to canonical names on load. Legacy `general.theme_source`, `font_family`, `font_size`, `scrollback_lines`, `terminal_audible_bell`, `terminal_renderer`, `terminal_theme`, and the temporary alpha `embedded_ghostty` switch are accepted on load for compatibility, omitted from new saves, and ignored by the GTK runtime; terminal panes always require the embedded Ghostty GTK renderer. Terminal font, color, bell, `scrollback-limit`, and `scrollbar` preferences come from Ghostty's config when present; no system Ghostty install is required. Embedded panes fall back to Ghostty's bounded default scrollback budget (10,000,000 bytes per surface) when Ghostty config does not set `scrollback-limit`; legacy ForkTTY `scrollback_lines` does not change retained embedded history. The GTK runtime loads `~/.config/ghostty/config.ghostty` and the legacy `~/.config/ghostty/config`, follows `config-file`, resolves `theme` for dark mode, searches Ghostty theme directories, and applies font size/family/style-family/style/synthetic-style entries, font features/variations, foreground/background, cursor, selection, named colors, `cell-foreground`/`cell-background` cursor and selection color references, `cursor-opacity`, DECSCUSR-backed `cursor-style`/`cursor-style-blink` defaults, `selection-clear-on-typing`, `selection-clear-on-copy`, `selection-word-chars`, `clipboard-trim-trailing-spaces`, `clipboard-codepoint-map`, `copy-on-select`, `right-click-action`, `scroll-to-bottom`, `scrollbar`, SGR faint text plus `faint-opacity`, `mouse-reporting`, `mouse-shift-capture`, `mouse-hide-while-typing`, `bell-features`, `bell-audio-path`, `bell-audio-volume`, `mouse-scroll-multiplier`, `adjust-cell-width`, `adjust-cell-height`, `adjust-font-baseline`, underline/strikethrough/overline/cursor metric adjustments, `bold-color`/`bold-is-bright`, short/full hex colors, ANSI palette entries 0-15, `image-storage-limit`, `unfocused-split-opacity`, and `unfocused-split-fill`. `terminal_renderer` is retained on load for compatibility; legacy `"vte"` input normalizes to `"auto"` and the native GTK runtime uses Ghostty.
+Config files are regular-file checked and capped at 1 MiB. Malformed or
+invalid content is quarantined; transient I/O errors are reported without
+renaming the file. Load validates and normalizes `general.shell` from manual
+TOML edits, while the Settings dialog intentionally does not expose a shell
+editor. Saved settings validate worktree layout, terminal-process persistence,
+persistent scrollback bounds (max 1,000 lines), sidebar position, window mode,
+PR lookup, update checks, telemetry, notification filters, and notification
+commands. Settings > Worktrees exposes `general.persist_terminal_processes` and
+reports whether `dtach` is detectable on the ForkTTY process `PATH`.
+
+Legacy `general.theme_source`, `font_family`, `font_size`, `scrollback_lines`,
+`terminal_audible_bell`, `terminal_renderer`, `terminal_theme`, and the temporary
+alpha `embedded_ghostty` switch are accepted on load for compatibility, omitted
+from new saves, and ignored by the GTK runtime. Unknown removed orchestration
+and team keys are ignored by serde and are omitted the next time ForkTTY saves
+configuration.
+
+Terminal font, colors, cursor, selection, bell, mouse, `scrollback-limit`, and
+`scrollbar` preferences come from Ghostty configuration when present; no system
+Ghostty install is required. Embedded panes use Ghostty's bounded default
+scrollback budget (10,000,000 bytes per surface) when no limit is configured.
+The GTK runtime reads `~/.config/ghostty/config.ghostty` and the legacy
+`~/.config/ghostty/config`, follows `config-file`, and resolves Ghostty themes
+under the existing size and regular-file guards.
 
 Ghostty compatibility scope:
 
@@ -269,25 +289,10 @@ skipped on that first launch.
 
 ## Socket API
 
-Socket path:
-
-```text
-$XDG_RUNTIME_DIR/forktty.sock
-```
-
-Fallback:
-
-```text
-/tmp/forktty-<uid>/forktty.sock
-```
-
-Override:
-
-```text
-FORKTTY_SOCKET_PATH=/path/to/socket
-```
-
-The protocol is newline-delimited JSON-RPC-like messages:
+ForkTTY exposes a newline-delimited JSON-RPC-like protocol over a user-local
+Unix socket. The default path is `$XDG_RUNTIME_DIR/forktty.sock`, with an
+owner-only fallback at `/tmp/forktty-<uid>/forktty.sock`; `FORKTTY_SOCKET_PATH`
+can select another absolute path.
 
 ```json
 {"id":"1","method":"workspace.list","params":{}}
@@ -297,802 +302,87 @@ The protocol is newline-delimited JSON-RPC-like messages:
 {"id":"1","ok":true,"result":[{"id":"...","name":"..."}]}
 ```
 
-Method stability tiers are tracked in [docs/socket-api.md](docs/socket-api.md):
-core discovery/context/surface/workspace calls are stable-for-alpha, while
-router, workflow, team, cleanup, and worktree mutation calls remain public alpha
-unless that document promotes them.
+Request lines are capped at 1 MiB. The server validates that the socket and its
+parent are owned by the current user, refuses unsafe existing paths, and applies
+bounded reads to terminal text and event replay. One request yields one response,
+except `events.subscribe`, which upgrades the connection to a replay-plus-live
+event stream.
 
-Implemented categories:
+Method stability tiers are tracked in [docs/socket-api.md](docs/socket-api.md).
+The core contract is deliberately process-neutral; agent methods are a thin
+lifecycle adapter over sessions discovered through optional hooks.
 
 | Category | Methods |
-| -------- | ------- |
+| --- | --- |
 | System | `system.ping`, `system.capabilities`, `system.identify`, `system.top` |
 | Context | `context.snapshot` |
-| Task | `task.strategy.plan`, `task.strategy.apply` |
-| Agent | `agent.list`, `agent.health`, `agent.reclaim.plan`, `agent.hibernate`, `agent.reclaim`, `agent.resume` |
+| Agent lifecycle | `agent.list`, `agent.health`, `agent.reclaim.plan`, `agent.hibernate`, `agent.reclaim`, `agent.resume` |
 | Workspace | `workspace.list`, `workspace.create`, `workspace.create_ssh`, `workspace.select`, `workspace.close` |
 | Surface | `surface.list`, `surface.read_text`, `surface.capture_tail`, `surface.split`, `surface.send_text`, `surface.focus`, `surface.close` |
 | Remote | `remote.list`, `remote.status` |
-| Pane | `pane.new_tab`, `pane.select_tab` |
-| Notification | `notification.create`, `notification.list`, `notification.clear` |
-| Worktree | `worktree.list`, `worktree.status`, `worktree.create`, `worktree.attach`, `worktree.remove`, `worktree.merge` |
-| Project Actions | `project.action.list`, `project.action.run` |
+| Pane tabs | `pane.new_tab`, `pane.select_tab` |
+| Notifications | `notification.create`, `notification.list`, `notification.clear` |
+| Worktrees | `worktree.list`, `worktree.status`, `worktree.create`, `worktree.attach`, `worktree.remove`, `worktree.merge` |
+| Project actions | `project.action.list`, `project.action.run` |
 | Metadata | `metadata.set_status`, `metadata.list_status`, `metadata.clear_status`, `metadata.set_progress`, `metadata.list_progress`, `metadata.clear_progress`, `metadata.log`, `metadata.list_logs`, `metadata.clear_logs` |
 | Status | `status.summary` |
-| Feed | `feed.list`, `feed.approval.respond` |
-| Workflow | `workflow.list`, `workflow.get`, `workflow.upsert`, `workflow.plan.set`, `workflow.loop.set`, `workflow.evidence.add`, `workflow.replay` |
-| Team | `team.list`, `team.get`, `team.upsert`, `team.finish`, `team.worker.upsert`, `team.worker.heartbeat`, `team.worker.launch`, `team.worker.health`, `team.worker.nudge`, `team.worker.shutdown`, `team.task.upsert`, `team.message.send`, `team.message.dispatch`, `team.message.ack`, `team.inbox`, `team.summary`, `team.events` |
 | Topology | `topology.tree` |
 | Events | `events.subscribe` |
-| Browser | `browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.fill`, `browser.back`, `browser.forward`, `browser.reload`, `browser.profile.list`, `browser.profile.create`, `browser.profile.delete`, `browser.history.list`, `browser.history.search`, `browser.history.clear`, `browser.bookmark.add`, `browser.bookmark.list`, `browser.bookmark.remove` |
+| Browser (source-only feature) | `browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.fill`, `browser.back`, `browser.forward`, `browser.reload`, `browser.profile.list`, `browser.profile.create`, `browser.profile.delete`, `browser.history.list`, `browser.history.search`, `browser.history.clear`, `browser.bookmark.add`, `browser.bookmark.list`, `browser.bookmark.remove` |
 
-`workflow.evidence.add` accepts an optional caller-provided `evidence_id`; when
-omitted, ForkTTY derives the first available `evidence-N` id for that workflow
-instead of deriving from the evidence count alone, so explicit ids do not block
-later automatic evidence appends.
+The built-in contract does not include task routing, provider-neutral team or
+workflow stores, approval feeds, orchestration cleanup, an MCP stdio bridge, or
+managed agent skills. External MCP servers and agent processes remain ordinary
+terminal workloads and may call the socket CLI when they need a ForkTTY
+primitive.
 
-`workspace.create` and `workspace.create_ssh` default omitted names to the
-allocated `workspace-N` id name, keeping the visible workspace label aligned
-with the real workspace id.
+The removal does not mutate external agent configuration automatically. Older
+ForkTTY versions marked managed MCP registrations with
+`FORKTTY_MCP_MANAGED = "forktty"` and managed skill files with
+`<!-- forktty-managed-agent-skill -->`; migration must remove only entries with
+those markers. The former skill remover retained up to three sibling
+`forktty-agent-orchestration.bak-*` directories, so marker-safe migration also
+checks those backups without following symlinks. The exact backup, dry-run, and
+manual cleanup paths are in the
+[README upgrade guide](README.md#upgrading-from-orchestration-builds).
 
-`task.strategy.plan` is a read-only task strategy planner. It accepts a user
-`goal` capped at 4096 UTF-8 bytes and rejected when it contains terminal
-control characters other than newline or tab, optional workspace/surface target selectors (`workspace_id`,
-`workspace_name`, `worktree_name`, `surface_id`), an optional absolute `cwd`
-override for read-only repository context inference inside a Git repository
-already represented by an open ForkTTY workspace, surface, or effective project
-cwd, and optional hints
-(`strategy`, `task_kind` / `task_class_hint`, `router_profile`, `repo_dirty`,
-`user_requested_parallelism`, `user_requested_review`,
-`likely_user_visible_change`, `last_known_good`, and `harness_signals`).
-It returns
-ForkTTY's selected router profile, recommended task class, strategy, layers,
-harness-role assignments with role-specific score/factor breakdowns, required
-approvals, ranked candidate strategy scores with factor breakdowns, reasons,
-and safety notes before an agent chooses team, workflow loop,
-worktree, MCP, hooks, or a provider harness. The planner grounds
-harness scoring in `system.capabilities.provider_capabilities`, including
-provider `plan_mode` and `max_parallel_sessions` capability metadata, and uses
-the configured `team_provider_policy.provider_order` as a tie-break. When
-assigning more than one role, it also respects each harness's
-`max_parallel_sessions` capacity; parallel research/experiment strategies are
-not selected unless at least two visible assignment roles fit the available
-harness capacity, including multiple lanes on one harness when that harness
-declares enough parallel session capacity. When
-`repo_dirty` is omitted,
-it infers simple git dirty/conflict state from the selected surface or
-workspace effective project cwd, or from `cwd` when the caller passes one
-because its real repo differs from the selected ForkTTY pane. `cwd` must be an
-absolute existing directory and is used only for planning context; an explicit
-`repo_dirty` value overrides that inference. `task_kind` is a caller-normalized
-task class hint for clear intent that may be expressed in any language. It
-accepts the canonical task classes (`tiny_answer`, `repo_inspection`,
-`focused_bugfix`, `feature_implementation`, `review_only`,
-`parallel_research`, `parallel_experiment`, `verify_fix_loop`, or
-`long_running_team_run`) plus short aliases such as `bugfix`, `feature`,
-`review`, `research`, `parallel`, `experiment`, `verify`, and `team`;
-`task_class_hint` is an equivalent socket alias and conflicts only if both
-values normalize to different task classes. When
-`likely_user_visible_change` is omitted, ForkTTY infers likely
-editing/user-visible intent from mutating task-kind hints and high-confidence
-goal wording; an explicit false value overrides that inference. Primary review
-goals such as "Review ..." or "Read only ..." are treated as read-only review
-work, so dirty-repo state alone does not force worktree isolation for a
-`review_only` strategy. When
-`router_profile` is omitted, it uses `balanced`
-unless the goal or request hints clearly imply `fast`, `conservative`,
-`parallel`, or `review_heavy`; an explicit profile reweights the same
-explainable scorer without changing approval or visibility rules. Explicit
-iterative goals such as "use loop", "iterative audit", "repeat verification",
-or "keep checking until clean"
-classify as `verify_fix_loop` and bias the selected strategy toward
-`layers.loop_metadata: true`; this remains planning metadata only. Other
-goal-based task class and router profile inference recognizes English keywords
-only; goals written in other languages fall back to `repo_inspection` with the
-`balanced` profile unless the caller passes normalized `task_kind`,
-`router_profile`, or the other explicit hints. It never
-launches processes, mutates workflow/team/feed state, creates worktrees, sends
-terminal input, or schedules background work.
-PATH and configured-command discovery establish only that a provider harness is
-launchable. ForkTTY does not run provider auth or health probes while planning;
-auto-discovered harnesses therefore carry unverified authentication/runtime
-health in their readiness score at 25 points, below the 50 points awarded to a
-verified authenticated/ready harness. They remain eligible while unverified.
-Optional `harness_signals` is an object keyed by harness id. Each value can set
-`readiness`, `readiness_reason`, `cooldown`, `cooldown_kind`,
-`cooldown_reason`, `locked_out`, and `lockout_reason`. `readiness` currently
-accepts only `verified_ready` and requires a non-empty `readiness_reason`; it is
-a caller attestation backed by concrete visible-worker, hook, or user-report
-evidence and promotes a launchable harness from the unverified 25-point factor
-to the verified 50-point factor. ForkTTY still does not probe provider auth or
-runtime health automatically. Cooldown is a soft assignment penalty and can still be
-selected when no better routable harness exists. `cooldown_kind` classifies the
-cause and requires `cooldown` to be true; it must be one of `quota`, `auth`,
-`crash`, or `timeout`, and the penalty scales with the cause (`auth` strongest,
-then `crash`, then `quota` — the default weight when no kind is given — then
-`timeout`). Lockout is a hard task/mode exclusion for assignment. Cooldown and
-lockout signals are separate from provider capability health/readiness; all
-caller signals should be supplied only with concrete runtime evidence.
-For harnesses without caller-supplied signals, ForkTTY also infers an advisory
-cooldown from its own workflow history: at least two failed task-strategy
-workflows naming that harness within the last 30 minutes, with no newer
-successful task-strategy workflow for the same harness. An inferred cooldown
-stays a soft, explainable penalty — the plan names the failed workflows in
-`reasons` and in the `session_cooldown` factor — and never locks a harness
-out. Explicit `harness_signals` for a harness always replace inference for
-that harness.
-Optional `last_known_good` is advisory evidence from a previous successful run.
-It can include `strategy`, `harness_id`, and `reason`; matching candidates get
-a small explainable score factor named `last_known_good_strategy` or
-`last_known_good_harness`. This is stickiness, not a hard override: readiness,
-cooldown, lockout, task fit, approvals, and visibility rules still win.
-Explicit `last_known_good.reason`, `readiness_reason`, `cooldown_reason`, and
-`lockout_reason` strings are capped at 512 UTF-8 bytes because they are echoed
-in plan score explanations, and they are rejected when they contain control
-characters.
-When `last_known_good` is omitted, the planner best-effort reads completed
-`task_strategy` workflows for the selected workspace and infers the most recent
-usable strategy/harness evidence recorded by `task.strategy.apply`. Explicit
-`last_known_good` input wins over inferred workflow history. This history read
-does not mutate workflow/team state and planning remains read-only.
-Strategies that name a reviewer role include an explicit reviewer assignment,
-using a separate routable harness when available and a separate role on the
-primary harness otherwise. Applying a returned strategy is a separate visible
-coordination step and risky actions still require later approval. Plan
-responses include `planner_version`, the ForkTTY app version that produced the
-plan, so agents can persist planner provenance with workflow evidence.
+`workspace.create` and `workspace.create_ssh` default an omitted name to the
+allocated workspace id. Workspace selectors accept an id, name, or linked
+worktree name where documented; surface selectors override workspace focus.
+`system.identify` resolves explicit selectors first and otherwise reports active
+focus. `system.capabilities` returns only methods dispatchable by the current
+build plus PTY-persistence diagnostics; browser methods appear only in browser
+builds.
 
-Example request:
+`surface.read_text` supports visible or full retained text with byte bounds.
+`surface.capture_tail` returns a bounded recent tail. `surface.send_text`
+rejects oversized input and targets an explicit or focused surface. These reads
+are observations of untrusted terminal content, not instructions.
 
-```json
-{
-  "goal": "Fix the failing workflow loop test and verify it",
-  "surface_id": "surface-1",
-  "router_profile": "balanced",
-  "user_requested_parallelism": false,
-  "user_requested_review": false,
-  "likely_user_visible_change": true,
-  "last_known_good": {
-    "strategy": "solo_with_verify_loop",
-    "harness_id": "codex",
-    "reason": "last successful bugfix run in this repo"
-  },
-  "harness_signals": {
-    "codex": {
-      "readiness": "verified_ready",
-      "readiness_reason": "visible worker accepted the previous task prompt"
-    },
-    "claude": {
-      "cooldown": true,
-      "cooldown_reason": "recent quota error"
-    }
-  }
-}
-```
+`context.snapshot` combines the selected workspace, pane topology, surface
+inventory, metadata, notifications, agent lifecycle rows, remotes, optional
+bounded terminal tails, and risk flags. It intentionally contains no hidden
+team, workflow, routing, or feed state. `status.summary` is a compact projection
+of the same generic status and attention primitives. Notifications are scoped
+to the selected workspace (plus untargeted global notifications); an unread
+prompt notification adds `notification_needs_input` to `risk_flags`.
+Risk evaluation covers the complete matching notification set, while the
+response projects only the newest 100 notifications and omits binary
+`terminal_metadata.icon_data` so untrusted OSC icon payloads cannot inflate the
+snapshot beyond the official client response limit.
 
-Example response:
+Agent hook events may bind a provider session to a surface, update lifecycle and
+attention, and retain provider-native resume metadata. `agent.hibernate` and
+`agent.reclaim` act only on idle, restorable sessions; `agent.resume` uses the
+provider's recorded native resume command. Hooks are optional, installed only by
+an explicit `forktty hooks setup` action, and are never installed or updated
+automatically at GTK startup. Hook setup writes atomically, preserves unrelated
+entries, and supports dry-run and targeted removal.
 
-```json
-{
-  "planner_version": "0.2.0-alpha.17",
-  "task_class": "focused_bugfix",
-  "strategy": "solo_with_verify_loop",
-  "router_profile": "balanced",
-  "layers": {
-    "workflow": true,
-    "team": false,
-    "loop_metadata": true,
-    "worktree": false,
-    "feed": true,
-    "mcp": true,
-    "hooks": true
-  },
-  "assignments": [
-    {
-      "role": "implementer",
-      "harness_id": "codex",
-      "reason": "highest-scored routable harness for implementer",
-      "score": 77,
-      "factors": [
-        {
-          "name": "harness_readiness",
-          "points": 50,
-          "reason": "harness is installed, authenticated, ready, and supports prompt launch; evidence: visible worker accepted the previous task prompt"
-        },
-        {
-          "name": "task_mode_lockout",
-          "points": 0,
-          "reason": "no active task/mode lockout"
-        },
-        {
-          "name": "session_cooldown",
-          "points": 0,
-          "reason": "no active session cooldown"
-        },
-        {
-          "name": "last_known_good_harness",
-          "points": 12,
-          "reason": "last successful bugfix run in this repo"
-        },
-        {
-          "name": "role_capability_fit",
-          "points": 0,
-          "reason": "role has no specialized harness capability preference yet"
-        },
-        {
-          "name": "mcp_support",
-          "points": 5,
-          "reason": "MCP support improves controlled task routing and inspection"
-        },
-        {
-          "name": "hook_support",
-          "points": 5,
-          "reason": "hook support improves visible lifecycle/status evidence"
-        },
-        {
-          "name": "resume_support",
-          "points": 5,
-          "reason": "resume support improves recoverability after interruption"
-        }
-      ]
-    }
-  ],
-  "approvals": ["start_run"],
-  "candidate_scores": [
-    {
-      "strategy": "solo_with_verify_loop",
-      "score": 120,
-      "factors": [
-        {
-          "name": "task_class_fit",
-          "points": 90,
-          "reason": "SoloWithVerifyLoop fit for FocusedBugfix"
-        },
-        {
-          "name": "router_profile_fit",
-          "points": 0,
-          "reason": "SoloWithVerifyLoop fit for router profile Balanced"
-        },
-        {
-          "name": "verification_loop_fit",
-          "points": 10,
-          "reason": "editing and bugfix tasks benefit from a bounded verify loop"
-        },
-        {
-          "name": "harness_readiness",
-          "points": 20,
-          "reason": "1 visible harness role(s) can be assigned"
-        }
-      ]
-    }
-  ],
-  "reasons": [
-    "classified task as FocusedBugfix",
-    "selected top-scored strategy SoloWithVerifyLoop"
-  ],
-  "safety_notes": [
-    "planning is read-only",
-    "applying this strategy must keep all agent work visible in ForkTTY panes",
-    "push, merge, destructive commands, and out-of-scope edits require a later approval"
-  ]
-}
-```
-
-`task.strategy.apply` is the visible mutation phase for a previously returned
-task strategy plan. It accepts required `run_id`, `goal` capped at 4096 UTF-8 bytes and rejected when it contains terminal control characters other than newline or tab, and `plan` fields
-plus optional `approved`, `approval_id`, `request_approval`, `workflow_id`,
-`team_id`, `workspace_id` or other workspace selector including
-`worktree_name`, `cwd`, `leader_surface_id`/`surface_id`,
-`user_requested_review`/`review`, and `submit`. Apply responses include
-`planner_version`, the ForkTTY app version that performed the server-side
-validation and mutation.
-The submitted plan is treated as untrusted client input: before mutation,
-ForkTTY revalidates assignment harness ids and compact plan text fields such
-as reasons, safety notes, and score factors so they cannot inject control
-characters or oversized strings into workflow steps, team task details,
-approval fingerprints, or worker prompts. Client-supplied explanation arrays,
-score factor lists, and approval lists are count-bounded as compact routing
-metadata before mutation, and plan approval lists must not contain duplicates,
-so they cannot inflate approval fingerprints or server work. It also rejects
-plans with more than 64 assignments, or with no
-assignments at all, before creating
-workflow/team state, matching the visible team worker cap used by submit runs
-and avoiding empty workflow plans. It also rejects assignment counts and role
-mixes that the selected strategy would not produce, such as multiple
-solo/review assignments, implementer-plus-reviewer plans without exactly one
-implementer and one reviewer, or over-wide parallel research runs. A submitted
-plan cannot omit `layers.workflow: true` from strategies that the planner
-tracks through durable workflow state, cannot omit `layers.team: true` from
-strategies that require visible team orchestration, cannot force
-`layers.team: true` onto a strategy that the planner does not treat as a team
-strategy, cannot force `layers.loop_metadata: true` onto a strategy that the
-planner does not treat as a verify-loop or iterative-review strategy, or attach
-assignment roles that the planner would not assign for that strategy. `team` or
-`loop_metadata` layers require the `workflow` layer so ForkTTY does not create
-orphan team state or no-op loop metadata.
-When both surface aliases are provided, `leader_surface_id` and `surface_id`
-must refer to the same surface. The MCP `task_strategy_apply` tool forwards
-the current `FORKTTY_WORKSPACE_ID` and `FORKTTY_SURFACE_ID` as the default
-workspace and leader surface when the caller omits explicit target selectors.
-Before any workflow/team/worker mutation it recomputes server-side dirty
-repo/edit-intent worktree isolation from the selected surface/workspace cwd,
-any explicit `cwd`, the normalized plan `task_class`, mutating strategy shape,
-and high-confidence goal wording. A `review_only` strategy suppresses this
-dirty-editing isolation only when the submitted plan is coherently read-only:
-`task_class: review_only`, `strategy: review_only`, and reviewer-only
-assignments. Caller-explicit review hints on `parallel_research` plans do not
-suppress dirty-editing isolation because parallel research can still produce
-mutating follow-up work. ForkTTY then recomputes required approvals from the
-requested operation and effective plan shape (`start_run` always,
-`create_worktree` when the effective layers require worktree isolation, and
-`launch_parallel_workers` when `submit: true` would launch more than one
-assignment worker) plus applicable approvals listed by the plan. It then
-verifies they are present in `approved` or satisfied by a
-matching approved task-strategy Feed approval passed as `approval_id`;
-otherwise missing approval returns `precondition_failed` and leaves
-workflow/team stores unchanged. The `approved` array is a programmatic caller
-attestation, not proof of a separate human decision; use
-`request_approval`/`approval_id` when a Feed-backed human approval is required.
-A Feed approval requested for a superset of the currently missing approvals can
-satisfy the remaining approvals when the caller also supplies explicit
-attestations for part of the same request; it cannot satisfy approvals outside
-the original request-bound set.
-A `launch_parallel_workers` entry in the plan is treated as a future submit
-approval and is not required for staged-only apply calls. Apply validates
-local preconditions such as required team assignments, `worktree_name`, and
-already-open worktree workspaces before creating approval requests. With
-`submit: true`, it also validates that every assignment names a launchable
-provider harness after approvals are satisfied but before any workflow/team
-mutation. When that validation or a later worker launch fails for an
-assignment, the error message appends an advisory hint naming the next-best
-routable harness for the same role (ranked with the plan-time scorer against
-current capabilities); the hint is a retry suggestion only — apply never
-retries or substitutes harnesses on its own. A plan with
-`layers.team: true` must include at least one assignment even when staging, so
-apply cannot create an empty team run. With `request_approval: true`, missing approvals
-create or reuse a pending Feed approval with a deterministic request-bound id shaped like
-`task-strategy:<fingerprint>:approvals:start_run`, return `status: "blocked"`,
-and still do not mutate workflow/team state. The fingerprint binds the approval
-to the run id, goal, plan, submit mode, and target scope, so an approved Feed
-entry cannot be reused for a different apply request with the same `run_id`.
-Agents or users can approve/deny that still-pending entry through
-`feed.approval.respond`, then retry apply with the returned `approval_id`.
-Already approved, denied, dismissed, or stale approval entries reject later
-approval decisions and cannot be reused as fresh authorization. If the caller
-instead retries with equivalent explicit `approved` attestations, apply marks
-any matching pending task-strategy Feed approval request as `dismissed` before
-staging the visible workflow/team state, so a superseded prompt does not
-continue raising the `pending_approval` risk flag.
-Optional `cwd` must be an absolute existing directory that resolves to a valid
-UTF-8 canonical path inside a Git repository already represented by an open
-ForkTTY workspace, surface, or effective project cwd, and cannot be combined
-with `worktree_name`. ForkTTY canonicalizes it
-before launch, prompt generation, and submit-retry compatibility checks, then
-uses that canonical path as the visible worker launch cwd and includes it in
-role task/prompt text when no `worktree_name` is used. This lets a caller whose
-actual repository differs from the selected ForkTTY pane avoid launching
-provider trust prompts or work in the broader pane cwd without making retries
-sensitive to symlink or `..` path spelling. It does not create a workspace or
-worktree and does not override worktree-layer dirty-isolation enforcement.
-Review-primary goals with an effective `review_only` strategy, and explicit
-read-only parallel reviews with an effective `parallel_research` strategy,
-remain read-only for apply-time dirty-repo isolation, but non-review editing
-goals still force worktree isolation even if a client submits a mismatched
-read-only-looking plan.
-With `submit` omitted or `false`, apply performs staged setup only: it can
-upsert a workflow, write workflow plan steps, bootstrap loop metadata, upsert a
-team, create team tasks, and queue team-wide messages. When the effective plan
-has `layers.loop_metadata: true`, apply seeds an initial workflow loop record
-only if the workflow does not already have loop state: recipe is the strategy
-wire id (for example `solo_with_verify_loop`), stage is `planned`, iteration is
-`0`, max iterations defaults to `3`, gates are pending verifier-contract rows
-derived from the strategy shape, and no stop reason is set.
-Explicitly iterative read-only review goals may keep the `review_only` strategy
-while carrying `layers.loop_metadata: true`, so agents can record repeated
-audit passes without launching team workers or changing the review role.
-Retries with the same run id preserve any existing loop state recorded by an
-agent or user. With `submit: true`, a
-supported team plan becomes an active visible run: ForkTTY upserts the workflow
-as `running`, upserts the team as `active`, creates each task before launch,
-launches one visible worker pane per assignment through `team.worker.launch`,
-assigns the task to the launched worker, queues a deterministic role prompt,
-and dispatches it through `team.message.dispatch` with provider-aware submit
-semantics. Freshly launched provider TUI worker panes get a brief initial prompt
-settle before the first dispatch. `submit: true` is rejected for plans without
-`layers.team: true`,
-because ForkTTY would otherwise mark a run active without opening visible worker
-panes. Plans whose `layers.worktree` is true require `worktree_name` to name an
-already-open ForkTTY worktree workspace; missing `worktree_name` returns
-`invalid_param`, and an unopened worktree returns
-`precondition_failed`, both before mutation. Apply still does not create
-worktrees, push, merge, run arbitrary commands, or schedule hidden background
-work. Worktree-layer task details and worker prompts name both the selected
-worktree and its effective repository cwd, so a worker can verify the intended
-target before editing. Repeating the same request with the same `run_id` reuses
-deterministic workflow/team/task/message ids, does not duplicate matching
-staged messages, and skips dispatch for messages already recorded as delivered
-only when the same compatible live worker is reused. If a worker record must be
-relaunched,
-or if an existing staged role prompt no longer matches the current task,
-target worker, or cwd-derived prompt body, apply queues the next deterministic
-`<task-id>-msg-N` prompt and dispatches that fresh prompt instead of sending
-stale instructions to the new pane. Older undelivered deterministic
-`<task-id>-msg-*` prompts for the same task are retained in the full team
-record with `superseded: true`, cannot be dispatched or acknowledged, are
-excluded from normal `team.inbox` results and pending-message counts, and are
-returned only by mailbox reads that opt into full history with
-`include_delivered`.
-When retrying `submit: true`, an existing live deterministic worker is reused
-only if its harness, role, assigned task, worktree, launch cwd, effective
-surface/workspace cwd target, and status match the current plan assignment. If
-the worker id points at a different live assignment, apply returns `conflict`
-before dispatching a role prompt to the wrong pane.
-
-`orchestration.cleanup` is a conservative maintenance method for stale
-team/workflow coordination records. It accepts optional `workspace_id`,
-`apply`, and `dry_run` fields. Dry-run is the default and returns planned
-`teamActions` and `workflowActions` without mutation; passing `apply: true`
-applies only actions that are safe from current ForkTTY model and terminal
-runtime state. Cleanup
-rejects `dry_run: false` unless `apply: true` is also present, so callers
-cannot write by disabling dry-run alone. Cleanup
-may mark non-terminal workers whose recorded surface no longer exists in the
-workspace model or no longer exists in the terminal runtime as `closed`, cancel
-open tasks assigned to those stale workers, supersede undelivered messages
-targeting those workers/tasks, mark teams with no live workers, open tasks, or
-pending messages as `done`, mark active workflows with all-terminal plan steps
-as `done`, and close open plan steps on already terminal workflows. If a
-non-terminal worker still references a model surface with a live terminal
-runtime, or has no recorded surface, cleanup reports a
-`team.worker.manual_review` action and does not mutate that worker, task,
-surface, or terminal. The method never sends terminal input, closes panes,
-launches workers, creates worktrees, or rebases/merges code. The CLI wrapper is
-`forktty cleanup orchestration`, and the MCP tool is
-`orchestration_cleanup`; `--apply`/`apply: true` is required for writes.
-
-Example request:
-
-```json
-{
-  "run_id": "router-run-1",
-  "goal": "Implement the router",
-  "cwd": "/home/user/project",
-  "approved": ["start_run"],
-  "plan": {
-    "task_class": "feature_implementation",
-    "strategy": "implementer_plus_reviewer",
-    "layers": {
-      "workflow": true,
-      "team": true,
-      "loop_metadata": true,
-      "worktree": false,
-      "feed": true,
-      "mcp": true,
-      "hooks": true
-    },
-    "assignments": [
-      {
-        "role": "implementer",
-        "harness_id": "codex",
-        "reason": "first routable harness with prompt launch support"
-      },
-      {
-        "role": "reviewer",
-        "harness_id": "claude",
-        "reason": "separate routable harness for review isolation"
-      }
-    ],
-    "approvals": ["start_run", "launch_parallel_workers"],
-    "reasons": ["classified task as FeatureImplementation"],
-    "safety_notes": ["visible setup only"]
-  }
-}
-```
-
-Example response:
-
-```json
-{
-  "run_id": "router-run-1",
-  "planner_version": "0.2.0-alpha.17",
-  "status": "staged",
-  "workflow_id": "router-run-1",
-  "team_id": "router-run-1",
-  "actions": [
-    {"method": "workflow.upsert", "status": "applied"},
-    {"method": "team.task.upsert", "status": "applied"},
-    {"method": "team.message.send", "status": "applied"}
-  ],
-  "blocked_approvals": [],
-  "monitoring": {
-    "workflow": "workflow.get",
-    "team": "team.summary"
-  }
-}
-```
-
-`team.finish` verifies and finalizes one team record. It accepts required
-`team_id` plus optional `dry_run`, `close_workers`, `force`, and `compact`;
-dry-run returns the planned actions, blockers, and cleanup errors without
-mutation or precondition rejection. Non-dry-run finalization without force
-rejects open tasks, pending messages, or live-looking worker final states. With
-`close_workers`, it only closes disposable worker surfaces created by
-`team.worker.launch` in the current ForkTTY runtime; missing worker surfaces
-are normalized to closed before the team is marked done. If a disposable worker
-surface cannot be closed, `team.finish` returns an error before persisting any
-worker shutdown request, missing-surface normalization, or team-done state; when
-closing multiple worker surfaces, a later close failure also restores already
-closed runtime surfaces before returning the error. Closing launch-owned worker
-surfaces preserves normal `surface.close` replacement behavior, including
-replacement terminals for root panes in inactive workspaces; if that
-replacement terminal cannot be spawned, ForkTTY returns an error before closing
-the worker surface. If persistence fails after terminal backends were closed,
-ForkTTY restores those backends and leaves both the model and team store
-unchanged before returning the save error. With `compact: true`, non-dry-run
-success still returns
-ids, status fields, blockers, summaries, worker health, cleanup errors, and
-closed-worker records, but omits the full team record and mailbox bodies.
-
-When `team.upsert` or `workflow.upsert` moves an existing record to another
-workspace without an explicit replacement leader/surface id, ForkTTY clears the
-old workspace's surface binding rather than persisting a cross-workspace pair.
-`team.worker.upsert` accepts an optional bounded `report` string. A report is
-intended for the worker's final compact findings or verification summary; it is
-stored on the worker record, returned by `team.get`, counted as
-`workers_with_reports` in `team.summary`, and exposed by
-`team.worker.health` as `report_present` plus `report`. Launching a worker
-clears any previous report on that worker id so stale final reports do not
-describe a new task.
-`team.summary` and `context.snapshot` team summaries flag active teams with no
-active workers, open tasks, or pending messages as `active_without_open_work`.
-`team.worker.health` reports `heartbeat_state: "no_heartbeat"` for workers
-whose provider path has no heartbeat yet, reserving `"stale"` for workers with
-a recorded heartbeat older than the stale threshold. When the attached surface
-already has persisted agent-session lifecycle metadata for the same provider as
-the team worker, health rows include an `agent_session` object and derive
-`running`, `idle`, `needs_input`, or `done` from that lifecycle before falling
-back to heartbeat age; lifecycle metadata from a different provider on a reused
-surface is ignored.
-
-`workflow.loop.set` records bounded closed-loop progress on an existing
-workflow: optional recipe, stage, iteration, maximum iterations, stop reason,
-and up to 64 verification gates. The call is state-only; it does not start a
-scheduler, run commands, send terminal input, push, merge, or grant approval.
-When a request advances to a different iteration without supplying replacement
-gates or a replacement stop reason, ForkTTY clears the previous gate rows and
-stop reason so stale failed checks do not describe the new pass.
-CLI `workflow-loop-gate`, `workflow-loop-step-done`, and
-`workflow-loop-iteration-start`, `workflow-loop-iteration-done`, and
-`workflow-loop-publish` are ergonomic wrappers over the same socket method:
-they read the current workflow, advance loop passes or merge one compact gate
-update, and then submit an ordinary `workflow.loop.set` payload so existing
-gate rows are preserved.
-Agents use it to make a visible loop such as discover/plan/execute/verify
-auditable across context compaction. `context.snapshot` exposes stale
-workflow surface bindings on workflow summary/detail rows through
-`surface_present`, `stale_binding`, and `active_with_missing_surface`
-consistency warnings, even when the workflow has no loop metadata. It also
-exposes compact `loop_summaries` by default, including recipe, stage, gate
-counts, iteration budget, stale surface-binding detection, and loop risk flags such as
-`loop_gate_failed`, `loop_needs_human`, `loop_blocked`,
-`loop_budget_exhausted`, and `loop_stale_binding`. Loop summaries deliberately
-omit full workflow goals, memory, evidence, and gate notes; use
-`workflow.get` or `include_workflow_details` when those details are needed.
-If a task-strategy workflow that was bootstrapped with loop metadata reaches a
-terminal status while still at iteration `0` with only unstarted pending/planned
-gates and no stop reason, workflow summaries/details add a non-blocking
-`loop_never_recorded` consistency warning and `context.snapshot` raises the
-existing `workflow_consistency_warning` risk flag. A terminal workflow that
-records a successful loop stop reason such as `passed` or `published ...`
-without any workflow evidence adds `loop_passed_without_evidence`; this warning
-is non-blocking and exists to keep verifier results auditable after context
-compaction. The supported terminal alias `finished` is treated as terminal by
-these snapshot checks, conservative orchestration cleanup, and the Agent HUD.
-
-
-`system.identify` is a compact read-only context call for agents and scripts that need the canonical current target before acting: it accepts the same workspace selectors plus optional `surface_id`, treats wrapper-provided `FORKTTY_SURFACE_ID`/`FORKTTY_WORKSPACE_ID` as caller validation context, uses a known caller surface as the default target when no explicit target selector is supplied, and falls back to the active workspace focus when that caller surface is stale or absent. It returns the target workspace, target surface with `effective_project_cwd`, current agent binding when present, and caller id validation booleans. The CLI `forktty wait agent-status` is a bounded client-side lifecycle poll built from repeated short `context.snapshot` calls with `tail_lines: 0`; it accepts a required `--status` (`running`, `working`, `idle`, `done`, `needs_input`, `blocked`, `suspended`, `ended`, `closed`, or `unknown`), optional workspace/surface/agent filters, `--timeout-ms` capped at 120000, and `--interval-ms` capped at 5000. The wait wrapper never reads terminal text, sends input, closes panes, or holds one socket request open while waiting; timeout exits nonzero with code `timeout`.
-
-Agent rows from `agent.list`, `agent.health`, `status.summary`, and `context.snapshot` include `lifecycle_evidence` as diagnostic metadata, not as a second source of lifecycle truth. The block repeats the persisted lifecycle source, last activity, observation time, nullable age, matching workspace/provider status key/value/source/scope when present, and permission mode when present. `status_scope: "workspace_provider"` means the status row is shared by same-provider sessions in that workspace and is not per-session live proof. `agent.health` additionally includes `ready` and `readiness_reason` in that block so clients can explain stale-looking or non-resumable rows without joining separate response fields.
-
-For Codex and Claude Code hooks, `SubagentStop` reports completion of a nested
-subagent without ending the parent turn, so the parent session remains
-`running`. Claude Code `TeammateIdle` reports that the teammate is about to
-become idle and publishes the ready/idle status consistently across hook
-metadata and persisted session lifecycle.
-
-`system.capabilities` includes `provider_capabilities` with the supported provider program, configured command override when present, aliases, resume features, managed hook/MCP setup support (`managed_hooks`, `managed_mcp`), plan-mode reviewer support, PATH detection (`available_on_path`, `executable`), launchability, and disabled/missing reason, plus `team_provider_policy` mirroring the active `[team]` provider-selection config including `provider_commands`. It also includes `pty_persistence`, a read-only diagnostic block with `config_enabled`, `available`, `active`, broker name/executable when present, scope, and unavailable reason so clients can distinguish "configured but no broker installed" from active process persistence. `team.worker.launch` accepts optional `agent`; omitted or `auto` selects the first configured provider that is not disabled and whose default program or configured command is currently resolvable. An explicit provider still uses the same argv-only validation and returns `precondition_failed` if disabled or missing. Successful launches return a `selection` object with the requested agent, selected provider, selected program, default program, configured command, executable path, reason, and considered candidates. ForkTTY does not preflight provider quota/auth by calling model CLIs; those states appear in the visible worker TUI and hooks, and users can change Settings or pass an explicit provider for the next launch.
-
-For a current-runtime launch-owned worker surface, the canonical provider from
-`team.worker.launch` is authoritative when binding hook session metadata.
-Compatibility hooks may still supply lifecycle, session id, cwd, and permission
-metadata under another provider's hook key, but they do not relabel the worker
-in the Agent HUD, `agent.list`, `agent.health`, or context snapshots. Manually
-created surfaces continue to derive their provider identity from their hook key.
-
-Claude Code `team.worker.launch` calls add documented permission-mode defaults unless the caller already supplied Claude permission args: review roles start with `--permission-mode dontAsk` plus pre-approved built-in read tools (`Read`, `Grep`, and `Glob`), while other Claude workers start with `--permission-mode auto`. Pi review workers start with read-only `--tools read,grep,find,ls` unless explicit Pi tool args are supplied. Grok review workers start with `--permission-mode plan` unless an explicit Grok permission mode is supplied.
-
-When `team.worker.launch` receives an explicit `worktree_name`, the worker tab is created in the matching already-open worktree workspace and inherits that workspace directory. Without `worktree_name`, an optional absolute existing `cwd` can set the worker tab cwd before launch; otherwise launch falls back to the team leader, team workspace focus, or active workspace and inherits the selected surface's recorded terminal cwd. If a persisted team leader surface is no longer present but the team workspace still exists, launch uses that workspace focus instead of wedging the team on the stale leader id. Hook-reported agent `resume_cwd` metadata is not copied into the worker surface cwd. Provider launch argv validation treats BusyBox shell applets such as `busybox sh -c ...` as shell trampolines, matching direct shell and GNU `env` wrappers including assignments after `--` and `-a`/`--argv0` argument rewriting.
-
-Provider-scoped status and progress keys are automatically cleared when the last same-provider session in a workspace ends, is suspended/hibernated, is forgotten, or its surface is closed; per-surface status/progress keys are cleared when their surface is closed.
-
-`team.message.dispatch` foregrounds the recipient worker surface by selecting
-its workspace and tab before writing. If the embedded terminal surface is not
-socket-ready yet, dispatch waits up to 10 seconds before returning `not_ready`.
-Delivered or superseded messages are rejected before any terminal write.
-Submit mode uses provider-aware terminal input: Codex/Claude/Pi/Grok get staged text, a
-short settle, and a separate Enter, while line-oriented providers keep text plus
-carriage-return Enter in one write. When the target is a current-runtime
-launch-owned provider TUI worker surface that was just created by
-`team.worker.launch`, dispatch also waits briefly for the provider TUI to reach
-its initial prompt before sending the first queued message.
-
-Embedded Ghostty panes service tail captures from the end of full scrollback
-when `ghostty_gtk_surface_read_text_limited` is available, with `max_bytes` and
-end truncation applied inside Ghostty before the FFI copy. Older libraries use
-the visible-text fallback rather than risk an unbounded full-history allocation.
-
-`team.worker.shutdown` with `close_surface: true` is immediate disposable-pane cleanup after the shutdown text is accepted by the terminal; it is not proof that the worker processed a graceful shutdown request. Use it only for worker panes launched by the current ForkTTY runtime that can be discarded; stale persisted launch records are not sufficient close authorization after restart. If the disposable worker surface cannot be closed, the call returns an error before persisting that worker as shutdown-requested.
-
-Hook-reported permission-mode status entries update the persisted agent session only when they target an already-known provider/session/surface. The exact mode `bypassPermissions` is preserved for supported Codex and Claude Code resumes by adding the providers' documented argv flags (`codex --dangerously-bypass-approvals-and-sandbox resume ...` and `claude --dangerously-skip-permissions --resume ...`) to `agent.health`, `agent.resume`, and restore-time auto-resume. Other permission mode strings remain metadata and are never copied into argv.
-
-Worktree and branch names are trimmed and rejected if empty, too long, flag-like, control-character bearing, backslash-containing, or path-traversing.
-Worktree socket, MCP, and CLI operations still require an explicit repository `cwd`/`path` and validate it against repositories visibly represented in ForkTTY; that boundary includes each open workspace directory and each open surface's recorded terminal cwd. Hook-reported agent `resume_cwd` metadata is not trusted for worktree authorization.
-
-Error responses include a structured `code` field so clients can branch on outcome instead of parsing message text:
-
-| Code | Cause |
-| ---- | ----- |
-| `method_not_found` | Unknown method name. |
-| `missing_param` | A required parameter is absent. |
-| `not_found` | The referenced workspace, surface, worktree, or metadata entry does not exist. |
-| `payload_too_large` | The request line exceeds 1 MiB, `surface.send_text` text exceeds 256 KiB, or metadata text exceeds its method-specific limit. |
-| `conflict` | The operation is valid but blocked by current state, such as dirty worktrees or in-use browser profiles. |
-| `precondition_failed` | The request needs setup the caller can perform first: the worktree open-workspace boundary returns this, naming the remedy (`forktty create-workspace` / the `workspace_create` MCP tool). |
-| `already_exists` | The requested worktree or resource already exists. |
-| `not_ready` | A target exists but is not ready to accept the operation. |
-| `invalid_param` | A supplied parameter has the wrong type or an invalid value. |
-| `error` | Catch-all for other failures (carries a `message`). |
-
-`forktty hooks setup` writes provider hook commands that invoke the stable
-ForkTTY launcher path rather than a volatile AppImage mount path. When that
-stable launcher is an AppImage file, the generated hook command sets
-`APPIMAGE_EXTRACT_AND_RUN=1` for the ForkTTY CLI child so short hook invocations
-run from temporary extraction instead of opening a FUSE AppImage mount; normal
-GUI AppImage launches are unchanged. `forktty --json hooks doctor <agent>` and
-`forktty --json hooks test <agent>` emit a stable machine-readable report: a
-`version` field (currently 1) with additive-only evolution, an overall `ok`
-boolean, and — for `hooks test` — per-method `{method, ok, error?}` entries from
-a real socket round-trip that always includes `notification.create`. Both
-commands exit 0 when every check passes and 1 otherwise, so CI can gate on the
-exit code alone; the human-readable output is rendered from the same report.
-For Codex setup summaries, `requiresTrustReview` and `trustReviewCommand`
-(`"/hooks"`) report when changed hook definitions need user review. Codex
-doctor `trustCheck` reports recorded/unrecorded events and
-`currentHashesVerified: false`: trust is bound to the current hook hash, and
-ForkTTY does not reproduce Codex's hash verification. App auto-refresh
-notifications therefore direct the user to `/hooks` whenever Codex hook
-definitions change.
-Hook metadata events that omit an explicit workspace/surface target but include
-a `hook_session_id` and unique live-surface `hook_session_cwd` are scoped to
-that matching surface and teach the in-memory hook-session target cache for
-later events. Ambiguous cwd matches are rejected rather than defaulting to the
-currently active workspace, avoiding false agent `Working`/`needs input` state
-in the Router rail and workspace list.
-
-The workspace sidebar derives its compact activity summary and status badge
-from visible hook status/progress first. When an active persisted session has
-no primary `agent:<provider>` status row, it synthesizes a presentation-only
-fallback from actionable lifecycle: `running` becomes `Working` and
-`needs_input` becomes `Input`. This applies to Codex, Claude Code, Pi, OpenCode,
-Antigravity, and Grok; permission-mode rows do not suppress the fallback, real
-primary hook status takes precedence, and idle, suspended, ended, or unknown
-sessions do not create a working badge.
-
-`forktty remote-helper hello` is a no-socket stdio handshake intended to run
-through SSH as `ssh <host> forktty remote-helper hello`. It emits one JSON
-object with `schema: 1`, `protocol: "forktty-remote-stdio"`,
-`protocol_version: 1`, the ForkTTY version, remote cwd, hostname, platform, and
-the currently implemented helper capabilities (`["hello", "pty"]`). It does
-not open a network listener, reconnect sessions, or require a local ForkTTY
-socket.
-
+`forktty remote-helper hello` is a no-socket stdio handshake for SSH discovery.
 `forktty remote-helper pty -- <program> [args...]` starts the argv command in a
-PTY and relays raw stdin bytes into the PTY plus raw PTY output to stdout. It
-uses a fixed initial 80x24 PTY size and exits with the child process status.
-On stdin EOF in canonical mode it sends the PTY's configured `VEOF` twice so an
-unterminated pending line is flushed before the slave observes EOF. If canonical
-mode is disabled or `VEOF` is disabled, the helper fails explicitly rather than
-injecting ordinary bytes or hanging; PTYs do not support socket-style half-close.
-It does not frame messages, resize, reconnect, or persist remote session
-ownership.
-
-### MCP stdio bridge
-
-`forktty mcp` runs a local Model Context Protocol server over stdio. It does
-not listen on a network port; each MCP tool call is validated and then bridged
-to the same owner-only Unix socket described above. Oversized, invalid JSON,
-and invalid UTF-8 stdio messages return JSON-RPC `-32700` parse errors and do
-not end the stdio session. The server exposes
-`identify`, `workspace_list`, `workspace_create`, `surface_list`, `context_snapshot`, `task_strategy_plan`, `task_strategy_apply`, `orchestration_cleanup`, `topology_tree`, `remote_list`, `remote_status`, `surface_read_text`, `surface_capture_tail`, `agent_list`, `agent_health`, `agent_reclaim_plan`, `agent_hibernate`, `agent_reclaim`, `agent_resume`, `status_summary`, `workflow_list`, `workflow_get`, `workflow_upsert`, `workflow_loop_set`, `workflow_plan_set`, `workflow_evidence_add`, `workflow_replay`, `team_list`, `team_get`, `team_upsert`, `team_finish`, `team_worker_upsert`, `team_worker_heartbeat`, `team_worker_launch`, `team_worker_health`, `team_worker_nudge`, `team_worker_shutdown`, `team_task_upsert`, `team_message_send`, `team_message_dispatch`, `team_message_ack`, `team_inbox`, `team_summary`, `team_events`, `surface_split`, `surface_send_text`,
-`surface_focus`, `worktree_list`, `worktree_status`, `worktree_create`,
-`worktree_attach`, `worktree_remove`, `worktree_merge`,
-`notification_create`, and `status_set`. `FORKTTY_SOCKET_PATH` chooses the
-socket, and `FORKTTY_WORKSPACE_ID`/`FORKTTY_SURFACE_ID` are used as default
-targets when a tool omits an explicit target, except `identify`, which treats
-them as caller validation context and falls back to active focus when the caller
-surface is stale. `team_upsert` prefers `FORKTTY_SURFACE_ID` as
-`leader_surface_id`; it falls back to `FORKTTY_WORKSPACE_ID` only when no leader
-surface is available.
-
-The MCP server also declares `resources` and `prompts` capabilities. It exposes
-a read-only `forktty://agent/operating-guide` text resource and a
-`forktty_operating_guide` prompt with the same content. The guide tells agents
-to use ForkTTY tools for pane/workspace coordination, SSH remote inventory,
-agent session discovery or resume, worktree management, terminal read/capture, visible
-status/notifications, and sending text to a different surface; ordinary code
-edits in the current repository should proceed without ForkTTY tool calls. The
-server's `initialize` instructions include the
-same short policy and point at the resource/prompt for the full guide.
-
-`forktty mcp setup` registers this stdio server in verified user-scope MCP
-config locations for Codex (`$CODEX_HOME/config.toml` or
-`~/.codex/config.toml`), Claude Code (`~/.claude.json`), and Antigravity
-(`~/.gemini/config/mcp_config.json`). Codex TOML setup preserves comments and
-formatting and uses the MCP config size budget, so large hand-edited Codex
-configs are not constrained by the smaller hook-template limit. Registration
-writes a ForkTTY-managed server named `forktty`, preserves foreign MCP servers,
-writes atomically, and creates a `.bak-*` backup when content changes. When the
-registered launcher is an AppImage file, the managed server environment sets
-`APPIMAGE_EXTRACT_AND_RUN=1` so persistent MCP servers do not keep a FUSE
-AppImage mount alive. Codex registration also allows `XDG_RUNTIME_DIR` through
-to the MCP server so it can find the default owner-only socket at
-`$XDG_RUNTIME_DIR/forktty.sock` when `FORKTTY_SOCKET_PATH` is not set.
-`forktty mcp remove` removes only that managed server entry. `forktty mcp
-remove gemini` is kept only to clean legacy ForkTTY-managed server entries
-from `~/.gemini/settings.json`; Gemini MCP setup remains unsupported.
-
-### Agent skills
-
-`forktty skills setup` installs a ForkTTY-managed Agent Skill named
-`forktty-agent-orchestration`. The skill is instruction-only and tells coding
-agents when to inspect ForkTTY context, how to treat terminal tails as
-untrusted input, how to treat fetched public docs as documentation-only
-evidence, when to use team/workflow/status MCP tools, how to account for
-`provider_capabilities`, compact `team_summaries`, persisted agent
-source/age/`lifecycle_evidence` metadata, and dispatch submit/Enter semantics,
-how to run durable team preflight with workflow/task records, how to assign
-explicit worker roles, how to prefer
-already-open worktree workspaces for mutating parallel workers, how to avoid
-cross-pane writes before reading the target surface, and how to prefer isolated
-temporary config roots for integration QA without redirecting the live ForkTTY
-socket path when validating the currently running instance. For hook, MCP, and
-skill setup debugging, it points agents at local doctor diagnostics and setup
-dry runs before configuration changes. The default setup writes
-the same managed skill to the interoperable Agent Skills user location
-(`~/.agents/skills/forktty-agent-orchestration`) and to Claude Code's personal
-skills location (`~/.claude/skills/forktty-agent-orchestration`, or
-`$CLAUDE_CONFIG_DIR/skills/forktty-agent-orchestration` when set). The
-`codex` and `pi` are accepted as aliases for the interoperable `agents` target;
-`claude` targets Claude Code's skill directory.
-`forktty skills remove` removes only skill directories containing ForkTTY's
-managed marker and moves the directory to a `.bak-*` backup. Setup refuses to
-overwrite an existing skill directory with the same name unless its `SKILL.md`
-contains the ForkTTY-managed marker. Non-dry-run setup/remove retain the three
-newest `.bak-*` directories that still contain the ForkTTY-managed marker for
-that target and prune older managed backups; backup-like directories without
-the marker are treated as user-managed and left untouched. `forktty skills setup --dry-run` and
-`forktty --json doctor` report each managed skill target's status
-(`missing`, `up_to_date`, `update_available`, `unmanaged`, or `invalid`),
-source and installed checksums, and `forktty skills setup <target>` as the
-repair command when the managed copy is missing, stale, or invalid with a
-verified ForkTTY-managed marker.
-Doctor skill inspection reads only bounded regular files and reports symlinked,
-non-regular, or oversized managed skill components (`SKILL.md`, `agents/`, or
-`agents/openai.yaml`) as `invalid`.
-`forktty skills setup <target>` treats invalid managed copies as repairable
-only after verifying the marker, backs up the existing skill directory, and
-reinstalls regular managed files; when the marker cannot be verified, such as a
-symlinked skill directory or `SKILL.md`, setup refuses to overwrite the path.
+PTY and relays raw stdin/stdout; it does not open a listener, reconnect, resize,
+or persist remote ownership.
 
 ## Browser Pane Feature
 
@@ -1156,8 +446,6 @@ Notification sources:
 
 Notifications update in-app unread state and may dispatch through `notify-rust` and `notification_command`. Workspace/surface-targeted desktop notifications register a best-effort default `Open` action, using the freedesktop `default` action key, that argv-executes the current ForkTTY binary to focus the target surface or workspace; global notifications remain passive. Custom commands are argv-executed, not `sh -c`; title/body are passed through environment variables, and terminal-originated OSC 99 `f`/`t` metadata is passed as `FORKTTY_NOTIFICATION_TERMINAL_APP` plus JSON array `FORKTTY_NOTIFICATION_TERMINAL_TYPES_JSON`. `blocked_terminal_apps` and `blocked_terminal_types` are exact string match filters for terminal-originated OSC 99 `f`/`t` metadata before the notification is stored or dispatched. OSC 99 notification identifiers are tracked and echoed only when they use the protocol identifier character set (`A-Z`, `a-z`, `0-9`, `_`, `-`, `+`, `.`); unsafe identifiers are treated as untracked notification payloads or ignored for reply-only actions. Unknown OSC 99 payload types are ignored so future protocol extensions do not surface as terminal status noise. OSC 99 binary icons are rendered in-app when GTK can decode them, after `n=` icon names and `f=` application-name icon fallback; desktop binary icons are materialized as bounded files under `$XDG_RUNTIME_DIR/forktty-notification-icons` and removed when the tracked desktop notification is replaced, closed, or evicted.
 
-Prompt notification feed rows expose `approval_state` as `pending`, `approved`, `denied`, `dismissed`, or `stale`. `feed.approval.respond` accepts approve/deny decisions only while an approval entry is still `pending`; entries already approved, denied, dismissed, or stale return `precondition_failed`. Approval rows are retained ahead of notification/status/progress history under the bounded Feed cap so an approved request can still be consumed by a later retry. `notification.clear` and the GTK notification panel's dismiss/clear actions mark still-pending prompt approvals as `dismissed`, close any matching desktop notification, and send OSC 99 close reports when the originating terminal requested close reporting. `feed.list` and `context.snapshot` normalize still-pending approvals whose target workspace or surface no longer exists to `stale`; only `pending` approvals raise the snapshot `pending_approval` risk flag.
-
 ## Security Constraints
 
 - Local Linux desktop threat model; same-user processes are not treated as hostile isolation boundaries.
@@ -1167,8 +455,6 @@ Prompt notification feed rows expose `approval_state` as `pending`, `approved`, 
   Releases at most once per day and can be disabled. Optional browser panes
   and optional PR lookup can make user-directed network requests.
 - Owner-only Unix socket permissions and private runtime directory validation.
-- `forktty mcp` is a local stdio bridge only; it opens no network listener and
-  enforces the same Unix socket ownership boundary as the CLI.
 - 1 MiB bounds for socket requests, config, and session files.
 - Hook session-to-surface routing cache is local process memory only, capped at
   256 entries, and evicted on session-end or surface close. Per-surface agent

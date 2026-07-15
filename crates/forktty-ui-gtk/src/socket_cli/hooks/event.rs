@@ -1041,9 +1041,9 @@ pub(in crate::socket_cli) fn build_hook_response(
                 trimmed_env("FORKTTY_SOCKET_PATH").unwrap_or_else(|| "(default)".to_string()),
             ),
             workspace_line,
-            "MCP tools: context_snapshot gives a compact read-only view; workspace_list, surface_list, topology_tree, surface_read_text, and surface_capture_tail inspect panes; surface_focus and surface_send_text drive them.".to_string(),
-            "Worktrees: worktree_create creates an isolated git worktree + workspace; worktree_attach, worktree_remove, and worktree_merge manage branches.".to_string(),
-            "Status: status_set and notification_create publish progress; CLI fallback is forktty list/surfaces/send-text/worktree-*.".to_string(),
+            "ForkTTY CLI/socket: context-snapshot gives a compact read-only view; list, surfaces, tree, read-screen, and capture-tail inspect panes; focus-surface and send-text target them.".to_string(),
+            "Worktrees: forktty worktree-create opens an isolated git worktree workspace; worktree-attach, worktree-remove, and worktree-merge manage it.".to_string(),
+            "Attention: forktty set-status, set-progress, log, and notify publish generic workspace metadata.".to_string(),
         ];
         context_lines.extend(
             agent_guide::session_context_lines()

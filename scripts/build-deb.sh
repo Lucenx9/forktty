@@ -224,9 +224,9 @@ Installed-Size: $INSTALLED_SIZE
 Maintainer: Lucenx9
 Homepage: https://forktty.dev/
 Depends: libc6, libgcc-s1, libstdc++6, libgtk-4-1, libadwaita-1-0 (>= 1.4), libgtk4-layer-shell0, libssl3, libssh2-1, zlib1g, libzstd1, hicolor-icon-theme
-Description: Linux-native multi-agent terminal
- ForkTTY is a Linux-native GTK4/libadwaita/Ghostty terminal for multi-agent
- workflows, programmable socket automation, and git worktree isolation.
+Description: Linux-native workspace terminal
+ ForkTTY is a Linux-native GTK4/libadwaita/Ghostty terminal for workspaces,
+ programmable socket automation, and git worktree isolation.
 CONTROL
 
 cat > "$PKG_ROOT/DEBIAN/postinst" <<'SCRIPT'

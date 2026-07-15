@@ -19,49 +19,10 @@ fn capabilities_requests_system_capabilities() {
 }
 
 #[test]
-fn capabilities_formatter_includes_team_provider_policy() {
+fn capabilities_formatter_includes_pty_persistence() {
     let lines = format_capabilities_lines(&json!({
         "version": "9.9.9",
         "methods": ["system.ping"],
-        "team_provider_policy": {
-            "default_agent": "auto",
-            "provider_order": ["codex", "pi"],
-            "auto_fallback": true,
-            "disabled_agents": ["claude"]
-        },
-        "provider_capabilities": {
-            "codex": {
-                "program": "codex",
-                "available_on_path": true,
-                "launchable": true,
-                "executable": "/usr/bin/codex",
-                "disabled_by_config": false
-            },
-            "claude": {
-                "program": "claude",
-                "available_on_path": true,
-                "launchable": false,
-                "executable": "/usr/bin/claude",
-                "disabled_by_config": true,
-                "unavailable_reason": "disabled by team.disabled_agents"
-            },
-            "pi": {
-                "program": "pi",
-                "available_on_path": false,
-                "launchable": false,
-                "disabled_by_config": false,
-                "unavailable_reason": "pi not found on PATH"
-            },
-            "opencode": {
-                "program": "/opt/opencode/bin/opencode",
-                "default_program": "opencode",
-                "configured_command": "/opt/opencode/bin/opencode",
-                "available_on_path": false,
-                "launchable": true,
-                "executable": "/opt/opencode/bin/opencode",
-                "disabled_by_config": false
-            }
-        },
         "pty_persistence": {
             "config_enabled": true,
             "active": false,
@@ -78,11 +39,6 @@ fn capabilities_formatter_includes_team_provider_policy() {
         vec![
             "version 9.9.9",
             "system.ping",
-            "team providers default auto fallback on order codex, pi disabled claude",
-            "provider codex found /usr/bin/codex",
-            "provider claude disabled disabled by team.disabled_agents",
-            "provider pi missing pi not found on PATH",
-            "provider opencode configured /opt/opencode/bin/opencode",
             "pty persistence configured-missing broker_not_found",
         ]
     );

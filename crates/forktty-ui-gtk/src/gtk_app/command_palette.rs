@@ -77,7 +77,6 @@ pub(super) fn show_shortcuts_dialog(parent: &adw::ApplicationWindow) {
         "General",
         &[
             ("Command Palette", "Ctrl+Shift+P"),
-            ("Router", "Command Palette"),
             ("Agents", "Command Palette"),
             ("Notifications", "Ctrl+Shift+M"),
             ("Keyboard Shortcuts", "Ctrl+? / F1"),
@@ -418,15 +417,6 @@ pub(super) fn show_command_palette_with_query(
         move || {
             dialog.close();
             show_notification_panel(&parent, &state, controller.clone());
-        }
-    });
-    command!("Router", None, {
-        let state = state.clone();
-        let parent = parent.clone();
-        let dialog = dialog.clone();
-        move || {
-            dialog.close();
-            show_task_router_dialog(&parent, &state);
         }
     });
     command!("Show Agents", None, {

@@ -758,9 +758,6 @@ pub(super) fn show_notification_panel(
                     })
                     .unwrap_or(0);
                 if removed {
-                    state_for_dismiss.mark_notification_feed_entries_cleared(std::slice::from_ref(
-                        &notification_for_dismiss,
-                    ));
                     close_desktop_notification(&notification_id);
                     send_terminal_notification_close_report(
                         controller_for_dismiss.as_ref(),
@@ -880,7 +877,6 @@ pub(super) fn show_notification_panel(
         } else {
             Vec::new()
         };
-        state_for_clear.mark_notification_feed_entries_cleared(&notifications);
         for notification in notifications {
             close_desktop_notification(&notification.id);
             send_terminal_notification_close_report(controller_for_clear.as_ref(), &notification);

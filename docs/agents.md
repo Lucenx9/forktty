@@ -1,165 +1,66 @@
-# Agent Providers in ForkTTY
+# Agent Lifecycle in ForkTTY
 
-This document treats Claude Code, Codex, Pi, Antigravity CLI, OpenCode, and
-custom CLIs as **agent providers** with explicit capabilities, not generic
-terminals.
-
-This is a baseline taxonomy for safe future integration. It does not change how ForkTTY launches agents, writes hook config, gates permissions, or reports UI/socket state by itself.
+ForkTTY treats coding agents primarily as terminal processes. Optional hooks
+add a thin, provider-aware lifecycle layer so the workspace UI can show
+attention, last activity, and native resume state without owning the agent's
+task planning or coordination policy.
 
 ## Source of truth
 
-This file is the provider taxonomy and review map. Executable behavior lives in
-the owning Rust modules and agent-facing setup docs:
+- Provider identity and normalized lifecycle: `crates/forktty-core/src/agents.rs`.
+- Hook setup, removal, diagnostics, and payload handling:
+  `crates/forktty-ui-gtk/src/socket_cli/hooks/`.
+- Socket lifecycle reads and explicit resume/hibernate/reclaim operations:
+  `crates/forktty-socket/src/agent_runtime.rs`.
+- User-facing setup behavior: `hooks/README.md`, `README.md`, and `SPEC.md`.
 
-- Provider identity, normalized status, and provider command defaults:
-  `crates/forktty-core/src/agents.rs`.
-- Hook setup, removal, doctor checks, and hook event payload handling:
-  `crates/forktty-ui-gtk/src/socket_cli/hooks.rs`,
-  `crates/forktty-ui-gtk/src/socket_cli/hooks/install.rs`, and
-  `crates/forktty-ui-gtk/src/socket_cli/hooks/event.rs`.
-- MCP setup and MCP tool exposure: `crates/forktty-ui-gtk/src/mcp_server.rs`
-  plus the socket methods in `crates/forktty-socket/src/`.
-- Task strategy routing: `crates/forktty-core/src/task_strategy.rs`,
-  `crates/forktty-socket/src/task_strategy_runtime.rs`, and MCP/CLI wrappers.
-  `task.strategy.plan` infers dirty git state from the selected surface or
-  workspace cwd when `repo_dirty` is omitted, and infers likely user-visible
-  edit intent plus clear fast/conservative/parallel/review-heavy router
-  profiles from the goal when those hints are omitted. It also returns the
-  selected router profile, ranked candidate strategy scores, and role-specific
-  harness assignment scores with factor breakdowns, and accepts optional
-  last-known-good plus per-harness verified-readiness/cooldown/lockout signals so agents can
-  inspect the router decision before applying it. When callers omit
-  last-known-good, the planner can infer it from completed task-strategy
-  workflows in the selected workspace. Last-known-good is a small advisory
-  stickiness factor; cooldown is a soft assignment penalty; lockout is
-  a hard task/mode exclusion. PATH/configured-command discovery proves only
-  launchability: auto-detected harness authentication and runtime health remain
-  unverified and score below positively verified Ready harnesses. Concrete
-  worker, hook, or user evidence can be passed as
-  `readiness: "verified_ready"` plus `readiness_reason`; executable discovery
-  alone must not set it.
-  `task.strategy.apply` stages visible
-  workflow/team/task/message state by default; with
-  `submit=true`, supported team plans launch visible worker panes and dispatch
-  prompts through the team mailbox; missing approvals can be
-  published as Feed approvals before any workflow/team mutation; worktree-layer
-  plans require `worktree_name` for an already-open ForkTTY worktree workspace.
-  Worktree creation, push, merge, and destructive work remain separate explicit
-  approvals.
-- Managed agent skill content: `.agents/skills/forktty-agent-orchestration/`,
-  embedded by `crates/forktty-ui-gtk/src/socket_cli/skills.rs`.
-- User-facing hook/MCP/skill setup guidance: `hooks/README.md`, `README.md`,
-  `SPEC.md`, and the separate `forktty-site` checkout when public docs change.
+ForkTTY does not expose a built-in MCP server, managed agent skills, task
+router, provider-neutral team/workflow store, or approval feed. External tools
+may call the generic socket CLI when they need workspace, pane, notification,
+metadata, worktree, or terminal-text primitives.
 
-When provider behavior changes, update the owning module first, then keep this
-taxonomy and the agent-facing docs aligned in the same change.
+## Supported hook integrations
 
-## Documentation areas reviewed (June 19, 2026)
+| Provider | Hook installation | Notes |
+| --- | --- | --- |
+| Codex | `$CODEX_HOME/hooks.json` or `~/.codex/hooks.json` | Changed hook definitions require review through `/hooks`; ForkTTY can detect trust records but cannot verify their hashes. |
+| Claude Code | `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json` | Lifecycle profile by default; `--full` adds high-frequency tool hooks. |
+| Antigravity CLI | `~/.gemini/config/hooks.json` plus generated wrappers | Uses a ForkTTY-owned hook group and direct wrapper executables. |
+| OpenCode | Generated plugin under the OpenCode plugin directory | Avoids mutating `opencode.json`. |
 
-- OpenAI Codex docs: hooks and configuration references
-  (`developers.openai.com/codex/hooks`, `developers.openai.com/codex/config-basic`).
-- Claude Code docs: hooks, MCP, settings, and security references
-  (`code.claude.com/docs/en/hooks`, `code.claude.com/docs/en/mcp`,
-  `code.claude.com/docs/en/settings`, `code.claude.com/docs/en/security`).
-- OpenCode docs: config, MCP servers, plugins, and agents
-  (`opencode.ai/docs/config/`, `opencode.ai/docs/mcp-servers/`,
-  `opencode.ai/docs/plugins/`, `opencode.ai/docs/agents/`).
-- Google Antigravity docs: CLI overview, hooks, MCP, plugins/skills
-  (`antigravity.google/docs/cli-overview`, `antigravity.google/docs/hooks`,
-  `antigravity.google/docs/mcp`, `antigravity.google/docs/cli-plugins`).
-- Pi docs: quickstart, usage, sessions, tool options, and skills
-  (`pi.dev/docs/latest/quickstart`, `pi.dev/docs/latest/usage`,
-  `pi.dev/docs/latest/skills`).
-- MCP specification: security principles, user consent, tool caution, and
-  implementation guidance (`modelcontextprotocol.io/specification/2025-06-18`).
+Pi, Grok, and custom agents can run normally in panes but do not have a
+ForkTTY-managed hook installer. Legacy Gemini entries can be removed but are no
+longer installed.
 
-## Capability matrix (documented-only)
+## Lifecycle contract
 
-| Provider | Install command (doc) | Launch command (doc) | Context files / skills | Hooks/events | Permission controls | MCP | Headless/JSON |
-|---|---|---|---|---|---|---|---|
-| Claude Code | See Claude install docs | `claude` | `CLAUDE.md` / project settings; `forktty skills setup claude` installs `~/.claude/skills/forktty-agent-orchestration` | ForkTTY installs the documented local settings hooks in the lifecycle profile by default; `--full` adds high-frequency per-tool hooks | Documented permission settings; ForkTTY colors risky modes, starts team workers with documented permission-mode defaults, and preserves exact `bypassPermissions` resumes with the documented bypass flag | Registered in `~/.claude.json` as `mcpServers.forktty` | Not fully standardized publicly |
-| Codex CLI | See Codex install docs | `codex` | `AGENTS.md`, user/project `config.toml` layers; `forktty skills setup agents` installs `~/.agents/skills/forktty-agent-orchestration` | ForkTTY installs documented `hooks.json` lifecycle hooks; Codex requires per-hook trust approval via `/hooks` before non-managed hooks run, and changed definitions require review because trust is hash-bound | Approval/sandbox modes documented; ForkTTY colors risky modes and preserves exact `bypassPermissions` resumes with the documented yolo/dangerous flag | Registered in `$CODEX_HOME/config.toml` / `~/.codex/config.toml` as `[mcp_servers.forktty]` | JSON/headless flows documented in Codex docs |
-| Pi | `npm install -g --ignore-scripts @earendil-works/pi-coding-agent` | `pi` | `AGENTS.md`; `forktty skills setup pi` aliases the interoperable `~/.agents/skills/forktty-agent-orchestration` target that Pi scans | No verified managed hook path yet | Tool allowlists are documented; ForkTTY starts Pi review workers with read-only `--tools read,grep,find,ls` unless explicit tool args are supplied | ForkTTY does not manage a Pi MCP registration path | `--mode json`, `--mode rpc`, and `-p/--print` flows documented |
-| Antigravity CLI | See Antigravity CLI docs | `agy` | Antigravity workspace customization and user config | ForkTTY installs the verified `PreInvocation`, `PreToolUse`, and `PostToolUse` hooks via a ForkTTY-owned group plus generated wrapper scripts | Hook responses are conservative: `PreToolUse` explicitly approves; other events return `{}` | Registered in `~/.gemini/config/mcp_config.json` as `mcpServers.forktty` | CLI behavior documented by Antigravity docs |
-| OpenCode | See OpenCode install docs | `opencode` | `AGENTS.md`, OpenCode config, plugins | ForkTTY installs a generated local plugin under the OpenCode plugins directory instead of mutating `opencode.json` | OpenCode permission/event payloads are observed and bounded before forwarding | OpenCode supports MCP, but ForkTTY does not yet manage an OpenCode MCP registration path | CLI/server flows documented by provider |
-| Grok Build | See Grok Build CLI docs | `grok` | `AGENTS.md` | No verified managed hook path yet | Plan mode is documented; ForkTTY marks Grok as plan-mode capable and starts Grok review workers with `--permission-mode plan` unless explicit permission args are supplied | ForkTTY does not manage a Grok MCP registration path | Single-turn/headless flags are documented by provider |
-| Custom | User-defined | User-defined | User-defined | Unknown | Unknown | Unknown | Unknown |
+Hooks can associate a provider session id, cwd, PID, permission mode, and
+normalized lifecycle with a ForkTTY surface. Unknown provider strings remain
+custom and unknown states remain conservative. Executable discovery or a hook
+record proves neither authentication nor provider-side session validity.
 
-## Safe integration points for ForkTTY
+The public agent socket family is limited to:
 
-1. **Provider identity**: keep `AgentKind` explicit (`claude_code`, `codex`, `pi`, `antigravity`, `opencode`, `grok`, `custom`); removed provider names such as `gemini` deserialize as `custom`.
-2. **Normalized status surface**: future UI/socket code should consume normalized states (`idle`, `running`, `needs_input`, `permission_request`, `tool_running`, `tests_running`, `done`, `failed`, `cancelled`, `unknown`) without treating unknown provider strings as success or progress.
-3. **Config discovery**: only probe documented locations/env overrides; avoid writing undocumented files.
-   Executable discovery proves local launchability only; it must not be reported
-   as provider authentication, quota availability, or runtime health.
-4. **Hook installer**: only mutate providers with documented, local JSON config paths and validated hook schemas.
-5. **Doctor checks**: local-only, no network, no telemetry, no mutating agent state.
+- `agent.list` and `agent.health` for observation;
+- `agent.resume` for an explicit provider-native resume request;
+- `agent.reclaim.plan`, `agent.hibernate`, and `agent.reclaim` for explicit
+  maintenance of idle, locally restorable sessions.
 
-## Unknowns / risks (left unimplemented intentionally)
+These operations do not select a model, launch a team, assign work, or run an
+autonomous loop. ForkTTY never installs or refreshes hooks automatically at GTK
+startup. It may show a reminder when hooks are missing or point at an old
+launcher; all writes require an explicit `forktty hooks setup` action.
 
-- Provider hook surfaces are evolving; run `forktty hooks doctor <agent>` after agent upgrades to confirm installed event coverage.
-- OpenCode integration is plugin-based, so ForkTTY intentionally writes a generated plugin file instead of mutating `opencode.json`.
-- OpenCode supports MCP servers, but ForkTTY has no verified OpenCode MCP registration path yet; keep this explicit instead of guessing a config shape.
-- Cross-provider “progress stream” formats are not standardized; normalization should remain best-effort and conservative.
+## Safety rules
 
-## Current ForkTTY integration notes
+1. Probe only documented local config locations and environment overrides.
+2. Write hook configuration atomically and preserve unrelated entries.
+3. Treat terminal text and hook payloads as untrusted data.
+4. Reject ambiguous cwd-to-surface matches instead of guessing active focus.
+5. Keep hook doctor checks local-only and non-mutating.
+6. Preserve exact permission/resume metadata only when supplied by the
+   provider; do not infer elevated safety from a friendly label.
 
-- Default hook setup currently targets Codex, Claude Code, Antigravity CLI, and
-  OpenCode.
-- Default MCP setup currently targets Codex, Claude Code, and Antigravity CLI.
-  Pi and OpenCode MCP registration are not managed yet.
-- Default skill setup installs the shared `forktty-agent-orchestration` skill
-  to `~/.agents/skills` and `~/.claude/skills`; `codex` and `pi` are aliases
-  for the interoperable `agents` target.
-- The managed skill directs hook/MCP/skill setup debugging through local
-  `forktty doctor` diagnostics and setup dry runs before config writes.
-- `system.capabilities` exposes a `provider_capabilities` matrix for supported
-  launch/resume providers, managed hook/MCP setup support, and plan-mode
-  support so socket and MCP clients can read provider support directly instead
-  of probing failed operations.
-- Current-runtime team workers keep the provider selected by
-  `team.worker.launch` as their canonical session identity. Compatible hook
-  keys from another provider still update lifecycle metadata without
-  relabeling the worker in the Agent HUD or agent APIs.
-- `task.strategy.plan`, CLI `forktty task-plan`, and MCP
-  `task_strategy_plan` provide a read-only routing recommendation before an
-  agent chooses solo work, workflow loops, reviewers, teams, worktrees, MCP,
-  hooks, or harness roles. The planner uses the selected surface/workspace cwd
-  to infer simple git dirty state when no explicit dirty hint is supplied,
-  returns or infers a router profile (`balanced`, `fast`, `conservative`,
-  `parallel`, or `review_heavy`), and scores harness assignments per role while
-  using configured provider order as the tie-break. Callers with concrete
-  runtime evidence can pass explicit last-known-good strategy/harness evidence
-  plus per-harness cooldown/lockout signals; when they omit LKGP, ForkTTY can
-  infer it from completed task-strategy workflow history. LKGP adds a small
-  explainable score bias, cooldown lowers assignment score, and lockout excludes
-  a harness from assignment. Multi-role parallel plans also respect each
-  harness's declared parallel session capacity. It does not launch workers or
-  mutate orchestration state.
-- `task.strategy.apply`, CLI `forktty task-apply`, and MCP
-  `task_strategy_apply` apply an approved returned plan as visible
-  workflow/team/task/message state with deterministic ids. The default path is
-  staged and local. If approvals are missing, `request_approval` publishes a
-  Feed approval and returns blocked without workflow/team mutation; an approved
-  returned `approval_id` can later satisfy that same request-bound start-run
-  approval, including remaining approvals from the same request when explicit
-  attestations cover another part of the approved set. An explicit `cwd`
-  launches submit-mode workers in that repo and adds the cwd to role prompts
-  when no `worktree_name` is used. Apply recomputes dirty-repo edit isolation
-  from the selected surface/workspace plus any explicit `cwd`, then recomputes
-  worktree approvals and multi-worker submit approvals from the requested
-  operation and effective plan shape before trusting the plan's approval list.
-  `approved`
-  is a caller attestation; use Feed `request_approval` when a separate human
-  decision is required. With
-  `submit=true`,
-  supported team plans launch worker panes and dispatch role prompts;
-  worktree-layer apply requires `worktree_name` for an already-open ForkTTY
-  worktree workspace and are rejected before mutation if that workspace is
-  missing. Submit retries refuse to reuse a live deterministic worker when its
-  harness, role, task, worktree or explicit cwd target, or status no longer
-  matches the current assignment.
-- `forktty hooks doctor <agent>` reports hook config path state, launcher
-  freshness, supported events, Claude profile, and Codex trust-record state;
-  recorded Codex approvals do not prove that current hook hashes are trusted.
-- Status normalization is centralized in `forktty-core` for reuse by UI/socket/script layers.
+Provider hook contracts evolve. After a provider upgrade, run
+`forktty hooks doctor <agent>` and `forktty hooks test <agent>` to verify the
+installed launcher, supported events, and socket round-trip.

@@ -2,6 +2,7 @@
 
 use super::{CliContext, CliError, CliResult, MAX_STDIN_TEXT_BYTES};
 use serde_json::{json, Value};
+#[cfg(any(feature = "browser", test))]
 use std::fs::File;
 use std::io::{self, IsTerminal, Read, Write};
 
@@ -13,6 +14,7 @@ pub(in crate::socket_cli) fn read_stdin_text() -> CliResult<String> {
     read_text_from_reader(&mut stdin, MAX_STDIN_TEXT_BYTES, "stdin")
 }
 
+#[cfg(any(feature = "browser", test))]
 pub(in crate::socket_cli) fn read_text_file_or_stdin(path: &str, label: &str) -> CliResult<String> {
     if path == "-" {
         return read_stdin_text();

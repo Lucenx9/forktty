@@ -93,39 +93,17 @@ not depend on host notification services. It uses the current display or
 - Open the Settings font family picker and confirm the dropdown lists installed monospace fonts with a working search field; the font size and scrollback spin rows show theme-independent −/+ glyph buttons.
 - Open Notifications, dismiss one notification, then Clear All.
 
-## Attention-first UI Smoke
-
-Use this when the Router rail or bottom workflow feed changes. The goal is to
-verify the manual metrics in `METRICS.md`, not to add telemetry.
-
-- Create or reuse a workspace with mixed orchestration state: at least one
-  active worker, one worker or approval needing input, one warning/error/stale
-  feed item, and at least one routine event/log row.
-- Open ForkTTY at a normal laptop-width window with the Router rail and bottom
-  workflow feed visible.
-- Without scrolling, identify every item that needs intervention from the
-  Router rail plus the bottom `ATTENTION` tab. Target: all critical items named
-  within 3 seconds.
-- Count critical items hidden behind scrolling or non-attention tabs. Target:
-  at least 90% of critical items visible without scrolling, and 0 missed
-  `needs_input`, stuck/stale, approval, error, warning, or conflict states.
-- Ask the tester to rate monitoring effort from 1 to 5. Target: 1-2. If the
-  answer is 3 or higher, save a screenshot and note which section caused the
-  scan friction.
-- Switch back to `WORKFLOW FEED`, `EVENTS`, and `LOGS` and confirm routine
-  trace rows remain available without crowding the attention view.
-
 ## General UI Quality Smoke
 
 Use this for visible GTK changes. It applies the visual rules in
 `docs/DESIGN.md` and the general UI metrics in `METRICS.md`.
 
 - Open ForkTTY at normal laptop width and wide desktop width.
-- Inspect the default workspace, sidebar, Router rail, workflow feed, command
+- Inspect the default workspace, sidebar, pane chrome, status bar, command
   palette, notifications panel, Settings, and any dialog touched by the change.
 - Confirm the screen keeps one accent color, no gradients/glow, no emoji-as-UI,
   compact operational spacing, sentence-case labels, and no decorative elements
-  that compete with terminal/workflow state.
+  that compete with terminal state or navigation.
 - Score visual clarity, visual noise, and consistency/polish using
   `METRICS.md`. Target: visual clarity 4-5/5, consistency/polish 4-5/5,
   and no distracting visual noise in the primary viewport.
@@ -265,27 +243,6 @@ checking that the opt-in browser feature still builds and starts.
 - Launch the GTK app with no ForkTTY-managed hooks installed — it shows an Agent Hooks Available notification that suggests `forktty hooks setup`; if at least one provider is already configured and current, missing optional providers do not nag.
 - Inspect one generated hook command — it calls the absolute `forktty` launcher directly, so AppImage and packaged installs do not need a source checkout or Node.js; if that launcher is an AppImage, the command includes `APPIMAGE_EXTRACT_AND_RUN=1`.
 - Repeat the previous command — prints `already configured` for each agent and does not create new backups.
-
-## Skill Installer Smoke
-
-- `forktty skills setup agents --dry-run` — prints `would install` but does not create `~/.agents/skills/forktty-agent-orchestration`.
-- `forktty skills setup codex` — writes the shared `~/.agents/skills/forktty-agent-orchestration` skill via the interoperable agents target.
-- `forktty skills setup claude` — writes `~/.claude/skills/forktty-agent-orchestration` or `$CLAUDE_CONFIG_DIR/skills/forktty-agent-orchestration`.
-- Create an unmanaged `SKILL.md` at the same destination, then run `forktty skills setup agents` — setup refuses to overwrite it.
-- `forktty skills remove agents` — moves the managed skill directory to a `.bak-*` backup and leaves no active skill with that name.
-- `forktty hooks codex session-start --socket <stub>` without `FORKTTY_SOCKET_PATH` — sends status/log actions to the supplied socket and still prints the hook continue JSON.
-- `forktty hooks codex sesion-start` — prints an unsupported hook event warning to stderr and still prints the hook continue JSON.
-- `forktty hooks codex session-start extra` — prints an unexpected hook argument warning to stderr and still prints the hook continue JSON.
-- Symlink `~/.codex/hooks.json` to a real managed JSON file, then run `hooks setup codex` —
-  the target file is updated and backed up, and the symlink remains a symlink.
-- Modify an existing agent hook config and re-run setup twice quickly — each changed run creates a distinct `.bak-*` file and does not overwrite a prior backup.
-- Corrupt `~/.codex/hooks.json` (`echo '{ not json' >~/.codex/hooks.json`), re-run `hooks setup codex` — error message names both the agent and the path; the file is left untouched.
-- Corrupt `~/.claude/settings.json`, then run `hooks setup codex claude` — setup fails before creating or updating the Codex hook config.
-- Replace `~/.codex/hooks.json` with a JSON array (`echo '[]' >~/.codex/hooks.json`), re-run `hooks setup codex` — error message says the top-level config must be a JSON object; the file is left untouched.
-- Replace `~/.codex/hooks.json` with a directory, re-run `hooks setup codex` —
-  error message says the path is not a regular file; no backup or replacement is created.
-- Replace `~/.codex/hooks.json` with a broken symlink, re-run `hooks setup codex` —
-  setup warns about the broken symlink and replaces it with a regular managed hook file.
 
 ## Worktree Smoke
 

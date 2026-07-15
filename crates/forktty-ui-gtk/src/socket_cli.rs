@@ -23,23 +23,16 @@ mod agent;
 mod args;
 #[cfg(any(feature = "browser", test))]
 mod browser;
-mod cleanup;
-mod feed;
 mod help;
 mod hooks;
 mod integration_files;
 mod io_helpers;
-mod mcp;
 mod remote;
 mod router;
-mod skills;
 mod status;
 mod surface;
 mod system;
-mod task;
-mod team;
 mod transport;
-mod workflow;
 mod workspace;
 mod worktree;
 
@@ -56,26 +49,18 @@ use agent::{
 #[cfg(test)]
 use args::default_socket_path;
 use args::{
-    bool_option, build_target_params, comma_list_option, format_option_names,
-    insert_optional_cli_bool_param, insert_optional_cli_raw_string_param,
-    insert_optional_cli_string_param, insert_optional_cli_u64_param, non_blank_string_option,
-    parse_flags, parse_global_args, parse_u64_option, reject_unknown_options, require_no_args,
-    required_positionals, should_read_stdin, socket_path_from_env, string_option,
-    target_selector_values, trimmed_positional, FlagValue, ParsedFlags,
+    bool_option, build_target_params, format_option_names, insert_optional_cli_string_param,
+    insert_optional_cli_u64_param, non_blank_string_option, parse_flags, parse_global_args,
+    parse_u64_option, reject_unknown_options, require_no_args, should_read_stdin,
+    socket_path_from_env, string_option, target_selector_values, FlagValue, ParsedFlags,
 };
 #[cfg(any(feature = "browser", test))]
 use args::{insert_optional_trimmed_string_param, required_trimmed_arg};
 #[cfg(test)]
 use browser::handle_browser;
-#[cfg(test)]
-use cleanup::handle_orchestration_cleanup;
-#[cfg(test)]
-use feed::handle_feed;
-#[cfg(test)]
-use help::HELP_TEXT;
 use help::{
     print_help, AGENT_HELP_TEXT, COMPLETION_COMMANDS, EXAMPLES_TEXT, HOOKS_HELP_TEXT,
-    STATUS_HELP_TEXT, STATUS_SUBCOMMANDS, TEAM_HELP_TEXT, TEAM_SUBCOMMANDS, WORKFLOW_HELP_TEXT,
+    STATUS_HELP_TEXT, STATUS_SUBCOMMANDS,
 };
 #[cfg(test)]
 use hooks::event::*;
@@ -91,26 +76,16 @@ use integration_files::{
     atomic_write_file, ensure_parent_dir, read_json_file, stable_hook_launcher_path_from_env,
     MAX_HOOK_CONFIG_SIZE_BYTES,
 };
+#[cfg(any(feature = "browser", test))]
+pub(in crate::socket_cli) use io_helpers::read_text_file_or_stdin;
 pub(in crate::socket_cli) use io_helpers::{
-    print_json, print_result_or_json, read_optional_stdin_json, read_stdin_text,
-    read_text_file_or_stdin, write_stdout_line, write_stdout_text,
+    print_json, print_result_or_json, read_optional_stdin_json, read_stdin_text, write_stdout_line,
+    write_stdout_text,
 };
 #[cfg(test)]
 pub(in crate::socket_cli) use io_helpers::{read_text_from_reader, write_output_line};
 #[cfg(test)]
-use mcp::{
-    antigravity_mcp_config_path, build_mcp_remove_plan, build_mcp_setup_plan,
-    claude_mcp_config_path, codex_mcp_config_path, handle_mcp_remove, handle_mcp_setup,
-    json_mcp_server_config, mcp_agent_spec, McpRemoveAction, MCP_MANAGED_ENV, MCP_SERVER_NAME,
-};
-#[cfg(test)]
 use remote::{handle_remote_status, handle_remotes};
-#[cfg(test)]
-use skills::{
-    agent_skills_dir, build_skill_setup_plan, claude_skill_dir, handle_skills_remove,
-    handle_skills_setup, skill_setup_summary, supported_skill_targets, AGENT_SKILL_MARKER,
-    AGENT_SKILL_MD, AGENT_SKILL_OPENAI_YAML,
-};
 #[cfg(test)]
 use status::{
     context_snapshot_params, format_context_snapshot_explain_line, format_notification_line,
@@ -133,33 +108,11 @@ use system::{
     handle_capabilities, handle_completions, handle_events, handle_examples, handle_help,
     handle_identify, handle_notify, handle_wait,
 };
-#[cfg(test)]
-use task::{
-    format_task_strategy_apply_line, format_task_strategy_plan_line, handle_task_apply,
-    handle_task_plan,
-};
-#[cfg(test)]
-use team::{
-    format_team_ask_flow_line, format_team_summary_line, format_team_worker_health_line,
-    format_team_worker_launch_line,
-};
-#[cfg(test)]
-use team::{
-    handle_team, handle_team_inbox, handle_team_list, handle_team_message_dispatch,
-    handle_team_message_send, handle_team_task_upsert, handle_team_upsert,
-    handle_team_worker_health, handle_team_worker_heartbeat, handle_team_worker_launch,
-    handle_team_worker_nudge, handle_team_worker_shutdown,
-};
 pub(crate) use transport::send_socket_request_with_timeout;
 #[cfg(test)]
 use transport::{
     connect_unix_stream_with_timeout, format_socket_connect_error, lagged_dropped_count,
     unix_socket_address,
-};
-#[cfg(test)]
-use workflow::{
-    handle_workflow_evidence_add, handle_workflow_loop_set, handle_workflow_plan_set,
-    handle_workflow_replay, handle_workflow_upsert, handle_workflows,
 };
 #[cfg(test)]
 use workspace::format_workspace_line;
