@@ -658,7 +658,7 @@ pub(crate) fn agent_session_lifecycle_from_hook(
         .to_ascii_lowercase();
     match hook_event.as_str() {
         "session-end" => AgentSessionLifecycle::Ended,
-        "stop" | "subagent-stop" | "teammate-idle" => AgentSessionLifecycle::Idle,
+        "stop" | "teammate-idle" => AgentSessionLifecycle::Idle,
         "permission-request" | "elicitation" | "ask-user-question" => {
             AgentSessionLifecycle::NeedsInput
         }
@@ -683,6 +683,7 @@ pub(crate) fn agent_session_lifecycle_from_hook(
         | "file-changed"
         | "worktree-create"
         | "worktree-remove"
+        | "subagent-stop"
         | "stop-failure" => AgentSessionLifecycle::Running,
         _ => agent_session_lifecycle_from_status(status_value),
     }

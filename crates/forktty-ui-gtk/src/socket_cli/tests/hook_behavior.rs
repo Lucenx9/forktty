@@ -362,6 +362,27 @@ fn hook_actions_cover_attention_status_tools_and_shutdown() {
 }
 
 #[test]
+fn teammate_idle_hook_publishes_idle_status() {
+    let actions = build_hook_actions(
+        agent_spec("claude").unwrap(),
+        "teammate-idle",
+        &json!({
+            "session_id": "sess-claude-teammate",
+            "teammate_name": "researcher",
+            "team_name": "router-audit"
+        }),
+        "79",
+    );
+
+    let status = actions
+        .iter()
+        .find(|(method, params)| method == "metadata.set_status" && params["key"] == "agent:claude")
+        .expect("teammate status action");
+    assert_eq!(status.1["value"], "Ready");
+    assert_eq!(status.1["color"], "green");
+}
+
+#[test]
 fn hook_payload_extraction_sanitizes_and_hashes_sensitive_text() {
     assert_eq!(
         sanitize_for_terminal("bad\u{1b}[31m\nnext"),

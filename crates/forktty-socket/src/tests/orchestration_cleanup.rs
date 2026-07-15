@@ -141,6 +141,49 @@ async fn orchestration_cleanup_dry_run_then_apply_closes_missing_surface_records
 }
 
 #[tokio::test]
+async fn orchestration_cleanup_closes_open_steps_for_finished_workflows() {
+    let (mut state, _backend) = test_state();
+    let dir = tempfile::tempdir().unwrap();
+    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
+
+    dispatch(
+        &state,
+        "workflow.upsert",
+        json!({
+            "workflow_id": "workflow-1",
+            "status": "finished"
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "workflow.plan.set",
+        json!({
+            "workflow_id": "workflow-1",
+            "steps": [{"id": "step-1", "title": "Open", "status": "running"}]
+        }),
+    )
+    .await
+    .unwrap();
+
+    let dry_run = dispatch(&state, "orchestration.cleanup", json!({}))
+        .await
+        .unwrap();
+
+    assert!(dry_run["workflowActions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| {
+            action["kind"] == "workflow.plan.close_stale_steps"
+                && action["workflowId"] == "workflow-1"
+                && action["status"] == "done"
+                && action["applied"] == false
+        }));
+}
+
+#[tokio::test]
 async fn orchestration_cleanup_closes_workers_when_surface_runtime_is_missing() {
     let (mut state, backend) = test_state();
     let dir = tempfile::tempdir().unwrap();

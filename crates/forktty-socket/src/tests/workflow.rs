@@ -407,7 +407,7 @@ async fn workflow_loop_set_updates_state_and_snapshot_loop_summaries() {
 }
 
 #[tokio::test]
-async fn workflow_done_with_successful_loop_without_evidence_warns() {
+async fn workflow_terminal_aliases_with_successful_loop_without_evidence_warn() {
     let (state, _) = test_state();
     let dir = tempfile::tempdir().unwrap();
     let state = state.with_workflow_store_path(dir.path().join("workflow-v1.json"));
@@ -449,22 +449,36 @@ async fn workflow_done_with_successful_loop_without_evidence_warns() {
     .await
     .unwrap();
 
-    let snapshot = dispatch(
-        &state,
-        "context.snapshot",
-        json!({"workspace_id": workspace_id, "tail_lines": 0}),
-    )
-    .await
-    .unwrap();
+    for status in ["done", "finished"] {
+        dispatch(
+            &state,
+            "workflow.upsert",
+            json!({
+                "workflow_id": "workflow-1",
+                "status": status
+            }),
+        )
+        .await
+        .unwrap();
 
-    assert_eq!(
-        snapshot["workflow_summaries"][0]["consistency_warnings"],
-        json!(["loop_passed_without_evidence"])
-    );
-    assert!(snapshot["risk_flags"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("workflow_consistency_warning")));
+        let snapshot = dispatch(
+            &state,
+            "context.snapshot",
+            json!({"workspace_id": workspace_id, "tail_lines": 0}),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            snapshot["workflow_summaries"][0]["consistency_warnings"],
+            json!(["loop_passed_without_evidence"]),
+            "terminal workflow status {status}"
+        );
+        assert!(snapshot["risk_flags"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("workflow_consistency_warning")));
+    }
 }
 
 #[tokio::test]

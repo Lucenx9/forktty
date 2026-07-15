@@ -420,6 +420,7 @@ fn workflow_status_is_terminal(status: &str) -> bool {
             | "closed"
             | "cancelled"
             | "canceled"
+            | "finished"
             | "pass"
             | "passed"
             | "ok"

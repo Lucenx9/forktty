@@ -78,6 +78,12 @@ All notable changes to ForkTTY are documented here.
   recessed with @ft_line hairlines and no shadow; pane badges also cleaned.
 
 ### Fixed
+- Codex and Claude Code `SubagentStop` events no longer mark the parent session
+  idle, and Claude Code `TeammateIdle` now publishes the same ready/idle state
+  persisted for the teammate session.
+- Workflows using the supported terminal status `finished` now receive the
+  same cleanup, context consistency warnings, and Agent HUD done styling as
+  other terminal workflows.
 - Workspace rows now keep one consistent height whether or not agent activity
   metadata is available, avoiding smaller click targets for quiet workspaces.
 - Workspace rows now fall back to persisted agent-session lifecycle when a

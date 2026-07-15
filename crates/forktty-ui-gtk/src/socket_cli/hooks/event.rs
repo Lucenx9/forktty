@@ -845,7 +845,7 @@ impl<'a> HookActionBuilder<'a> {
                     self.message.clone()
                 },
             ),
-            self.status("Running", "blue", self.event),
+            self.status("Ready", "green", self.event),
         ]
     }
 

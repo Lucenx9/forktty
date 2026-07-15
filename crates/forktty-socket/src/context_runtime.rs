@@ -473,7 +473,7 @@ fn workflow_consistency_warnings(
 fn workflow_status_is_terminal(status: &str) -> bool {
     matches!(
         status.trim().to_ascii_lowercase().as_str(),
-        "done" | "closed" | "cancelled" | "canceled" | "failed"
+        "done" | "closed" | "cancelled" | "canceled" | "failed" | "finished"
     )
 }
 

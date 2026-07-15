@@ -553,6 +553,13 @@ fn terminal_plan_status_for_workflow(status: &str) -> &'static str {
 fn is_terminal_status(status: &str) -> bool {
     matches!(
         status.trim().to_ascii_lowercase().as_str(),
-        "done" | "closed" | "cancelled" | "canceled" | "failed" | "skipped" | "superseded"
+        "done"
+            | "closed"
+            | "cancelled"
+            | "canceled"
+            | "failed"
+            | "finished"
+            | "skipped"
+            | "superseded"
     )
 }

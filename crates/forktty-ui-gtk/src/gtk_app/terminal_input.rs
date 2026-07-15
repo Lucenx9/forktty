@@ -140,14 +140,10 @@ pub(super) fn translate_gtk_key(
                     return Some(TerminalInput::Bytes(text.as_bytes().to_vec()));
                 }
             }
-            if let Some(ch) = key.to_unicode() {
-                GhosttyKeySpec {
-                    key: GhosttyKey::Char(ch),
-                    ctrl,
-                    alt,
-                }
-            } else {
-                return None;
+            GhosttyKeySpec {
+                key: GhosttyKey::Char(key.to_unicode()?),
+                ctrl,
+                alt,
             }
         }
     };

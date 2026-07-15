@@ -11,6 +11,18 @@ fn agent_status_keys_keep_the_exact_alias_contract() {
     assert_eq!(agent_kind_from_status_key("agent: CLAUDE "), None);
 }
 
+#[test]
+fn nested_agent_hook_lifecycles_match_the_reported_session() {
+    assert_eq!(
+        agent_session_lifecycle_from_hook("Running", Some("subagent-stop")),
+        AgentSessionLifecycle::Running
+    );
+    assert_eq!(
+        agent_session_lifecycle_from_hook("Ready", Some("teammate-idle")),
+        AgentSessionLifecycle::Idle
+    );
+}
+
 #[tokio::test]
 #[serial_test::serial]
 async fn launch_owned_grok_worker_keeps_grok_identity_for_claude_compatible_hooks() {

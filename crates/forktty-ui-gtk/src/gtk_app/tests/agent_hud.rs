@@ -353,8 +353,14 @@ fn agent_hud_loop_badges_classify_attention_and_done_states() {
     done.loop_stage = Some("verify".to_string());
     done.loop_stop_reason = Some("passed".to_string());
     done.loop_updated_at_ms = Some(1_700_000_200_000);
+    let mut finished = done.clone();
+    finished.id = "finished".to_string();
+    finished.surface_id = Some("surface-3".to_string());
+    finished.status = "finished".to_string();
+    finished.loop_stop_reason = None;
+    finished.loop_updated_at_ms = Some(1_700_000_300_000);
 
-    let loop_badges = agent_hud_loop_badges_from_workflows(&[warning, done]);
+    let loop_badges = agent_hud_loop_badges_from_workflows(&[warning, done, finished]);
 
     assert_eq!(
         loop_badges
@@ -367,6 +373,13 @@ fn agent_hud_loop_badges_classify_attention_and_done_states() {
         loop_badges
             .by_surface
             .get("surface-2")
+            .map(|badge| badge.class_name),
+        Some("done")
+    );
+    assert_eq!(
+        loop_badges
+            .by_surface
+            .get("surface-3")
             .map(|badge| badge.class_name),
         Some("done")
     );

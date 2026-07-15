@@ -226,6 +226,9 @@ that are documented by the provider.
 Tool-use events keep `agent:<key>` as the compact `Running` lifecycle status;
 the exact tool name is recorded in hook log metadata instead of the primary
 status value so snapshots stay stable for automation.
+For Codex and Claude Code, `SubagentStop` leaves the parent session `Running`
+because the event only reports a nested subagent completion. Claude Code
+`TeammateIdle` publishes `Ready` and persists the teammate lifecycle as idle.
 
 ## Manual editing
 

@@ -57,9 +57,10 @@ work. For small local code changes, read and edit the repo directly.
    penalty scales with it), while `locked_out`
    excludes that harness for the current task/mode. For harnesses you do not
    name, ForkTTY infers an advisory soft cooldown from recent failed
-   task-strategy workflows; your explicit signals replace that inference. Multi-role parallel plans
-   also respect the harness parallel-session capacity reported by ForkTTY. Do
-   not invent signals from preference alone; treat the
+   task-strategy workflows; your explicit signals replace that inference.
+   Multi-role parallel plans also respect the harness parallel-session
+   capacity reported by ForkTTY. Do not invent signals from preference alone;
+   treat the
    returned strategy and harness assignments as the default operating plan
    unless the user explicitly overrides them. When the effective plan sets
    `layers.loop_metadata: true`, `task_strategy_apply` bootstraps the initial
@@ -399,6 +400,11 @@ evidence, not proof that the row came from a fresh hook event. Use
 the current workspace/provider status row (`status_scope=workspace_provider`,
 not per-session live proof), permission mode, and health readiness reason before
 declaring a state stale.
+
+For Codex and Claude Code lifecycle evidence, `SubagentStop` means a nested
+subagent finished while the parent remains running. Claude Code `TeammateIdle`
+means that teammate is becoming idle and should agree with a ready/idle status
+row.
 
 When `running`, `idle`, `needs_input`, permission mode, or worker health looks
 wrong:

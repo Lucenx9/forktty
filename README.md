@@ -342,7 +342,7 @@ worktree. The planner is read-only, returns the selected router profile
 candidate strategy scores with factor breakdowns, scores each eligible harness
 assignment by role with factor breakdowns, uses configured team provider order
 as the assignment tie-break, respects each harness's declared parallel session
-capacity before selecting multi-role parallel plans, infers dirty git state
+capacity before selecting multi-role parallel plans, and infers dirty git state
 from the selected surface/workspace cwd when `repo_dirty`/`--repo-dirty` is
 omitted, or from an explicit absolute `--cwd` / MCP `cwd` inside a Git
 repository already represented by an open ForkTTY workspace, surface, or
@@ -476,7 +476,9 @@ with `workflow_consistency_warning` in `risk_flags` when a running workflow has
 a completed plan, an active workflow is bound to a missing surface, or a
 terminal workflow still has open steps. Snapshot feed rows are compact by default: approvals and
 notifications remain, while status and progress trace rows are available with
-`include_feed_trace: true`.
+`include_feed_trace: true`. The terminal alias `finished` is handled consistently
+by snapshot warnings, conservative orchestration cleanup, and Agent HUD loop
+styling.
 For closed loops, `workflow.loop.set` / `workflow_loop_set` /
 `forktty workflow-loop-set` records bounded loop metadata on an existing
 workflow: recipe, stage, iteration budget, stop reason, and compact gate
@@ -766,6 +768,9 @@ Each agent's hook commands honor a per-agent disable variable:
 Hooks report status, progress, logs, and prompt notifications through
 the same local socket pipeline. Manual hook-event commands can pass
 `--socket <path>` when they run outside a ForkTTY-spawned shell.
+For Codex and Claude Code, `SubagentStop` keeps the parent session running
+because only the nested subagent ended. Claude Code `TeammateIdle` publishes
+the teammate as ready/idle.
 
 ## Features
 
