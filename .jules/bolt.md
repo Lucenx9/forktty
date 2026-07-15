@@ -1,0 +1,3 @@
+## 2024-07-15 - [Refactor to avoid eager string allocation in tree traversals]
+**Learning:** In Rust performance optimizations for tree-like structures, avoiding eager String allocations (e.g., `.clone()`) inside iterator closures (like `.any()`) prevents redundant O(N) heap allocations for every node during traversal.
+**Action:** Always refactor functions taking owned identifiers to take a string reference (`&str`), allowing downstream consumers to avoid calling `.clone()` when recursing or traversing. The target insertion point should defer calling `.to_string()` until a successful match happens.

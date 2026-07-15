@@ -906,7 +906,7 @@ impl WorkspaceModel {
             .workspaces
             .get_mut(&workspace_id)
             .expect("workspace verified above");
-        if !push_tab_to_leaf(&mut workspace.pane_tree, near_surface_id, new_id.clone()) {
+        if !push_tab_to_leaf(&mut workspace.pane_tree, near_surface_id, &new_id) {
             return None;
         }
         workspace.focused_surface_id = new_id.clone();
