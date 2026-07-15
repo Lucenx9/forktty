@@ -68,9 +68,9 @@ use hooks::event::*;
 use hooks::handle_hooks;
 #[cfg(test)]
 use hooks::install::*;
+pub(crate) use hooks::HookSetupProfile;
 #[cfg(test)]
 use hooks::*;
-pub(crate) use hooks::{hook_setup_reminder_message, HookSetupProfile};
 
 pub(crate) fn read_claude_installed_hook_profile(
     config_path: &Path,

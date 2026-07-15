@@ -387,8 +387,9 @@ When `HOME` is overridden, the `~` defaults are resolved under that home
 directory. Existing configs are written atomically (tmp + rename) and a
 timestamped `.bak-*` backup is created when content changes.
 
-On app startup, ForkTTY shows a reminder notification when no ForkTTY-managed
-agent hooks are installed, or when installed hooks point at a stale launcher.
+ForkTTY does not create startup reminders for missing or stale hooks. Optional
+setup remains available from the first-run welcome flow, Settings > Agents, and
+the `forktty hooks setup` CLI.
 
 Diagnose and exercise installed hooks:
 

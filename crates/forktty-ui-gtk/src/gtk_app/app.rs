@@ -773,7 +773,6 @@ pub(super) fn build_ui(app: &adw::Application) {
         controller_for_bootstrap
             .borrow_mut()
             .ensure_layout_current();
-        show_hook_setup_reminder(&state_for_bootstrap);
         refresh_sidebar(
             &sidebar_ui_for_bootstrap,
             &state_for_bootstrap,
@@ -1151,15 +1150,7 @@ pub(super) fn restore_or_bootstrap_workspaces(
             }
             Ok(())
         }
-        Ok(_) => {
-            create_global_notification(
-                state,
-                "Welcome to ForkTTY",
-                "Opened your home directory as the main workspace. Use Ctrl+Shift+P for commands, F9 to toggle the sidebar, and New Worktree for isolated git work.",
-                NotificationKind::Info,
-            );
-            bootstrap_default_workspace(state, cwd)
-        }
+        Ok(_) => bootstrap_default_workspace(state, cwd),
         Err(err) => {
             eprintln!("Failed to load GTK session, bootstrapping a new workspace: {err}");
             create_global_notification(
@@ -1170,17 +1161,6 @@ pub(super) fn restore_or_bootstrap_workspaces(
             );
             bootstrap_default_workspace(state, cwd)
         }
-    }
-}
-
-pub(super) fn show_hook_setup_reminder(state: &SocketAppState) {
-    if let Some(body) = crate::socket_cli::hook_setup_reminder_message() {
-        create_global_notification(
-            state,
-            "Agent Hooks Available",
-            &body,
-            NotificationKind::Info,
-        );
     }
 }
 

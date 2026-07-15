@@ -579,49 +579,6 @@ pub(super) fn camel_to_snake_event_name(event: &str) -> String {
     out
 }
 
-#[cfg(feature = "gtk-ghostty")]
-pub(crate) fn hook_setup_reminder_message() -> Option<String> {
-    let current_launcher = stable_hook_launcher_path();
-    let statuses = default_hook_setup_agents()
-        .iter()
-        .map(|spec| {
-            let config_path = (spec.config_path)();
-            describe_launcher_check(spec, &config_path, current_launcher.as_deref())
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("not_installed")
-                .to_string()
-        })
-        .collect::<Vec<_>>();
-    hook_setup_reminder_message_for_statuses(statuses.iter().map(String::as_str))
-}
-
-#[cfg(any(test, feature = "gtk-ghostty"))]
-pub(super) fn hook_setup_reminder_message_for_statuses<'a>(
-    statuses: impl IntoIterator<Item = &'a str>,
-) -> Option<String> {
-    let statuses = statuses.into_iter().collect::<Vec<_>>();
-    let installed = statuses
-        .iter()
-        .any(|status| matches!(*status, "ok" | "stale" | "current_launcher_unknown"));
-    let stale = statuses
-        .iter()
-        .any(|status| matches!(*status, "stale" | "current_launcher_unknown"));
-    if stale {
-        Some(
-            "Refresh ForkTTY agent hooks by running `forktty hooks setup` so Codex, Claude Code, Antigravity, and OpenCode can publish status, progress, and notifications."
-                .to_string(),
-        )
-    } else if !installed {
-        Some(
-            "Install ForkTTY agent hooks by running `forktty hooks setup` to connect Codex, Claude Code, Antigravity, and OpenCode to status, progress, and notifications."
-                .to_string(),
-        )
-    } else {
-        None
-    }
-}
-
 pub(super) fn extract_launcher_from_opencode_plugin(text: &str) -> Option<String> {
     let marker = "const FORKTTY_LAUNCHER = ";
     let start = text.find(marker)? + marker.len();

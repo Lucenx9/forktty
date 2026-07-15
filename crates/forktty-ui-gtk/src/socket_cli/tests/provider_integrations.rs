@@ -285,24 +285,6 @@ fn codex_trust_summary_never_claims_current_hashes_are_verified() {
 }
 
 #[test]
-fn hook_setup_reminder_only_prompts_when_all_missing_or_stale() {
-    assert!(
-        hook_setup_reminder_message_for_statuses(["not_installed", "not_installed"])
-            .unwrap()
-            .contains("Install ForkTTY agent hooks")
-    );
-    assert!(hook_setup_reminder_message_for_statuses(["ok", "not_installed"]).is_none());
-    assert!(hook_setup_reminder_message_for_statuses(["ok", "stale"])
-        .unwrap()
-        .contains("Refresh ForkTTY agent hooks"));
-    assert!(
-        hook_setup_reminder_message_for_statuses(["current_launcher_unknown"])
-            .unwrap()
-            .contains("Refresh ForkTTY agent hooks")
-    );
-}
-
-#[test]
 fn hook_setup_command_uses_forktty_launcher_without_node() {
     let spec = agent_spec("codex").unwrap();
     let command = build_hook_shell_command(

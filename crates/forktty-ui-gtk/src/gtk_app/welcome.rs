@@ -103,7 +103,6 @@ pub(super) fn show_welcome_dialog(
         .label("Set Up")
         .valign(gtk::Align::Center)
         .build();
-    setup_button.add_css_class("suggested-action");
     setup_button.add_css_class("welcome-setup");
     integration_row.append(&setup_button);
     let setup_status = gtk::Label::builder()
@@ -176,6 +175,7 @@ pub(super) fn show_welcome_dialog(
     footer.append(&privacy_link);
 
     let get_started = gtk::Button::with_label("Get Started");
+    get_started.add_css_class("suggested-action");
     get_started.add_css_class("welcome-start");
     get_started.add_css_class("pill");
     get_started.connect_clicked({

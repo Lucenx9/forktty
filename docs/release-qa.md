@@ -240,7 +240,7 @@ checking that the opt-in browser feature still builds and starts.
 - `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= OPENCODE_CONFIG_DIR= forktty hooks setup` — creates `.codex`, `.claude`, `.gemini/config` for Antigravity, and `.config/opencode/plugins/forktty.generated.js` under that temporary home, not the real home directory.
 - `forktty hooks remove codex --dry-run` — prints `would remove` and leaves the Codex config unchanged.
 - `forktty hooks remove codex opencode` — removes only ForkTTY-managed Codex entries and the generated OpenCode plugin, preserving unrelated hook commands.
-- Launch the GTK app with no ForkTTY-managed hooks installed — it shows an Agent Hooks Available notification that suggests `forktty hooks setup`; if at least one provider is already configured and current, missing optional providers do not nag.
+- Launch the GTK app with no ForkTTY-managed hooks installed — it does not create an unread setup reminder; setup remains available from the first-run welcome flow and Settings > Agents.
 - Inspect one generated hook command — it calls the absolute `forktty` launcher directly, so AppImage and packaged installs do not need a source checkout or Node.js; if that launcher is an AppImage, the command includes `APPIMAGE_EXTRACT_AND_RUN=1`.
 - Repeat the previous command — prints `already configured` for each agent and does not create new backups.
 

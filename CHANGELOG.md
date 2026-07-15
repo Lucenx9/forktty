@@ -20,8 +20,12 @@ All notable changes to ForkTTY are documented here.
   methods. Workspace, pane, surface, terminal-text, notifications, metadata,
   worktrees, remotes, project actions, events, and thin agent lifecycle
   primitives remain available through the owner-only Unix socket and CLI.
-- Agent hooks are now explicitly opt-in: GTK may show a setup reminder, but it
-  never installs or refreshes hook configuration in the background.
+- Agent hooks are now explicitly opt-in: setup remains available from the
+  welcome flow and settings, without recurring unread startup reminders or
+  background hook installation and refresh.
+- Refined terminal-first onboarding and pane affordances: `Get Started` is the
+  primary welcome action, duplicate first-run notifications are gone, and the
+  single-pane split/tab controls have stronger resting contrast.
 - Consolidated the four identical 500 ms workbench refresh sources into one
   callback for layout, sidebar, notification badge, and agent badge updates.
 - Reframed the workbench around the embedded Ghostty terminal, workspace

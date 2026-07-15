@@ -3177,6 +3177,29 @@ fn app_shell_polish_keeps_tooltips_and_bundled_icons_precise() {
     assert!(!search.contains("\"go-down-symbolic\""));
     assert!(settings.contains("settings_nav_button(\"forktty-info-symbolic\", \"Privacy\""));
     assert!(welcome.contains(".label(\"Set Up\")"));
+    assert!(!welcome.contains("setup_button.add_css_class(\"suggested-action\")"));
+    assert!(welcome.contains("get_started.add_css_class(\"suggested-action\")"));
+}
+
+#[test]
+fn terminal_first_startup_avoids_duplicate_notification_nags() {
+    let app = include_str!("app.rs");
+
+    assert!(!app.contains("show_hook_setup_reminder"));
+    assert!(!app.contains("Agent Hooks Available"));
+    assert!(!app.contains("Opened your home directory as the main workspace"));
+}
+
+#[test]
+fn single_pane_actions_remain_discoverable_at_rest() {
+    let css = include_str!("../style.css");
+    let actions = css
+        .split(".single-pane-actions {")
+        .nth(1)
+        .and_then(|rest| rest.split('}').next())
+        .expect("single-pane-actions block");
+
+    assert!(actions.contains("opacity: 0.56;"));
 }
 
 #[test]

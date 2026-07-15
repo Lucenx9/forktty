@@ -1430,7 +1430,7 @@ button.flat.pane-close-action:active {
   border-radius: 8px;
   background: transparent;
   box-shadow: none;
-  opacity: 0.36;
+  opacity: 0.56;
   transition: opacity 90ms ease-out, background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
