@@ -58,6 +58,10 @@ All notable changes to ForkTTY are documented here.
   the misleading `Update available`; updates and repairs preserve intentionally
   absent providers, the section is labelled optional, and it no longer
   describes the removed coordination layer.
+- Agent hook settings now preserve Claude's installed `--full` profile, make a
+  failed-status `Retry` repeat only the check, and tell Codex users to approve
+  newly written hooks with `/hooks` instead of reporting an incomplete setup as
+  fully configured.
 - Bounded `context.snapshot` to the newest 100 matching notifications and
   omitted binary terminal icon data while evaluating prompt risk across the
   full matching set, preventing untrusted OSC icon payloads from exceeding the

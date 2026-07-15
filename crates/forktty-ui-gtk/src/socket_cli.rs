@@ -66,11 +66,17 @@ use help::{
 use hooks::event::*;
 #[cfg(test)]
 use hooks::handle_hooks;
-pub(crate) use hooks::hook_setup_reminder_message;
 #[cfg(test)]
 use hooks::install::*;
 #[cfg(test)]
 use hooks::*;
+pub(crate) use hooks::{hook_setup_reminder_message, HookSetupProfile};
+
+pub(crate) fn read_claude_installed_hook_profile(
+    config_path: &Path,
+) -> Result<Option<HookSetupProfile>, String> {
+    hooks::read_claude_installed_profile(config_path).map_err(|err| err.message)
+}
 #[cfg(test)]
 use integration_files::{
     atomic_write_file, ensure_parent_dir, read_json_file, stable_hook_launcher_path_from_env,

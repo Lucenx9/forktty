@@ -35,8 +35,8 @@ pub(in crate::socket_cli) enum HookInstallKind {
     AntigravityConfig,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(in crate::socket_cli) enum HookSetupProfile {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HookSetupProfile {
     Lifecycle,
     Full,
 }

@@ -29,15 +29,15 @@ use install::{
 pub(super) use event::{
     handle_hook_event, hook_target_params, increment_hook_event_order, next_hook_event_order,
 };
+pub(crate) use specs::HookSetupProfile;
 #[cfg(test)]
 pub(super) use specs::HOOK_ENTRY_TIMEOUT_SECS;
 pub(super) use specs::{
-    AgentSpec, HookEntrySpec, HookInstallKind, HookSetupProfile, AGENTS,
-    CLAUDE_HIGH_FREQUENCY_HOOK_ENTRIES, CLAUDE_HOOK_ENTRIES, CODEX_HOOK_ENTRIES,
-    DEFAULT_HOOK_SETUP_AGENT_KEYS, FORKTTY_HOOK_TAG, HOOK_CONTINUE_JSON, HOOK_EVENT_CLOCK,
-    HOOK_EVENT_ORDER_PARAM, HOOK_STATUS_TIMEOUT, HOOK_TOKEN_CEILING_DEFAULT, HOOK_TOOL_LABEL_MAX,
-    LEGACY_GEMINI_HOOK_AGENT, OPENCODE_HOOK_TIMEOUT_MS, OPENCODE_MAX_INPUT_BYTES,
-    OPENCODE_PLUGIN_TAG,
+    AgentSpec, HookEntrySpec, HookInstallKind, AGENTS, CLAUDE_HIGH_FREQUENCY_HOOK_ENTRIES,
+    CLAUDE_HOOK_ENTRIES, CODEX_HOOK_ENTRIES, DEFAULT_HOOK_SETUP_AGENT_KEYS, FORKTTY_HOOK_TAG,
+    HOOK_CONTINUE_JSON, HOOK_EVENT_CLOCK, HOOK_EVENT_ORDER_PARAM, HOOK_STATUS_TIMEOUT,
+    HOOK_TOKEN_CEILING_DEFAULT, HOOK_TOOL_LABEL_MAX, LEGACY_GEMINI_HOOK_AGENT,
+    OPENCODE_HOOK_TIMEOUT_MS, OPENCODE_MAX_INPUT_BYTES, OPENCODE_PLUGIN_TAG,
 };
 
 pub(super) fn handle_hooks(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -444,26 +444,33 @@ pub(super) fn describe_launcher_check(
 }
 
 pub(super) fn describe_claude_installed_profile(config_path: &Path) -> &'static str {
+    match read_claude_installed_profile(config_path) {
+        Ok(Some(profile)) => hook_setup_profile_name(profile),
+        Ok(None) | Err(_) => "not_installed",
+    }
+}
+
+pub(super) fn read_claude_installed_profile(
+    config_path: &Path,
+) -> CliResult<Option<HookSetupProfile>> {
     let Some(spec) = agent_spec("claude") else {
-        return "not_installed";
+        return Err(CliError::new("Claude hook specification is unavailable"));
     };
-    let Ok(config) = read_json_file(config_path) else {
-        return "not_installed";
-    };
+    let config = read_json_file(config_path)?;
     let has_high_frequency = CLAUDE_HIGH_FREQUENCY_HOOK_ENTRIES
         .iter()
         .any(|entry| config_has_forktty_hook(&config, spec, entry));
     if has_high_frequency {
-        return "full";
+        return Ok(Some(HookSetupProfile::Full));
     }
     let has_lifecycle = CLAUDE_HOOK_ENTRIES
         .iter()
         .filter(|entry| !is_claude_high_frequency_event(entry.event_name))
         .any(|entry| config_has_forktty_hook(&config, spec, entry));
     if has_lifecycle {
-        "lifecycle"
+        Ok(Some(HookSetupProfile::Lifecycle))
     } else {
-        "not_installed"
+        Ok(None)
     }
 }
 

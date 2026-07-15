@@ -370,11 +370,17 @@ pub(super) fn show_settings_dialog_page(
     }
     stack.set_visible_child_name(initial_page.stack_name());
 
+    let agent_setup_status_kind = Rc::new(Cell::new(AgentSetupStatusKind::CheckFailed));
     let refresh_agent_setup_statuses = {
         let all_setup_status = all_setup_status.clone();
         let all_setup_button = all_setup_button.clone();
+        let agent_setup_status_kind = agent_setup_status_kind.clone();
         Rc::new(move || {
-            refresh_settings_setup_statuses(&all_setup_status, &all_setup_button);
+            refresh_settings_setup_statuses(
+                &all_setup_status,
+                &all_setup_button,
+                &agent_setup_status_kind,
+            );
         })
     };
     refresh_agent_setup_statuses.as_ref()();
@@ -382,17 +388,16 @@ pub(super) fn show_settings_dialog_page(
     all_setup_button.connect_clicked({
         let dialog = dialog.clone();
         let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
+        let agent_setup_status_kind = agent_setup_status_kind.clone();
         move |button| {
-            run_settings_setup(
-                button,
-                &dialog,
-                "Agent hooks configured.",
-                run_agent_integrations_setup,
-                {
-                    let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
-                    move || refresh_agent_setup_statuses.as_ref()()
-                },
-            );
+            if !agent_setup_status_kind.get().should_run_setup() {
+                refresh_agent_setup_statuses.as_ref()();
+                return;
+            }
+            run_settings_setup(button, &dialog, run_agent_integrations_setup, {
+                let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
+                move || refresh_agent_setup_statuses.as_ref()()
+            });
         }
     });
     window_mode.connect_selected_notify({
@@ -886,7 +891,11 @@ fn settings_setup_status_label() -> gtk::Label {
     label
 }
 
-fn refresh_settings_setup_statuses(all_status: &gtk::Label, all_button: &gtk::Button) {
+fn refresh_settings_setup_statuses(
+    all_status: &gtk::Label,
+    all_button: &gtk::Button,
+    status_kind: &Rc<Cell<AgentSetupStatusKind>>,
+) {
     apply_pending_setup_status(all_status, all_button);
 
     let (tx, rx) = mpsc::channel();
@@ -897,8 +906,10 @@ fn refresh_settings_setup_statuses(all_status: &gtk::Label, all_button: &gtk::Bu
 
     let all_status = all_status.clone();
     let all_button = all_button.clone();
+    let status_kind = status_kind.clone();
     glib::timeout_add_local(SETTINGS_SETUP_POLL_INTERVAL, move || match rx.try_recv() {
         Ok(all) => {
+            status_kind.set(all.kind);
             apply_setup_status(&all_status, &all_button, &all);
             glib::ControlFlow::Break
         }
@@ -909,6 +920,7 @@ fn refresh_settings_setup_statuses(all_status: &gtk::Label, all_button: &gtk::Bu
                 label: "Check failed".to_string(),
                 detail: "Setup status check stopped before completing.".to_string(),
             };
+            status_kind.set(status.kind);
             apply_setup_status(&all_status, &all_button, &status);
             glib::ControlFlow::Break
         }
@@ -964,11 +976,10 @@ fn set_setup_button_class(button: &gtk::Button, class_name: &str) {
 fn run_settings_setup<F, C>(
     button: &gtk::Button,
     dialog: &adw::ToastOverlay,
-    success_message: &'static str,
     task: F,
     after_complete: C,
 ) where
-    F: FnOnce() -> Result<(), String> + Send + 'static,
+    F: FnOnce() -> Result<String, String> + Send + 'static,
     C: Fn() + 'static,
 {
     let original_label = button
@@ -986,10 +997,10 @@ fn run_settings_setup<F, C>(
     let button = button.clone();
     let dialog = dialog.clone();
     glib::timeout_add_local(SETTINGS_SETUP_POLL_INTERVAL, move || match rx.try_recv() {
-        Ok(Ok(())) => {
+        Ok(Ok(success_message)) => {
             button.set_label(&original_label);
             button.set_sensitive(true);
-            dialog.add_toast(adw::Toast::new(success_message));
+            dialog.add_toast(adw::Toast::new(&success_message));
             after_complete();
             glib::ControlFlow::Break
         }
