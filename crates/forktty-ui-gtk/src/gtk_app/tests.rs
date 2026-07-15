@@ -2822,16 +2822,16 @@ fn workbench_state_uses_one_periodic_refresh_source() {
 }
 
 #[test]
-fn pane_footer_mirrors_header_visibility_and_lifecycle() {
+fn pane_chrome_keeps_focus_and_agent_state_in_one_header() {
     let pane_source = include_str!("pane_chrome.rs");
     let controller_source = include_str!("controller.rs");
     let css = include_str!("../style.css");
 
-    assert!(pane_source.contains("footer_revealer"));
-    assert!(pane_source.contains("pane_shell_label(&state.shell)"));
-    assert!(controller_source.contains("chrome.footer_revealer.set_reveal_child(!single_pane);"));
-    assert!(css.contains(".terminal-pane-footer {"));
-    assert!(css.contains(".terminal-pane-footer-shell {"));
+    assert!(pane_source.contains("agent_badge.add_css_class(\"pane-agent-badge\")"));
+    assert!(!pane_source.contains("footer_revealer"));
+    assert!(!controller_source.contains("footer_revealer"));
+    assert!(!css.contains(".terminal-pane-footer"));
+    assert!(!css.contains(".rail-dot"));
 }
 
 #[test]
@@ -2924,19 +2924,25 @@ fn chrome_micro_polish_unifies_pane_hover_and_hairline_tone() {
     assert!(block(".terminal-stage paned > separator {").contains("min-width: 3px;"));
     assert!(block(".terminal-pane.active .terminal-pane-header {")
         .contains("border-bottom-color: @ft_line;"));
+    assert!(block(".terminal-pane.active .terminal-pane-header {")
+        .contains("box-shadow: inset 0 1px 0 alpha(@accent_color, 0.72);"));
 }
 
 #[test]
-fn pane_status_uses_readable_muted_contrast() {
+fn app_chrome_uses_readable_contrast_without_compounding_status_microtext() {
     let source = include_str!("../style.css");
-    let pane_status = source
-        .split(".pane-status {")
-        .nth(1)
-        .and_then(|rest| rest.split('}').next())
-        .expect("pane-status block");
+    let block = |selector: &str| {
+        source
+            .split(selector)
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .unwrap_or_else(|| panic!("missing CSS block {selector}"))
+    };
 
-    // Muted-but-readable status text resolves to @ft_text_3 (#929292).
-    assert!(pane_status.contains("color: @ft_text_3;"));
+    assert!(block(".app-header .header-action,").contains("color: @ft_text_2;"));
+    assert!(block(".status-location {").contains("color: @ft_text_2;"));
+    assert!(block(".pane-status {").contains("color: @ft_text_2;"));
+    assert!(!block(".app-status-bar {").contains("font-size:"));
 }
 
 #[test]

@@ -101,6 +101,9 @@ Use this for visible GTK changes. It applies the visual rules in
 - Open ForkTTY at normal laptop width and wide desktop width.
 - Inspect the default workspace, sidebar, pane chrome, status bar, command
   palette, notifications panel, Settings, and any dialog touched by the change.
+- Create a three-pane layout and move focus between panes. Confirm exactly one
+  pane header has the warm focus hairline, no redundant shell/status footer is
+  shown per pane, and the global status bar remains readable.
 - Confirm the screen keeps one accent color, no gradients/glow, no emoji-as-UI,
   compact operational spacing, sentence-case labels, and no decorative elements
   that compete with terminal state or navigation.

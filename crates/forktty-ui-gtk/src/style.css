@@ -20,7 +20,7 @@
  * Spacing / radius / typography have no GTK variable equivalent and stay
  * consistent by convention, not tokens. Radius scale: 4px (xs controls) /
  * 4-6px (controls, badges) / 8px (cards, rows, dialogs) / 999px (true circular dots only).
- * Avoid full pills for status — use .rail-dot + quiet text (Linear/Vercel/Cursor pattern).
+ * Avoid full pills for status — use quiet text and compact state cues.
  * Accent uses libadwaita's @accent_color.
  * Migration of raw literals onto these names is progressive and pixel-neutral.
  * -------------------------------------------------------------------------- */
@@ -130,7 +130,7 @@ headerbar.app-header windowhandle,
   background: transparent;
   border: 0;
   border-radius: 999px;
-  color: @ft_text_3;
+  color: @ft_text_2;
   font-size: 0.84em;
   font-weight: 560;
   transition: background-color 90ms ease-out, color 90ms ease-out;
@@ -152,7 +152,7 @@ headerbar.app-header windowhandle,
   min-height: 26px;
   margin: 0;
   padding: 0;
-  color: @ft_text_3;
+  color: @ft_text_2;
   border-radius: 6px;
   background: transparent;
   border: 0;
@@ -227,7 +227,7 @@ headerbar.app-header windowhandle,
   border: 0;
   border-radius: 999px;
   background: transparent;
-  color: @ft_text_3;
+  color: @ft_text_2;
   box-shadow: none;
   transition: background-color 90ms ease-out, color 90ms ease-out;
 }
@@ -265,7 +265,7 @@ headerbar.app-header windowhandle,
   border: 0;
   border-radius: 999px;
   background: transparent;
-  color: @ft_text_3;
+  color: @ft_text_2;
   box-shadow: none;
   transition: background-color 90ms ease-out, color 90ms ease-out;
 }
@@ -468,40 +468,6 @@ button.flat.header-workspace-chip:disabled {
 .header-workspace-caret {
   color: #5f5f5f;
   font-size: 0.8em;
-}
-
-
-/* Shared status dots for pane footers. */
-
-.rail-dot {
-  min-width: 6px;
-  min-height: 6px;
-  border-radius: 999px;
-  background: #4a4a4a;
-}
-
-.rail-dot.ok {
-  background: @ft_success;
-}
-
-.rail-dot.warn {
-  background: alpha(@ft_warning, 0.7);
-}
-
-.rail-dot.err {
-  background: @ft_danger;
-}
-
-.rail-dot.run {
-  background: @ft_success;
-}
-
-.rail-dot.info {
-  background: @ft_info;
-}
-
-.rail-dot.idle {
-  background: #5a5a5a;
 }
 
 /* Sidebar and status bar share one recessed ground so the workbench reads as
@@ -853,14 +819,13 @@ button.flat.sidebar-nav-row:focus-visible {
   border-top: 1px solid @ft_bg_1;
   box-shadow: none;
   color: @ft_text_3;
-  font-size: 0.76em;
 }
 
 .status-location {
   padding: 0 7px;
   background: transparent;
   border: 0;
-  color: #9a9a9a;
+  color: @ft_text_2;
   font-size: 0.82em;
   font-weight: 620;
   letter-spacing: 0;
@@ -896,7 +861,7 @@ button.flat.status-shortcut:focus-visible {
 }
 
 .pane-status {
-  color: @ft_text_3;
+  color: @ft_text_2;
   font-size: 0.78em;
   margin-left: 12px;
 }
@@ -1056,6 +1021,7 @@ button.flat.status-shortcut:focus-visible {
 .terminal-pane.active .terminal-pane-header {
   color: @ft_text_1;
   border-bottom-color: @ft_line;
+  box-shadow: inset 0 1px 0 alpha(@accent_color, 0.72);
   /* No extra background shift — active conveyed by top accent hairline (Cursor-style) + text.
    * Keeps multi-pane chrome minimal so terminals remain primary. */
 }
@@ -1307,32 +1273,6 @@ button.flat.pane-tab-close:active {
   font-size: 0.72em;
 }
 
-/* Slim pane footer mirroring the header chrome: shell name on the left,
- * agent lifecycle on the right. Hidden with the header for single panes. */
-.terminal-pane-footer {
-  min-height: 20px;
-  padding: 0 10px;
-  background: @ft_bg_0;
-  /* Hairline only; no heavy framing */
-  border-top: 1px solid @ft_line;
-}
-
-.terminal-pane.active .terminal-pane-footer {
-  background: #1d1d1d;
-}
-
-.terminal-pane-footer-shell {
-  color: #777777;
-  font-size: 0.7em;
-  font-weight: 560;
-}
-
-.terminal-pane-footer-state {
-  color: @ft_text_3;
-  font-size: 0.7em;
-  font-weight: 600;
-}
-
 /* Inactive attention panes already carry a 2px warning border on top.
  * Keep the dot as a redundant cue for screen-magnifier users but shrink
  * its visual weight so it reads as accent, not duplicate alarm. */
@@ -1342,13 +1282,6 @@ button.flat.pane-tab-close:active {
   border-radius: 50%;
   background: alpha(@accent_color, 0.55);
   margin-right: 4px;
-}
-
-.pane-focus-marker {
-  min-width: 0;
-  min-height: 0;
-  border: 0;
-  margin: 0;
 }
 
 .terminal-pane-actions {

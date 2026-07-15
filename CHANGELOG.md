@@ -26,6 +26,9 @@ All notable changes to ForkTTY are documented here.
 - Refined terminal-first onboarding and pane affordances: `Get Started` is the
   primary welcome action, duplicate first-run notifications are gone, and the
   single-pane split/tab controls have stronger resting contrast.
+- Made split layouts easier to scan: the focused pane now has a visible accent
+  hairline, redundant per-pane shell/lifecycle footers are gone, and header and
+  global status-bar text retain readable contrast at compact sizes.
 - Consolidated the four identical 500 ms workbench refresh sources into one
   callback for layout, sidebar, notification badge, and agent badge updates.
 - Reframed the workbench around the embedded Ghostty terminal, workspace

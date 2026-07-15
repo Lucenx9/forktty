@@ -51,10 +51,6 @@ fn build_pane_chrome_with_content(
     attention_dot.set_valign(gtk::Align::Center);
     attention_dot.set_visible(false);
     attention_dot.update_property(&[gtk::accessible::Property::Label("Pane needs attention")]);
-    let focus_marker = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    focus_marker.add_css_class("pane-focus-marker");
-    focus_marker.set_valign(gtk::Align::Center);
-    focus_marker.set_visible(false);
     let drag_grip = gtk::Image::from_icon_name("forktty-menu-symbolic");
     drag_grip.add_css_class("pane-drag-grip");
     drag_grip.set_tooltip_text(Some("Drag to swap panes"));
@@ -247,7 +243,6 @@ fn build_pane_chrome_with_content(
     }
     actions.add_controller(focus);
 
-    header.append(&focus_marker);
     header.append(&attention_dot);
     header.append(&drag_grip);
     header.append(&title);
@@ -257,48 +252,10 @@ fn build_pane_chrome_with_content(
     pane.append(&header_revealer);
     pane.append(&terminal_overlay);
 
-    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    footer.add_css_class("terminal-pane-footer");
-    let shell_label = state
-        .map(|state| pane_shell_label(&state.shell))
-        .unwrap_or_else(|| "shell".to_string());
-    let footer_shell = gtk::Label::builder()
-        .label(shell_label)
-        .xalign(0.0)
-        .hexpand(true)
-        .single_line_mode(true)
-        .build();
-    footer_shell.add_css_class("terminal-pane-footer-shell");
-    let footer_state = gtk::Label::builder()
-        .label("")
-        .xalign(1.0)
-        .single_line_mode(true)
-        .build();
-    footer_state.add_css_class("terminal-pane-footer-state");
-    let footer_dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    footer_dot.add_css_class("rail-dot");
-    footer_dot.add_css_class("ok");
-    footer_dot.set_valign(gtk::Align::Center);
-    footer.append(&footer_shell);
-    footer.append(&footer_state);
-    footer.append(&footer_dot);
-    // The footer mirrors the header: both are pane chrome and stay hidden
-    // while a workspace shows a single pane.
-    let footer_revealer = gtk::Revealer::builder()
-        .transition_type(gtk::RevealerTransitionType::SlideUp)
-        .transition_duration(180)
-        .child(&footer)
-        .build();
-    pane.append(&footer_revealer);
-
     PaneChrome {
         pane,
         header_revealer,
-        footer_revealer,
-        footer_state,
-        footer_dot,
         single_pane_actions,
-        focus_marker,
         title,
         agent_badge,
         cwd,
@@ -306,15 +263,6 @@ fn build_pane_chrome_with_content(
         search_bar,
         search_supported,
     }
-}
-
-/// Best-effort label for the shell panes spawn by default.
-fn pane_shell_label(configured_shell: &str) -> String {
-    std::path::Path::new(configured_shell.trim())
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "shell".to_string())
 }
 
 pub(super) fn pane_action_button(icon_name: &str, tooltip: &str) -> gtk::Button {
@@ -741,7 +689,6 @@ pub(super) fn update_pane_chrome(chrome: &PaneChrome, surface: &Surface, active:
         chrome.pane.remove_css_class("needs-attention");
     }
     chrome.attention_dot.set_visible(!active && needs_attention);
-    chrome.focus_marker.set_visible(active);
 }
 
 fn update_pane_agent_badge(chrome: &PaneChrome, surface: &Surface) {
@@ -755,15 +702,10 @@ fn update_pane_agent_badge(chrome: &PaneChrome, surface: &Surface) {
     ] {
         chrome.agent_badge.remove_css_class(class_name);
     }
-    for class_name in ["ok", "warn", "err", "info", "idle"] {
-        chrome.footer_dot.remove_css_class(class_name);
-    }
     let Some(session) = surface.agent_session.as_ref() else {
         chrome.agent_badge.set_label("");
         chrome.agent_badge.set_tooltip_text(None);
         chrome.agent_badge.set_visible(false);
-        chrome.footer_state.set_label("");
-        chrome.footer_dot.add_css_class("ok");
         return;
     };
     let agent = pane_agent_label(session.agent);
@@ -775,21 +717,6 @@ fn update_pane_agent_badge(chrome: &PaneChrome, surface: &Surface) {
         .agent_badge
         .set_tooltip_text(Some(&format!("{agent} session: {lifecycle}")));
     chrome.agent_badge.set_visible(true);
-    chrome.footer_state.set_label(lifecycle);
-    chrome
-        .footer_dot
-        .add_css_class(pane_lifecycle_dot(session.lifecycle));
-}
-
-fn pane_lifecycle_dot(lifecycle: forktty_core::AgentSessionLifecycle) -> &'static str {
-    match lifecycle {
-        forktty_core::AgentSessionLifecycle::NeedsInput => "warn",
-        forktty_core::AgentSessionLifecycle::Running => "ok",
-        forktty_core::AgentSessionLifecycle::Idle
-        | forktty_core::AgentSessionLifecycle::Suspended
-        | forktty_core::AgentSessionLifecycle::Unknown
-        | forktty_core::AgentSessionLifecycle::Ended => "idle",
-    }
 }
 
 fn pane_agent_label(agent: forktty_core::AgentKind) -> &'static str {
@@ -942,14 +869,6 @@ mod tests {
             pane_lifecycle_label(forktty_core::AgentSessionLifecycle::Ended),
             ("done", "ended")
         );
-    }
-
-    #[test]
-    fn pane_shell_label_uses_configured_shell_instead_of_process_env() {
-        crate::test_env::with_env(&[("SHELL", Some("/bin/bash"))], || {
-            assert_eq!(pane_shell_label("/usr/bin/fish"), "fish");
-            assert_eq!(pane_shell_label(""), "shell");
-        });
     }
 
     #[test]

@@ -40,6 +40,8 @@ Use these rules for GTK UI changes so the app stays quiet, dense, and native.
 - Balance padding remainder on both axes so the grid is centered when pixels do not divide evenly.
 - Unfocused split dimming for current panes comes from Ghostty config (`unfocused-split-opacity` / `unfocused-split-fill`) when present; legacy `terminal_renderer.rs` dimming applies only to the old classic renderer code path.
 - Dim only unfocused panes when the visible workspace has more than one terminal pane.
+- In split layouts, mark only the focused pane with the warm header hairline.
+  Keep agent lifecycle in that header and avoid duplicating it in a pane footer.
 - Visual bell uses the accent color as a short 2px inner border. Do not add sound.
 - The scrollback indicator is a minimal right-edge overlay; avoid permanent chrome.
 
