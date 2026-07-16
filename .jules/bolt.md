@@ -1,0 +1,3 @@
+## $(date +%Y-%m-%d) - [Avoid Cloning Entire Structs for Single Fields]
+**Learning:** Calling `.clone()` on large structs like `Surface` (which can contain 64KB scrollback buffers) just to extract small fields like `workspace_id` and `cwd` causes expensive, redundant allocations that bottleneck hot paths like pane splitting or tab creation.
+**Action:** When a few fields are needed from a large struct, bind the struct temporarily using a local scope block, extract only the required fields by cloning them individually, and drop the reference before proceeding, avoiding the O(N) copy overhead of the entire struct.
