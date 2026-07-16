@@ -397,9 +397,9 @@ impl WorkspaceModel {
             workspace.listening_ports.clear();
             workspace.pr = None;
         }
-        // Only non-terminal surfaces and terminal surfaces with restorable
-        // agent metadata need to be persisted explicitly: plain terminals are
-        // the default and are reconstructed from the pane tree.
+        // Plain terminals at their workspace launch directory are reconstructed
+        // from the pane tree. Persist terminals that moved elsewhere so each
+        // pane can resume in its last live working directory.
         let surfaces = self
             .surfaces
             .values()
@@ -407,6 +407,10 @@ impl WorkspaceModel {
                 !matches!(surface.kind, SurfaceKind::Terminal)
                     || surface.agent_session.is_some()
                     || surface.persisted_scrollback.is_some()
+                    || self
+                        .workspaces
+                        .get(&surface.workspace_id)
+                        .is_some_and(|workspace| surface.cwd != workspace.working_dir)
             })
             .cloned()
             .collect();

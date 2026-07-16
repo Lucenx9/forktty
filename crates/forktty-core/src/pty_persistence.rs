@@ -290,6 +290,48 @@ pub fn cleanup_managed_session(
     Ok(summary)
 }
 
+/// Return the live working directory of each managed terminal workload.
+///
+/// A Ghostty surface attached through dtach reports the short-lived broker
+/// client PID, while the durable shell is the direct child of the detached
+/// dtach master. This resolves that child by the managed per-surface socket and
+/// reads its Linux `/proc/<pid>/cwd` link without following the target path.
+///
+/// # Errors
+///
+/// Returns an error when the managed session directory or Linux process table
+/// cannot be read. Individual processes that exit during the scan are skipped.
+pub fn managed_session_cwds(runtime_dir: &Path) -> io::Result<BTreeMap<String, PathBuf>> {
+    #[cfg(target_os = "linux")]
+    {
+        let session_dir = runtime_dir.join(PTY_SESSION_DIR_NAME);
+        let entries = match std::fs::read_dir(&session_dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+            Err(err) => return Err(err),
+        };
+        let has_managed_socket = entries
+            .filter_map(Result::ok)
+            .any(|entry| managed_socket_path(&entry.path(), &session_dir).is_some());
+        if !has_managed_socket {
+            return Ok(BTreeMap::new());
+        }
+
+        let infos = linux_process_infos()?;
+        let workload_pids = managed_dtach_workload_pids_from_infos(&infos, runtime_dir);
+        Ok(workload_pids
+            .into_iter()
+            .filter_map(|(surface_id, pid)| linux_process_cwd(pid).map(|cwd| (surface_id, cwd)))
+            .collect())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = runtime_dir;
+        Ok(BTreeMap::new())
+    }
+}
+
 fn cleanup_session_sockets(
     runtime_dir: &Path,
     preserve_surface_ids: &BTreeSet<String>,
@@ -332,7 +374,7 @@ fn managed_dtach_socket_from_cmdline(
     }
     let socket_arg = args
         .windows(2)
-        .find(|window| window[0] == OsStr::new("-A"))
+        .find(|window| matches!(window[0].to_str(), Some("-A" | "-c" | "-n" | "-N")))
         .map(|window| PathBuf::from(&window[1]))?;
     managed_socket_path(&socket_arg, &runtime_dir.join(PTY_SESSION_DIR_NAME))
 }
@@ -368,6 +410,41 @@ fn managed_dtach_processes_from_infos(
             })
         })
         .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn managed_dtach_workload_pids_from_infos(
+    infos: &[LinuxProcessInfo],
+    runtime_dir: &Path,
+) -> BTreeMap<String, libc::pid_t> {
+    let direct_children = infos.iter().fold(BTreeMap::new(), |mut children, info| {
+        children
+            .entry(info.ppid)
+            .and_modify(|pid: &mut libc::pid_t| *pid = (*pid).min(info.pid))
+            .or_insert(info.pid);
+        children
+    });
+    managed_dtach_processes_from_infos(infos, runtime_dir)
+        .into_iter()
+        .filter_map(|process| {
+            direct_children
+                .get(&process.pid)
+                .copied()
+                .map(|pid| (process.socket.surface_id, pid))
+        })
+        .fold(BTreeMap::new(), |mut workloads, (surface_id, pid)| {
+            workloads
+                .entry(surface_id)
+                .and_modify(|current: &mut libc::pid_t| *current = (*current).min(pid))
+                .or_insert(pid);
+            workloads
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_process_cwd(pid: libc::pid_t) -> Option<PathBuf> {
+    let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
+    (!cwd.as_os_str().as_bytes().ends_with(b" (deleted)")).then_some(cwd)
 }
 
 #[cfg(target_os = "linux")]
@@ -775,6 +852,19 @@ mod tests {
         assert_eq!(matched.socket_path, socket);
         assert_eq!(matched.surface_id, "surface-3");
 
+        let detached = vec![
+            OsString::from("/usr/bin/dtach"),
+            OsString::from("-n"),
+            session_dir.join("surface-detached.sock").into_os_string(),
+            OsString::from("/usr/bin/zsh"),
+        ];
+        assert_eq!(
+            managed_dtach_socket_from_cmdline(&detached, dir.path())
+                .unwrap()
+                .surface_id,
+            "surface-detached"
+        );
+
         let outside = vec![
             OsString::from("/usr/bin/dtach"),
             OsString::from("-A"),
@@ -790,6 +880,48 @@ mod tests {
             OsString::from("/usr/bin/zsh"),
         ];
         assert!(managed_dtach_socket_from_cmdline(&unsafe_surface, dir.path()).is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn managed_dtach_workload_pid_is_the_master_direct_child() {
+        let runtime = Path::new("/run/user/1000");
+        let socket = PathBuf::from("/run/user/1000/forktty-pty/surface-live.sock");
+        let infos = vec![
+            LinuxProcessInfo {
+                pid: 10,
+                ppid: 1,
+                args: vec![
+                    OsString::from("/usr/bin/dtach"),
+                    OsString::from("-A"),
+                    socket.clone().into_os_string(),
+                ],
+            },
+            LinuxProcessInfo {
+                pid: 11,
+                ppid: 10,
+                args: vec![OsString::from("/usr/bin/zsh")],
+            },
+            LinuxProcessInfo {
+                pid: 12,
+                ppid: 11,
+                args: vec![OsString::from("/usr/bin/codex")],
+            },
+            LinuxProcessInfo {
+                pid: 20,
+                ppid: 99,
+                args: vec![
+                    OsString::from("/usr/bin/dtach"),
+                    OsString::from("-A"),
+                    socket.into_os_string(),
+                ],
+            },
+        ];
+
+        assert_eq!(
+            managed_dtach_workload_pids_from_infos(&infos, runtime),
+            BTreeMap::from([("surface-live".to_string(), 11)])
+        );
     }
 
     #[cfg(target_os = "linux")]

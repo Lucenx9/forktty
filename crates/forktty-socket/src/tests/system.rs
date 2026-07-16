@@ -105,6 +105,76 @@ async fn system_identify_reports_target_and_caller_context() {
 }
 
 #[tokio::test]
+async fn system_identify_uses_live_terminal_cwd() {
+    let (state, backend) = test_state();
+    let live_dir = tempfile::tempdir().unwrap();
+    let surface_id = state
+        .model
+        .lock()
+        .unwrap()
+        .active_workspace()
+        .unwrap()
+        .focused_surface_id;
+    let mut child = std::process::Command::new("/bin/sleep")
+        .arg("5")
+        .current_dir(live_dir.path())
+        .spawn()
+        .unwrap();
+    backend.mark_surface_pid(&surface_id, child.id()).unwrap();
+
+    let identify = dispatch(&state, "system.identify", json!({"surface_id": surface_id}))
+        .await
+        .unwrap();
+    let _ = child.kill();
+    let _ = child.wait();
+    let live_cwd = live_dir.path().to_string_lossy();
+
+    assert_eq!(identify["surface"]["cwd"], live_cwd.as_ref());
+    assert_eq!(
+        identify["surface"]["effective_project_cwd"],
+        live_cwd.as_ref()
+    );
+    assert_eq!(
+        identify["workspace"]["effective_project_cwd"],
+        live_cwd.as_ref()
+    );
+}
+
+#[tokio::test]
+async fn system_identify_keeps_ssh_surface_cwd_local_to_its_launch_context() {
+    let (state, backend) = test_state();
+    let launch_dir = tempfile::tempdir().unwrap();
+    let unrelated_client_dir = tempfile::tempdir().unwrap();
+    let surface = {
+        let mut model = state.model.lock().unwrap();
+        let workspace =
+            model.create_ssh_workspace("remote", launch_dir.path(), "user@example.com".to_string());
+        model
+            .surface(&workspace.focused_surface_id)
+            .unwrap()
+            .clone()
+    };
+    spawn_surface_terminal(&state, &surface).unwrap();
+    let mut child = std::process::Command::new("/bin/sleep")
+        .arg("5")
+        .current_dir(unrelated_client_dir.path())
+        .spawn()
+        .unwrap();
+    backend.mark_surface_pid(&surface.id, child.id()).unwrap();
+
+    let identify = dispatch(&state, "system.identify", json!({"surface_id": surface.id}))
+        .await
+        .unwrap();
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert_eq!(
+        identify["surface"]["cwd"],
+        launch_dir.path().to_string_lossy().as_ref()
+    );
+}
+
+#[tokio::test]
 async fn system_identify_defaults_to_known_caller_surface() {
     let (state, _) = test_state();
     let caller_surface_id = {

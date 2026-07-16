@@ -46,6 +46,7 @@ pub(crate) fn identify(state: &SocketAppState, params: &Value) -> Result<Value, 
     let requested_surface_id = optional_surface_id_param(params)?.map(str::to_string);
     let caller_workspace_id = optional_caller_id(params, "caller_workspace_id")?;
     let caller_surface_id = optional_caller_id(params, "caller_surface_id")?;
+    crate::sync_live_surface_cwds(state)?;
     let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
     let terminal_by_id = terminal_surfaces
         .iter()

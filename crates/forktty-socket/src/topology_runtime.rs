@@ -10,6 +10,7 @@ use forktty_terminal::TerminalTextCapture;
 use serde_json::{json, Value};
 
 pub(crate) fn system_top(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    crate::sync_live_surface_cwds(state)?;
     let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
     let model = state
         .model
@@ -40,6 +41,7 @@ pub(crate) fn workspace_list(state: &SocketAppState) -> Result<Value, DispatchEr
 }
 
 pub(crate) fn surface_list(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    crate::sync_live_surface_cwds(state)?;
     let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
     let model = state
         .model
@@ -99,6 +101,7 @@ pub(crate) fn surface_send_text(
 }
 
 pub(crate) fn tree(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    let _ = crate::sync_live_surface_cwds(state);
     let model = state
         .model
         .lock()

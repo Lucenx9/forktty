@@ -26,6 +26,7 @@ pub(super) fn spawn_surface_gtk(
 }
 
 pub(super) fn add_new_tab_surface(state: &SocketAppState, near_surface_id: &str) {
+    let _ = forktty_socket::sync_live_surface_cwds(state);
     let surface = {
         let mut model = match state.model.lock() {
             Ok(model) => model,
@@ -57,6 +58,7 @@ pub(super) fn add_new_tab_surface(state: &SocketAppState, near_surface_id: &str)
 }
 
 pub(super) fn split_active_surface(state: &SocketAppState, axis: SplitAxis) {
+    let _ = forktty_socket::sync_live_surface_cwds(state);
     let surface = {
         let mut model = match state.model.lock() {
             Ok(model) => model,
@@ -245,6 +247,7 @@ pub(super) fn restart_active_surface(state: &SocketAppState) {
 }
 
 pub(super) fn restart_surface(state: &SocketAppState, surface_id: &str) -> bool {
+    let _ = forktty_socket::sync_live_surface_cwds(state);
     let surface = {
         let model = match state.model.lock() {
             Ok(model) => model,

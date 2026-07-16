@@ -11,7 +11,10 @@
 
 #![cfg(unix)]
 
-use forktty_core::pty_persistence::{detect, ensure_private_session_dir, PtyBroker};
+use forktty_core::pty_persistence::{
+    cleanup_managed_session, detect, ensure_private_session_dir, managed_session_cwds,
+    session_socket_path, PtyBroker,
+};
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -65,6 +68,51 @@ fn process_under_dtach_survives_launcher_exit() {
     unsafe {
         libc::kill(pid, libc::SIGKILL);
     }
+}
+
+#[test]
+fn managed_session_cwds_reports_detached_workload_directory() {
+    let Some(persistence) = detect() else {
+        eprintln!("SKIP: no detach broker (dtach) on PATH; cwd discovery not exercised");
+        return;
+    };
+    let runtime_dir = tempfile::tempdir().unwrap();
+    let launch_dir = tempfile::tempdir().unwrap();
+    let live_dir = tempfile::tempdir().unwrap();
+    let surface_id = "surface-cwd-it";
+    let socket = session_socket_path(runtime_dir.path(), surface_id).unwrap();
+    ensure_private_session_dir(&socket).unwrap();
+
+    let status = Command::new(&persistence.broker_path)
+        .arg("-n")
+        .arg(&socket)
+        .arg("-E")
+        .arg("-z")
+        .arg("/bin/sh")
+        .arg("-c")
+        .arg(format!("cd {} && exec sleep 30", live_dir.path().display()))
+        .current_dir(launch_dir.path())
+        .status()
+        .expect("spawn detached dtach session");
+    assert!(status.success(), "dtach -n exited with {status:?}");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let observed = loop {
+        if let Some(cwd) = managed_session_cwds(runtime_dir.path())
+            .unwrap()
+            .remove(surface_id)
+        {
+            break Some(cwd);
+        }
+        if Instant::now() >= deadline {
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let cleanup = cleanup_managed_session(runtime_dir.path(), surface_id).unwrap();
+
+    assert_eq!(observed.as_deref(), Some(live_dir.path()));
+    assert!(cleanup.processes_signaled > 0);
 }
 
 fn wait_for_pid(pidfile: &Path) -> i32 {

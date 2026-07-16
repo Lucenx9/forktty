@@ -18,6 +18,7 @@ pub(crate) async fn snapshot(
     params: &Value,
 ) -> Result<Value, DispatchError> {
     let request = ContextSnapshotRequest::decode(state, params)?;
+    crate::sync_live_surface_cwds(state)?;
     let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
     let now_ms = current_unix_epoch_ms();
 

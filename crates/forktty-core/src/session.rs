@@ -48,7 +48,8 @@ pub struct SessionData {
     pub workspaces: Vec<Workspace>,
     #[serde(default)]
     pub active_workspace_id: Option<String>,
-    /// Persisted per-surface state keyed by surface id: non-terminal kind data
+    /// Persisted per-surface state keyed by surface id: non-terminal kind data,
+    /// terminal directories that differ from the workspace launch directory,
     /// and optional restorable agent session metadata. Empty on older sessions,
     /// in which case restore falls back to a plain terminal for every leaf.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

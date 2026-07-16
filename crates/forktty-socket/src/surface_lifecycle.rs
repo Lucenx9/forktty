@@ -3,10 +3,12 @@
 use crate::{agent_runtime::effective_agent_resume_cwd, DispatchError, SocketAppState};
 use forktty_core::{
     agent_resume_command_with_cwd_and_permission_mode, command_safety::is_valid_ssh_host,
-    AgentSessionLifecycle, WorkspaceSelector,
+    AgentSessionLifecycle, SurfaceKind, WorkspaceSelector,
 };
 use forktty_terminal::{SpawnRequest, TerminalError};
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn surface_effective_project_cwd(surface: &forktty_core::Surface) -> PathBuf {
@@ -15,6 +17,84 @@ pub(crate) fn surface_effective_project_cwd(surface: &forktty_core::Surface) -> 
         .as_ref()
         .and_then(effective_agent_resume_cwd)
         .unwrap_or_else(|| surface.cwd.clone())
+}
+
+/// Refresh model surface directories from the live terminal child processes.
+///
+/// Shells can change directory after their surface is spawned, while the
+/// terminal backend retains the original spawn directory. Local shells are
+/// resolved through Linux `/proc`; dtach-backed shells use their detached
+/// workload process rather than the attached broker client. SSH surfaces are
+/// intentionally excluded because a local client PID cannot expose a remote
+/// shell directory. Missing or exited processes are left unchanged.
+///
+/// # Errors
+///
+/// Returns an error when terminal or model state cannot be read.
+pub fn sync_live_surface_cwds(state: &SocketAppState) -> Result<bool, TerminalError> {
+    let local_surface_ids = state
+        .model
+        .lock()
+        .map_err(|_| TerminalError::LockPoisoned)?
+        .list_surfaces(None)
+        .into_iter()
+        .filter(|surface| matches!(surface.kind, SurfaceKind::Terminal))
+        .map(|surface| surface.id)
+        .collect::<BTreeSet<_>>();
+    let runtime_dir = state.socket_path.parent();
+    let managed_cwds = runtime_dir
+        .and_then(|runtime_dir| {
+            forktty_core::pty_persistence::managed_session_cwds(runtime_dir).ok()
+        })
+        .unwrap_or_default();
+    let live_cwds = state
+        .terminal
+        .surfaces()?
+        .into_iter()
+        .filter_map(|surface| {
+            if !local_surface_ids.contains(&surface.surface_id) {
+                return None;
+            }
+            let cwd = managed_cwds.get(&surface.surface_id).cloned().or_else(|| {
+                if has_managed_session_socket(runtime_dir, &surface.surface_id) {
+                    return None;
+                }
+                surface.pid.and_then(linux_process_cwd)
+            })?;
+            Some((surface.surface_id, cwd))
+        })
+        .collect::<Vec<_>>();
+    if live_cwds.is_empty() {
+        return Ok(false);
+    }
+
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| TerminalError::LockPoisoned)?;
+    let mut changed = false;
+    for (surface_id, cwd) in live_cwds {
+        let needs_update = model
+            .surface(&surface_id)
+            .is_some_and(|surface| surface.cwd != cwd);
+        if needs_update {
+            changed |= model.set_surface_cwd(&surface_id, cwd);
+        }
+    }
+    Ok(changed)
+}
+
+fn has_managed_session_socket(runtime_dir: Option<&Path>, surface_id: &str) -> bool {
+    runtime_dir
+        .and_then(|runtime_dir| {
+            forktty_core::pty_persistence::session_socket_path(runtime_dir, surface_id).ok()
+        })
+        .is_some_and(|socket| std::fs::symlink_metadata(socket).is_ok())
+}
+
+fn linux_process_cwd(pid: u32) -> Option<PathBuf> {
+    let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
+    (!cwd.as_os_str().as_bytes().ends_with(b" (deleted)")).then_some(cwd)
 }
 
 pub(crate) fn spawn_workspace_terminal(

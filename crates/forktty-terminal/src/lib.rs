@@ -450,6 +450,30 @@ impl TerminalBackend for HeadlessTerminalBackend {
         Ok(())
     }
 
+    fn mark_surface_pid(&self, surface_id: &str, pid: u32) -> Result<(), TerminalError> {
+        let mut surfaces = self
+            .surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        let surface = surfaces
+            .get_mut(surface_id)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        surface.state.pid = Some(pid);
+        Ok(())
+    }
+
+    fn clear_surface_pid(&self, surface_id: &str) -> Result<(), TerminalError> {
+        let mut surfaces = self
+            .surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        let surface = surfaces
+            .get_mut(surface_id)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        surface.state.pid = None;
+        Ok(())
+    }
+
     fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
         let mut surfaces = self
             .surfaces

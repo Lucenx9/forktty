@@ -711,6 +711,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         if let Some(mut server) = socket_server_for_close.borrow_mut().take() {
             server.shutdown();
         }
+        let _ = forktty_socket::sync_live_surface_cwds(&state_for_close);
         save_session_from_state(&state_for_close);
         let cleanup_pty_persistence_on_close = config::load_config()
             .map(|config| !config.general.persist_terminal_processes)

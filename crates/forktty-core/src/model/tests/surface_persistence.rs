@@ -144,6 +144,26 @@ fn persisted_scrollback_makes_terminal_surface_persistable() {
 }
 
 #[test]
+fn terminal_surface_cwd_that_differs_from_workspace_is_persisted() {
+    let workspace_dir = tempfile::tempdir().unwrap();
+    let live_dir = tempfile::tempdir().unwrap();
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", workspace_dir.path());
+    let surface_id = workspace.focused_surface_id;
+
+    assert!(model.set_surface_cwd(&surface_id, live_dir.path().to_path_buf()));
+
+    let data = model.to_session_data();
+    crate::session::validate_session_data(&data).unwrap();
+    assert_eq!(data.surfaces.len(), 1);
+    assert_eq!(data.surfaces[0].cwd, live_dir.path());
+
+    let mut restored = WorkspaceModel::new();
+    restored.restore_session(data);
+    assert_eq!(restored.surface(&surface_id).unwrap().cwd, live_dir.path());
+}
+
+#[test]
 fn clearing_agent_session_forgets_metadata_without_closing_surface() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");

@@ -420,7 +420,7 @@ the teammate as ready/idle.
 - Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, terminal read/capture, topology tree/top health inspection, pane-tab, notification, worktree, metadata, persisted agent-session inventory/resume, compact status summaries, context identify, event-stream, and capabilities; CLI wrappers add bounded lifecycle waits over read-only socket calls.
 - Agent HUD in the GTK titlebar for lifecycle, last activity, attention, focus, and resume across workspaces.
 - Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees. Setup hooks are advisory; teardown hook failures or teardown-created dirty state block removal.
-- Session restore for workspace order, active workspace, pane tree, focused surface, cwd, branch, and worktree metadata.
+- Session restore for workspace order, active workspace, pane tree, focused surface, each local terminal pane's last live cwd, branch, and worktree metadata.
 - Prompt-aware notifications from ForkTTY hooks and terminal events, bounded visible prompt fallback, Ghostty bell, and hook/socket events. The notification panel groups prompts/current-workspace/history and its latest-target action prioritizes unread prompts before lower-urgency history.
 - Source-only experimental WebKitGTK6 browser panes (behind the `browser` feature) with scriptable snapshot/click/fill/eval verbs, per-profile persistent WebKit sessions, profile CRUD, history/bookmark socket plus CLI access, and history/bookmark import from local Firefox/Chromium-family profiles.
 - Bounded config/session/socket handling and local-only privacy defaults.

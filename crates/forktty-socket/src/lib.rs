@@ -147,7 +147,7 @@ pub(crate) use socket_bind::{
 };
 pub use surface_lifecycle::{
     bootstrap_default_workspace, resolve_ssh_binary, spawn_request_for_surface,
-    spawn_request_for_surface_kind,
+    spawn_request_for_surface_kind, sync_live_surface_cwds,
 };
 pub(crate) use surface_lifecycle::{
     close_replacement_terminal_surface_if_present, close_surface_request,

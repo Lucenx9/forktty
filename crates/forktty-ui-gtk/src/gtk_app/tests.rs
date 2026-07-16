@@ -960,6 +960,68 @@ fn add_new_tab_surface_rolls_back_model_when_spawn_fails() {
 }
 
 #[test]
+fn new_tabs_and_splits_use_live_terminal_cwd() {
+    let launch_dir = tempfile::tempdir().unwrap();
+    let live_dir = tempfile::tempdir().unwrap();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let (tx, rx) = mpsc::channel();
+    let terminal = Arc::new(GtkTerminalBackend::new(tx));
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let surface_id = {
+        let mut model = model.lock().unwrap();
+        model
+            .create_workspace("project", launch_dir.path())
+            .focused_surface_id
+    };
+    spawn_focused_surface_if_needed(&state).unwrap();
+    assert!(matches!(
+        rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+        GtkTerminalCommand::Spawn(_)
+    ));
+
+    let mut child = Command::new("/bin/sleep")
+        .arg("5")
+        .current_dir(live_dir.path())
+        .spawn()
+        .unwrap();
+    terminal.mark_surface_pid(&surface_id, child.id()).unwrap();
+
+    crate::test_env::with_isolated_user_dirs(|| add_new_tab_surface(&state, &surface_id));
+    let spawned_tab = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let GtkTerminalCommand::Spawn(tab_request) = spawned_tab else {
+        panic!("new tab should enqueue a terminal spawn");
+    };
+    assert_eq!(tab_request.cwd, live_dir.path());
+
+    {
+        let mut model = model.lock().unwrap();
+        assert!(model.select_tab(&surface_id));
+        assert!(model.set_surface_cwd(&surface_id, launch_dir.path().to_path_buf()));
+    }
+    crate::test_env::with_isolated_user_dirs(|| {
+        split_active_surface(&state, SplitAxis::Horizontal)
+    });
+    let spawned_split = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let GtkTerminalCommand::Spawn(split_request) = spawned_split else {
+        panic!("split should enqueue a terminal spawn");
+    };
+    assert_eq!(split_request.cwd, live_dir.path());
+    assert_eq!(
+        model.lock().unwrap().surface(&surface_id).unwrap().cwd,
+        live_dir.path()
+    );
+}
+
+#[test]
 fn split_active_surface_rolls_back_model_when_spawn_fails() {
     let project_dir = tempfile::tempdir().unwrap();
     let project_cwd = project_dir.path().to_path_buf();

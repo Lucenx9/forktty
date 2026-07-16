@@ -60,6 +60,10 @@ All notable changes to ForkTTY are documented here.
   recessed with @ft_line hairlines and no shadow; pane badges also cleaned.
 
 ### Fixed
+- Local terminal panes now track the live shell working directory, use it for new
+  tabs and splits, expose it through socket context, and restore distinct
+  per-pane directories after restart instead of reverting to the workspace
+  launch directory.
 - Agent integration settings now distinguish an existing provider config from
   installed ForkTTY hooks, so a clean system shows `Not installed` instead of
   the misleading `Update available`; updates and repairs preserve intentionally
