@@ -1,0 +1,3 @@
+## 2024-07-17 - [Optimizing Terminal Search with First-Char Fast Path]
+**Learning:** In Rust text search hot loops (like `terminal_search`'s `for_each_char_match_start` checking scrollbacks), using a `.iter().zip().all()` chain for the whole needle is a massive bottleneck due to the sheer volume of first-character non-matches in large text blocks.
+**Action:** Extract the first-character comparison outside of the zip/iter chain and explicitly inline a fast-path ASCII-only equality check for it to avoid hitting the fallback Unicode/Iterator overhead, drastically reducing search times for non-matching text.

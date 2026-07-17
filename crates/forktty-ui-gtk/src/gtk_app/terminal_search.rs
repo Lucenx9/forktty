@@ -74,11 +74,29 @@ fn for_each_char_match_start(
     if needle.is_empty() {
         return;
     }
+    let first_needle = needle[0];
     let mut index = 0;
     while index + needle.len() <= haystack.len() {
-        let matched = haystack[index..index + needle.len()]
+        // Fast path: avoid slice creation, zip iterators, closures, and heavy
+        // Unicode fallbacks for the millions of first-char rejects in a full scrollback.
+        // We inline the ASCII check here to prevent the function call overhead.
+        let h = haystack[index];
+        let first_match = if h == first_needle {
+            true
+        } else if h.is_ascii() && first_needle.is_ascii() {
+            h.eq_ignore_ascii_case(&first_needle)
+        } else {
+            chars_eq_ignore_case(h, first_needle)
+        };
+
+        if !first_match {
+            index += 1;
+            continue;
+        }
+
+        let matched = haystack[index + 1..index + needle.len()]
             .iter()
-            .zip(needle)
+            .zip(&needle[1..])
             .all(|(a, b)| chars_eq_ignore_case(*a, *b));
         if matched {
             if !visit(index) {
