@@ -60,10 +60,14 @@ All notable changes to ForkTTY are documented here.
   recessed with @ft_line hairlines and no shadow; pane badges also cleaned.
 
 ### Fixed
+- PTY-persisted panes now resolve their live cwd from the workload behind the
+  `dtach -A` master instead of mistaking the attached client master for the
+  shell, so new tabs, splits, restored panes, and Worktree actions inherit the
+  current directory.
 - Local terminal panes now track the live shell working directory, use it for new
-  tabs and splits, expose it through socket context, and restore distinct
-  per-pane directories after restart instead of reverting to the workspace
-  launch directory.
+  tabs and splits, expose it through socket context and sidebar chrome, and
+  autosave distinct per-pane directories for restart instead of reverting to
+  the workspace launch directory.
 - Agent integration settings now distinguish an existing provider config from
   installed ForkTTY hooks, so a clean system shows `Not installed` instead of
   the misleading `Update available`; updates and repairs preserve intentionally

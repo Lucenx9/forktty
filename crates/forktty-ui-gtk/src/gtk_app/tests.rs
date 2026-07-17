@@ -27,6 +27,34 @@ fn make_temp_repo() -> tempfile::TempDir {
     dir
 }
 
+#[cfg(target_os = "linux")]
+struct SleepingTestChild(std::process::Child);
+
+#[cfg(target_os = "linux")]
+impl SleepingTestChild {
+    fn spawn_in(cwd: &Path) -> Self {
+        Self(
+            Command::new("/bin/sleep")
+                .arg("60")
+                .current_dir(cwd)
+                .spawn()
+                .unwrap(),
+        )
+    }
+
+    fn id(&self) -> u32 {
+        self.0.id()
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for SleepingTestChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 fn create_local_branch(repo_dir: &Path, branch_name: &str) {
     let repo = Repository::open(repo_dir).unwrap();
     let head = repo.head().unwrap().peel_to_commit().unwrap();

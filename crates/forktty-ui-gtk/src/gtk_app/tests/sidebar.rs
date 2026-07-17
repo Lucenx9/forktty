@@ -176,6 +176,66 @@ fn sidebar_snapshot_hides_launch_cwd_title_when_effective_cwd_differs() {
     assert_eq!(snapshot.active_pane_label, None);
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn session_autosave_updates_sidebar_and_persists_live_terminal_cwd() {
+    crate::test_env::with_isolated_user_dirs(|| {
+        let launch_dir = tempfile::tempdir().unwrap();
+        let live_dir = tempfile::tempdir().unwrap();
+        let runtime_dir = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
+        let socket_path = runtime_dir.join("forktty.sock");
+        let (tx, _rx) = mpsc::channel();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(GtkTerminalBackend::new(tx));
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal.clone(),
+            "/bin/sh",
+            socket_path.clone(),
+        )
+        .with_notification_dispatch(false);
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", launch_dir.path());
+            (workspace.id, workspace.focused_surface_id)
+        };
+        terminal
+            .spawn(SpawnRequest {
+                surface_id: surface_id.clone(),
+                workspace_id,
+                shell: "/bin/sh".to_string(),
+                args: Vec::new(),
+                cwd: launch_dir.path().to_path_buf(),
+                socket_path,
+                extra_env: Vec::new(),
+                eligible_for_pty_persistence: false,
+            })
+            .unwrap();
+        let child = SleepingTestChild::spawn_in(live_dir.path());
+        terminal.mark_surface_pid(&surface_id, child.id()).unwrap();
+
+        let mut last_saved = None;
+        autosave_session_from_state(&state, &mut last_saved);
+        let snapshot = sidebar_snapshot(&state);
+        let saved = forktty_core::session::load_session()
+            .unwrap()
+            .expect("session should be saved");
+
+        assert_eq!(
+            snapshot.active_full_path.as_deref(),
+            Some(live_dir.path().to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            saved
+                .surfaces
+                .iter()
+                .find(|surface| surface.id == surface_id)
+                .map(|surface| surface.cwd.as_path()),
+            Some(live_dir.path())
+        );
+    });
+}
+
 #[test]
 fn sidebar_snapshot_counts_panes_not_tabs_for_count_badge() {
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));

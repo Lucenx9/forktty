@@ -417,20 +417,20 @@ fn managed_dtach_workload_pids_from_infos(
     infos: &[LinuxProcessInfo],
     runtime_dir: &Path,
 ) -> BTreeMap<String, libc::pid_t> {
-    let direct_children = infos.iter().fold(BTreeMap::new(), |mut children, info| {
-        children
-            .entry(info.ppid)
-            .and_modify(|pid: &mut libc::pid_t| *pid = (*pid).min(info.pid))
-            .or_insert(info.pid);
-        children
-    });
-    managed_dtach_processes_from_infos(infos, runtime_dir)
-        .into_iter()
-        .filter_map(|process| {
-            direct_children
-                .get(&process.pid)
-                .copied()
-                .map(|pid| (process.socket.surface_id, pid))
+    let managed_processes = managed_dtach_processes_from_infos(infos, runtime_dir);
+    let managed_by_pid = managed_processes
+        .iter()
+        .map(|process| (process.pid, process.socket.surface_id.as_str()))
+        .collect::<BTreeMap<_, _>>();
+
+    infos
+        .iter()
+        .filter_map(|info| {
+            let surface_id = managed_by_pid.get(&info.ppid)?;
+            // `dtach -A` creates an attached client whose direct child is the
+            // persistent dtach master. Only the master's non-dtach child owns
+            // the live shell cwd.
+            (!managed_by_pid.contains_key(&info.pid)).then(|| ((*surface_id).to_string(), info.pid))
         })
         .fold(BTreeMap::new(), |mut workloads, (surface_id, pid)| {
             workloads
@@ -884,7 +884,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn managed_dtach_workload_pid_is_the_master_direct_child() {
+    fn managed_dtach_workload_pid_skips_the_attached_client_master() {
         let runtime = Path::new("/run/user/1000");
         let socket = PathBuf::from("/run/user/1000/forktty-pty/surface-live.sock");
         let infos = vec![
@@ -900,11 +900,20 @@ mod tests {
             LinuxProcessInfo {
                 pid: 11,
                 ppid: 10,
-                args: vec![OsString::from("/usr/bin/zsh")],
+                args: vec![
+                    OsString::from("/usr/bin/dtach"),
+                    OsString::from("-A"),
+                    socket.clone().into_os_string(),
+                ],
             },
             LinuxProcessInfo {
                 pid: 12,
                 ppid: 11,
+                args: vec![OsString::from("/usr/bin/zsh")],
+            },
+            LinuxProcessInfo {
+                pid: 13,
+                ppid: 12,
                 args: vec![OsString::from("/usr/bin/codex")],
             },
             LinuxProcessInfo {
@@ -920,7 +929,7 @@ mod tests {
 
         assert_eq!(
             managed_dtach_workload_pids_from_infos(&infos, runtime),
-            BTreeMap::from([("surface-live".to_string(), 11)])
+            BTreeMap::from([("surface-live".to_string(), 12)])
         );
     }
 

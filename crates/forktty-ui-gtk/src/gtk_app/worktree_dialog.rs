@@ -45,35 +45,18 @@ pub(super) fn worktree_dialog_choices_from_list(
 }
 
 fn active_worktree_base(state: &SocketAppState) -> Option<(String, PathBuf)> {
-    let (name, focused_surface_id, surface_cwd, workspace_cwd) =
-        state.model.lock().ok().and_then(|model| {
-            let workspace = model.active_workspace()?;
-            let surface_cwd = model
-                .surface(&workspace.focused_surface_id)
-                .map(|surface| surface.cwd.clone());
-            Some((
-                workspace.name,
-                workspace.focused_surface_id,
-                surface_cwd,
-                workspace.working_dir,
-            ))
-        })?;
-    let cwd = live_surface_cwd(state, &focused_surface_id)
-        .or_else(|| surface_cwd.filter(|cwd| cwd.is_dir()))
+    let _ = forktty_socket::sync_live_surface_cwds(state);
+    let (name, surface_cwd, workspace_cwd) = state.model.lock().ok().and_then(|model| {
+        let workspace = model.active_workspace()?;
+        let surface_cwd = model
+            .surface(&workspace.focused_surface_id)
+            .map(|surface| surface.cwd.clone());
+        Some((workspace.name, surface_cwd, workspace.working_dir))
+    })?;
+    let cwd = surface_cwd
+        .filter(|cwd| cwd.is_dir())
         .unwrap_or(workspace_cwd);
     Some((name, cwd))
-}
-
-fn live_surface_cwd(state: &SocketAppState, surface_id: &str) -> Option<PathBuf> {
-    let pid = state
-        .terminal
-        .surfaces()
-        .ok()?
-        .into_iter()
-        .find(|surface| surface.surface_id == surface_id)?
-        .pid?;
-    let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
-    cwd.is_dir().then_some(cwd)
 }
 
 pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState) {

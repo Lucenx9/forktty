@@ -366,6 +366,58 @@ fn worktree_dialog_prefers_live_child_pid_cwd_over_recorded_surface_cwd() {
     assert_eq!(cwd, repo_dir.path().to_string_lossy());
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn worktree_dialog_preserves_synced_managed_workload_cwd() {
+    crate::test_env::with_isolated_user_dirs(|| {
+        let launch_dir = tempfile::tempdir().unwrap();
+        let workload_dir = make_temp_repo();
+        let runtime_dir = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
+        let socket_path = runtime_dir.join("forktty.sock");
+        let (tx, _rx) = mpsc::channel();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(GtkTerminalBackend::new(tx));
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal.clone(),
+            "/bin/sh",
+            socket_path.clone(),
+        )
+        .with_notification_dispatch(false);
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", launch_dir.path());
+            assert!(model.set_surface_cwd(
+                &workspace.focused_surface_id,
+                workload_dir.path().to_path_buf()
+            ));
+            (workspace.id, workspace.focused_surface_id)
+        };
+        terminal
+            .spawn(SpawnRequest {
+                surface_id: surface_id.clone(),
+                workspace_id,
+                shell: "/bin/sh".to_string(),
+                args: Vec::new(),
+                cwd: launch_dir.path().to_path_buf(),
+                socket_path,
+                extra_env: Vec::new(),
+                eligible_for_pty_persistence: true,
+            })
+            .unwrap();
+        let managed_socket =
+            forktty_core::pty_persistence::session_socket_path(&runtime_dir, &surface_id).unwrap();
+        forktty_core::pty_persistence::ensure_private_session_dir(&managed_socket).unwrap();
+        let _managed_listener = std::os::unix::net::UnixListener::bind(managed_socket).unwrap();
+        let client = SleepingTestChild::spawn_in(launch_dir.path());
+        terminal.mark_surface_pid(&surface_id, client.id()).unwrap();
+
+        let cwd = active_workspace_cwd_string(&state).unwrap();
+
+        assert_eq!(cwd, workload_dir.path().to_string_lossy());
+    });
+}
+
 #[test]
 fn gtk_worktree_remove_keeps_worktree_when_terminal_close_fails() {
     let repo_dir = make_temp_repo();

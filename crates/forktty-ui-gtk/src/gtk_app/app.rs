@@ -1269,15 +1269,35 @@ pub(super) fn register_app_icon() {
 }
 
 pub(super) fn save_session_from_state(state: &SocketAppState) {
-    let data = match state.model.lock() {
-        Ok(mut model) => {
-            let _ = model.repair_session_invariants();
-            model.to_session_data()
-        }
-        Err(_) => return,
+    let Some(data) = session_data_from_state(state) else {
+        return;
     };
     if let Err(err) = session::save_session(&data) {
         eprintln!("Failed to save GTK session: {err}");
+    }
+}
+
+fn session_data_from_state(state: &SocketAppState) -> Option<session::SessionData> {
+    let mut model = state.model.lock().ok()?;
+    let _ = model.repair_session_invariants();
+    Some(model.to_session_data())
+}
+
+pub(super) fn autosave_session_from_state(
+    state: &SocketAppState,
+    last_saved: &mut Option<session::SessionData>,
+) {
+    let _ = forktty_socket::sync_live_surface_cwds(state);
+    let Some(data) = session_data_from_state(state) else {
+        return;
+    };
+    if last_saved.as_ref() == Some(&data) {
+        return;
+    }
+    if let Err(err) = session::save_session(&data) {
+        eprintln!("Failed to autosave GTK session: {err}");
+    } else {
+        *last_saved = Some(data);
     }
 }
 
@@ -1365,21 +1385,7 @@ pub(super) fn install_session_autosave(state: &SocketAppState, ui_alive: Rc<Cell
         if !ui_alive.get() {
             return glib::ControlFlow::Break;
         }
-        let data = match state.model.lock() {
-            Ok(mut model) => {
-                let _ = model.repair_session_invariants();
-                model.to_session_data()
-            }
-            Err(_) => return glib::ControlFlow::Continue,
-        };
-        if last_saved.borrow().as_ref() == Some(&data) {
-            return glib::ControlFlow::Continue;
-        }
-        if let Err(err) = session::save_session(&data) {
-            eprintln!("Failed to autosave GTK session: {err}");
-        } else {
-            *last_saved.borrow_mut() = Some(data);
-        }
+        autosave_session_from_state(&state, &mut last_saved.borrow_mut());
         glib::ControlFlow::Continue
     });
 }
