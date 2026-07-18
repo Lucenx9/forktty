@@ -141,12 +141,13 @@ fi
 
 unusable_gtk="$TMP_DIR/unusable-host-gtk"
 : >"$unusable_gtk"
+# The loader check needs mount masking, not network isolation. Some CI kernels
+# allow bubblewrap itself but deny configuring loopback in a new net namespace.
 bwrap_args=(
   --ro-bind / /
   --proc /proc
   --dev /dev
   --unshare-pid
-  --unshare-net
   --die-with-parent
 )
 masked_count=0

@@ -1238,6 +1238,16 @@ printf '%s\n' 'libgtk-4.so.1 => /host/libgtk-4.so.1' 'libadwaita-1.so.0 => /host
     }
 
     #[test]
+    fn appimage_bundled_check_does_not_require_network_namespaces() {
+        let script = fs::read_to_string(repo_root().join(APPIMAGE_BUNDLED_CHECK_SCRIPT)).unwrap();
+
+        assert!(
+            !script.contains("--unshare-net"),
+            "the loader smoke must run where bubblewrap cannot configure a private loopback device"
+        );
+    }
+
+    #[test]
     fn validates_full_ghostty_submodule_manifest() {
         let raw = r#"
 [submodule "vendor/ghostty"]
