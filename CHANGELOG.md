@@ -102,10 +102,10 @@ All notable changes to ForkTTY are documented here.
 - Closing or forgetting an embedded terminal now stops after a bounded wait if
   a generation lease is stuck, reports the error, and leaves the surface state
   registered for a safe retry instead of hanging removal or shutdown forever.
-- The packaged GTK/Ghostty smoke now accepts the documented bounded-fragment
-  `total_lines` fallback when the optional extended line-count ABI is absent,
-  so clean release builds validate the pinned vendor instead of only a locally
-  patched Ghostty checkout.
+- The packaged GTK/Ghostty smoke now requires the pinned extended line-count
+  ABI to report beyond a deliberately truncated fragment, so release artifacts
+  cannot silently fall back to fragment-only `total_lines`; runtime loading
+  remains compatible with older libraries that lack the optional extension.
 - The pinned Ghostty embedding library now exports the optional
   `ghostty_gtk_surface_read_text_limited_with_total_lines` extension, so
   packaged bounded reads report `total_lines` for the complete selected source

@@ -58,11 +58,13 @@ DBus session against isolated config/data/state/socket paths under
 input/readback, tab create/select/close, runtime zoom reflow/reset, GTK action
 split/focus behavior, socket split readback, live pane close, restart with
 scrollback restore, and the socket notification create/list/clear flow. The
-scrollback assertion accepts the documented fragment-line fallback when the
-optional extended total-lines ABI is absent from the loaded Ghostty library. The
-temporary config disables desktop notifications and telemetry so the smoke does
-not depend on host notification services. It uses the current display or
-`xvfb-run` when available.
+scrollback assertion deliberately truncates a multi-line read and requires the
+pinned release library to report a `total_lines` value larger than the returned
+fragment's line count, proving that the optional extended ABI was packaged and
+loaded. ForkTTY's runtime fallback for older compatible libraries remains
+covered by Rust tests. The temporary config disables desktop notifications and
+telemetry so the smoke does not depend on host notification services. It uses
+the current display or `xvfb-run` when available.
 
 ## Manual Runtime Smoke
 
