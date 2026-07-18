@@ -226,9 +226,9 @@ scripts/check-appimage-bundled-container.sh \
 ./target/packaging/appimage/forktty-0.2.0-alpha.19-x86_64.AppImage
 ```
 
-The bundled-mode check requires `bubblewrap`; it extracts the artifact, masks
-host GTK/libadwaita, and exercises the child helper and packaged Bash
-integration without publishing or pulling a container image.
+The bundled-mode check extracts the artifact, shadows host GTK/libadwaita in
+the dynamic-loader search path, and exercises the child helper and packaged
+Bash integration without publishing or pulling a container image.
 
 Set `APPIMAGE_UPDATE_INFO=1` when building release-style AppImages with
 embedded update metadata; this requires `zsyncmake` on `PATH` and emits a

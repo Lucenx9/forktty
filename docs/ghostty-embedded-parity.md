@@ -29,8 +29,9 @@ mapping) are pinned by host-runnable Rust unit tests.
   zoom, restart, notifications) against live embedded panes and forces Bash to
   assert `TERM=xterm-ghostty` plus the `__ghostty_precmd` integration function.
 - **auto (package)** — `scripts/check-appimage-bundled-container.sh` extracts an
-  AppImage, masks usable host GTK/libadwaita with bubblewrap, forces bundled
-  mode, and exercises the GTK-linked child helper plus packaged Bash resources.
+  AppImage, shadows usable host GTK/libadwaita in the loader search path,
+  forces bundled mode, and exercises the GTK-linked child helper plus packaged
+  Bash resources.
 - **auto (unit)** — host-runnable `cargo test` that pins the ForkTTY↔ABI
   contract (no `.so` needed).
 - **probe** — covered by the `forktty ghostty-gtk-probe` widget smoke (launch /
@@ -65,7 +66,7 @@ blocker) · `fail` (file a blocker) · `pending` (not yet exercised) · `n/a`.
 | 15 | Socket API | `read_text`, `capture_tail`, `send_text`, and `surfaces` listing/focus behavior work on embedded panes | auto (smoke): surfaces/read-screen/capture-tail/send-text plus tab, action split, socket split, close, and focus checks | pass |
 | 16 | Port discovery / child PID | Embedded panes populate child PID in socket `surfaces` so listening-port discovery reaches classic-pane parity | auto (unit): child-pid symbol; auto (smoke): Probe requires a positive `surfaces` PID for the initial embedded pane | pass |
 | 17 | Shell identity / integration | Embedded Bash, Zsh, fish, Elvish, and Nushell preserve Ghostty startup integration and advertise `TERM=xterm-ghostty` when packaged resources are available | auto (unit): shell-specific argv/environment construction; auto (smoke): forced Bash asserts `TERM` and `__ghostty_precmd`; auto (package): extracted AppImage repeats both assertions | pass |
-| 18 | AppImage bundled child path | Bundled mode starts the GTK-linked helper without usable host GTK, then sanitizes AppImage loader state before executing the real child | auto (package): bubblewrap masks host GTK/libadwaita, AppRun forces bundled mode, and `/usr/bin/env` proves the helper replaced `LD_LIBRARY_PATH` before the Bash integration check | pass |
+| 18 | AppImage bundled child path | Bundled mode starts the GTK-linked helper without usable host GTK, then sanitizes AppImage loader state before executing the real child | auto (package): loader-shadow files mask host GTK/libadwaita, AppRun forces bundled mode, and `/usr/bin/env` proves the helper replaced `LD_LIBRARY_PATH` before the Bash integration check | pass |
 
 ## Local manual validation — 2026-06-18
 

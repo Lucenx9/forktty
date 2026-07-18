@@ -433,7 +433,7 @@ fn check_packaging_ghostty_gtk_lib_guard() -> Result<()> {
         "/usr/bin/env",
         "xterm-ghostty",
         "__ghostty_precmd",
-        "bwrap",
+        "unusable-host-gtk",
     ] {
         if !bundled_check.contains(needle) {
             return Err(format!(
@@ -533,7 +533,6 @@ fn check_ci_builds_ghostty_gtk_lib_before_deb(root: &Path) -> Result<()> {
     let release_job = &raw[release_index..];
     for needle in [
         "xvfb",
-        "bubblewrap",
         APPIMAGE_BUNDLED_CHECK_SCRIPT,
         "FORKTTY_SMOKE_BIN=\"$PWD/$appimage_artifact\"",
         GTK_GHOSTTY_SMOKE_SCRIPT,
@@ -1238,13 +1237,15 @@ printf '%s\n' 'libgtk-4.so.1 => /host/libgtk-4.so.1' 'libadwaita-1.so.0 => /host
     }
 
     #[test]
-    fn appimage_bundled_check_does_not_require_network_namespaces() {
+    fn appimage_bundled_check_does_not_require_bubblewrap() {
         let script = fs::read_to_string(repo_root().join(APPIMAGE_BUNDLED_CHECK_SCRIPT)).unwrap();
 
         assert!(
-            !script.contains("--unshare-net"),
-            "the loader smoke must run where bubblewrap cannot configure a private loopback device"
+            !script.contains("bwrap"),
+            "the loader smoke must run where unprivileged user namespaces are unavailable"
         );
+        assert!(script.contains("libgtk-4.so.1"));
+        assert!(script.contains("libadwaita-1.so.0"));
     }
 
     #[test]

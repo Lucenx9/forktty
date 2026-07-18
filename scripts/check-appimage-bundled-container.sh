@@ -7,11 +7,11 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/check-appimage-bundled-container.sh [APPIMAGE_OR_APPDIR]
 
-Extracts the packaged AppImage when needed, masks host GTK/libadwaita inside a
-bubblewrap sandbox, verifies that default AppRun auto mode falls back to the
-bundled stack, and checks ForkTTY's hidden appimage-child-exec helper. The helper
-must sanitize LD_LIBRARY_PATH, execute a host target, and preserve
-TERM=xterm-ghostty plus Ghostty's Bash integration.
+Extracts the packaged AppImage when needed, shadows host GTK/libadwaita with
+deliberately unusable loader candidates, verifies that default AppRun auto mode
+falls back to the bundled stack, and checks ForkTTY's hidden appimage-child-exec
+helper. The helper must sanitize LD_LIBRARY_PATH, execute a host target, and
+preserve TERM=xterm-ghostty plus Ghostty's Bash integration.
 When the path is omitted, exactly one target/packaging/appimage/*.AppImage must
 exist.
 USAGE
@@ -115,55 +115,22 @@ for needle in 'FORKTTY_APPIMAGE_GTK_RUNTIME' 'usr/lib/bundled'; do
   fi
 done
 
-if ! command -v bwrap >/dev/null 2>&1; then
-  echo "appimage bundled container: static package contract passed; bubblewrap unavailable" >&2
-  exit 77
-fi
 if [[ ! -x /usr/bin/env || ! -x /bin/bash ]]; then
   echo "appimage bundled container: /usr/bin/env and /bin/bash are required" >&2
   exit 77
 fi
 
-host_gtk_paths=()
-if command -v ldconfig >/dev/null 2>&1; then
-  mapfile -t host_gtk_paths < <(
-    ldconfig -p 2>/dev/null |
-      awk '$1 == "libgtk-4.so.1" || $1 == "libadwaita-1.so.0" { print $NF }' |
-      sort -u
-  )
-elif [[ -x /sbin/ldconfig ]]; then
-  mapfile -t host_gtk_paths < <(
-    /sbin/ldconfig -p 2>/dev/null |
-      awk '$1 == "libgtk-4.so.1" || $1 == "libadwaita-1.so.0" { print $NF }' |
-      sort -u
-  )
-fi
-
 unusable_gtk="$TMP_DIR/unusable-host-gtk"
-: >"$unusable_gtk"
-# The loader check needs mount masking, not network isolation. Some CI kernels
-# allow bubblewrap itself but deny configuring loopback in a new net namespace.
-bwrap_args=(
-  --ro-bind / /
-  --proc /proc
-  --dev /dev
-  --unshare-pid
-  --die-with-parent
-)
-masked_count=0
-for path in "${host_gtk_paths[@]}"; do
-  if [[ -e "$path" ]]; then
-    bwrap_args+=(--ro-bind "$unusable_gtk" "$path")
-    masked_count=$((masked_count + 1))
-  fi
-done
+mkdir -p "$unusable_gtk"
+: >"$unusable_gtk/libgtk-4.so.1"
+: >"$unusable_gtk/libadwaita-1.so.0"
 
 host_probe_stdout="$TMP_DIR/host-probe.stdout"
 host_probe_stderr="$TMP_DIR/host-probe.stderr"
-if bwrap "${bwrap_args[@]}" \
-  /usr/bin/env -i \
+if /usr/bin/env -i \
   HOME=/tmp \
   PATH=/usr/bin:/bin \
+  LD_LIBRARY_PATH="$unusable_gtk" \
   FORKTTY_APPIMAGE_GTK_RUNTIME=host \
   APPDIR="$APP_ROOT" \
   "$APP_RUN" --version \
@@ -175,11 +142,10 @@ fi
 
 auto_probe_stdout="$TMP_DIR/auto-probe.stdout"
 auto_probe_stderr="$TMP_DIR/auto-probe.stderr"
-if ! bwrap "${bwrap_args[@]}" \
-  /usr/bin/env -i \
+if ! /usr/bin/env -i \
   HOME=/tmp \
   PATH=/usr/bin:/bin \
-  LD_LIBRARY_PATH=/unusable-host-loader \
+  LD_LIBRARY_PATH="$unusable_gtk" \
   APPDIR="$APP_ROOT" \
   "$APP_RUN" --version \
   >"$auto_probe_stdout" 2>"$auto_probe_stderr"
@@ -191,12 +157,11 @@ fi
 
 helper_stdout="$TMP_DIR/helper.stdout"
 helper_stderr="$TMP_DIR/helper.stderr"
-if ! bwrap "${bwrap_args[@]}" \
-  /usr/bin/env -i \
+if ! /usr/bin/env -i \
   HOME=/tmp \
   PATH=/usr/bin:/bin \
   FORKTTY_APPIMAGE_GTK_RUNTIME=bundled \
-  LD_LIBRARY_PATH=/unusable-host-loader \
+  LD_LIBRARY_PATH="$unusable_gtk" \
   APPDIR="$APP_ROOT" \
   "$APP_RUN" appimage-child-exec \
   --unset APPDIR \
@@ -226,8 +191,7 @@ shell_stdout="$TMP_DIR/shell.stdout"
 shell_stderr="$TMP_DIR/shell.stderr"
 # Expand TERM inside the child Bash, not in this outer smoke script.
 # shellcheck disable=SC2016
-if ! bwrap "${bwrap_args[@]}" \
-  /usr/bin/env -i \
+if ! /usr/bin/env -i \
   HOME=/tmp \
   PATH=/usr/bin:/bin \
   FORKTTY_APPIMAGE_GTK_RUNTIME=bundled \
@@ -254,4 +218,4 @@ fi
 grep -Fxq 'forktty-bundled-term=xterm-ghostty' "$shell_stdout"
 grep -Fxq 'forktty-bundled-bash-integration=ok' "$shell_stdout"
 
-echo "appimage bundled container: ok (bubblewrap; masked $masked_count host GTK libraries)"
+echo "appimage bundled container: ok (loader shadow; masked host GTK/libadwaita)"

@@ -143,10 +143,10 @@ Embedded terminal commands enter the same GTK-linked binary's
 `appimage-child-exec` helper before AppImage loader entries are removed, so
 sanitization occurs only after the helper has loaded and just before it executes
 `/usr/bin/env`, a shell, or another target. The packaged check
-`scripts/check-appimage-bundled-container.sh` masks host GTK/libadwaita in a
-bubblewrap sandbox and verifies that bundled mode still executes the helper,
-cleans `LD_LIBRARY_PATH`, and preserves `TERM=xterm-ghostty` plus Ghostty's Bash
-integration.
+`scripts/check-appimage-bundled-container.sh` shadows host GTK/libadwaita with
+deliberately unusable loader candidates and verifies that bundled mode still
+executes the helper, cleans `LD_LIBRARY_PATH`, and preserves
+`TERM=xterm-ghostty` plus Ghostty's Bash integration.
 
 `xtask check` fails if the submodule is missing, points at the wrong fork,
 or is checked out at a different revision.
