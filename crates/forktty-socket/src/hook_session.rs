@@ -355,8 +355,13 @@ where
     if let Some(provider) = provider {
         ensure_max_text_size("hook_agent", provider)?;
     }
-    let prompt_resolution =
-        completed_hook_prompt_resolution(params, &session_id, hook.as_ref(), provider)?;
+    let prompt_resolution = completed_hook_prompt_resolution(
+        params,
+        &session_id,
+        hook.as_ref(),
+        provider,
+        learned_target.as_ref(),
+    )?;
     let result = mutation(params)?;
     resolve_completed_hook_prompt(state, prompt_resolution)?;
     if cleanup_prompts_on_success {
@@ -421,6 +426,7 @@ fn completed_hook_prompt_resolution(
     session_id: &str,
     hook: Option<&forktty_core::StatusHookMetadata>,
     provider: Option<&str>,
+    target: Option<&HookSessionTarget>,
 ) -> Result<Option<HookPromptResolution>, DispatchError> {
     let Some(hook) = hook else {
         return Ok(None);
@@ -463,8 +469,12 @@ fn completed_hook_prompt_resolution(
         kind,
         event_order,
         correlation_id: correlation_id.map(str::to_string),
-        workspace_id: workspace_id.map(str::to_string),
-        surface_id: surface_id.map(str::to_string),
+        workspace_id: target
+            .map(|target| target.workspace_id.clone())
+            .or_else(|| workspace_id.map(str::to_string)),
+        surface_id: target
+            .map(|target| target.surface_id.clone())
+            .or_else(|| surface_id.map(str::to_string)),
     }))
 }
 

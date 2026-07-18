@@ -102,6 +102,137 @@ async fn accepted_permission_reply_resolves_only_correlated_prompt_and_closes_de
 }
 
 #[tokio::test]
+async fn permission_reply_with_only_surface_id_uses_its_inferred_workspace() {
+    let (state, _backend) = test_state();
+    let closed_ids = Arc::new(Mutex::new(Vec::<String>::new()));
+    let observed_ids = closed_ids.clone();
+    let state = state.with_desktop_notification_closer(move |notification_id| {
+        observed_ids
+            .lock()
+            .unwrap()
+            .push(notification_id.to_string());
+    });
+    let (workspace_id, surface_id) = target(&state);
+
+    let mut prompt = hook_target(
+        &workspace_id,
+        &surface_id,
+        "surface-only-resolution",
+        "permission-request",
+        Some("boottime-ns"),
+        Some(100),
+    );
+    prompt["title"] = json!("Permission");
+    prompt["body"] = json!("Approve?");
+    prompt["kind"] = json!("prompt");
+    prompt["hook_agent"] = json!("opencode");
+    prompt["hook_prompt_kind"] = json!("permission");
+    prompt["hook_prompt_id"] = json!("opencode/session/permission/id:surface-only");
+    prompt["hook_correlation_id"] = json!("id:surface-only");
+    let prompt = dispatch(&state, "notification.create", prompt)
+        .await
+        .unwrap();
+
+    let mut reply = hook_target(
+        &workspace_id,
+        &surface_id,
+        "surface-only-resolution",
+        "permission-replied",
+        Some("boottime-ns"),
+        Some(101),
+    );
+    reply.as_object_mut().unwrap().remove("workspace_id");
+    reply["level"] = json!("info");
+    reply["message"] = json!("Permission resolved");
+    reply["hook_agent"] = json!("opencode");
+    reply["hook_prompt_kind"] = json!("permission");
+    reply["hook_prompt_id"] = json!("opencode/session/permission/id:surface-only");
+    reply["hook_correlation_id"] = json!("id:surface-only");
+
+    dispatch(&state, "metadata.log", reply).await.unwrap();
+
+    let notification = state
+        .model
+        .lock()
+        .unwrap()
+        .list_notifications()
+        .into_iter()
+        .find(|notification| notification.id == prompt["id"])
+        .unwrap();
+    assert!(notification.read);
+    assert_eq!(
+        closed_ids.lock().unwrap().as_slice(),
+        [prompt["id"].as_str().unwrap()]
+    );
+}
+
+#[tokio::test]
+async fn workspace_only_reply_does_not_inherit_the_sessions_cached_surface() {
+    let (state, _backend) = test_state();
+    let (workspace_id, surface_id) = target(&state);
+
+    let mut seed = hook_target(
+        &workspace_id,
+        &surface_id,
+        "workspace-only-resolution",
+        "post-tool",
+        Some("boottime-ns"),
+        Some(99),
+    );
+    seed["level"] = json!("info");
+    seed["message"] = json!("Seed the session surface target");
+    dispatch(&state, "metadata.log", seed).await.unwrap();
+
+    let mut prompt = hook_target(
+        &workspace_id,
+        &surface_id,
+        "workspace-only-resolution",
+        "permission-request",
+        Some("boottime-ns"),
+        Some(100),
+    );
+    prompt.as_object_mut().unwrap().remove("surface_id");
+    prompt["title"] = json!("Workspace permission");
+    prompt["body"] = json!("Approve for this workspace?");
+    prompt["kind"] = json!("prompt");
+    prompt["hook_agent"] = json!("opencode");
+    prompt["hook_prompt_kind"] = json!("permission");
+    prompt["hook_prompt_id"] = json!("opencode/session/permission/id:workspace-only");
+    prompt["hook_correlation_id"] = json!("id:workspace-only");
+    let prompt = dispatch(&state, "notification.create", prompt)
+        .await
+        .unwrap();
+
+    let mut reply = hook_target(
+        &workspace_id,
+        &surface_id,
+        "workspace-only-resolution",
+        "permission-replied",
+        Some("boottime-ns"),
+        Some(101),
+    );
+    reply.as_object_mut().unwrap().remove("surface_id");
+    reply["level"] = json!("info");
+    reply["message"] = json!("Workspace permission resolved");
+    reply["hook_agent"] = json!("opencode");
+    reply["hook_prompt_kind"] = json!("permission");
+    reply["hook_prompt_id"] = json!("opencode/session/permission/id:workspace-only");
+    reply["hook_correlation_id"] = json!("id:workspace-only");
+
+    dispatch(&state, "metadata.log", reply).await.unwrap();
+
+    let notification = state
+        .model
+        .lock()
+        .unwrap()
+        .list_notifications()
+        .into_iter()
+        .find(|notification| notification.id == prompt["id"])
+        .unwrap();
+    assert!(notification.read);
+}
+
+#[tokio::test]
 async fn notification_create_rejects_partial_hook_prompt_metadata() {
     let (state, _backend) = test_state();
     let (workspace_id, surface_id) = target(&state);

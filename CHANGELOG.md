@@ -87,7 +87,9 @@ All notable changes to ForkTTY are documented here.
   workspace removal retire only the affected correlations while preserving
   unrelated unread attention. Claude Elicitation hooks now create the prompt
   notification that ElicitationResult resolves, and PermissionDenied is treated
-  as a terminal permission result.
+  as a terminal permission result. Result hooks addressed by `surface_id` alone
+  now reuse its inferred workspace target, so they resolve the same prompt as
+  hooks that provide both target fields.
 - PTY-persisted panes now resolve their live cwd from the workload behind the
   `dtach -A` master instead of mistaking the attached client master for the
   shell, so new tabs, splits, restored panes, and Worktree actions inherit the
