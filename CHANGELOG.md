@@ -65,6 +65,9 @@ All notable changes to ForkTTY are documented here.
   instead of full status pills.
 
 ### Fixed
+- Claude non-attention notifications now preserve the current agent lifecycle,
+  so a notification arriving after `Stop` no longer changes an idle workspace
+  badge back to `Working`.
 - Persisted `Suspended` agent sessions now remain tombstones: late hooks cannot
   revive them, publish side effects, resolve prompts, or advance event order
   before an explicit resume.

@@ -417,6 +417,11 @@ absolute socket path from the same ForkTTY child environment. If any provenance
 component is absent or invalid, the hook returns the exact continue response
 without reading stdin or issuing a socket request.
 
+Hook notifications that do not request attention are logged without publishing
+an `agent:<key>` status update. An informational notification received after
+`Stop` therefore preserves the persisted idle lifecycle instead of changing the
+workspace badge back to running.
+
 Persisted `Suspended` is a lifecycle tombstone. Hook events arriving after
 hibernate are accepted as inert: they do not mutate lifecycle, attention,
 metadata, prompt state, or the per-session event-order watermark. Only an

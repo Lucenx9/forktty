@@ -1440,40 +1440,51 @@ fn codex_permission_request_in_skip_permissions_mode_does_not_create_attention_p
 }
 
 #[test]
-fn claude_non_attention_notifications_do_not_create_needs_input_prompt() {
-    let actions = build_hook_actions(
-        agent_spec("claude").unwrap(),
-        "notification",
-        &json!({
-            "session_id": "sess-claude-running",
-            "notification_type": "auth_success",
-            "message": "Authentication succeeded"
-        }),
-        "10",
-    );
+fn claude_non_attention_notifications_log_without_changing_agent_status() {
+    for (payload, expected_message) in [
+        (
+            json!({
+                "session_id": "sess-claude-running",
+                "notification_type": "auth_success",
+                "message": "Authentication succeeded"
+            }),
+            "Authentication succeeded",
+        ),
+        (
+            json!({
+                "session_id": "sess-claude-running",
+                "notification_type": "elicitation_complete",
+                "message": "Elicitation completed"
+            }),
+            "Elicitation completed",
+        ),
+        (
+            json!({
+                "session_id": "sess-claude-running",
+                "notification_type": "elicitation_response",
+                "message": "Elicitation response received"
+            }),
+            "Elicitation response received",
+        ),
+        (
+            json!({
+                "session_id": "sess-claude-running",
+                "message": "Background task completed: call-123"
+            }),
+            "Background task completed: call-123",
+        ),
+    ] {
+        let actions = build_hook_actions(
+            agent_spec("claude").unwrap(),
+            "notification",
+            &payload,
+            "10",
+        );
 
-    assert!(!actions
-        .iter()
-        .any(|(method, _)| method == "notification.create"));
-    let status = actions
-        .iter()
-        .find(|(method, params)| method == "metadata.set_status" && params["key"] == "agent:claude")
-        .expect("agent status");
-    assert_eq!(status.1["value"], "Running");
-    assert_eq!(status.1["hook_event_name"], "notification");
-
-    let actions = build_hook_actions(
-        agent_spec("claude").unwrap(),
-        "notification",
-        &json!({
-            "session_id": "sess-claude-running",
-            "message": "Background task completed: call-123"
-        }),
-        "11",
-    );
-    assert!(!actions
-        .iter()
-        .any(|(method, _)| method == "notification.create"));
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].0, "metadata.log");
+        assert_eq!(actions[0].1["message"], expected_message);
+    }
 }
 
 #[test]
