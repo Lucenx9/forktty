@@ -115,7 +115,7 @@ const VTE_CHECK_PATHS: &[&str] = &[
 
 const GHOSTTY_VENDOR_PATH: &str = "vendor/ghostty";
 const GHOSTTY_VENDOR_URL: &str = "https://github.com/Lucenx9/ghostty.git";
-const GHOSTTY_VENDOR_REV: &str = "1ef34f73853d21e86b1395257832965af12f3ff3";
+const GHOSTTY_VENDOR_REV: &str = "24bd566a5d52bc338032e5582f423472afe094ad";
 const GHOSTTY_GTK_LIB_PROBE_SCRIPT: &str = "scripts/ghostty-gtk-lib-probe.sh";
 const PACKAGING_SCRIPTS: &[&str] = &["scripts/build-deb.sh", "scripts/build-appimage.sh"];
 const GTK_GHOSTTY_SMOKE_SCRIPT: &str = "scripts/gtk-ghostty-smoke.sh";

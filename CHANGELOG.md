@@ -106,11 +106,12 @@ All notable changes to ForkTTY are documented here.
   `total_lines` fallback when the optional extended line-count ABI is absent,
   so clean release builds validate the pinned vendor instead of only a locally
   patched Ghostty checkout.
-- When the loaded Ghostty library provides the optional
-  `ghostty_gtk_surface_read_text_limited_with_total_lines` extension, bounded
-  reads report `total_lines` for the complete selected source rather than only
-  the returned byte fragment. Libraries with only the base limited-read ABI
-  remain byte-bounded and report the returned fragment's line count.
+- The pinned Ghostty embedding library now exports the optional
+  `ghostty_gtk_surface_read_text_limited_with_total_lines` extension, so
+  packaged bounded reads report `total_lines` for the complete selected source
+  rather than only the returned byte fragment. Older compatible libraries with
+  only the base limited-read ABI remain byte-bounded and report the returned
+  fragment's line count.
 - AppImage `auto` mode now uses an eager loader compatibility probe and selects
   host GTK only when both the ForkTTY binary and embedded Ghostty library load;
   otherwise it falls back to the bundled GTK/libadwaita stack. Release smoke
