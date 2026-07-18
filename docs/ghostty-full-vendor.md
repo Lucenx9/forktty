@@ -5,7 +5,7 @@ ForkTTY pins a small Ghostty fork as a Git submodule at
 
 - Fork: `https://github.com/Lucenx9/ghostty.git`
 - Upstream base: `https://github.com/ghostty-org/ghostty.git`
-- Pin: `31da31b65d1011b59e40932cd2b81cb9c69556bd`
+- Pin: `24bd566a5d52bc338032e5582f423472afe094ad`
 - License: MIT, see `vendor/ghostty/LICENSE`
 
 This mirrors the cmux direction: keep Ghostty itself available in-tree so
