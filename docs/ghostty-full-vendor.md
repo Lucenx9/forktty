@@ -5,7 +5,7 @@ ForkTTY pins a small Ghostty fork as a Git submodule at
 
 - Fork: `https://github.com/Lucenx9/ghostty.git`
 - Upstream base: `https://github.com/ghostty-org/ghostty.git`
-- Pin: `31da31b65d1011b59e40932cd2b81cb9c69556bd`
+- Pin: `24bd566a5d52bc338032e5582f423472afe094ad`
 - License: MIT, see `vendor/ghostty/LICENSE`
 
 This mirrors the cmux direction: keep Ghostty itself available in-tree so
@@ -112,9 +112,11 @@ pre-restart marker is present in `capture_tail` after restore. A library built
 before this symbol degrades to a safe no-op. The snapshot half reads the tail
 through the bounded limited-read ABI into the session on child exit,
 programmatic close/restart, and a throttled poll, retaining at most the
-requested byte budget plus one truncation-detection byte. When the optional
-`ghostty_gtk_surface_read_text_limited_with_total_lines` extension is available,
-the snapshot also preserves the complete source line count.
+requested byte budget plus one truncation-detection byte. The current pinned
+fork exports the optional
+`ghostty_gtk_surface_read_text_limited_with_total_lines` extension, so the
+snapshot also preserves the complete source line count; older compatible
+libraries retain the bounded-fragment fallback.
 
 For installed builds, `FORKTTY_GHOSTTY_GTK_LIB` is only needed during local
 development. `scripts/build-deb.sh` and `scripts/build-appimage.sh` call
@@ -124,8 +126,9 @@ enters Zig's incremental build graph and then verifies every mandatory ABI
 symbol in the resulting `ghostty-gtk-embed.so`, including the unconditional
 context/surface constructors and the bounded
 `ghostty_gtk_surface_read_text_limited` export. The extended
-`ghostty_gtk_surface_read_text_limited_with_total_lines` symbol is an optional
-runtime capability, not a packaging prerequisite. The packagers install the
+`ghostty_gtk_surface_read_text_limited_with_total_lines` symbol is exported by
+the current pin but remains an optional runtime capability, not a packaging
+prerequisite for older compatible libraries. The packagers install the
 verified library into `usr/lib`, and the binary loads it through its RUNPATH
 (`$ORIGIN/../lib`). The install step is required for release packages:
 `scripts/build-deb.sh`, `scripts/build-appimage.sh`, and release CI fail if the

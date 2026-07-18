@@ -172,10 +172,10 @@ maintainer at a real pointer/keyboard, a working input-injection daemon, or a
   ABIs back the socket `send_text`, `read_text`, `capture_tail`, and inline
   agent replies. The required `ghostty_gtk_surface_read_text_limited` ABI makes
   Ghostty stream the requested text into a bounded buffer before ForkTTY copies
-  the FFI payload. When the library also exports the optional
-  `ghostty_gtk_surface_read_text_limited_with_total_lines` extension, ForkTTY
-  reports the complete selected source line count instead of only the returned
-  fragment's count. Explicit
+  the FFI payload. The current pinned fork exports the optional
+  `ghostty_gtk_surface_read_text_limited_with_total_lines` extension, so
+  ForkTTY reports the complete selected source line count instead of only the
+  returned fragment's count. Explicit
   `read_text(all)` may still scan scrollback, but it no longer materializes
   more than the requested byte budget plus one truncation-detection byte in
   either process. `capture_tail` requests the bounded end of full scrollback
