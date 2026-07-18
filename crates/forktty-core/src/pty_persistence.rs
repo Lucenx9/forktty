@@ -444,7 +444,7 @@ fn managed_dtach_workload_pids_from_infos(
 #[cfg(target_os = "linux")]
 fn linux_process_cwd(pid: libc::pid_t) -> Option<PathBuf> {
     let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
-    (!cwd.as_os_str().as_bytes().ends_with(b" (deleted)")).then_some(cwd)
+    (cwd.to_str().is_some() && !cwd.as_os_str().as_bytes().ends_with(b" (deleted)")).then_some(cwd)
 }
 
 #[cfg(target_os = "linux")]
@@ -931,6 +931,39 @@ mod tests {
             managed_dtach_workload_pids_from_infos(&infos, runtime),
             BTreeMap::from([("surface-live".to_string(), 12)])
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_process_cwd_accepts_utf8_and_ignores_non_utf8_paths() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let valid_dir = tempfile::tempdir().unwrap();
+        let mut valid_child = std::process::Command::new("/bin/sleep")
+            .arg("5")
+            .current_dir(valid_dir.path())
+            .spawn()
+            .unwrap();
+        let valid_cwd = linux_process_cwd(valid_child.id() as libc::pid_t);
+        let _ = valid_child.kill();
+        let _ = valid_child.wait();
+
+        let parent_dir = tempfile::tempdir().unwrap();
+        let invalid_dir = parent_dir
+            .path()
+            .join(std::ffi::OsStr::from_bytes(b"invalid-\xff-cwd"));
+        std::fs::create_dir(&invalid_dir).unwrap();
+        let mut invalid_child = std::process::Command::new("/bin/sleep")
+            .arg("5")
+            .current_dir(&invalid_dir)
+            .spawn()
+            .unwrap();
+        let invalid_cwd = linux_process_cwd(invalid_child.id() as libc::pid_t);
+        let _ = invalid_child.kill();
+        let _ = invalid_child.wait();
+
+        assert_eq!(valid_cwd.as_deref(), Some(valid_dir.path()));
+        assert_eq!(invalid_cwd, None);
     }
 
     #[cfg(target_os = "linux")]

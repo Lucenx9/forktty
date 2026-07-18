@@ -65,6 +65,9 @@ All notable changes to ForkTTY are documented here.
   instead of full status pills.
 
 ### Fixed
+- Live terminal working directories containing non-UTF-8 Unix bytes are now
+  ignored, preserving the last valid cwd instead of poisoning JSON socket
+  responses.
 - Claude non-attention notifications now preserve the current agent lifecycle,
   so a notification arriving after `Stop` no longer changes an idle workspace
   badge back to `Working`.

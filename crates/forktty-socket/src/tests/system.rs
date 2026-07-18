@@ -141,6 +141,42 @@ async fn system_identify_uses_live_terminal_cwd() {
 }
 
 #[tokio::test]
+async fn system_identify_ignores_non_utf8_live_terminal_cwd() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let (state, backend) = test_state();
+    let parent_dir = tempfile::tempdir().unwrap();
+    let invalid_dir = parent_dir
+        .path()
+        .join(std::ffi::OsStr::from_bytes(b"invalid-\xff-cwd"));
+    std::fs::create_dir(&invalid_dir).unwrap();
+    let (surface_id, initial_cwd) = {
+        let model = state.model.lock().unwrap();
+        let surface_id = model.active_workspace().unwrap().focused_surface_id;
+        let initial_cwd = model.surface(&surface_id).unwrap().cwd.clone();
+        (surface_id, initial_cwd)
+    };
+    let mut child = std::process::Command::new("/bin/sleep")
+        .arg("5")
+        .current_dir(&invalid_dir)
+        .spawn()
+        .unwrap();
+    backend.mark_surface_pid(&surface_id, child.id()).unwrap();
+
+    let identify = dispatch(&state, "system.identify", json!({"surface_id": surface_id}))
+        .await
+        .unwrap();
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert_eq!(identify["surface"]["cwd"], initial_cwd.to_str().unwrap());
+    assert_eq!(
+        identify["surface"]["effective_project_cwd"],
+        initial_cwd.to_str().unwrap()
+    );
+}
+
+#[tokio::test]
 async fn system_identify_keeps_ssh_surface_cwd_local_to_its_launch_context() {
     let (state, backend) = test_state();
     let launch_dir = tempfile::tempdir().unwrap();
