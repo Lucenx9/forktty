@@ -156,7 +156,7 @@ fn has_managed_session_socket(runtime_dir: Option<&Path>, surface_id: &str) -> b
 
 fn linux_process_cwd(pid: u32) -> Option<PathBuf> {
     let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
-    (!cwd.as_os_str().as_bytes().ends_with(b" (deleted)")).then_some(cwd)
+    (cwd.to_str().is_some() && !cwd.as_os_str().as_bytes().ends_with(b" (deleted)")).then_some(cwd)
 }
 
 pub(crate) fn spawn_workspace_terminal(

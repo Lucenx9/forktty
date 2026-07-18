@@ -99,6 +99,10 @@ Native session file:
 
 The native session includes workspace order, active workspace, pane tree, focused surface, each local terminal pane's last live cwd, branch, worktree metadata, generated workspace/surface id high-water marks, and opt-in bounded plain-text tails when `appearance.persistent_scrollback_lines` is greater than zero. Embedded Ghostty panes source those tails from the bounded end of full scrollback when `ghostty_gtk_surface_read_text_limited` is available, and fall back to recent visible text with older embedding libraries. The pinned release library provides the optional `ghostty_gtk_surface_read_text_limited_with_total_lines` extension, so socket snapshots report `total_lines` for the complete selected source before byte truncation; older compatible libraries without it report the bounded fragment's line count. It does not serialize running PTY process handles; the session file records only durable identifiers (surface ids and agent resume metadata). Process survival across a UI restart is a separate, opt-in mechanism (`general.persist_terminal_processes`) described under [PTY process persistence](#pty-process-persistence), keyed by the persisted surface id rather than by any serialized handle.
 
+Live `/proc/<pid>/cwd` values enter the model only when they are valid UTF-8;
+non-UTF-8 values are ignored so the last valid cwd remains serializable through
+the JSON socket API and native session persistence.
+
 Browser panes persist their surface URL and profile ID in the same session
 model. WebKit processes, in-memory page state, and terminal PTY state are
 not restored.
