@@ -148,7 +148,32 @@ pub struct PreparedWorktreeRemoval {
     repo_git_dir: PathBuf,
     worktree_name: String,
     branch: String,
-    wt_path: Option<PathBuf>,
+    target_path: PathBuf,
+}
+
+/// Durable progress reached while finishing a prepared worktree removal.
+///
+/// Coordinating callers use this typed progress instead of re-inspecting the
+/// path after the operation, because another process may recreate or remove
+/// that path concurrently.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WorktreeRemovalProgress {
+    /// Neither the verified checkout nor its Git registration was removed.
+    #[default]
+    Prepared,
+    /// The verified checkout was removed, but registration pruning did not
+    /// complete successfully.
+    TargetRemoved,
+    /// The Git worktree registration was removed or was already absent.
+    RegistrationRemoved,
+}
+
+impl WorktreeRemovalProgress {
+    /// Whether model/runtime removal must commit because the old worktree
+    /// identity cannot be restored by respawning its terminal surfaces.
+    pub fn requires_model_commit(self) -> bool {
+        self != Self::Prepared
+    }
 }
 
 impl PreparedWorktreeRemoval {
@@ -156,52 +181,156 @@ impl PreparedWorktreeRemoval {
         &self.worktree_name
     }
 
-    pub fn finish(self, delete_branch: bool) -> Result<(), WorktreeError> {
-        let repo = Repository::open(&self.repo_git_dir)?;
-        let wt = repo
-            .find_worktree(&self.worktree_name)
-            .map_err(|_| WorktreeError::NotFound(self.worktree_name.clone()))?;
-        if let Some(wt_path) = &self.wt_path {
-            match std::fs::symlink_metadata(wt_path) {
-                Ok(_) => {
-                    let verified =
-                        verify_linked_worktree_path(&repo, &self.worktree_name, wt.path())?;
-                    if &verified != wt_path {
-                        return Err(WorktreeError::WorktreeMetadataMismatch {
-                            name: self.worktree_name.clone(),
-                        });
-                    }
-                    let wt_repo = Repository::open(wt_path).map_err(|_| {
-                        WorktreeError::NotARepo(wt_path.to_string_lossy().to_string())
-                    })?;
-                    if has_uncommitted_changes(&wt_repo)? {
-                        return Err(WorktreeError::WorktreeDirty(self.worktree_name.clone()));
-                    }
-                }
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => return Err(err.into()),
-            }
-        }
-        // Remove the working-tree directory before deregistering it from git.
-        // The reverse order is unrecoverable: if prune succeeds but
-        // remove_dir_all fails (a file locked by an agent, EBUSY, read-only
-        // mount), git has already forgotten the path mapping, so the retry hits
-        // NotFound and the directory is stranded forever. This order leaves at
-        // most an orphaned admin entry on failure, which `git worktree prune`
-        // recovers.
-        if let Some(wt_path) = self.wt_path.filter(|path| path.exists()) {
-            std::fs::remove_dir_all(&wt_path)?;
-        }
-        let mut opts = git2::WorktreePruneOptions::new();
-        opts.valid(true).working_tree(true);
-        wt.prune(Some(&mut opts))?;
-        if delete_branch && !self.branch.is_empty() {
-            if let Ok(mut branch) = repo.find_branch(&self.branch, BranchType::Local) {
-                let _ = branch.delete();
-            }
-        }
-        Ok(())
+    /// Returns the worktree path resolved during removal preflight.
+    pub fn target_path(&self) -> &Path {
+        &self.target_path
     }
+
+    pub fn finish(self, delete_branch: bool) -> Result<(), WorktreeError> {
+        let mut progress = WorktreeRemovalProgress::Prepared;
+        self.finish_with_progress(delete_branch, &mut progress)
+    }
+
+    /// Finish removal while recording each irreversible boundary.
+    ///
+    /// `progress` remains usable if the operation returns an error or unwinds
+    /// after a completed destructive step.
+    pub fn finish_with_progress(
+        self,
+        delete_branch: bool,
+        progress: &mut WorktreeRemovalProgress,
+    ) -> Result<(), WorktreeError> {
+        let repo = Repository::open(&self.repo_git_dir)?;
+        let wt = match repo.find_worktree(&self.worktree_name) {
+            Ok(worktree) => worktree,
+            Err(error) if error.code() == git2::ErrorCode::NotFound => {
+                *progress = WorktreeRemovalProgress::RegistrationRemoved;
+                return Err(WorktreeError::NotFound(self.worktree_name.clone()));
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let verified_target =
+            verified_removal_target_for_finish(&repo, &wt, &self.worktree_name, &self.target_path)?;
+        finish_preflighted_worktree_removal(
+            &repo,
+            &wt,
+            &self.worktree_name,
+            &self.branch,
+            verified_target.as_deref(),
+            delete_branch,
+            progress,
+        )
+    }
+}
+
+fn verified_removal_target_for_finish(
+    repo: &Repository,
+    worktree: &git2::Worktree,
+    worktree_name: &str,
+    target_path: &Path,
+) -> Result<Option<PathBuf>, WorktreeError> {
+    match std::fs::symlink_metadata(target_path) {
+        Ok(_) => {
+            let verified = verify_linked_worktree_path(repo, worktree_name, worktree.path())?;
+            if verified != target_path {
+                return Err(WorktreeError::WorktreeMetadataMismatch {
+                    name: worktree_name.to_string(),
+                });
+            }
+            let wt_repo = Repository::open(&verified)
+                .map_err(|_| WorktreeError::NotARepo(verified.to_string_lossy().to_string()))?;
+            if has_uncommitted_changes(&wt_repo)? {
+                return Err(WorktreeError::WorktreeDirty(worktree_name.to_string()));
+            }
+            Ok(Some(verified))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err.into()),
+    }
+}
+
+fn finish_preflighted_worktree_removal(
+    repo: &Repository,
+    worktree: &git2::Worktree,
+    worktree_name: &str,
+    branch_name: &str,
+    verified_target: Option<&Path>,
+    delete_branch: bool,
+    progress: &mut WorktreeRemovalProgress,
+) -> Result<(), WorktreeError> {
+    // Delete only a target verified by the immediately preceding preflight.
+    // A target that was absent must not be re-checked here: it could have been
+    // created by another process in the meantime.
+    if let Some(target_path) = verified_target {
+        std::fs::remove_dir_all(target_path)?;
+        *progress = WorktreeRemovalProgress::TargetRemoved;
+    }
+    if let Err(error) = prune_worktree_registration(worktree) {
+        if matches!(
+            repo.find_worktree(worktree_name),
+            Err(error) if error.code() == git2::ErrorCode::NotFound
+        ) {
+            *progress = WorktreeRemovalProgress::RegistrationRemoved;
+        }
+        return Err(error);
+    }
+    *progress = WorktreeRemovalProgress::RegistrationRemoved;
+    if delete_branch && !branch_name.is_empty() {
+        if let Ok(mut branch) = repo.find_branch(branch_name, BranchType::Local) {
+            let _ = branch.delete();
+        }
+    }
+    Ok(())
+}
+
+fn prune_worktree_registration(worktree: &git2::Worktree) -> Result<(), WorktreeError> {
+    let mut opts = git2::WorktreePruneOptions::new();
+    // The verified path is removed explicitly above. Leaving `working_tree`
+    // disabled prevents libgit2 from deleting a path that appeared after an
+    // earlier NotFound result or that failed post-create verification.
+    opts.valid(true);
+    worktree.prune(Some(&mut opts))?;
+    Ok(())
+}
+
+fn verify_fresh_worktree_or_rollback<F>(
+    repo: &Repository,
+    worktree: &git2::Worktree,
+    worktree_name: &str,
+    created_branch: Option<&str>,
+    verify: F,
+) -> Result<PathBuf, WorktreeError>
+where
+    F: FnOnce(&Repository, &str, &Path) -> Result<PathBuf, WorktreeError>,
+{
+    match verify(repo, worktree_name, worktree.path()) {
+        Ok(path) => Ok(path),
+        Err(verification_error) => {
+            if let Err(rollback_error) = rollback_fresh_worktree(repo, worktree, created_branch) {
+                return Err(WorktreeError::Other(format!(
+                    "{verification_error}; worktree rollback failed: {rollback_error}"
+                )));
+            }
+            Err(verification_error)
+        }
+    }
+}
+
+fn rollback_fresh_worktree(
+    repo: &Repository,
+    worktree: &git2::Worktree,
+    created_branch: Option<&str>,
+) -> Result<(), WorktreeError> {
+    prune_worktree_registration(worktree)?;
+    let Some(branch_name) = created_branch else {
+        return Ok(());
+    };
+    match repo.find_branch(branch_name, BranchType::Local) {
+        Ok(mut branch) => branch.delete()?,
+        Err(err) if err.code() == git2::ErrorCode::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
+    Ok(())
 }
 
 pub fn create(
@@ -248,14 +377,24 @@ pub fn create(
     let branch = branch_ref.shorthand().unwrap_or(branch_name).to_string();
     let mut opts = git2::WorktreeAddOptions::new();
     opts.reference(Some(&branch_ref));
-    if let Err(err) = repo.worktree(&worktree_name, &wt_path, Some(&opts)) {
-        if branch_was_created {
-            if let Ok(mut created_branch) = repo.find_branch(&branch, BranchType::Local) {
-                let _ = created_branch.delete();
+    let wt = match repo.worktree(&worktree_name, &wt_path, Some(&opts)) {
+        Ok(worktree) => worktree,
+        Err(err) => {
+            if branch_was_created {
+                if let Ok(mut created_branch) = repo.find_branch(&branch, BranchType::Local) {
+                    let _ = created_branch.delete();
+                }
             }
+            return Err(err.into());
         }
-        return Err(err.into());
-    }
+    };
+    let wt_path = verify_fresh_worktree_or_rollback(
+        &repo,
+        &wt,
+        &worktree_name,
+        branch_was_created.then_some(branch.as_str()),
+        verify_linked_worktree_path,
+    )?;
     let setup_warning = run_setup_hook_advisory(&wt_path);
     let mut info = info(&repo, branch, wt_path, worktree_name);
     info.created = true;
@@ -291,7 +430,14 @@ pub fn attach(
     ensure_local_exclude_for_worktree_path(&repo, workdir, &wt_path)?;
     let mut opts = git2::WorktreeAddOptions::new();
     opts.reference(Some(&branch_ref));
-    repo.worktree(&worktree_name, &wt_path, Some(&opts))?;
+    let wt = repo.worktree(&worktree_name, &wt_path, Some(&opts))?;
+    let wt_path = verify_fresh_worktree_or_rollback(
+        &repo,
+        &wt,
+        &worktree_name,
+        None,
+        verify_linked_worktree_path,
+    )?;
     let setup_warning = run_setup_hook_advisory(&wt_path);
     let mut info = info(&repo, branch, wt_path, worktree_name);
     info.created = true;
@@ -372,7 +518,7 @@ pub fn prepare_remove(
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
         Err(err) => return Err(err.into()),
     };
-    let wt_path = if worktree_path_exists {
+    let target_path = if worktree_path_exists {
         let wt_path = verify_linked_worktree_path(&repo, &worktree_name, &reported_path)?;
         let wt_repo = Repository::open(&wt_path)
             .map_err(|_| WorktreeError::NotARepo(wt_path.to_string_lossy().to_string()))?;
@@ -385,15 +531,15 @@ pub fn prepare_remove(
         if has_uncommitted_changes(&wt_repo)? {
             return Err(WorktreeError::WorktreeDirty(worktree_name.clone()));
         }
-        Some(wt_path)
+        wt_path
     } else {
-        None
+        reported_path
     };
     Ok(PreparedWorktreeRemoval {
         repo_git_dir: repo.path().to_path_buf(),
         worktree_name,
         branch,
-        wt_path,
+        target_path,
     })
 }
 
@@ -1275,6 +1421,21 @@ mod tests {
         repo.branch(branch_name, &head, false).unwrap();
     }
 
+    fn add_registered_worktree(
+        repo: &Repository,
+        branch_name: &str,
+        worktree_name: &str,
+        worktree_path: &Path,
+    ) -> git2::Worktree {
+        fs::create_dir_all(worktree_path.parent().unwrap()).unwrap();
+        let branch = repo.find_branch(branch_name, BranchType::Local).unwrap();
+        let branch_ref = branch.into_reference();
+        let mut opts = git2::WorktreeAddOptions::new();
+        opts.reference(Some(&branch_ref));
+        repo.worktree(worktree_name, worktree_path, Some(&opts))
+            .unwrap()
+    }
+
     fn redirect_registered_worktree(
         repo_workdir: &Path,
         info: &WorktreeInfo,
@@ -1354,6 +1515,95 @@ mod tests {
         assert_eq!(list(dir.path().to_str().unwrap()).unwrap().len(), 1);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn fresh_create_returns_verified_canonical_worktree_path() {
+        let dir = make_repo();
+        let worktree_storage = tempfile::tempdir().unwrap();
+        symlink(worktree_storage.path(), dir.path().join(".worktrees")).unwrap();
+
+        let info = create(dir.path().to_str().unwrap(), "canonical-create", "nested").unwrap();
+        let canonical_path = fs::canonicalize(&info.path).unwrap();
+
+        assert_eq!(Path::new(&info.path), canonical_path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fresh_attach_returns_verified_canonical_worktree_path() {
+        let dir = make_repo();
+        let worktree_storage = tempfile::tempdir().unwrap();
+        symlink(worktree_storage.path(), dir.path().join(".worktrees")).unwrap();
+        create_branch(dir.path(), "canonical-attach");
+
+        let info = attach(dir.path().to_str().unwrap(), "canonical-attach", "nested").unwrap();
+        let canonical_path = fs::canonicalize(&info.path).unwrap();
+
+        assert_eq!(Path::new(&info.path), canonical_path);
+    }
+
+    #[test]
+    fn create_verification_failure_rolls_back_registration_and_created_branch() {
+        let dir = make_repo();
+        let repo = Repository::open(dir.path()).unwrap();
+        let branch_name = "rollback-created-branch";
+        let worktree_name = "rollback-created-worktree";
+        let worktree_path = dir.path().join(".worktrees").join(worktree_name);
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch(branch_name, &head, false).unwrap();
+        let worktree = add_registered_worktree(&repo, branch_name, worktree_name, &worktree_path);
+
+        let result = verify_fresh_worktree_or_rollback(
+            &repo,
+            &worktree,
+            worktree_name,
+            Some(branch_name),
+            |_, _, _| {
+                Err(WorktreeError::Other(
+                    "forced post-registration verification failure".to_string(),
+                ))
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(WorktreeError::Other(message))
+                if message == "forced post-registration verification failure"
+        ));
+        assert!(repo.find_worktree(worktree_name).is_err());
+        assert!(repo.find_branch(branch_name, BranchType::Local).is_err());
+        assert!(
+            worktree_path.exists(),
+            "unverified paths must not be deleted"
+        );
+    }
+
+    #[test]
+    fn attach_verification_failure_rolls_back_registration_but_preserves_branch() {
+        let dir = make_repo();
+        create_branch(dir.path(), "preserved-existing-branch");
+        let repo = Repository::open(dir.path()).unwrap();
+        let branch_name = "preserved-existing-branch";
+        let worktree_name = "rollback-attached-worktree";
+        let worktree_path = dir.path().join(".worktrees").join(worktree_name);
+        let worktree = add_registered_worktree(&repo, branch_name, worktree_name, &worktree_path);
+
+        let result =
+            verify_fresh_worktree_or_rollback(&repo, &worktree, worktree_name, None, |_, _, _| {
+                Err(WorktreeError::Other(
+                    "forced post-registration verification failure".to_string(),
+                ))
+            });
+
+        assert!(result.is_err());
+        assert!(repo.find_worktree(worktree_name).is_err());
+        assert!(repo.find_branch(branch_name, BranchType::Local).is_ok());
+        assert!(
+            worktree_path.exists(),
+            "unverified paths must not be deleted"
+        );
+    }
+
     #[test]
     fn create_propagates_branch_lookup_errors_other_than_not_found() {
         let dir = make_repo();
@@ -1404,6 +1654,84 @@ mod tests {
         assert!(list(dir.path().to_str().unwrap()).unwrap().is_empty());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn prepared_worktree_removal_exposes_verified_target_path() {
+        let dir = make_repo();
+        let worktree_storage = tempfile::tempdir().unwrap();
+        symlink(worktree_storage.path(), dir.path().join(".worktrees")).unwrap();
+        let info = create(
+            dir.path().to_str().unwrap(),
+            "prepared-target-path",
+            "nested",
+        )
+        .unwrap();
+
+        let prepared =
+            prepare_remove(dir.path().to_str().unwrap(), "prepared-target-path").unwrap();
+
+        assert_eq!(prepared.target_path(), Path::new(&info.path));
+    }
+
+    #[test]
+    fn prepared_worktree_removal_exposes_missing_target_path() {
+        let dir = make_repo();
+        let info = create(
+            dir.path().to_str().unwrap(),
+            "missing-target-path",
+            "nested",
+        )
+        .unwrap();
+        fs::remove_dir_all(&info.path).unwrap();
+
+        let prepared = prepare_remove(dir.path().to_str().unwrap(), "missing-target-path").unwrap();
+
+        assert_eq!(prepared.target_path(), Path::new(&info.path));
+    }
+
+    #[test]
+    fn removal_target_appearing_after_missing_check_is_not_deleted() {
+        let dir = make_repo();
+        let info = create(
+            dir.path().to_str().unwrap(),
+            "appears-after-removal-check",
+            "nested",
+        )
+        .unwrap();
+        let prepared =
+            prepare_remove(dir.path().to_str().unwrap(), "appears-after-removal-check").unwrap();
+        fs::remove_dir_all(&info.path).unwrap();
+        let repo = Repository::open(&prepared.repo_git_dir).unwrap();
+        let worktree = repo.find_worktree(&prepared.worktree_name).unwrap();
+        let verified_target = verified_removal_target_for_finish(
+            &repo,
+            &worktree,
+            &prepared.worktree_name,
+            &prepared.target_path,
+        )
+        .unwrap();
+        assert!(verified_target.is_none());
+
+        fs::create_dir_all(&prepared.target_path).unwrap();
+        let marker = prepared.target_path.join("do-not-delete.txt");
+        fs::write(&marker, "appeared after preflight").unwrap();
+        let mut progress = WorktreeRemovalProgress::Prepared;
+        finish_preflighted_worktree_removal(
+            &repo,
+            &worktree,
+            &prepared.worktree_name,
+            &prepared.branch,
+            verified_target.as_deref(),
+            false,
+            &mut progress,
+        )
+        .unwrap();
+
+        assert!(marker.exists());
+        assert!(repo.find_worktree(&prepared.worktree_name).is_err());
+        assert_eq!(progress, WorktreeRemovalProgress::RegistrationRemoved);
+    }
+
     #[test]
     fn finish_rejects_worktree_dirtied_after_prepare() {
         let dir = make_repo();
@@ -1443,8 +1771,10 @@ mod tests {
         opts.valid(true).working_tree(true);
         wt.prune(Some(&mut opts)).unwrap();
 
-        let result = prepared.finish(true);
+        let mut progress = WorktreeRemovalProgress::Prepared;
+        let result = prepared.finish_with_progress(true, &mut progress);
         assert!(matches!(result, Err(WorktreeError::NotFound(_))));
+        assert_eq!(progress, WorktreeRemovalProgress::RegistrationRemoved);
     }
 
     #[test]

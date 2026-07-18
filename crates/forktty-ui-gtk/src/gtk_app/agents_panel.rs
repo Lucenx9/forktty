@@ -321,9 +321,15 @@ impl AgentPanelUi {
             let Some(surface_id) = agent_surface_for_row_index(row.index(), &row_targets) else {
                 return;
             };
-            if open_agent_surface(&state, surface_id, controller.as_ref()) {
-                dialog.close();
-            }
+            let state = state.clone();
+            let controller = controller.clone();
+            let dialog = dialog.clone();
+            let surface_id = surface_id.to_string();
+            glib::spawn_future_local(async move {
+                if open_agent_surface(&state, &surface_id, controller.as_ref()).await {
+                    dialog.close();
+                }
+            });
         });
         gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -428,7 +434,7 @@ pub(super) fn show_agent_panel(
     });
 }
 
-pub(super) fn open_agent_surface(
+pub(super) async fn open_agent_surface(
     state: &SocketAppState,
     surface_id: &str,
     controller: Option<&Rc<RefCell<TerminalController>>>,
@@ -447,7 +453,7 @@ pub(super) fn open_agent_surface(
         surface.workspace_id
     };
 
-    match select_workspace_with_terminal(state, &workspace_id) {
+    match select_workspace_with_terminal(state, &workspace_id).await {
         Ok(true) => {
             if let Ok(mut model) = state.model.lock() {
                 let _ = model.mark_surface_unread(surface_id, false);
@@ -663,13 +669,15 @@ fn append_agent_row(
     let dialog_for_focus = ui.dialog.clone();
     let surface_for_focus = row.surface_id.clone();
     focus.connect_clicked(move |_| {
-        if open_agent_surface(
-            &state_for_focus,
-            &surface_for_focus,
-            controller_for_focus.as_ref(),
-        ) {
-            dialog_for_focus.close();
-        }
+        let state = state_for_focus.clone();
+        let controller = controller_for_focus.clone();
+        let dialog = dialog_for_focus.clone();
+        let surface_id = surface_for_focus.clone();
+        glib::spawn_future_local(async move {
+            if open_agent_surface(&state, &surface_id, controller.as_ref()).await {
+                dialog.close();
+            }
+        });
     });
 
     let state_for_resume = ui.state.clone();

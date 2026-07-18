@@ -4,6 +4,8 @@ use std::time::Duration;
 pub const SOCKET_REQUEST_MAX_BYTES: usize = 1_048_576;
 /// Maximum size accepted by official socket clients for one JSON-RPC response.
 pub const OFFICIAL_SOCKET_RESPONSE_MAX_BYTES: usize = 64 * 1024 * 1024;
+/// Maximum notifications returned by one `notification.list` page.
+pub const SOCKET_NOTIFICATION_PAGE_MAX_ITEMS: usize = 200;
 /// Timeout used by official socket CLI clients.
 pub const OFFICIAL_SOCKET_TIMEOUT: Duration = Duration::from_secs(35);
 

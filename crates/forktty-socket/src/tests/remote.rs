@@ -51,6 +51,55 @@ async fn remote_list_reports_ssh_workspaces_and_connection_state() {
 }
 
 #[tokio::test]
+async fn runtime_present_but_not_ready_ssh_is_disconnected_in_remote_and_context_views() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(NotReadySendBackend::default());
+    let state = SocketAppState::new(
+        model,
+        backend,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+    let workspace = dispatch(
+        &state,
+        "workspace.create_ssh",
+        json!({"host": "user@example.com", "name": "prod", "workingDir": "/tmp"}),
+    )
+    .await
+    .unwrap();
+    let workspace_id = workspace["id"].as_str().unwrap();
+    let surface_id = workspace["focused_surface_id"].as_str().unwrap();
+
+    let remotes = dispatch(&state, "remote.list", json!({})).await.unwrap();
+    let remote = remotes
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|remote| remote["surface_id"] == surface_id)
+        .unwrap();
+    assert_eq!(remote["connected"], false);
+    assert_eq!(remote["cols"], 80);
+    assert!(remote["shell"].as_str().unwrap().ends_with("/ssh"));
+
+    let status = dispatch(&state, "remote.status", json!({"surface_id": surface_id}))
+        .await
+        .unwrap();
+    assert_eq!(status["connected"], false);
+
+    let context = dispatch(
+        &state,
+        "context.snapshot",
+        json!({"workspace_id": workspace_id, "tail_lines": 0}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(context["remotes"][0]["connected"], false);
+    assert_eq!(context["remotes"][0]["cols"], 80);
+}
+
+#[tokio::test]
 async fn remote_status_uses_selected_or_active_ssh_surface() {
     let (state, _backend) = test_state();
     let result = dispatch(

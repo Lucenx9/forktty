@@ -369,7 +369,7 @@ fn agent_hud_focuses_existing_agent_surface() {
         (first_surface, second_surface)
     };
 
-    assert!(open_agent_surface(&state, &second_surface, None));
+    assert!(glib::MainContext::new().block_on(open_agent_surface(&state, &second_surface, None)));
 
     let model = model.lock().unwrap();
     assert_eq!(

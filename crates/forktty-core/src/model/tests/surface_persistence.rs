@@ -73,7 +73,7 @@ fn agent_session_makes_terminal_surface_persistable() {
         42_000
     );
     let mut restored = WorkspaceModel::new();
-    restored.restore_session(data);
+    restore_model_session(&mut restored, data);
     let restored_session = restored
         .surface(&surface_id)
         .unwrap()
@@ -129,7 +129,7 @@ fn persisted_scrollback_makes_terminal_surface_persistable() {
     );
 
     let mut restored = WorkspaceModel::new();
-    restored.restore_session(data);
+    restore_model_session(&mut restored, data);
     assert_eq!(
         restored
             .surface(&surface_id)
@@ -159,7 +159,7 @@ fn terminal_surface_cwd_that_differs_from_workspace_is_persisted() {
     assert_eq!(data.surfaces[0].cwd, live_dir.path());
 
     let mut restored = WorkspaceModel::new();
-    restored.restore_session(data);
+    restore_model_session(&mut restored, data);
     assert_eq!(restored.surface(&surface_id).unwrap().cwd, live_dir.path());
 }
 

@@ -74,6 +74,10 @@ Splits are represented as recursive `PaneNode::Split { axis, children, sizes }`;
 4. If the embedding library cannot load or the Ghostty surface cannot be
    created, ForkTTY records a terminal spawn failure and does not open a
    classic-renderer fallback pane.
+   Restored agent terminals follow the same fail-closed rule: an invalid
+   persisted session ID, resume cwd, or unsupported provider records a red
+   surface status, error log, and notification and never falls back to the
+   configured shell.
 5. Socket methods and GTK actions send text, read visible/full/tail text,
    perform copy/paste/select-all/find, restart, split, focus, close, or resize
    surfaces through ForkTTY's model plus the Ghostty GTK embedding ABI.
@@ -93,7 +97,7 @@ Native session file:
 ~/.local/share/forktty/session-v2.json
 ```
 
-The native session includes workspace order, active workspace, pane tree, focused surface, each local terminal pane's last live cwd, branch, worktree metadata, generated workspace/surface id high-water marks, and opt-in bounded plain-text tails when `appearance.persistent_scrollback_lines` is greater than zero. Embedded Ghostty panes source those tails from the bounded end of full scrollback when `ghostty_gtk_surface_read_text_limited` is available, and fall back to recent visible text with older embedding libraries. It does not serialize running PTY process handles; the session file records only durable identifiers (surface ids and agent resume metadata). Process survival across a UI restart is a separate, opt-in mechanism (`general.persist_terminal_processes`) described under [PTY process persistence](#pty-process-persistence), keyed by the persisted surface id rather than by any serialized handle.
+The native session includes workspace order, active workspace, pane tree, focused surface, each local terminal pane's last live cwd, branch, worktree metadata, generated workspace/surface id high-water marks, and opt-in bounded plain-text tails when `appearance.persistent_scrollback_lines` is greater than zero. Embedded Ghostty panes source those tails from the bounded end of full scrollback when `ghostty_gtk_surface_read_text_limited` is available, and fall back to recent visible text with older embedding libraries. The current `ghostty_gtk_surface_read_text_limited_with_total_lines` ABI also reports the complete selected source line count before byte truncation, so socket snapshots keep an accurate `total_lines`. It does not serialize running PTY process handles; the session file records only durable identifiers (surface ids and agent resume metadata). Process survival across a UI restart is a separate, opt-in mechanism (`general.persist_terminal_processes`) described under [PTY process persistence](#pty-process-persistence), keyed by the persisted surface id rather than by any serialized handle.
 
 Browser panes persist their surface URL and profile ID in the same session
 model. WebKit processes, in-memory page state, and terminal PTY state are
@@ -210,11 +214,11 @@ Ghostty compatibility scope:
 | Ghostty config area | ForkTTY status |
 | --- | --- |
 | Config discovery | Supported for `~/.config/ghostty/config`, `~/.config/ghostty/config.ghostty`, recursive `config-file`, and Ghostty theme directories, with ForkTTY's regular-file and size guards. |
-| Terminal appearance | Supported for terminal font family/style/synthetic-style fallbacks, font size, font features/variations, foreground/background, cursor colors, DECSCUSR-backed cursor style defaults, selection colors/clear-on-typing/clear-on-copy/word-chars/copy-on-select, clipboard trim-trailing-spaces/codepoint-map, right-click action, scroll-to-bottom, scrollbar policy, mouse reporting/shift-capture including XTSHIFTESCAPE overrides, mouse-hide-while-typing, bold, faint, ANSI palette, named colors, short/full hex colors, `theme`, cell/text-decoration/cursor metric adjustment, image storage limit, mouse scroll multiplier, and inactive split dimming. Embedded panes follow Ghostty's bounded `scrollback-limit` budget and pack the surface in a GTK scrolled window so retained history is reachable from the UI. |
+| Terminal appearance | Supported for terminal font family/style/synthetic-style fallbacks, font size, font features/variations, foreground/background, cursor colors/blinking, DECSCUSR-backed cursor style defaults, selection colors/clear-on-typing/clear-on-copy/word-chars/copy-on-select, clipboard trim-trailing-spaces/codepoint-map, right-click action, scroll-to-bottom, scrollbar policy, mouse reporting/shift-capture including XTSHIFTESCAPE overrides, mouse-hide-while-typing, bold, faint, ANSI palette, named colors, short/full hex colors, `theme`, cell/text-decoration/cursor metric adjustment, image storage limit, mouse scroll multiplier, and inactive split dimming. Embedded panes follow Ghostty's bounded `scrollback-limit` budget and pack the surface in a GTK scrolled window so retained history is reachable from the UI. |
 | Runtime terminal state | Delegated to `libghostty-vt` for VT parsing, key/paste encoding, OSC 8 links, OSC 9/99 notifications, bracketed paste/focus mode mirrors, XTSHIFTESCAPE mouse-shift capture overrides, selection formatting, word selection, and Kitty image protocol storage/loading media plus PNG decode/placement geometry. ForkTTY snapshots Kitty placements across the GTK boundary as RGBA buffers bounded by the rendered pixel footprint, not the stored source image size. Shell startup integration uses Ghostty's upstream shell scripts when resources are available. |
 | ForkTTY-owned UI | Intentionally not read from Ghostty config. Window layout, tabs, splits, sidebar, socket automation, worktrees, agent controls, notifications UI, and session restore use ForkTTY config/session state. |
 | Ghostty GUI/window/platform options | Ignored unless ForkTTY has the same runtime concept. Examples include Ghostty keybinds, quick terminal, window decorations, titlebar/font, shell integration UI, macOS-only options, shaders, background blur/opacity, and Linux cgroup settings. |
-| Renderer parity | Terminal panes use the embedded Ghostty GTK widget and require `ghostty-gtk-embed.so`; if the library cannot load or an embedded surface cannot spawn, ForkTTY records a terminal spawn failure instead of falling back to the classic GTK/Pango/Cairo renderer. The full upstream Ghostty source is pinned at `vendor/ghostty` for the cmux-style renderer/widget integration. Upstream's current public C embedding API is macOS/iOS-only for surfaces, while the Linux `GhosttySurface` GTK widget is internal to Ghostty's GTK app runtime. ForkTTY's Ghostty fork now carries a GTK widget embedding ABI with cwd, direct command spawn, socket text-input, and visible/full text-read hooks. Embedded panes pass the requested argv plus per-surface `FORKTTY_*` environment through `ghostty_gtk_surface_new_with_working_directory_and_command` when available, avoiding typed bootstrap text in the child shell; older libraries start Ghostty's default shell in the requested cwd without ForkTTY environment injection. ForkTTY-managed embedded panes force Ghostty's `wait-after-command` behavior so clean child exits remain inspectable as `Closed` panes with restart/scrollback parity instead of closing the split immediately. Embedded panes also mirror Ghostty surface title, child-exit readiness/status (with the real exit code via `ghostty_gtk_surface_exit_code`, falling back to a neutral "Closed" on older libraries), abnormal-exit notifications, and close-request teardown into the model via GObject signals. Embedded panes reach copy/paste/select-all/find parity through `ghostty_gtk_surface_perform_action`, which performs a Ghostty keybinding action by name on the focused surface; mouse selection works natively inside the surface, and libraries lacking the symbol degrade to a logged no-op. Embedded panes also expose their child PID via `ghostty_gtk_surface_child_pid`, so listening-port discovery and the socket `surfaces` PID field reach parity. The deb and AppImage packagers invoke `scripts/ghostty-gtk-lib-probe.sh --ensure --print-path` before packaging, require the probe to build or locate a `ghostty-gtk-embed.so` with the required ABI symbols, and install it into `usr/lib`; installed builds load it via the binary RUNPATH (`$ORIGIN/../lib`) without `FORKTTY_GHOSTTY_GTK_LIB`. When `appearance.persistent_scrollback_lines` is greater than zero, embedded panes snapshot a bounded full-scrollback tail into the session and restore it through `ghostty_gtk_surface_restore_scrollback`, which feeds Ghostty's VT stream rather than the child PTY. Libraries lacking `ghostty_gtk_surface_read_text_limited` retain the safe visible-text fallback. `forktty doctor` warns about a missing embedding library because terminal panes cannot open without it. Rows 9/10/12/13/14 in `docs/ghostty-embedded-parity.md` remain deferred manual validation items. |
+| Renderer parity | Terminal panes use the embedded Ghostty GTK widget and require `ghostty-gtk-embed.so`; if the library cannot load or an embedded surface cannot spawn, ForkTTY records a terminal spawn failure instead of falling back to the classic GTK/Pango/Cairo renderer. The full upstream Ghostty source is pinned at `vendor/ghostty` for the cmux-style renderer/widget integration. Upstream's current public C embedding API is macOS/iOS-only for surfaces, while the Linux `GhosttySurface` GTK widget is internal to Ghostty's GTK app runtime. ForkTTY's Ghostty fork now carries a GTK widget embedding ABI with cwd, direct command spawn, socket text-input, and visible/full text-read hooks. Embedded panes pass the requested argv plus per-surface `FORKTTY_*` environment through `ghostty_gtk_surface_new_with_working_directory_and_command` when available, avoiding typed bootstrap text in the child shell; older libraries start Ghostty's default shell in the requested cwd without ForkTTY environment injection. ForkTTY-managed embedded panes force Ghostty's `wait-after-command` behavior so clean child exits remain inspectable as `Closed` panes with restart/scrollback parity instead of closing the split immediately. Embedded panes also mirror Ghostty surface title, child-exit readiness/status (with the real exit code via `ghostty_gtk_surface_exit_code`, falling back to a neutral "Closed" on older libraries), and abnormal-exit notifications via GObject signals. A `close-request` emitted by the Ghostty widget opens ForkTTY's Close Pane confirmation; explicit socket/API close remains noninteractive. Embedded panes reach copy/paste/select-all/find parity through `ghostty_gtk_surface_perform_action`, which performs a Ghostty keybinding action by name on the focused surface; mouse selection works natively inside the surface, and libraries lacking the symbol degrade to a logged no-op. Embedded panes also expose their child PID via `ghostty_gtk_surface_child_pid`, so listening-port discovery and the socket `surfaces` PID field reach parity. The deb and AppImage packagers invoke `scripts/ghostty-gtk-lib-probe.sh --ensure --print-path` before packaging; every invocation enters Zig's incremental build graph, verifies every mandatory ABI symbol in the resulting `ghostty-gtk-embed.so`, and installs it into `usr/lib`. Installed builds load it via the binary RUNPATH (`$ORIGIN/../lib`) without `FORKTTY_GHOSTTY_GTK_LIB`. When `appearance.persistent_scrollback_lines` is greater than zero, embedded panes snapshot a bounded full-scrollback tail into the session and restore it through `ghostty_gtk_surface_restore_scrollback`, which feeds Ghostty's VT stream rather than the child PTY. Libraries lacking `ghostty_gtk_surface_read_text_limited` retain the safe visible-text fallback. `forktty doctor` warns about a missing embedding library because terminal panes cannot open without it. Rows 9/10/12/13/14 in `docs/ghostty-embedded-parity.md` remain deferred manual validation items. |
 
 ## Updates
 
@@ -246,11 +250,18 @@ instead. External AppImage managers such as Gear Lever can continue to launch
 the same path; they may rescan their own metadata separately.
 
 Packaged AppImages set `LD_LIBRARY_PATH` to ForkTTY's private `usr/lib`
-runtime first. In `auto` mode they use the host GTK/libadwaita stack when
-`ldconfig` reports GTK4 and libadwaita, and add the bundled GTK/libadwaita
-fallback only when those host libraries are absent. The runtime choice can be
-forced for troubleshooting with `FORKTTY_APPIMAGE_GTK_RUNTIME=bundled`, `host`,
-or `auto`.
+runtime first. In `auto` mode AppRun performs an eager loader compatibility
+probe with the effective loader environment, preloading
+`ghostty-gtk-embed.so` with immediate binding while starting the GTK-linked
+ForkTTY binary. Host GTK/libadwaita is selected only when both the binary and
+embedding library load; otherwise AppRun adds the bundled GTK/libadwaita
+fallback. Embedded terminal commands first enter the already-loaded
+`appimage-child-exec` helper, which applies the intended environment delta and
+removes AppImage loader/runtime entries immediately before executing the real
+command. Ghostty's packaged shell integration and `TERM=xterm-ghostty` remain
+present in that intended child environment. The runtime choice can be forced
+for troubleshooting with `FORKTTY_APPIMAGE_GTK_RUNTIME=bundled`, `host`, or
+`auto`.
 
 ## Telemetry
 
@@ -302,11 +313,28 @@ can select another absolute path.
 {"id":"1","ok":true,"result":[{"id":"...","name":"..."}]}
 ```
 
-Request lines are capped at 1 MiB. The server validates that the socket and its
-parent are owned by the current user, refuses unsafe existing paths, and applies
-bounded reads to terminal text and event replay. One request yields one response,
-except `events.subscribe`, which upgrades the connection to a replay-plus-live
-event stream.
+Request lines are capped at 1 MiB. Official clients accept response lines up to
+64 MiB, including the terminating newline. Before writing a normal JSON-RPC
+response, the server measures its compact encoded form; an oversized response
+is replaced with a compact `response_too_large` error carrying the same request
+id. The server validates that the socket and its parent are owned by the current
+user, refuses unsafe existing paths, and applies bounded reads to terminal text
+and event replay. One request yields one response, except `events.subscribe`,
+which upgrades the connection to a replay-plus-live event stream.
+
+Official socket clients and existing-socket inspection use the same
+deadline-bounded nonblocking AF_UNIX connector. Linux `EAGAIN` from a full
+accept backlog is retried on a newly created descriptor until the deadline;
+the resulting timeout classifies an existing socket as occupied/foreign rather
+than stale, so its inode is never removed. Successful streams are restored to
+blocking mode before request or probe I/O.
+
+GTK shutdown is cooperative and ordered. The first close request keeps the UI
+alive, stops new socket dispatch, and waits without a fixed deadline for requests
+that already entered dispatch and for the socket runtime to drop. Finalization
+then snapshots bounded embedded-terminal scrollback, synchronizes live surface
+working directories, saves the session, performs configured PTY-persistence
+cleanup, marks the UI dead, and issues the final window close.
 
 Method stability tiers are tracked in [docs/socket-api.md](docs/socket-api.md).
 The core contract is deliberately process-neutral; agent methods are a thin
@@ -379,6 +407,41 @@ an explicit `forktty hooks setup` action, and are never installed or updated
 automatically at GTK startup. Hook setup writes atomically, preserves unrelated
 entries, and supports dry-run and targeted removal.
 
+The managed event sets contain 10 Codex events, 29 Claude events (26 in the
+default lifecycle profile and 29 with `--full`), 3 Antigravity events, and 11
+OpenCode plugin events. The Claude lifecycle profile excludes only
+`PreToolUse`, `PostToolUse`, and `PostToolUseFailure`; `PostToolBatch` remains
+installed for prompt-result correlation. Claude `SessionStart` workspace
+enrichment is atomic: it requires nonblank workspace and surface IDs plus an
+absolute socket path from the same ForkTTY child environment. If any provenance
+component is absent or invalid, the hook returns the exact continue response
+without reading stdin or issuing a socket request.
+
+Persisted `Suspended` is a lifecycle tombstone. Hook events arriving after
+hibernate are accepted as inert: they do not mutate lifecycle, attention,
+metadata, prompt state, or the per-session event-order watermark. Only an
+explicit resume can replace the suspended state. Prompt requests are correlated
+privately by provider, session, kind, prompt ID, target, and event order.
+Accepted results keep only the matching in-app notification as read history,
+close its desktop notification, and leave stale or unrelated prompts untouched;
+session end, target remap, and surface/workspace removal retire only affected
+correlations.
+
+`forktty hooks doctor <agent>` remains a local, read-only version-1 report. Its
+additive `installationCheck` regenerates the provider's expected managed assets
+through the canonical setup planner and verifies complete config/plugin content,
+one usable recorded launcher, and every Antigravity wrapper's exact content,
+regular-file type, and executable bit. The top-level `ok` requires
+`installationCheck.ok`; wrapper-only, missing-group, malformed, partial,
+modified, or non-executable installations are unhealthy.
+
+`remote.list`, `remote.status`, and the `context.snapshot` remote rows report
+`connected: true` only when the terminal backend says the SSH surface is ready.
+A runtime inventory entry that is still starting or no longer ready reports
+`connected: false`; its last available `pid`, dimensions, and shell metadata may
+remain present for diagnosis. This is local terminal-I/O readiness, not an
+independent SSH heartbeat, network probe, or authentication check.
+
 `forktty remote-helper hello` is a no-socket stdio handshake for SSH discovery.
 `forktty remote-helper pty -- <program> [args...]` starts the argv command in a
 PTY and relays raw stdin/stdout; it does not open a listener, reconnect, resize,
@@ -423,6 +486,36 @@ Implemented operations:
 
 Worktree and hook paths are canonicalized. Hook execution is limited to `.forktty/setup` and `.forktty/teardown` inside verified worktrees.
 
+The modeled worktree identity is the exact `(worktree_name,
+canonical_worktree_path)` pair. After Create or Attach returns a verified
+canonical path, ForkTTY selects and refreshes an existing exact match instead
+of allocating another workspace or surface. A repeated Create, or
+Create followed by Attach for the same identity, therefore returns the same
+workspace ID while preserving its user-facing display name. Equal worktree
+names at different canonical paths remain distinct. Session repair collapses
+only exact, resolvable duplicate identities (preferring the active record,
+otherwise the earliest ordered record); unresolved paths are not deduplicated.
+
+One running ForkTTY process coordinates GTK and socket worktree operations
+through a shared reader/writer transaction boundary: discovery, List, and
+Status may overlap, while Create, Attach, Remove, and Merge serialize through
+commit or complete rollback. This guarantee is process-local; it is not a
+cross-process or distributed lock against another application process or an
+independent Git command.
+
+Removal uses its prepared verified target path to match the exact modeled
+workspace. Before terminal close, every target surface ID is registered as
+auto-spawn suppressed, so GTK reconciliation cannot recreate a terminal while
+the model still describes the workspace. Suppression remains active through
+either successful filesystem removal plus model commit or the complete rollback
+restoration attempt. A partial close attempts to restore the surfaces already
+closed; a filesystem finish failure also attempts to restore the prior active
+selection and runtime surfaces. Removing the final workspace stages a
+replacement before destructive close and attempts to remove that replacement
+again on rollback. If a rollback spawn fails, ForkTTY records a terminal error
+status before releasing suppression; that status continues to block automatic
+respawn.
+
 ## Notifications
 
 Notification sources:
@@ -446,6 +539,26 @@ Notification sources:
 
 Notifications update in-app unread state and may dispatch through `notify-rust` and `notification_command`. Workspace/surface-targeted desktop notifications register a best-effort default `Open` action, using the freedesktop `default` action key, that argv-executes the current ForkTTY binary to focus the target surface or workspace; global notifications remain passive. Custom commands are argv-executed, not `sh -c`; title/body are passed through environment variables, and terminal-originated OSC 99 `f`/`t` metadata is passed as `FORKTTY_NOTIFICATION_TERMINAL_APP` plus JSON array `FORKTTY_NOTIFICATION_TERMINAL_TYPES_JSON`. `blocked_terminal_apps` and `blocked_terminal_types` are exact string match filters for terminal-originated OSC 99 `f`/`t` metadata before the notification is stored or dispatched. OSC 99 notification identifiers are tracked and echoed only when they use the protocol identifier character set (`A-Z`, `a-z`, `0-9`, `_`, `-`, `+`, `.`); unsafe identifiers are treated as untracked notification payloads or ignored for reply-only actions. Unknown OSC 99 payload types are ignored so future protocol extensions do not surface as terminal status noise. OSC 99 binary icons are rendered in-app when GTK can decode them, after `n=` icon names and `f=` application-name icon fallback; desktop binary icons are materialized as bounded files under `$XDG_RUNTIME_DIR/forktty-notification-icons` and removed when the tracked desktop notification is replaced, closed, or evicted.
 
+`notification.list` returns one retained-history page in oldest-to-newest order.
+`limit` is optional, defaults to 200, and must be an integer from 1 through 200.
+Without `before_id`, the page contains the newest retained items; `before_id`
+is an exclusive cursor and returns the older page immediately before that
+notification. Unknown cursors are rejected. Updating an existing notification
+moves it to the newest position without changing its id, so paging follows
+recency rather than original insertion position. `notification.create`,
+`notification.list`, and `context.snapshot` all use the same socket projection:
+terminal metadata remains available, but binary `terminal_metadata.icon_data`
+is omitted. Hook prompt correlation is internal runtime state kept outside the
+public `NotificationItem` projection. Provider result hooks resolve only an
+unread prompt with the same provider, session, kind, target, and correlation id;
+providers without a result correlation id resolve only the newest compatible
+prompt older than the accepted result event. Ignored stale events do not change
+notification or desktop state. Accepted session cleanup, target remap, and target
+removal mark affected retained prompt history read, clear its correlation, close
+the matching desktop notification id, and recompute attention from remaining
+notifications and terminal output. The CLI exposes one-page access as `forktty notifications
+[--limit <n>] [--before-id <id>]` and never aggregates pages automatically.
+
 ## Security Constraints
 
 - Local Linux desktop threat model; same-user processes are not treated as hostile isolation boundaries.
@@ -456,8 +569,10 @@ Notifications update in-app unread state and may dispatch through `notify-rust` 
   and optional PR lookup can make user-directed network requests.
 - Owner-only Unix socket permissions and private runtime directory validation.
 - 1 MiB bounds for socket requests, config, and session files.
-- Hook session-to-surface routing cache is local process memory only, capped at
-  256 entries, and evicted on session-end or surface close. Per-surface agent
+- Hook session-to-surface routing and prompt-correlation state is local process
+  memory only. The routing cache is capped at 256 entries; prompt correlations
+  live in a private map keyed by retained notification id. Both are evicted as
+  applicable on accepted session-end, target remap, or surface/workspace removal. Per-surface agent
   session ids and hook cwd values learned from hooks are persisted as resume
   metadata for explicit and restore-time provider resume. Codex cwd fallback
   reads only local `session_meta` JSONL records under `$CODEX_HOME/sessions` or

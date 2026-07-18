@@ -7,14 +7,16 @@ use super::super::integration_files::{
 use super::super::{trimmed_env, CliError, CliResult};
 use super::{
     AgentSpec, HookEntrySpec, HookInstallKind, HookSetupProfile, AGENTS,
-    CLAUDE_HIGH_FREQUENCY_HOOK_ENTRIES, DEFAULT_HOOK_SETUP_AGENT_KEYS, FORKTTY_HOOK_TAG,
+    CLAUDE_PER_TOOL_HOOK_ENTRIES, DEFAULT_HOOK_SETUP_AGENT_KEYS, FORKTTY_HOOK_TAG,
     HOOK_CONTINUE_JSON, LEGACY_GEMINI_HOOK_AGENT, OPENCODE_HOOK_TIMEOUT_MS,
     OPENCODE_MAX_INPUT_BYTES, OPENCODE_PLUGIN_TAG,
 };
 use serde_json::{json, Map, Value};
-use std::fs::{self, File};
+use std::ffi::CString;
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 pub(in crate::socket_cli) struct HookSetupPlan {
@@ -40,6 +42,42 @@ pub(in crate::socket_cli) struct HookRemovePlan {
     pub(in crate::socket_cli) action: HookRemoveAction,
     /// ForkTTY-owned generated scripts directory deleted on removal.
     pub(in crate::socket_cli) scripts_dir: Option<PathBuf>,
+}
+
+pub(in crate::socket_cli) fn is_effectively_executable_file(path: &Path) -> bool {
+    if !path.is_absolute() || !fs::metadata(path).is_ok_and(|metadata| metadata.is_file()) {
+        return false;
+    }
+    let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `path` is a valid NUL-terminated pathname. AT_EACCESS asks the
+    // kernel to apply the process's effective credentials and normal ACL/mode
+    // selection instead of treating any execute bit as sufficient.
+    unsafe { libc::faccessat(libc::AT_FDCWD, path.as_ptr(), libc::X_OK, libc::AT_EACCESS) == 0 }
+}
+
+pub(in crate::socket_cli) fn read_regular_managed_script(path: &Path) -> Option<String> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if !metadata.file_type().is_file() {
+        return None;
+    }
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut content = String::new();
+    file.read_to_string(&mut content).ok()?;
+    Some(content)
+}
+
+fn managed_script_is_current(path: &Path, expected_content: &str) -> bool {
+    is_effectively_executable_file(path)
+        && read_regular_managed_script(path).as_deref() == Some(expected_content)
 }
 
 pub(in crate::socket_cli) fn build_hook_setup_plan(
@@ -97,9 +135,9 @@ pub(in crate::socket_cli) fn build_hook_setup_plan_with_profile(
                     )
                 })
                 .collect::<Vec<_>>();
-            let scripts_changed = scripts.iter().any(|(path, content)| {
-                fs::read_to_string(path).ok().as_deref() != Some(content.as_str())
-            });
+            let scripts_changed = scripts
+                .iter()
+                .any(|(path, content)| !managed_script_is_current(path, content));
             Ok(HookSetupPlan {
                 spec,
                 config_path,
@@ -325,6 +363,7 @@ pub(in crate::socket_cli) fn shell_quote(value: &str) -> String {
 
 pub(in crate::socket_cli) fn build_hook_entry(
     spec: &AgentSpec,
+    event_name: &str,
     command: String,
     timeout: u64,
 ) -> Value {
@@ -342,10 +381,18 @@ pub(in crate::socket_cli) fn build_hook_entry(
         "forkttySource".to_string(),
         Value::String(FORKTTY_HOOK_TAG.to_string()),
     );
-    if let Some(matcher) = spec.matcher {
+    if let Some(matcher) = hook_event_matcher(spec, event_name) {
         entry.insert("matcher".to_string(), Value::String(matcher.to_string()));
     }
     Value::Object(entry)
+}
+
+fn hook_event_matcher(spec: &AgentSpec, event_name: &str) -> Option<&'static str> {
+    if spec.key == "claude" && event_name == "PostToolBatch" {
+        None
+    } else {
+        spec.matcher
+    }
 }
 
 pub(in crate::socket_cli) fn merge_hook_config(
@@ -383,7 +430,12 @@ pub(in crate::socket_cli) fn merge_hook_config_with_profile(
         .filter(|entry| hook_entry_enabled_for_setup(spec, profile, entry))
     {
         let command = build_hook_shell_command(launcher, spec, entry_spec.hook_event_name);
-        let next_entry = build_hook_entry(spec, command.clone(), entry_spec.timeout);
+        let next_entry = build_hook_entry(
+            spec,
+            entry_spec.event_name,
+            command.clone(),
+            entry_spec.timeout,
+        );
         let existing_entries = hooks
             .get(entry_spec.event_name)
             .and_then(Value::as_array)
@@ -456,7 +508,7 @@ pub(in crate::socket_cli) fn hook_entry_enabled_for_setup(
 ) -> bool {
     !(spec.key == "claude"
         && profile == HookSetupProfile::Lifecycle
-        && is_claude_high_frequency_event(entry_spec.event_name))
+        && is_claude_per_tool_event(entry_spec.event_name))
 }
 
 pub(in crate::socket_cli) fn hook_entry_removed_by_setup(
@@ -466,13 +518,11 @@ pub(in crate::socket_cli) fn hook_entry_removed_by_setup(
 ) -> bool {
     spec.key == "claude"
         && profile == HookSetupProfile::Lifecycle
-        && is_claude_high_frequency_event(entry_spec.event_name)
+        && is_claude_per_tool_event(entry_spec.event_name)
 }
 
-pub(in crate::socket_cli) fn is_claude_high_frequency_event(event_name: &str) -> bool {
-    CLAUDE_HIGH_FREQUENCY_HOOK_ENTRIES
-        .iter()
-        .any(|entry| entry.event_name == event_name)
+pub(in crate::socket_cli) fn is_claude_per_tool_event(event_name: &str) -> bool {
+    CLAUDE_PER_TOOL_HOOK_ENTRIES.contains(&event_name)
 }
 
 pub(in crate::socket_cli) fn hook_setup_profile_name(profile: HookSetupProfile) -> &'static str {

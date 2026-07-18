@@ -4,11 +4,15 @@ use std::collections::BTreeSet;
 
 use crate::agents::{agent_metadata_aliases, AgentKind};
 
-use super::hook_status::{merge_hook_metadata, should_ignore_hook_status};
+use super::hook_status::{
+    merge_hook_metadata, should_ignore_hook_status,
+    should_ignore_hook_status_after_serialized_ordering,
+};
 use super::{
-    AgentSession, AgentSessionLifecycle, LogEntry, LogLevel, NotificationItem, NotificationKind,
-    ProgressEntry, StatusEntry, StatusHookMetadata, Surface, SurfaceId,
-    TerminalNotificationMetadata, WorkspaceId, WorkspaceModel,
+    AgentSession, AgentSessionLifecycle, HookPromptMetadata, HookPromptResolution, LogEntry,
+    LogLevel, NotificationCreation, NotificationItem, NotificationKind, ProgressEntry, StatusEntry,
+    StatusHookMetadata, Surface, SurfaceId, TerminalNotificationMetadata, WorkspaceId,
+    WorkspaceModel,
 };
 
 const MAX_LOG_ENTRIES: usize = 200;
@@ -24,6 +28,12 @@ pub(super) const MAX_NOTIFICATIONS: usize = 1_000;
 /// are already capped. When the cap is exceeded the oldest entry is dropped.
 pub(super) const MAX_STATUS_ENTRIES: usize = 256;
 pub(super) const MAX_PROGRESS_ENTRIES: usize = 256;
+
+#[derive(Clone, Copy)]
+enum HookStatusOrdering {
+    CompareInModel,
+    AlreadySerialized,
+}
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ClearedAgentMetadata {
@@ -84,10 +94,115 @@ impl WorkspaceModel {
         workspace_id: Option<WorkspaceId>,
         surface_id: Option<SurfaceId>,
     ) -> NotificationItem {
+        self.create_notification_with_evictions(title, body, kind, workspace_id, surface_id)
+            .notification
+    }
+
+    pub fn create_notification_with_evictions(
+        &mut self,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        kind: NotificationKind,
+        workspace_id: Option<WorkspaceId>,
+        surface_id: Option<SurfaceId>,
+    ) -> NotificationCreation {
+        self.create_notification_with_hook_prompt(title, body, kind, workspace_id, surface_id, None)
+    }
+
+    pub fn create_hook_prompt_notification(
+        &mut self,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        kind: NotificationKind,
+        workspace_id: Option<WorkspaceId>,
+        surface_id: Option<SurfaceId>,
+        hook_prompt: HookPromptMetadata,
+    ) -> NotificationItem {
+        self.create_hook_prompt_notification_with_evictions(
+            title,
+            body,
+            kind,
+            workspace_id,
+            surface_id,
+            hook_prompt,
+        )
+        .notification
+    }
+
+    pub fn create_hook_prompt_notification_with_evictions(
+        &mut self,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        kind: NotificationKind,
+        workspace_id: Option<WorkspaceId>,
+        surface_id: Option<SurfaceId>,
+        hook_prompt: HookPromptMetadata,
+    ) -> NotificationCreation {
+        self.create_notification_with_hook_prompt(
+            title,
+            body,
+            kind,
+            workspace_id,
+            surface_id,
+            Some(hook_prompt),
+        )
+    }
+
+    fn create_notification_with_hook_prompt(
+        &mut self,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        kind: NotificationKind,
+        workspace_id: Option<WorkspaceId>,
+        surface_id: Option<SurfaceId>,
+        hook_prompt: Option<HookPromptMetadata>,
+    ) -> NotificationCreation {
+        let title = title.into();
+        let body = body.into();
+        let existing = hook_prompt.as_ref().and_then(|prompt| {
+            self.notifications.iter().position(|notification| {
+                notification.workspace_id == workspace_id
+                    && notification.surface_id == surface_id
+                    && self
+                        .hook_prompt_correlations
+                        .get(&notification.id)
+                        .is_some_and(|existing| {
+                            existing.id == prompt.id
+                                && existing.provider == prompt.provider
+                                && existing.session_id == prompt.session_id
+                                && existing.kind == prompt.kind
+                                && existing.correlation_id == prompt.correlation_id
+                        })
+            })
+        });
+        if let Some(index) = existing {
+            let mut item = self.notifications.remove(index);
+            item.title = title;
+            item.body = body;
+            item.kind = kind;
+            item.created_at_ms = super::now_ms().max(item.created_at_ms.saturating_add(1));
+            item.read = false;
+            item.workspace_id = workspace_id;
+            item.surface_id = surface_id;
+            item.terminal_metadata = None;
+            if let Some(hook_prompt) = hook_prompt {
+                self.hook_prompt_correlations
+                    .insert(item.id.clone(), hook_prompt);
+            }
+            self.mark_notification_target_unread(
+                item.workspace_id.as_deref(),
+                item.surface_id.as_deref(),
+            );
+            self.notifications.push(item.clone());
+            return NotificationCreation {
+                notification: item,
+                evicted_desktop_notification_ids: Vec::new(),
+            };
+        }
         let item = NotificationItem {
             id: self.next_notification_id(),
-            title: title.into(),
-            body: body.into(),
+            title,
+            body,
             kind,
             created_at_ms: super::now_ms(),
             read: false,
@@ -95,16 +210,34 @@ impl WorkspaceModel {
             surface_id,
             terminal_metadata: None,
         };
+        if let Some(hook_prompt) = hook_prompt {
+            self.hook_prompt_correlations
+                .insert(item.id.clone(), hook_prompt);
+        }
         self.mark_notification_target_unread(
             item.workspace_id.as_deref(),
             item.surface_id.as_deref(),
         );
         self.notifications.push(item.clone());
-        if self.notifications.len() > MAX_NOTIFICATIONS {
+        let evicted_desktop_notification_ids = if self.notifications.len() > MAX_NOTIFICATIONS {
             let overflow = self.notifications.len() - MAX_NOTIFICATIONS;
-            self.notifications.drain(0..overflow);
+            let evicted_desktop_notification_ids = self
+                .notifications
+                .drain(0..overflow)
+                .map(|notification| notification.id)
+                .collect::<Vec<_>>();
+            for notification_id in &evicted_desktop_notification_ids {
+                self.hook_prompt_correlations.remove(notification_id);
+            }
+            self.recompute_notification_attention();
+            evicted_desktop_notification_ids
+        } else {
+            Vec::new()
+        };
+        NotificationCreation {
+            notification: item,
+            evicted_desktop_notification_ids,
         }
-        item
     }
 
     pub fn update_notification(
@@ -118,25 +251,42 @@ impl WorkspaceModel {
             .notifications
             .iter()
             .position(|notification| notification.id == notification_id)?;
-        {
-            let notification = &mut self.notifications[index];
-            notification.title = title.into();
-            notification.body = body.into();
-            notification.kind = kind;
-            notification.created_at_ms =
-                super::now_ms().max(notification.created_at_ms.saturating_add(1));
-            notification.read = false;
-        }
-        let item = self.notifications[index].clone();
+        let mut item = self.notifications.remove(index);
+        item.title = title.into();
+        item.body = body.into();
+        item.kind = kind;
+        item.created_at_ms = super::now_ms().max(item.created_at_ms.saturating_add(1));
+        item.read = false;
         self.mark_notification_target_unread(
             item.workspace_id.as_deref(),
             item.surface_id.as_deref(),
         );
+        self.notifications.push(item.clone());
         Some(item)
     }
 
     pub fn list_notifications(&self) -> Vec<NotificationItem> {
         self.notifications.clone()
+    }
+
+    /// Borrows one notification page in chronological order.
+    ///
+    /// `before_id` is an exclusive cursor. A missing cursor selects the newest
+    /// entries, while an ID that is no longer retained returns `None`.
+    pub fn notification_page(
+        &self,
+        limit: usize,
+        before_id: Option<&str>,
+    ) -> Option<&[NotificationItem]> {
+        let end = match before_id {
+            Some(before_id) => self
+                .notifications
+                .iter()
+                .position(|notification| notification.id == before_id)?,
+            None => self.notifications.len(),
+        };
+        let start = end.saturating_sub(limit);
+        Some(&self.notifications[start..end])
     }
 
     pub fn set_notification_terminal_metadata(
@@ -172,13 +322,100 @@ impl WorkspaceModel {
             .retain(|notification| notification.id != notification_id);
         let removed = self.notifications.len() != before;
         if removed {
+            self.hook_prompt_correlations.remove(notification_id);
             self.recompute_notification_attention();
         }
         removed
     }
 
+    pub fn resolve_hook_prompt(
+        &mut self,
+        resolution: &HookPromptResolution,
+    ) -> Option<NotificationItem> {
+        let index = self
+            .notifications
+            .iter()
+            .enumerate()
+            .filter_map(|(index, notification)| {
+                let prompt = self.hook_prompt_correlations.get(&notification.id)?;
+                let matches_target = notification.workspace_id == resolution.workspace_id
+                    && notification.surface_id == resolution.surface_id;
+                let matches_identity = prompt.provider == resolution.provider
+                    && prompt.session_id == resolution.session_id
+                    && prompt.kind == resolution.kind;
+                let matches_correlation = prompt.event_order <= resolution.event_order
+                    && resolution
+                        .correlation_id
+                        .as_ref()
+                        .is_none_or(|correlation_id| {
+                            prompt.correlation_id.as_ref() == Some(correlation_id)
+                        });
+                (matches_target && matches_identity && matches_correlation)
+                    .then_some((index, prompt.event_order))
+            })
+            .max_by_key(|(_, event_order)| *event_order)
+            .map(|(index, _)| index)?;
+        let resolved = {
+            let notification = &mut self.notifications[index];
+            notification.read = true;
+            notification.clone()
+        };
+        self.hook_prompt_correlations.remove(&resolved.id);
+        self.recompute_notification_attention();
+        Some(resolved)
+    }
+
+    pub fn evict_hook_prompt_correlations_for_surfaces(
+        &mut self,
+        surface_ids: &[SurfaceId],
+    ) -> Vec<String> {
+        let surface_ids = surface_ids.iter().collect::<BTreeSet<_>>();
+        self.evict_hook_prompt_correlations_matching(|notification, _| {
+            notification
+                .surface_id
+                .as_ref()
+                .is_some_and(|surface_id| surface_ids.contains(surface_id))
+        })
+    }
+
+    pub fn evict_hook_prompt_correlations_for_session_target(
+        &mut self,
+        provider: &str,
+        session_id: &str,
+        surface_id: &str,
+    ) -> Vec<String> {
+        self.evict_hook_prompt_correlations_matching(|notification, prompt| {
+            notification.surface_id.as_deref() == Some(surface_id)
+                && prompt.provider == provider
+                && prompt.session_id == session_id
+        })
+    }
+
+    fn evict_hook_prompt_correlations_matching(
+        &mut self,
+        mut should_evict: impl FnMut(&NotificationItem, &HookPromptMetadata) -> bool,
+    ) -> Vec<String> {
+        let mut evicted_ids = Vec::new();
+        for notification in &mut self.notifications {
+            let evict = self
+                .hook_prompt_correlations
+                .get(&notification.id)
+                .is_some_and(|prompt| should_evict(notification, prompt));
+            if evict {
+                notification.read = true;
+                evicted_ids.push(notification.id.clone());
+            }
+        }
+        for notification_id in &evicted_ids {
+            self.hook_prompt_correlations.remove(notification_id);
+        }
+        self.recompute_notification_attention();
+        evicted_ids
+    }
+
     pub fn clear_notifications(&mut self) {
         self.notifications.clear();
+        self.hook_prompt_correlations.clear();
         self.recompute_notification_attention();
     }
 
@@ -234,6 +471,48 @@ impl WorkspaceModel {
         color: Option<String>,
         hook: Option<StatusHookMetadata>,
     ) -> Option<(StatusEntry, bool)> {
+        self.set_status_with_hook_metadata_applied_ordering(
+            workspace_id,
+            key,
+            label,
+            value,
+            color,
+            hook,
+            HookStatusOrdering::CompareInModel,
+        )
+    }
+
+    pub fn set_status_with_hook_metadata_applied_after_serialized_ordering(
+        &mut self,
+        workspace_id: &str,
+        key: impl Into<String>,
+        label: impl Into<String>,
+        value: impl Into<String>,
+        color: Option<String>,
+        hook: Option<StatusHookMetadata>,
+    ) -> Option<(StatusEntry, bool)> {
+        self.set_status_with_hook_metadata_applied_ordering(
+            workspace_id,
+            key,
+            label,
+            value,
+            color,
+            hook,
+            HookStatusOrdering::AlreadySerialized,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn set_status_with_hook_metadata_applied_ordering(
+        &mut self,
+        workspace_id: &str,
+        key: impl Into<String>,
+        label: impl Into<String>,
+        value: impl Into<String>,
+        color: Option<String>,
+        hook: Option<StatusHookMetadata>,
+        ordering: HookStatusOrdering,
+    ) -> Option<(StatusEntry, bool)> {
         if !self.workspaces.contains_key(workspace_id) {
             return None;
         }
@@ -248,7 +527,15 @@ impl WorkspaceModel {
                 .status_hooks
                 .get(workspace_id)
                 .and_then(|hooks| hooks.get(&entry.key));
-            if should_ignore_hook_status(current_hook, &hook) {
+            let ignored = match ordering {
+                HookStatusOrdering::CompareInModel => {
+                    should_ignore_hook_status(current_hook, &hook)
+                }
+                HookStatusOrdering::AlreadySerialized => {
+                    should_ignore_hook_status_after_serialized_ordering(current_hook, &hook)
+                }
+            };
+            if ignored {
                 return self
                     .statuses
                     .get(workspace_id)
@@ -333,6 +620,35 @@ impl WorkspaceModel {
         key: Option<&str>,
         hook: Option<StatusHookMetadata>,
     ) -> bool {
+        self.clear_status_with_hook_metadata_ordering(
+            workspace_id,
+            key,
+            hook,
+            HookStatusOrdering::CompareInModel,
+        )
+    }
+
+    pub fn clear_status_with_hook_metadata_after_serialized_ordering(
+        &mut self,
+        workspace_id: &str,
+        key: Option<&str>,
+        hook: Option<StatusHookMetadata>,
+    ) -> bool {
+        self.clear_status_with_hook_metadata_ordering(
+            workspace_id,
+            key,
+            hook,
+            HookStatusOrdering::AlreadySerialized,
+        )
+    }
+
+    fn clear_status_with_hook_metadata_ordering(
+        &mut self,
+        workspace_id: &str,
+        key: Option<&str>,
+        hook: Option<StatusHookMetadata>,
+        ordering: HookStatusOrdering,
+    ) -> bool {
         if !self.workspaces.contains_key(workspace_id) {
             return false;
         }
@@ -342,7 +658,15 @@ impl WorkspaceModel {
                     .status_hooks
                     .get(workspace_id)
                     .and_then(|hooks| hooks.get(key));
-                if should_ignore_hook_status(current_hook, &hook) {
+                let ignored = match ordering {
+                    HookStatusOrdering::CompareInModel => {
+                        should_ignore_hook_status(current_hook, &hook)
+                    }
+                    HookStatusOrdering::AlreadySerialized => {
+                        should_ignore_hook_status_after_serialized_ordering(current_hook, &hook)
+                    }
+                };
+                if ignored {
                     return true;
                 }
                 let next_hook = merge_hook_metadata(current_hook, hook);

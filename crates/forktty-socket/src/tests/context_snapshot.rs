@@ -238,6 +238,14 @@ async fn context_snapshot_bounds_notifications_without_hiding_prompt_risk() {
         notifications.last().unwrap()["terminal_metadata"]["icon_cache_id"],
         "cached-icon"
     );
+    let notification_page = dispatch(&state, "notification.list", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(
+        notifications.last().unwrap(),
+        notification_page.as_array().unwrap().last().unwrap(),
+        "context snapshots and notification.list must share the socket projection"
+    );
     assert!(snapshot["risk_flags"]
         .as_array()
         .unwrap()

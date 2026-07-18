@@ -1,4 +1,5 @@
 use super::*;
+use crate::socket_cli::integration_files::stable_hook_launcher_path;
 
 #[test]
 fn hook_setup_writes_all_agent_configs_and_is_idempotent() {
@@ -43,6 +44,7 @@ fn hook_setup_writes_all_agent_configs_and_is_idempotent() {
                 "PermissionRequest",
                 "SubagentStart",
                 "SubagentStop",
+                "PostToolBatch",
                 "PreCompact",
                 "PostCompact",
                 "StopFailure",
@@ -50,12 +52,7 @@ fn hook_setup_writes_all_agent_configs_and_is_idempotent() {
             ] {
                 assert!(claude["hooks"][event].is_array(), "missing {event}");
             }
-            for event in [
-                "PreToolUse",
-                "PostToolUse",
-                "PostToolUseFailure",
-                "PostToolBatch",
-            ] {
+            for event in ["PreToolUse", "PostToolUse", "PostToolUseFailure"] {
                 assert!(
                     claude["hooks"].get(event).is_none(),
                     "default Claude setup should omit {event}"
@@ -89,6 +86,43 @@ fn hook_setup_writes_all_agent_configs_and_is_idempotent() {
             assert_eq!(backup_count(&codex_home, "hooks.json.bak-"), 0);
         },
     );
+}
+
+#[test]
+fn antigravity_setup_repairs_wrapper_type_and_permissions() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let home_s = home.display().to_string();
+
+    with_env(&[("HOME", Some(&home_s))], || {
+        let context = test_context();
+        handle_hooks_setup(&context, strings(&["antigravity"])).unwrap();
+        let spec = agent_spec("antigravity").unwrap();
+        let launcher = stable_hook_launcher_path().unwrap();
+        let plan = build_hook_setup_plan(spec, &launcher).unwrap();
+        let wrapper = plan.scripts[0].0.clone();
+        let expected_content = plan.scripts[0].1.clone();
+
+        fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o644)).unwrap();
+        handle_hooks_setup(&context, strings(&["antigravity"])).unwrap();
+        let metadata = fs::symlink_metadata(&wrapper).unwrap();
+        assert!(metadata.file_type().is_file());
+        assert_eq!(metadata.permissions().mode() & 0o700, 0o700);
+        assert_eq!(fs::read_to_string(&wrapper).unwrap(), expected_content);
+
+        let symlink_target = dir.path().join("exact-wrapper-target");
+        fs::write(&symlink_target, &expected_content).unwrap();
+        fs::set_permissions(&symlink_target, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::remove_file(&wrapper).unwrap();
+        std::os::unix::fs::symlink(&symlink_target, &wrapper).unwrap();
+
+        handle_hooks_setup(&context, strings(&["antigravity"])).unwrap();
+        let metadata = fs::symlink_metadata(&wrapper).unwrap();
+        assert!(metadata.file_type().is_file());
+        assert!(!metadata.file_type().is_symlink());
+        assert_eq!(metadata.permissions().mode() & 0o700, 0o700);
+        assert_eq!(fs::read_to_string(&wrapper).unwrap(), expected_content);
+    });
 }
 
 #[test]
@@ -207,6 +241,7 @@ fn claude_hook_setup_profiles_migrate_and_remove() {
             let lifecycle = read_json(&claude_path);
             assert!(lifecycle["hooks"]["SessionStart"].is_array());
             assert!(lifecycle["hooks"]["PermissionRequest"].is_array());
+            assert!(lifecycle["hooks"]["PostToolBatch"].is_array());
             assert!(lifecycle["hooks"].get("PreToolUse").is_none());
             assert_eq!(describe_claude_installed_profile(&claude_path), "lifecycle");
 
@@ -230,12 +265,8 @@ fn claude_hook_setup_profiles_migrate_and_remove() {
             let migrated = read_json(&claude_path);
             assert!(migrated["hooks"]["SessionStart"].is_array());
             assert!(migrated["hooks"]["PermissionRequest"].is_array());
-            for event in [
-                "PreToolUse",
-                "PostToolUse",
-                "PostToolUseFailure",
-                "PostToolBatch",
-            ] {
+            assert!(migrated["hooks"]["PostToolBatch"].is_array());
+            for event in ["PreToolUse", "PostToolUse", "PostToolUseFailure"] {
                 assert!(
                     migrated["hooks"].get(event).is_none(),
                     "default rerun should remove {event}"
@@ -274,6 +305,10 @@ fn claude_hook_setup_plan_profiles_control_tool_hooks() {
             let default_plan = build_hook_setup_plan(spec, launcher).unwrap();
             let default_config: Value = serde_json::from_str(&default_plan.content).unwrap();
             assert!(default_config["hooks"]["SessionStart"].is_array());
+            assert!(default_config["hooks"]["PostToolBatch"].is_array());
+            assert!(default_config["hooks"]["PostToolBatch"][0]
+                .get("matcher")
+                .is_none());
             assert!(default_config["hooks"].get("PreToolUse").is_none());
 
             let full_plan =

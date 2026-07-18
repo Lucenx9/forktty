@@ -211,6 +211,7 @@ fn hook_status_state_ignores_late_prompt_for_completed_turn() {
             "Running",
             Some("blue".to_string()),
             Some(StatusHookMetadata {
+                session_id: None,
                 event: "prompt-submit".to_string(),
                 order: Some(10),
                 clock: Some("monotonic-ns".to_string()),
@@ -226,6 +227,7 @@ fn hook_status_state_ignores_late_prompt_for_completed_turn() {
             "Ready",
             Some("green".to_string()),
             Some(StatusHookMetadata {
+                session_id: None,
                 event: "stop".to_string(),
                 order: Some(20),
                 clock: Some("monotonic-ns".to_string()),
@@ -242,6 +244,7 @@ fn hook_status_state_ignores_late_prompt_for_completed_turn() {
             "Running",
             Some("blue".to_string()),
             Some(StatusHookMetadata {
+                session_id: None,
                 event: "prompt-submit".to_string(),
                 order: Some(30),
                 clock: Some("monotonic-ns".to_string()),
@@ -259,6 +262,7 @@ fn hook_status_state_ignores_late_prompt_for_completed_turn() {
             "Running",
             Some("blue".to_string()),
             Some(StatusHookMetadata {
+                session_id: None,
                 event: "prompt-submit".to_string(),
                 order: Some(40),
                 clock: Some("monotonic-ns".to_string()),
@@ -282,6 +286,7 @@ fn hook_status_state_briefly_guards_prompt_after_terminal_without_turn_id() {
             "Ready",
             Some("green".to_string()),
             Some(StatusHookMetadata {
+                session_id: None,
                 event: "stop".to_string(),
                 order: Some(20),
                 clock: Some("monotonic-ns".to_string()),
@@ -297,6 +302,7 @@ fn hook_status_state_briefly_guards_prompt_after_terminal_without_turn_id() {
             "Running",
             Some("blue".to_string()),
             Some(StatusHookMetadata {
+                session_id: None,
                 event: "prompt-submit".to_string(),
                 order: Some(20 + HOOK_TERMINAL_PROMPT_GUARD_NS),
                 clock: Some("monotonic-ns".to_string()),
@@ -314,6 +320,7 @@ fn hook_status_state_briefly_guards_prompt_after_terminal_without_turn_id() {
             "Running",
             Some("blue".to_string()),
             Some(StatusHookMetadata {
+                session_id: None,
                 event: "prompt-submit".to_string(),
                 order: Some(21 + HOOK_TERMINAL_PROMPT_GUARD_NS),
                 clock: Some("monotonic-ns".to_string()),
@@ -329,6 +336,7 @@ fn hook_status_orders_only_compare_within_the_same_clock() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");
     let metadata = |order: u128, clock: &str| StatusHookMetadata {
+        session_id: None,
         event: "session-start".to_string(),
         order: Some(order),
         clock: Some(clock.to_string()),
@@ -387,6 +395,7 @@ fn hook_status_guard_applies_to_matching_boottime_clocks() {
             "Ready",
             Some("green".to_string()),
             Some(StatusHookMetadata {
+                session_id: None,
                 event: "stop".to_string(),
                 order: Some(20),
                 clock: Some("boottime-ns".to_string()),
@@ -402,6 +411,7 @@ fn hook_status_guard_applies_to_matching_boottime_clocks() {
             "Running",
             Some("blue".to_string()),
             Some(StatusHookMetadata {
+                session_id: None,
                 event: "prompt-submit".to_string(),
                 order: Some(20 + HOOK_TERMINAL_PROMPT_GUARD_NS),
                 clock: Some("boottime-ns".to_string()),

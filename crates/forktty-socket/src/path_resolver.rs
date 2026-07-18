@@ -28,14 +28,11 @@ pub(crate) async fn resolve_open_repo_cwd_param(
     // is deliberately excluded from this authorization boundary.
     let working_dirs = open_workspace_git_boundary_dirs(state)?;
     let candidate = cwd.clone();
-    match tokio::task::spawn_blocking(move || {
+    crate::worktree_runtime::run_guarded_worktree_read_result(state, move || {
         validate_cwd_against_working_dirs(&working_dirs, &candidate)
+            .map_err(DispatchError::PreconditionFailed)
     })
-    .await
-    {
-        Ok(result) => result.map_err(DispatchError::PreconditionFailed)?,
-        Err(err) => return Err(format!("Validation task failed: {err}").into()),
-    }
+    .await?;
     Ok(cwd.to_string_lossy().to_string())
 }
 

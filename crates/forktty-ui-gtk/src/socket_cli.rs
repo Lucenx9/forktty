@@ -9,14 +9,10 @@ use std::fs::{self, File, OpenOptions};
 use std::io;
 #[cfg(test)]
 use std::io::{BufRead, BufReader};
-#[cfg(test)]
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(test)]
-use std::time::Instant;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 mod agent;
@@ -60,7 +56,7 @@ use args::{insert_optional_trimmed_string_param, required_trimmed_arg};
 use browser::handle_browser;
 use help::{
     print_help, AGENT_HELP_TEXT, COMPLETION_COMMANDS, EXAMPLES_TEXT, HOOKS_HELP_TEXT,
-    STATUS_HELP_TEXT, STATUS_SUBCOMMANDS,
+    NOTIFICATION_OPTIONS, STATUS_HELP_TEXT, STATUS_SUBCOMMANDS,
 };
 #[cfg(test)]
 use hooks::event::*;
@@ -98,7 +94,10 @@ use status::{
     format_progress_line, format_status_line, format_status_summary_line,
 };
 #[cfg(test)]
-use status::{handle_context_snapshot, handle_set_status, handle_status, handle_statusline};
+use status::{
+    handle_context_snapshot, handle_notifications, handle_set_status, handle_status,
+    handle_statusline,
+};
 #[cfg(test)]
 use surface::format_surface_line;
 #[cfg(test)]
@@ -107,7 +106,8 @@ use surface::{handle_capture_tail, handle_read_screen, handle_top, handle_tree};
 use system::{
     agent_wait_interval_ms_from_options, agent_wait_status_from_cli,
     agent_wait_timeout_ms_from_options, build_socket_doctor_report, completion_script_for_test,
-    format_capabilities_lines, format_socket_doctor_text, identify_params,
+    completion_script_with_notification_options_for_test, format_capabilities_lines,
+    format_socket_doctor_text, identify_params,
 };
 #[cfg(test)]
 use system::{
@@ -116,10 +116,7 @@ use system::{
 };
 pub(crate) use transport::send_socket_request_with_timeout;
 #[cfg(test)]
-use transport::{
-    connect_unix_stream_with_timeout, format_socket_connect_error, lagged_dropped_count,
-    unix_socket_address,
-};
+use transport::{format_socket_connect_error, lagged_dropped_count};
 #[cfg(test)]
 use workspace::format_workspace_line;
 #[cfg(test)]

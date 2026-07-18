@@ -39,7 +39,7 @@ All notable changes to ForkTTY are documented here.
   workbench palette and a single warm active-path accent.
 - Major polish for premium, clean, Linear/Cursor/Vercel aesthetic (terminal-first, low noise):
   - Workspace sidebar converted from bordered cards with heavy drop shadows to compact inset navigation rows using quiet hairline indicators for active/attention/DnD.
-  - Reduced full 999px pill radii on badges, status location, welcome button, and keycaps to small precise radii (4-6px). 999px now reserved for true circular dots only.
+  - Reduced full 999px pill radii on badges, status location, welcome button, and keycaps to small precise radii (4-6px). 999px now remains only on intrinsically round controls and true circular dots.
   - Keycaps made subtler (lighter background, thinner border, lower weight) to reduce chrome noise.
   - Command palette selected state and several tab/workspace DnD feedbacks switched from inset box-shadows to clean hairlines + surface shifts.
 - Further quieted the workbench toward Linear/Cursor/Vercel aesthetics:
@@ -55,15 +55,73 @@ All notable changes to ForkTTY are documented here.
   workspace status badge becomes quiet colored text instead of a bordered pill,
   and section labels/counts use tracked uppercase and muted weight.
 - Agent HUD and About ForkTTY now use the quiet hairline + @ft_* palette
-  treatment: lifecycle and permission badges use small 5px radii and quiet
+  treatment: lifecycle and permission badges use small 4px radii and quiet
   semantic text colors (no heavy colored 999px pills), About details card is
   recessed with @ft_line hairlines and no shadow; pane badges also cleaned.
+- Systematized the built-in GTK theme around a seven-step type scale, standard
+  font weights, named surface and semantic color tokens, one success color for
+  running state, AA-readable muted text, and the documented 4/6/8 radius scale.
+  Notification kinds and the header title now use quiet text/control shapes
+  instead of full status pills.
 
 ### Fixed
+- Persisted `Suspended` agent sessions now remain tombstones: late hooks cannot
+  revive them, publish side effects, resolve prompts, or advance event order
+  before an explicit resume.
+- Claude `SessionStart` enrichment now requires complete workspace, surface, and
+  absolute socket provenance; partial provenance returns the exact continue
+  response without reading stdin or contacting the socket.
+- `forktty hooks doctor` now requires a complete managed hook installation:
+  malformed or partial configs, missing/modified/non-regular Antigravity
+  wrappers, wrappers or launchers that are not executable by the effective
+  user, and incomplete Claude, Codex, or OpenCode assets make doctor fail.
+  Setup repairs exact-content wrappers with stale permissions or symlink type,
+  and doctor no longer blocks while inspecting a FIFO in a wrapper path.
+- Restoring a persisted agent terminal with an invalid session ID, resume cwd,
+  or unsupported provider now reports a red terminal error instead of silently
+  opening a plain shell in that pane.
+- Hook-backed permission, elicitation, and attention notifications now carry a
+  normalized prompt identity and are retained as read history while their
+  matching desktop notification closes after an accepted provider result. Stale
+  hook retries cannot clear newer prompts; session cleanup, target remap, and surface or
+  workspace removal retire only the affected correlations while preserving
+  unrelated unread attention. Claude Elicitation hooks now create the prompt
+  notification that ElicitationResult resolves, and PermissionDenied is treated
+  as a terminal permission result.
 - PTY-persisted panes now resolve their live cwd from the workload behind the
   `dtach -A` master instead of mistaking the attached client master for the
   shell, so new tabs, splits, restored panes, and Worktree actions inherit the
   current directory.
+- Newly created and restarted embedded Ghostty panes now reliably receive an
+  initial non-zero layout and inherit the current global terminal zoom, while
+  cursor blinking follows Ghostty's configured or default behavior instead of
+  being forcibly disabled by the GTK embed.
+- Bounded embedded Ghostty reads now report `total_lines` for the complete
+  selected source rather than only the returned byte fragment, and the session
+  documentation consistently describes full-scrollback tail capture.
+- AppImage `auto` mode now uses an eager loader compatibility probe and selects
+  host GTK only when both the ForkTTY binary and embedded Ghostty library load;
+  otherwise it falls back to the bundled GTK/libadwaita stack. Release smoke
+  coverage masks host GTK in a bubblewrap sandbox and exercises the extracted
+  AppImage's child helper.
+- AppImage terminal children now sanitize the selected loader environment only
+  after the GTK-linked `appimage-child-exec` helper has loaded, preserving
+  `TERM=xterm-ghostty` and Ghostty shell integration for Bash, Zsh, fish,
+  Elvish, and Nushell when the helper executes the real command.
+- `ghostty-gtk-lib-probe.sh --ensure` now always invokes the incremental Zig
+  build before verifying every mandatory embedding ABI symbol.
+- Ghostty widget close requests now use ForkTTY's Close Pane confirmation;
+  explicit socket/API close remains noninteractive.
+- Worktree Create/Attach retries now reuse the same existing modeled workspace
+  ID and allocate no new modeled surface for the exact
+  worktree-name/canonical-path identity, while same-named worktrees at different
+  canonical paths stay distinct. GTK and socket
+  worktree mutations now share process-local serialization, and removal
+  retains that transaction even if its requesting future is cancelled while
+  suppressing automatic terminal respawn and quiescing the exact target;
+  partial close or filesystem failures trigger explicit runtime/model rollback,
+  with failed terminal respawns recorded as blocking error status so
+  reconciliation does not retry blindly.
 - Local terminal panes now track the live shell working directory, use it for new
   tabs and splits, expose it through socket context and sidebar chrome, and
   autosave distinct per-pane directories for restart instead of reverting to
@@ -81,6 +139,31 @@ All notable changes to ForkTTY are documented here.
   omitted binary terminal icon data while evaluating prompt risk across the
   full matching set, preventing untrusted OSC icon payloads from exceeding the
   official client response limit.
+- Notification socket reads now use bounded cursor pages (`limit` 1–200 and an
+  exclusive `before_id`), keep updated items on the newest page, and share one
+  binary-icon-free projection with `context.snapshot`; the CLI exposes matching
+  `--limit` and `--before-id` flags without auto-fetching additional pages.
+- Socket responses now have a final 64 MiB encoded-size guard that returns a
+  same-request-id `response_too_large` JSON-RPC error instead of sending an
+  oversized line. Remote `connected` state now reflects local terminal-I/O
+  readiness rather than stale runtime inventory or an independent SSH probe.
+- Socket clients and startup collision checks now share one deadline-bounded
+  AF_UNIX connector. A full accept backlog retries with fresh descriptors and
+  is treated as occupied on timeout, so startup cannot hang or unlink another
+  listener's socket inode.
+- Closing the last GTK window now stops new socket dispatch, cooperatively
+  drains admitted requests, then snapshots scrollback, syncs live directories,
+  saves the session, applies PTY cleanup, and only then tears down the UI.
+- Pane and tab menu actions now stay bound to the surface that opened them, so a
+  later focus or workspace change cannot redirect a split or browser action;
+  removed targets are quiet no-ops. Pane maximize now counts the real pane tree,
+  ignores one-pane or multi-tab-only layouts, and clears when a split collapses.
+- The notification panel now renders rows, count, footer actions, and Open Latest
+  from one current snapshot, reconciles changes every 500 ms while visible, and
+  refreshes immediately after Dismiss or Clear without leaving a timer behind.
+- SSH workspace rows now show `ssh:<host> · connected` or
+  `ssh:<host> · disconnected` from the same local terminal-readiness signal used
+  by remote socket views.
 - Codex and Claude Code `SubagentStop` events no longer mark the parent session
   idle, and Claude Code `TeammateIdle` now publishes the same ready/idle state
   persisted for the teammate session.
@@ -127,6 +210,9 @@ All notable changes to ForkTTY are documented here.
   release checksum verification with the uploaded `.zsync` artifact.
 
 ### Changed
+- Claude's default lifecycle hook profile now keeps `PostToolBatch` for prompt
+  result correlation, so it installs 26 events; `--full` adds only
+  `PreToolUse`, `PostToolUse`, and `PostToolUseFailure` for 29 total.
 - Rejected relative hook config roots during setup/removal so malformed
   `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `HOME`, or related env overrides cannot
   make ForkTTY write agent integration config under the current working

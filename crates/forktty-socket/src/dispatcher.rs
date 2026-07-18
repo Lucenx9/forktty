@@ -19,7 +19,13 @@ pub async fn dispatch(
     }
 
     let mut params = params;
-    let _hook_session_end = hook_session::prepare_hook_session_targets(state, method, &mut params)?;
+    if let Some(result) =
+        hook_session::run_serialized_hook_ingress(state, method, &mut params, |params| {
+            dispatch_hook_mutation(state, method, params)
+        })?
+    {
+        return Ok(result);
+    }
 
     match method {
         "system.ping" => Ok(system_runtime::ping()),
@@ -27,18 +33,18 @@ pub async fn dispatch(
         "system.identify" => system_runtime::identify(state, &params),
         "context.snapshot" => context_runtime::snapshot(state, &params).await,
         "agent.health" => agent_runtime::health(state, &params),
-        "agent.hibernate" => agent_runtime::hibernate(state, &params),
+        "agent.hibernate" => agent_runtime::hibernate(state, &params).await,
         "agent.list" => agent_runtime::list(state, &params),
         "agent.reclaim.plan" => agent_runtime::reclaim_plan(state, &params),
-        "agent.reclaim" => agent_runtime::reclaim(state, &params),
+        "agent.reclaim" => agent_runtime::reclaim(state, &params).await,
         "agent.resume" => agent_runtime::resume(state, &params).await,
         "status.summary" => status_runtime::summary(state, &params),
         "remote.list" => remote::list(state, &params),
         "remote.status" => remote::status(state, &params),
         "system.top" => topology_runtime::system_top(state, &params),
         "workspace.list" => topology_runtime::workspace_list(state),
-        "workspace.create" => workspace_runtime::create(state, &params),
-        "workspace.create_ssh" => workspace_runtime::create_ssh(state, &params),
+        "workspace.create" => workspace_runtime::create(state, &params).await,
+        "workspace.create_ssh" => workspace_runtime::create_ssh(state, &params).await,
         "workspace.select" => workspace_runtime::select(state, &params).await,
         "workspace.close" => workspace_runtime::close(state, &params).await,
         "worktree.list" => worktree_runtime::list(state, &params).await,
@@ -55,7 +61,7 @@ pub async fn dispatch(
         "surface.send_text" => topology_runtime::surface_send_text(state, &params),
         "topology.tree" => topology_runtime::tree(state, &params),
         "surface.split" => surface_runtime::split(state, &params).await,
-        "browser.open" => browser_runtime::open(state, &params),
+        "browser.open" => browser_runtime::open(state, &params).await,
         "browser.navigate" => browser_runtime::navigate(state, &params),
         "browser.snapshot" => browser_runtime::snapshot(state, &params).await,
         "browser.click" => browser_runtime::click(state, &params).await,
@@ -80,7 +86,7 @@ pub async fn dispatch(
         "surface.focus" => surface_runtime::focus(state, &params).await,
         "surface.close" => surface_runtime::close(state, &params).await,
         "notification.create" => metadata_runtime::notification_create(state, &params),
-        "notification.list" => metadata_runtime::notification_list(state),
+        "notification.list" => metadata_runtime::notification_list(state, &params),
         "notification.clear" => metadata_runtime::notification_clear(state),
         "metadata.set_status" => metadata_runtime::set_status(state, &params),
         "metadata.list_status" => metadata_runtime::list_status(state, &params),
@@ -91,6 +97,25 @@ pub async fn dispatch(
         "metadata.log" => metadata_runtime::log(state, &params),
         "metadata.list_logs" => metadata_runtime::list_logs(state, &params),
         "metadata.clear_logs" => metadata_runtime::clear_logs(state, &params),
+        _ => Err(DispatchError::MethodNotFound(method.to_string())),
+    }
+}
+
+fn dispatch_hook_mutation(
+    state: &SocketAppState,
+    method: &str,
+    params: &Value,
+) -> Result<Value, DispatchError> {
+    match method {
+        "notification.create" => metadata_runtime::notification_create(state, params),
+        "metadata.set_status" => {
+            metadata_runtime::set_status_after_serialized_hook_ingress(state, params)
+        }
+        "metadata.clear_status" => {
+            metadata_runtime::clear_status_after_serialized_hook_ingress(state, params)
+        }
+        "metadata.set_progress" => metadata_runtime::set_progress(state, params),
+        "metadata.log" => metadata_runtime::log(state, params),
         _ => Err(DispatchError::MethodNotFound(method.to_string())),
     }
 }

@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 pub(crate) async fn split(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = SurfaceSplitRequest::decode(params)?;
-    let _surface_set_guard = state.coordinator.surface_set.lock().await;
+    let _surface_set_guard = state.surface_set_guard().await;
     let _ = crate::sync_live_surface_cwds(state);
     let surface = {
         let mut model = state
@@ -32,7 +32,7 @@ pub(crate) async fn new_tab(
     params: &Value,
 ) -> Result<Value, DispatchError> {
     let request = SurfaceIdRequest::decode(params)?;
-    let _surface_set_guard = state.coordinator.surface_set.lock().await;
+    let _surface_set_guard = state.surface_set_guard().await;
     let _ = crate::sync_live_surface_cwds(state);
     let surface = {
         let mut model = state
@@ -68,6 +68,7 @@ pub(crate) fn select_tab(state: &SocketAppState, params: &Value) -> Result<Value
 
 pub(crate) async fn focus(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = SurfaceIdRequest::decode(params)?;
+    let _surface_set_guard = state.surface_set_guard().await;
     let (previous_active_id, previous_target_focus) = {
         let mut model = state
             .model

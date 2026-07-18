@@ -61,9 +61,10 @@ gemini` is retained only to remove ForkTTY-managed entries from legacy
 unsupported.
 
 Claude Code setup installs a lifecycle profile by default. That profile omits
-the high-frequency `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, and
-`PostToolBatch` hooks that block every tool call; pass `--full` to include
-those events. Existing full installs keep working, but re-running
+the high-frequency `PreToolUse`, `PostToolUse`, and `PostToolUseFailure` hooks
+that block every tool call; `PostToolBatch` remains installed for prompt-result
+correlation. Pass `--full` to include the three per-tool events. Existing full
+installs keep working, but re-running
 `forktty hooks setup claude` migrates the ForkTTY-managed entries back to the
 lifecycle profile unless `--full` is passed. Removal cleans either profile.
 
@@ -89,9 +90,9 @@ Antigravity runs the generated wrapper scripts from its config directory, so
 ForkTTY derives Antigravity `resume_cwd` from the hook payload's
 `workspacePaths` instead of the wrapper process cwd.
 
-When the GTK app starts and no ForkTTY-managed hooks are installed, it creates
-an in-app notification suggesting `forktty hooks setup`. If installed hooks
-point at an old launcher path, the reminder asks you to refresh them.
+GTK startup does not install, refresh, or create reminders for optional hooks.
+Use the welcome flow, Settings > Agents, or the CLI when you want setup or
+diagnostics.
 
 ## Inspect and exercise installed hooks
 
@@ -104,16 +105,26 @@ forktty hooks test codex       # round-trip a status update and a log over the s
 single transient `agent:<name>:hook-test` status entry through the socket so
 you can confirm the daemon is reachable.
 
-`hooks doctor` also compares the launcher path baked into the agent config
-against the current `forktty` executable and reports `launcherCheck.status`
+`hooks doctor` inspects the launcher path baked into the managed assets and
+reports `launcherCheck.status`
 (`ok`, `stale`, `not_installed`, or `current_launcher_unknown`). A `stale`
-status means the AppImage or installed binary has moved since the last
-`hooks setup` run; re-run `forktty hooks setup` to rewrite the hook commands.
+status means the recorded launcher is no longer usable and differs from the
+current executable; a still-executable recorded launcher remains healthy even
+when doctor itself runs from another path. Re-run `forktty hooks setup` to
+rewrite unusable managed commands.
 The doctor JSON also exposes `supportedEvents`, the list of provider-side
-event names ForkTTY can install hooks for (Codex: 10; Claude Code: 25
+event names ForkTTY can install hooks for (Codex: 10; Claude Code: 26
 lifecycle / 29 full; Antigravity: 3; OpenCode plugin events: 11).
 For Claude Code it also reports `installedProfile` as `lifecycle`, `full`, or
 `not_installed`.
+
+The additive version-1 `installationCheck` regenerates the expected provider
+assets with the same setup planner used by `hooks setup`. Doctor health requires
+the complete managed config/plugin, one usable recorded launcher, and for
+Antigravity the exact generated group plus every wrapper as a regular executable
+file with generated content. Missing groups or wrappers, wrapper-only installs,
+malformed or modified files, partial Claude/Codex/OpenCode assets, and
+non-executable wrappers set `installationCheck.ok` and top-level `ok` to false.
 
 For Codex, `hooks doctor codex` additionally reports `trustCheck`: Codex
 records per-hook trust approvals under `[hooks.state]` in its `config.toml`,
@@ -143,6 +154,25 @@ status value so snapshots stay stable for automation.
 For Codex and Claude Code, `SubagentStop` leaves the parent session `Running`
 because the event only reports a nested subagent completion. Claude Code
 `TeammateIdle` publishes `Ready` and persists the teammate lifecycle as idle.
+
+Permission, elicitation, and recognized attention hooks attach a normalized
+provider/session/kind prompt identity to their ForkTTY notification. Accepted
+result hooks retain only the matching in-app notification as read history and
+close its desktop notification; when a
+provider result has no correlation id, ForkTTY resolves only the newest
+compatible older prompt. Stale results are inert. Session-end cleanup, hook
+target remap, and surface/workspace removal retire affected correlations without
+clearing unrelated prompts. Claude `Elicitation` creates a prompt notification;
+`ElicitationResult`, `PermissionDenied`, and `PostToolBatch` close
+the corresponding elicitation or permission prompt when one is pending.
+
+Claude `SessionStart` uses ForkTTY workspace ID, surface ID, and absolute socket
+path as one provenance tuple. If any component is missing or invalid, the hook
+returns the exact continue response without reading stdin or contacting the
+socket. Persisted `Suspended` is a tombstone: late hook events cannot revive the
+session, publish metadata/notifications, or advance its event-order watermark.
+Only explicit resume may replace it, and invalid persisted resume metadata
+produces a visible terminal error rather than a plain-shell fallback.
 
 ## Manual editing
 

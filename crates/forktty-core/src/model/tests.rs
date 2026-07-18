@@ -2,10 +2,27 @@
 
 use super::*;
 
+mod notification_activity;
 mod pane_tabs;
 mod status_progress;
 mod surface_kind;
 mod surface_persistence;
+mod worktree_identity;
+
+fn resolved_worktree_identities(model: &WorkspaceModel) -> Vec<ResolvedWorktreeIdentity> {
+    resolve_worktree_identity_snapshots(model.worktree_identity_snapshots())
+}
+
+fn repair_model_session_invariants(model: &mut WorkspaceModel) -> bool {
+    let resolved_identities = resolved_worktree_identities(model);
+    model.repair_session_invariants(&resolved_identities)
+}
+
+fn restore_model_session(model: &mut WorkspaceModel, data: SessionData) {
+    let snapshots = WorktreeIdentitySnapshot::from_workspaces(&data.workspaces);
+    let resolved_identities = resolve_worktree_identity_snapshots(snapshots);
+    model.restore_session(data, &resolved_identities);
+}
 
 #[test]
 fn new_workspace_has_one_surface_and_leaf() {
@@ -212,7 +229,7 @@ fn repair_session_invariants_restores_missing_focus() {
         workspace.focused_surface_id = second.id.clone();
     }
 
-    assert!(model.repair_session_invariants());
+    assert!(repair_model_session_invariants(&mut model));
     let repaired = model.list_workspaces().remove(0);
     assert_eq!(repaired.focused_surface_id, first);
     assert!(model.surface(&second.id).is_none());
@@ -239,7 +256,7 @@ fn repair_session_invariants_advances_id_counters_for_repaired_leaves() {
     model.workspace_order.push(workspace.id.clone());
     model.workspaces.insert(workspace.id.clone(), workspace);
 
-    assert!(model.repair_session_invariants());
+    assert!(repair_model_session_invariants(&mut model));
     let split = model
         .split_surface("surface-1", SplitAxis::Horizontal)
         .unwrap();
@@ -263,7 +280,7 @@ fn restore_session_clears_stale_workspace_attention() {
     let data = model.to_session_data();
 
     let mut fresh = WorkspaceModel::new();
-    fresh.restore_session(data);
+    restore_model_session(&mut fresh, data);
 
     // Notifications are not persisted, so the restored workspace must not
     // keep the saved attention badge.
@@ -546,255 +563,6 @@ fn can_close_surface_nested_after_unrelated_split() {
 }
 
 #[test]
-fn worktree_workspace_keeps_branch_and_worktree_metadata() {
-    let mut model = WorkspaceModel::new();
-    let workspace =
-        model.create_worktree_workspace("feature", "/tmp/feature", "feature", "feature");
-
-    assert_eq!(workspace.git_branch, "feature");
-    assert_eq!(workspace.worktree_name.as_deref(), Some("feature"));
-    assert_eq!(workspace.worktree_dir, Some(PathBuf::from("/tmp/feature")));
-}
-
-#[test]
-fn notification_marks_surface_unread() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp");
-    model.create_notification(
-        "Prompt",
-        "Needs input",
-        NotificationKind::Prompt,
-        Some(workspace.id.clone()),
-        Some(workspace.focused_surface_id.clone()),
-    );
-
-    let surface = model.surface(&workspace.focused_surface_id).unwrap();
-    assert!(surface.unread);
-    assert!(model.list_workspaces()[0].needs_attention);
-}
-
-#[test]
-fn notifications_are_capped_dropping_oldest() {
-    let mut model = WorkspaceModel::new();
-    let total = MAX_NOTIFICATIONS + 5;
-    for index in 0..total {
-        model.create_notification(
-            format!("n{index}"),
-            "body",
-            NotificationKind::Info,
-            None,
-            None,
-        );
-    }
-
-    let notifications = model.list_notifications();
-    assert_eq!(notifications.len(), MAX_NOTIFICATIONS);
-    // The five oldest were dropped; the newest is retained.
-    assert_eq!(notifications.first().unwrap().title, "n5");
-    assert_eq!(
-        notifications.last().unwrap().title,
-        format!("n{}", total - 1)
-    );
-}
-
-#[test]
-fn clear_notifications_resets_attention_state() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp");
-    model.create_notification(
-        "Prompt",
-        "Ready",
-        NotificationKind::Prompt,
-        Some(workspace.id.clone()),
-        Some(workspace.focused_surface_id.clone()),
-    );
-
-    model.clear_notifications();
-
-    assert!(model.list_notifications().is_empty());
-    assert!(!model.surface(&workspace.focused_surface_id).unwrap().unread);
-    assert!(!model.list_workspaces()[0].needs_attention);
-}
-
-#[test]
-fn mark_notifications_read_keeps_items_and_clears_attention() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp");
-    model.create_notification(
-        "Prompt",
-        "Ready",
-        NotificationKind::Prompt,
-        Some(workspace.id.clone()),
-        Some(workspace.focused_surface_id.clone()),
-    );
-
-    model.mark_notifications_read();
-
-    let notifications = model.list_notifications();
-    assert_eq!(notifications.len(), 1);
-    assert!(notifications[0].read);
-    assert_eq!(model.unread_notification_count(), 0);
-    assert!(!model.surface(&workspace.focused_surface_id).unwrap().unread);
-    assert!(!model.list_workspaces()[0].needs_attention);
-}
-
-#[test]
-fn mark_notifications_read_preserves_output_unread_surface_attention() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp");
-    assert!(model.mark_surface_unread(&workspace.focused_surface_id, true));
-    model.create_notification(
-        "Prompt",
-        "Ready",
-        NotificationKind::Prompt,
-        Some(workspace.id.clone()),
-        Some(workspace.focused_surface_id.clone()),
-    );
-
-    model.mark_notifications_read();
-
-    assert_eq!(model.unread_notification_count(), 0);
-    assert!(model.surface(&workspace.focused_surface_id).unwrap().unread);
-    assert!(model.list_workspaces()[0].needs_attention);
-
-    assert!(model.mark_surface_unread(&workspace.focused_surface_id, false));
-    assert!(!model.surface(&workspace.focused_surface_id).unwrap().unread);
-    assert!(!model.list_workspaces()[0].needs_attention);
-}
-
-#[test]
-fn clear_notifications_preserves_output_unread_surface_attention() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp");
-    assert!(model.mark_surface_unread(&workspace.focused_surface_id, true));
-    model.create_notification(
-        "Prompt",
-        "Ready",
-        NotificationKind::Prompt,
-        Some(workspace.id.clone()),
-        Some(workspace.focused_surface_id.clone()),
-    );
-
-    model.clear_notifications();
-
-    assert!(model.list_notifications().is_empty());
-    assert!(model.surface(&workspace.focused_surface_id).unwrap().unread);
-    assert!(model.list_workspaces()[0].needs_attention);
-}
-
-#[test]
-fn dismiss_notification_keeps_attention_when_unread_target_remains() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp");
-    let first = model.create_notification(
-        "Prompt",
-        "Ready",
-        NotificationKind::Prompt,
-        Some(workspace.id.clone()),
-        Some(workspace.focused_surface_id.clone()),
-    );
-    model.create_notification(
-        "Prompt",
-        "Still ready",
-        NotificationKind::Prompt,
-        Some(workspace.id.clone()),
-        Some(workspace.focused_surface_id.clone()),
-    );
-
-    assert!(model.dismiss_notification(&first.id));
-
-    assert_eq!(model.list_notifications().len(), 1);
-    assert_eq!(model.unread_notification_count(), 1);
-    assert!(model.surface(&workspace.focused_surface_id).unwrap().unread);
-    assert!(model.list_workspaces()[0].needs_attention);
-}
-
-#[test]
-fn dismiss_notification_preserves_output_unread_surface_attention() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp");
-    assert!(model.mark_surface_unread(&workspace.focused_surface_id, true));
-    let notification = model.create_notification(
-        "Prompt",
-        "Ready",
-        NotificationKind::Prompt,
-        Some(workspace.id.clone()),
-        Some(workspace.focused_surface_id.clone()),
-    );
-
-    assert!(model.dismiss_notification(&notification.id));
-
-    assert_eq!(model.unread_notification_count(), 0);
-    assert!(model.surface(&workspace.focused_surface_id).unwrap().unread);
-    assert!(model.list_workspaces()[0].needs_attention);
-}
-
-#[test]
-fn close_surface_clears_workspace_attention_when_unread_pane_is_removed() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp");
-    let split = model
-        .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
-        .unwrap();
-    model.create_notification(
-        "Prompt",
-        "Needs input",
-        NotificationKind::Prompt,
-        Some(workspace.id.clone()),
-        Some(split.id.clone()),
-    );
-    assert!(model.list_workspaces()[0].needs_attention);
-
-    model.close_surface(&split.id).unwrap();
-
-    assert!(!model.list_workspaces()[0].needs_attention);
-}
-
-#[test]
-fn close_surface_preserves_workspace_only_notification_attention() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp");
-    let split = model
-        .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
-        .unwrap();
-    model.create_notification(
-        "Workspace",
-        "Needs input",
-        NotificationKind::Info,
-        Some(workspace.id.clone()),
-        None,
-    );
-
-    model.close_surface(&split.id).unwrap();
-
-    assert!(model.list_workspaces()[0].needs_attention);
-}
-
-#[test]
-fn closed_surface_notification_does_not_revive_workspace_attention() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp");
-    let split = model
-        .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
-        .unwrap();
-    model.create_notification(
-        "Prompt",
-        "Needs input",
-        NotificationKind::Prompt,
-        Some(workspace.id.clone()),
-        Some(split.id.clone()),
-    );
-
-    model.close_surface(&split.id).unwrap();
-    assert!(!model.list_workspaces()[0].needs_attention);
-
-    let focused_surface_id = model.list_workspaces()[0].focused_surface_id.clone();
-    assert!(model.mark_surface_unread(&focused_surface_id, false));
-
-    assert!(!model.list_workspaces()[0].needs_attention);
-}
-
-#[test]
 fn can_update_surface_title() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");
@@ -821,7 +589,7 @@ fn restore_session_collapses_multiple_active_flags_to_active_workspace_id() {
     data.active_workspace_id = Some(second.id.clone());
 
     let mut restored = WorkspaceModel::new();
-    restored.restore_session(data);
+    restore_model_session(&mut restored, data);
 
     let actives: Vec<_> = restored
         .list_workspaces()
@@ -844,7 +612,7 @@ fn restore_session_assigns_first_workspace_active_when_id_is_missing() {
     data.active_workspace_id = None;
 
     let mut restored = WorkspaceModel::new();
-    restored.restore_session(data);
+    restore_model_session(&mut restored, data);
 
     let workspaces = restored.list_workspaces();
     assert!(workspaces[0].active);
@@ -865,7 +633,7 @@ fn restore_session_dedups_workspace_order_on_duplicate_ids() {
         PaneNode::single_leaf(data.workspaces[1].focused_surface_id.clone());
 
     let mut restored = WorkspaceModel::new();
-    restored.restore_session(data);
+    restore_model_session(&mut restored, data);
 
     let workspaces = restored.list_workspaces();
     let occurrences = workspaces
@@ -884,7 +652,7 @@ fn restore_session_repairs_focused_surface_id_pointing_outside_pane_tree() {
     data.workspaces[0].focused_surface_id = "surface-99".to_string();
 
     let mut restored = WorkspaceModel::new();
-    restored.restore_session(data);
+    restore_model_session(&mut restored, data);
 
     let restored_workspace = &restored.list_workspaces()[0];
     // The focus is normalised to a leaf that actually exists in the pane
@@ -909,7 +677,7 @@ fn restore_session_repairs_duplicate_leaf_ids() {
     data.workspaces[1].focused_surface_id = first.focused_surface_id.clone();
 
     let mut restored = WorkspaceModel::new();
-    restored.restore_session(data);
+    restore_model_session(&mut restored, data);
 
     let workspaces = restored.list_workspaces();
     let first_leaves = leaf_surface_ids(&workspaces[0].pane_tree);
@@ -1162,7 +930,7 @@ fn restored_session_keeps_closed_workspace_and_surface_ids_reserved() {
     assert_eq!(data.next_surface, 2);
 
     let mut restored = WorkspaceModel::new();
-    restored.restore_session(data);
+    restore_model_session(&mut restored, data);
     let fresh = restored.create_workspace("fresh", "/tmp/fresh");
 
     assert_eq!(fresh.id, "workspace-3");
@@ -1192,27 +960,30 @@ fn next_ids_wrap_after_restored_max_numeric_suffixes() {
     let workspace_id = format!("workspace-{max}");
     let surface_id = format!("surface-{max}");
     let mut model = WorkspaceModel::new();
-    model.restore_session(SessionData {
-        version: SESSION_FORMAT_VERSION,
-        workspaces: vec![Workspace {
-            id: workspace_id,
-            name: String::from("max ids"),
-            active: true,
-            working_dir: PathBuf::from("/tmp"),
-            git_branch: String::new(),
-            worktree_dir: None,
-            worktree_name: None,
-            pane_tree: PaneNode::single_leaf(surface_id.clone()),
-            focused_surface_id: surface_id.clone(),
-            needs_attention: false,
-            listening_ports: Vec::new(),
-            pr: None,
-        }],
-        active_workspace_id: None,
-        surfaces: Vec::new(),
-        next_workspace: 0,
-        next_surface: 0,
-    });
+    model.restore_session(
+        SessionData {
+            version: SESSION_FORMAT_VERSION,
+            workspaces: vec![Workspace {
+                id: workspace_id,
+                name: String::from("max ids"),
+                active: true,
+                working_dir: PathBuf::from("/tmp"),
+                git_branch: String::new(),
+                worktree_dir: None,
+                worktree_name: None,
+                pane_tree: PaneNode::single_leaf(surface_id.clone()),
+                focused_surface_id: surface_id.clone(),
+                needs_attention: false,
+                listening_ports: Vec::new(),
+                pr: None,
+            }],
+            active_workspace_id: None,
+            surfaces: Vec::new(),
+            next_workspace: 0,
+            next_surface: 0,
+        },
+        &[],
+    );
 
     let tab = model.add_tab(&surface_id).unwrap();
     assert_eq!(tab.id, "surface-1");
@@ -1235,7 +1006,7 @@ fn repair_session_invariants_collapses_single_child_splits() {
         };
     }
 
-    assert!(model.repair_session_invariants());
+    assert!(repair_model_session_invariants(&mut model));
 
     let repaired = model.workspaces.get(&workspace.id).unwrap().clone();
     assert!(matches!(
@@ -1262,7 +1033,7 @@ fn repair_session_invariants_rebalances_non_finite_split_sizes() {
         }
     }
 
-    assert!(model.repair_session_invariants());
+    assert!(repair_model_session_invariants(&mut model));
 
     let repaired = model.workspaces.get(&workspace.id).unwrap().clone();
     match repaired.pane_tree {
@@ -1303,7 +1074,7 @@ fn repair_session_invariants_renames_duplicate_leaf_ids_across_workspaces() {
         },
     );
 
-    assert!(model.repair_session_invariants());
+    assert!(repair_model_session_invariants(&mut model));
 
     let first_after = model.workspaces.get(&first.id).unwrap().clone();
     let second_after = model.workspaces.get(&second.id).unwrap().clone();
@@ -1346,7 +1117,7 @@ fn repair_session_invariants_renames_duplicate_leaf_ids_within_workspace() {
         };
     }
 
-    assert!(model.repair_session_invariants());
+    assert!(repair_model_session_invariants(&mut model));
 
     let repaired = model.workspaces.get(&workspace.id).unwrap().clone();
     let leaves = leaf_surface_ids(&repaired.pane_tree);
@@ -1382,7 +1153,7 @@ fn repair_session_invariants_replaces_leafless_pane_tree() {
         workspace.focused_surface_id = "missing-surface".to_string();
     }
 
-    assert!(model.repair_session_invariants());
+    assert!(repair_model_session_invariants(&mut model));
 
     let repaired = model.workspaces.get(&workspace.id).unwrap().clone();
     let leaves = leaf_surface_ids(&repaired.pane_tree);
@@ -1418,7 +1189,7 @@ fn repair_session_invariants_prunes_nested_leafless_splits() {
         };
     }
 
-    assert!(model.repair_session_invariants());
+    assert!(repair_model_session_invariants(&mut model));
 
     let repaired = model.workspaces.get(&workspace.id).unwrap().clone();
     assert!(matches!(
@@ -1465,7 +1236,7 @@ fn repair_session_invariants_drops_orphan_surfaces() {
         },
     );
 
-    assert!(model.repair_session_invariants());
+    assert!(repair_model_session_invariants(&mut model));
 
     assert!(model.surface(&orphan_id).is_none());
     assert!(model.surface(&dangling_id).is_none());
@@ -1484,7 +1255,7 @@ fn can_restore_model_from_session_data() {
     session.active_workspace_id = Some("missing-workspace".to_string());
 
     let mut restored = WorkspaceModel::new();
-    restored.restore_session(session);
+    restore_model_session(&mut restored, session);
 
     assert_eq!(restored.list_workspaces().len(), 1);
     assert!(restored.list_workspaces()[0].active);

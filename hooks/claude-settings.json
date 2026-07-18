@@ -130,6 +130,18 @@
         "matcher": "*"
       }
     ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude post-tool-batch || echo '{\"continue\":true,\"suppressOutput\":false}'",
+            "statusMessage": "ForkTTY Claude hooks",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
     "SubagentStart": [
       {
         "hooks": [

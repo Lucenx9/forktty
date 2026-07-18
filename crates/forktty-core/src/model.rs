@@ -2,7 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::agents::AgentKind;
@@ -71,6 +72,111 @@ pub struct Workspace {
     pub pr: Option<crate::pr::PrInfo>,
 }
 
+/// Outcome of resolving a canonical worktree identity in the workspace model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorktreeWorkspaceResolution {
+    /// The selected existing workspace or the newly allocated workspace.
+    pub workspace: Workspace,
+    /// Whether this resolution allocated the workspace and its initial surface.
+    pub created: bool,
+}
+
+/// Filesystem-independent snapshot of a modeled worktree identity.
+///
+/// Capture these while holding a model mutex, then resolve them after releasing
+/// the mutex with [`resolve_worktree_identity_snapshots`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeIdentitySnapshot {
+    workspace_id: WorkspaceId,
+    worktree_name: String,
+    worktree_dir: PathBuf,
+}
+
+impl WorktreeIdentitySnapshot {
+    /// Capture worktree identity inputs from persisted workspace data.
+    pub fn from_workspaces(workspaces: &[Workspace]) -> Vec<Self> {
+        workspaces.iter().filter_map(Self::from_workspace).collect()
+    }
+
+    fn from_workspace(workspace: &Workspace) -> Option<Self> {
+        Some(Self {
+            workspace_id: workspace.id.clone(),
+            worktree_name: workspace.worktree_name.clone()?,
+            worktree_dir: workspace.worktree_dir.clone()?,
+        })
+    }
+}
+
+/// Canonical worktree identity resolved before acquiring a model mutex.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedWorktreeIdentity {
+    snapshot: WorktreeIdentitySnapshot,
+    canonical_path: PathBuf,
+}
+
+impl ResolvedWorktreeIdentity {
+    fn matches_workspace(&self, workspace: &Workspace) -> bool {
+        self.snapshot.workspace_id == workspace.id
+            && workspace.worktree_name.as_ref() == Some(&self.snapshot.worktree_name)
+            && workspace.worktree_dir.as_ref() == Some(&self.snapshot.worktree_dir)
+    }
+
+    fn matches_target(&self, worktree_name: &str, canonical_path: &Path) -> bool {
+        self.snapshot.worktree_name == worktree_name && self.canonical_path == canonical_path
+    }
+}
+
+/// Resolve worktree snapshots without requiring access to the workspace model.
+///
+/// Snapshots whose path cannot be canonicalized are deliberately omitted so
+/// unresolved session records cannot alias a live worktree.
+/// Call this only after releasing any mutex that protects the model.
+pub fn resolve_worktree_identity_snapshots(
+    snapshots: impl IntoIterator<Item = WorktreeIdentitySnapshot>,
+) -> Vec<ResolvedWorktreeIdentity> {
+    snapshots
+        .into_iter()
+        .filter_map(|snapshot| {
+            let canonical_path = std::fs::canonicalize(&snapshot.worktree_dir).ok()?;
+            Some(ResolvedWorktreeIdentity {
+                snapshot,
+                canonical_path,
+            })
+        })
+        .collect()
+}
+
+/// Filesystem-resolved path identity used only by prepared worktree removal.
+///
+/// This may resolve a missing suffix through its nearest existing ancestor;
+/// normal workspace creation and session deduplication keep requiring a fully
+/// canonicalizable path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeRemovalIdentity(PathBuf);
+
+impl WorktreeRemovalIdentity {
+    /// Resolve a removal target without requiring its leaf to still exist.
+    pub fn resolve(path: &Path) -> Option<Self> {
+        let mut cursor = path;
+        let mut missing_components = Vec::<OsString>::new();
+        loop {
+            match std::fs::canonicalize(cursor) {
+                Ok(mut canonical) => {
+                    for component in missing_components.iter().rev() {
+                        canonical.push(component);
+                    }
+                    return Some(Self(canonical));
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    missing_components.push(cursor.file_name()?.to_os_string());
+                    cursor = cursor.parent()?;
+                }
+                Err(_) => return None,
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum PaneNode {
@@ -101,21 +207,102 @@ pub enum MovePosition {
     After,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+/// Semantic category used to correlate a hook prompt with its completion.
+pub enum HookPromptKind {
+    /// A provider is waiting for permission to perform an operation.
+    Permission,
+    /// A provider is waiting for user-supplied input.
+    Elicitation,
+    /// A provider reported a condition that needs user attention.
+    Attention,
+}
+
+/// Provider prompt identity retained alongside an in-app notification.
+///
+/// Prompt metadata is private correlation state: the notification carries the
+/// workspace and surface target, while these fields identify the provider
+/// event. A completion can resolve only a prompt from the same provider,
+/// session, and kind whose event order is not newer than the completion.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HookPromptMetadata {
+    /// Provider-supplied prompt ID used to reuse repeated prompt notifications.
+    pub id: String,
+    /// Provider that emitted the prompt.
+    pub provider: String,
+    /// Provider session that emitted the prompt.
+    pub session_id: String,
+    /// Semantic category of the prompt.
+    pub kind: HookPromptKind,
+    /// Provider event order at which the prompt was emitted.
+    pub event_order: u128,
+    /// Optional provider correlation token for matching a specific result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+}
+
+/// Completion identity used to resolve one retained hook prompt.
+///
+/// Provider, session, kind, workspace, and surface must match exactly. When
+/// `correlation_id` is present it must also match exactly; without one, the
+/// newest compatible prompt at or before `event_order` is selected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookPromptResolution {
+    /// Provider that emitted the completion.
+    pub provider: String,
+    /// Provider session that emitted the completion.
+    pub session_id: String,
+    /// Prompt category completed by the event.
+    pub kind: HookPromptKind,
+    /// Completion event order, which is the upper bound for matching prompts.
+    pub event_order: u128,
+    /// Optional provider token that narrows the match to one prompt.
+    pub correlation_id: Option<String>,
+    /// Exact workspace target recorded on the prompt notification.
+    pub workspace_id: Option<WorkspaceId>,
+    /// Exact surface target recorded on the prompt notification.
+    pub surface_id: Option<SurfaceId>,
+}
+
+/// One retained in-app notification and its optional workspace/surface target.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NotificationItem {
+    /// Stable model-generated notification ID.
     pub id: String,
+    /// Short text displayed as the notification heading.
     pub title: String,
+    /// Detailed notification text.
     pub body: String,
+    /// Semantic presentation category.
     pub kind: NotificationKind,
+    /// Unix timestamp in milliseconds; updates advance it to preserve ordering.
     pub created_at_ms: u128,
+    /// Whether the retained notification no longer contributes unread state.
     #[serde(default)]
     pub read: bool,
+    /// Optional workspace to which the notification belongs.
     #[serde(default)]
     pub workspace_id: Option<WorkspaceId>,
+    /// Optional surface to which the notification belongs.
     #[serde(default)]
     pub surface_id: Option<SurfaceId>,
+    /// Optional terminal-origin metadata used for actions and desktop hints.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_metadata: Option<TerminalNotificationMetadata>,
+}
+
+/// Result of inserting a notification into the bounded model history.
+///
+/// Callers dispatch `notification` and close any desktop notifications whose
+/// IDs appear in `evicted_desktop_notification_ids`. Every notification removed
+/// by the retention limit appears there in chronological order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationCreation {
+    /// Newly created notification, or the refreshed existing prompt record.
+    pub notification: NotificationItem,
+    /// Notification IDs evicted from retained history, oldest first.
+    pub evicted_desktop_notification_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -179,6 +366,7 @@ pub enum LogLevel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusHookMetadata {
+    pub session_id: Option<String>,
     pub event: String,
     pub order: Option<u128>,
     pub clock: Option<String>,
@@ -188,6 +376,7 @@ pub struct StatusHookMetadata {
 impl StatusHookMetadata {
     pub fn from_order(order: u128) -> Self {
         Self {
+            session_id: None,
             event: String::new(),
             order: Some(order),
             clock: None,
@@ -211,6 +400,7 @@ pub struct WorkspaceModel {
     surfaces: BTreeMap<SurfaceId, Surface>,
     workspace_order: Vec<WorkspaceId>,
     notifications: Vec<NotificationItem>,
+    hook_prompt_correlations: BTreeMap<String, HookPromptMetadata>,
     statuses: BTreeMap<WorkspaceId, Vec<StatusEntry>>,
     status_hooks: BTreeMap<WorkspaceId, BTreeMap<String, StatusHookMetadata>>,
     progress: BTreeMap<WorkspaceId, Vec<ProgressEntry>>,
@@ -295,19 +485,113 @@ impl WorkspaceModel {
         git_branch: impl Into<String>,
         worktree_name: impl Into<String>,
     ) -> Workspace {
+        self.allocate_worktree_workspace(
+            name.into(),
+            working_dir.into(),
+            git_branch.into(),
+            worktree_name.into(),
+        )
+    }
+
+    /// Capture worktree identity inputs without accessing the filesystem.
+    pub fn worktree_identity_snapshots(&self) -> Vec<WorktreeIdentitySnapshot> {
+        self.workspace_order
+            .iter()
+            .filter_map(|workspace_id| self.workspaces.get(workspace_id))
+            .filter_map(WorktreeIdentitySnapshot::from_workspace)
+            .collect()
+    }
+
+    /// Finds the earliest workspace with this exact worktree name and canonical path.
+    ///
+    /// Only workspaces represented by a successfully pre-resolved identity are
+    /// eligible, so unverifiable session records cannot alias a live worktree.
+    pub fn find_worktree_workspace(
+        &self,
+        worktree_name: &str,
+        canonical_path: &Path,
+        resolved_identities: &[ResolvedWorktreeIdentity],
+    ) -> Option<Workspace> {
+        self.workspace_order
+            .iter()
+            .filter_map(|workspace_id| self.workspaces.get(workspace_id))
+            .find(|workspace| {
+                resolved_identities.iter().any(|identity| {
+                    identity.matches_workspace(workspace)
+                        && identity.matches_target(worktree_name, canonical_path)
+                })
+            })
+            .cloned()
+    }
+
+    /// Selects and refreshes an exact worktree match, or allocates one.
+    ///
+    /// Reuse preserves the workspace's display name and existing surfaces.
+    pub fn find_or_create_worktree_workspace(
+        &mut self,
+        name: impl Into<String>,
+        canonical_path: &Path,
+        git_branch: impl Into<String>,
+        worktree_name: impl Into<String>,
+        resolved_identities: &[ResolvedWorktreeIdentity],
+    ) -> WorktreeWorkspaceResolution {
+        let git_branch = git_branch.into();
+        let worktree_name = worktree_name.into();
+        if let Some(existing) =
+            self.find_worktree_workspace(&worktree_name, canonical_path, resolved_identities)
+        {
+            for workspace in self.workspaces.values_mut() {
+                workspace.active = workspace.id == existing.id;
+            }
+            let workspace = self
+                .workspaces
+                .get_mut(&existing.id)
+                .expect("workspace was found immediately above");
+            workspace.working_dir = canonical_path.to_path_buf();
+            workspace.git_branch = git_branch;
+            workspace.worktree_dir = Some(canonical_path.to_path_buf());
+            return WorktreeWorkspaceResolution {
+                workspace: workspace.clone(),
+                created: false,
+            };
+        }
+
+        WorktreeWorkspaceResolution {
+            workspace: self.allocate_worktree_workspace(
+                name.into(),
+                canonical_path.to_path_buf(),
+                git_branch,
+                worktree_name,
+            ),
+            created: true,
+        }
+    }
+
+    fn allocate_worktree_workspace(
+        &mut self,
+        name: String,
+        working_dir: PathBuf,
+        git_branch: String,
+        worktree_name: String,
+    ) -> Workspace {
         let id = self.create_workspace(name, working_dir).id;
         // `create_workspace` just inserted this id, so the lookup cannot fail.
         let workspace = self
             .workspaces
             .get_mut(&id)
             .expect("workspace just created");
-        workspace.git_branch = git_branch.into();
+        workspace.git_branch = git_branch;
         workspace.worktree_dir = Some(workspace.working_dir.clone());
-        workspace.worktree_name = Some(worktree_name.into());
+        workspace.worktree_name = Some(worktree_name);
         workspace.clone()
     }
 
-    pub fn restore_session(&mut self, data: SessionData) {
+    /// Restore a session using worktree identities resolved before model access.
+    pub fn restore_session(
+        &mut self,
+        data: SessionData,
+        resolved_worktree_identities: &[ResolvedWorktreeIdentity],
+    ) {
         *self = WorkspaceModel::new();
         self.next_workspace = data.next_workspace;
         self.next_surface = data.next_surface;
@@ -387,7 +671,7 @@ impl WorkspaceModel {
                 }
             }
         }
-        let _ = self.repair_session_invariants();
+        let _ = self.repair_session_invariants(resolved_worktree_identities);
     }
 
     pub fn to_session_data(&self) -> SessionData {
@@ -424,8 +708,13 @@ impl WorkspaceModel {
         }
     }
 
-    pub fn repair_session_invariants(&mut self) -> bool {
-        let mut changed = false;
+    /// Repair structural invariants using canonical identities resolved before
+    /// mutable model access.
+    pub fn repair_session_invariants(
+        &mut self,
+        resolved_worktree_identities: &[ResolvedWorktreeIdentity],
+    ) -> bool {
+        let mut changed = self.collapse_duplicate_worktree_workspaces(resolved_worktree_identities);
         let mut valid_surface_ids: BTreeSet<SurfaceId> = BTreeSet::new();
         let workspace_ids = self.workspace_order.clone();
 
@@ -548,6 +837,73 @@ impl WorkspaceModel {
                 && self.workspaces.contains_key(&surface.workspace_id)
         });
         changed || self.surfaces.len() != before
+    }
+
+    fn collapse_duplicate_worktree_workspaces(
+        &mut self,
+        resolved_worktree_identities: &[ResolvedWorktreeIdentity],
+    ) -> bool {
+        let mut winners: BTreeMap<(String, PathBuf), (WorkspaceId, bool)> = BTreeMap::new();
+        let mut loser_ids = Vec::new();
+
+        for workspace_id in &self.workspace_order {
+            let Some(workspace) = self.workspaces.get(workspace_id) else {
+                continue;
+            };
+            let Some(identity) = resolved_worktree_identities
+                .iter()
+                .find(|identity| identity.matches_workspace(workspace))
+            else {
+                continue;
+            };
+            let canonical_identity = (
+                identity.snapshot.worktree_name.clone(),
+                identity.canonical_path.clone(),
+            );
+            if let Some((winner_id, winner_active)) = winners.get_mut(&canonical_identity) {
+                if winner_id == workspace_id {
+                    continue;
+                }
+                if workspace.active && !*winner_active {
+                    loser_ids.push(winner_id.clone());
+                    *winner_id = workspace_id.clone();
+                    *winner_active = true;
+                } else {
+                    loser_ids.push(workspace_id.clone());
+                }
+            } else {
+                winners.insert(canonical_identity, (workspace_id.clone(), workspace.active));
+            }
+        }
+
+        let mut changed = false;
+        for loser_id in loser_ids {
+            let removed_surface_ids = self
+                .surfaces
+                .values()
+                .filter(|surface| surface.workspace_id == loser_id)
+                .map(|surface| surface.id.clone())
+                .collect::<BTreeSet<_>>();
+            if self
+                .close_workspace(WorkspaceSelector::Id(&loser_id))
+                .is_none()
+            {
+                continue;
+            }
+            self.output_unread_surface_ids
+                .retain(|surface_id| !removed_surface_ids.contains(surface_id));
+            self.notification_unread_surface_ids
+                .retain(|surface_id| !removed_surface_ids.contains(surface_id));
+            self.notifications.retain(|notification| {
+                notification.workspace_id.as_deref() != Some(loser_id.as_str())
+                    && notification
+                        .surface_id
+                        .as_ref()
+                        .is_none_or(|surface_id| !removed_surface_ids.contains(surface_id))
+            });
+            changed = true;
+        }
+        changed
     }
 
     pub fn select_workspace(&mut self, selector: WorkspaceSelector<'_>) -> Option<Workspace> {
@@ -701,9 +1057,20 @@ impl WorkspaceModel {
             .get(workspace_id)?
             .focused_surface_id
             .clone();
+        self.open_browser_near(&focused, url, profile, axis)
+    }
+
+    /// Split an exact source surface into a new browser pane.
+    pub fn open_browser_near(
+        &mut self,
+        surface_id: &str,
+        url: &str,
+        profile: crate::profile::ProfileId,
+        axis: SplitAxis,
+    ) -> Option<Surface> {
         let title = browser_title_for(url);
         self.split_with(
-            &focused,
+            surface_id,
             axis,
             SurfaceKind::Browser {
                 url: url.to_string(),
@@ -846,6 +1213,36 @@ impl WorkspaceModel {
             return false;
         };
         update_partition_ratio(&mut workspace.pane_tree, left_leaves, right_leaves, ratio)
+    }
+
+    /// Restore an exact pane tree after a failed runtime topology change.
+    ///
+    /// The supplied tree must reference only surfaces that still belong to the
+    /// workspace, and the focused surface must be one of those leaves.
+    pub fn restore_workspace_pane_layout(
+        &mut self,
+        workspace_id: &str,
+        pane_tree: PaneNode,
+        focused_surface_id: SurfaceId,
+    ) -> bool {
+        let leaf_ids = leaf_surface_ids(&pane_tree);
+        if !leaf_ids
+            .iter()
+            .any(|surface_id| surface_id == &focused_surface_id)
+            || leaf_ids.iter().any(|surface_id| {
+                self.surfaces
+                    .get(surface_id)
+                    .is_none_or(|surface| surface.workspace_id != workspace_id)
+            })
+        {
+            return false;
+        }
+        let Some(workspace) = self.workspaces.get_mut(workspace_id) else {
+            return false;
+        };
+        workspace.pane_tree = pane_tree;
+        workspace.focused_surface_id = focused_surface_id;
+        true
     }
 
     pub fn focus_surface(&mut self, surface_id: &str) -> bool {

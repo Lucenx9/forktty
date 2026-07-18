@@ -8,6 +8,7 @@ use super::{
     string_option, target_selector_values, trimmed_env, write_stdout_line, CliContext, CliError,
     CliResult, FlagValue,
 };
+use forktty_core::protocol_limits;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -685,8 +686,25 @@ fn format_log_line(log: &Value) -> String {
 }
 
 pub(super) fn handle_notifications(context: &CliContext, args: Vec<String>) -> CliResult<()> {
-    require_no_args(&args, "notifications")?;
-    let result = send_socket_request(&context.socket_path, "notification.list", json!({}))?;
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "notifications")?;
+    reject_unknown_options(&parsed.options, &["limit", "before-id"], "notifications")?;
+    let mut params = Map::new();
+    if let Some(limit) = parse_u64_option(&parsed.options, "limit", "--limit")? {
+        if !(1..=protocol_limits::SOCKET_NOTIFICATION_PAGE_MAX_ITEMS as u64).contains(&limit) {
+            return Err(CliError::new(format!(
+                "notifications: --limit must be from 1 to {}",
+                protocol_limits::SOCKET_NOTIFICATION_PAGE_MAX_ITEMS
+            )));
+        }
+        params.insert("limit".to_string(), json!(limit));
+    }
+    insert_optional_cli_string_param(&mut params, &parsed.options, "before-id", "before_id")?;
+    let result = send_socket_request(
+        &context.socket_path,
+        "notification.list",
+        Value::Object(params),
+    )?;
     if context.json {
         return print_json(&result);
     }

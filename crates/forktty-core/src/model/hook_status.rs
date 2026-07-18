@@ -11,6 +11,9 @@ pub(super) fn should_ignore_hook_status(
     let Some(current) = current else {
         return false;
     };
+    if current.session_id != incoming.session_id {
+        return false;
+    }
     if let (Some(incoming_order), Some(current_order)) = (incoming.order, current.order) {
         // Orders are only comparable when both sides used the same clock; a
         // stored order from a different clock (e.g. a wall-clock order kept
@@ -19,6 +22,19 @@ pub(super) fn should_ignore_hook_status(
         if same_order_clock(current, incoming) && incoming_order < current_order {
             return true;
         }
+    }
+    should_ignore_hook_status_after_serialized_ordering(Some(current), incoming)
+}
+
+pub(super) fn should_ignore_hook_status_after_serialized_ordering(
+    current: Option<&StatusHookMetadata>,
+    incoming: &StatusHookMetadata,
+) -> bool {
+    let Some(current) = current else {
+        return false;
+    };
+    if current.session_id != incoming.session_id {
+        return false;
     }
     if incoming.event == "prompt-submit" && is_terminal_hook_event(&current.event) {
         if incoming
@@ -48,7 +64,10 @@ pub(super) fn merge_hook_metadata(
     current: Option<&StatusHookMetadata>,
     mut incoming: StatusHookMetadata,
 ) -> StatusHookMetadata {
-    if is_terminal_hook_event(&incoming.event) && incoming.turn_id.is_none() {
+    if is_terminal_hook_event(&incoming.event)
+        && incoming.turn_id.is_none()
+        && current.is_some_and(|current| current.session_id == incoming.session_id)
+    {
         incoming.turn_id = current.and_then(|current| current.turn_id.clone());
     }
     incoming

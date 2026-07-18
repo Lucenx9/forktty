@@ -16,13 +16,18 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 pub(super) mod event;
+mod health;
 pub(super) mod install;
 mod specs;
+use health::{
+    describe_installation_check, format_installation_check, hook_doctor_report_is_healthy,
+};
 use install::{
     agent_spec, antigravity_script_path, build_hook_remove_plan, build_hook_setup_plan,
     build_hook_setup_plan_with_profile, default_hook_setup_agents,
-    ensure_private_antigravity_hook_dirs, hook_setup_profile_name, is_claude_high_frequency_event,
-    is_forktty_managed_entry, normalize_agent_name, read_opencode_plugin_file, supported_agents,
+    ensure_private_antigravity_hook_dirs, hook_setup_profile_name, is_claude_per_tool_event,
+    is_effectively_executable_file, is_forktty_managed_entry, normalize_agent_name,
+    read_opencode_plugin_file, read_regular_managed_script, supported_agents,
     supported_hook_remove_agents, HookRemoveAction,
 };
 
@@ -33,10 +38,10 @@ pub(crate) use specs::HookSetupProfile;
 #[cfg(test)]
 pub(super) use specs::HOOK_ENTRY_TIMEOUT_SECS;
 pub(super) use specs::{
-    AgentSpec, HookEntrySpec, HookInstallKind, AGENTS, CLAUDE_HIGH_FREQUENCY_HOOK_ENTRIES,
-    CLAUDE_HOOK_ENTRIES, CODEX_HOOK_ENTRIES, DEFAULT_HOOK_SETUP_AGENT_KEYS, FORKTTY_HOOK_TAG,
-    HOOK_CONTINUE_JSON, HOOK_EVENT_CLOCK, HOOK_EVENT_ORDER_PARAM, HOOK_STATUS_TIMEOUT,
-    HOOK_TOKEN_CEILING_DEFAULT, HOOK_TOOL_LABEL_MAX, LEGACY_GEMINI_HOOK_AGENT,
+    AgentSpec, HookEntrySpec, HookInstallKind, AGENTS, CLAUDE_HOOK_ENTRIES,
+    CLAUDE_PER_TOOL_HOOK_ENTRIES, CODEX_HOOK_ENTRIES, DEFAULT_HOOK_SETUP_AGENT_KEYS,
+    FORKTTY_HOOK_TAG, HOOK_CONTINUE_JSON, HOOK_EVENT_CLOCK, HOOK_EVENT_ORDER_PARAM,
+    HOOK_STATUS_TIMEOUT, HOOK_TOKEN_CEILING_DEFAULT, HOOK_TOOL_LABEL_MAX, LEGACY_GEMINI_HOOK_AGENT,
     OPENCODE_HOOK_TIMEOUT_MS, OPENCODE_MAX_INPUT_BYTES, OPENCODE_PLUGIN_TAG,
 };
 
@@ -256,6 +261,18 @@ pub(super) fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> Cl
     let config_path = (spec.config_path)();
     let config_info = inspect_path(&config_path);
     let launcher_check = describe_launcher_check(spec, &config_path, current_launcher.as_deref());
+    let installed_launcher = launcher_check
+        .get("installedLauncher")
+        .and_then(Value::as_str)
+        .map(Path::new);
+    let installation_check = describe_installation_check(spec, &config_path, installed_launcher);
+    let installation_summary = format_installation_check(&installation_check);
+    let installation_check_json = serde_json::to_value(&installation_check).map_err(|error| {
+        CliError::new(format!(
+            "hooks doctor {}: cannot encode installation check: {error}",
+            spec.key
+        ))
+    })?;
     let supported_events: Vec<&str> = spec
         .hook_entries
         .iter()
@@ -282,6 +299,7 @@ pub(super) fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> Cl
         },
         "hookConfig": config_info,
         "launcherCheck": launcher_check,
+        "installationCheck": installation_check_json,
         "supportedEvents": supported_events,
     });
     if spec.key == "claude" {
@@ -291,11 +309,7 @@ pub(super) fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> Cl
     if spec.key == "codex" && hooks_installed {
         report["trustCheck"] = describe_codex_hook_trust(&config_path);
     }
-    let healthy = report["socket"]["inspect"]["exists"] == json!(true)
-        && report["socket"]["inspect"]["readable"] == json!(true)
-        && report["socket"]["inspect"]["writable"] == json!(true)
-        && report["hookConfig"]["exists"] == json!(true)
-        && report["launcherCheck"]["status"] == json!("ok");
+    let healthy = hook_doctor_report_is_healthy(&report, &installation_check);
     report["version"] = json!(1);
     report["ok"] = json!(healthy);
     if context.json {
@@ -334,6 +348,7 @@ pub(super) fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> Cl
     if let Some(line) = format_launcher_check(&report["launcherCheck"]) {
         eprintln!("{line}");
     }
+    eprintln!("{installation_summary}");
     if let Some(line) = format_codex_trust_check(&report["trustCheck"]) {
         eprintln!("{line}");
     }
@@ -413,7 +428,8 @@ pub(super) fn describe_launcher_check(
         // The launcher path lives in the generated wrapper scripts, not in
         // hooks.json (whose commands are bare script paths).
         HookInstallKind::AntigravityConfig => spec.hook_entries.iter().find_map(|entry| {
-            let text = fs::read_to_string(antigravity_script_path(entry.hook_event_name)).ok()?;
+            let text =
+                read_regular_managed_script(&antigravity_script_path(entry.hook_event_name))?;
             text.lines()
                 .find_map(|line| parse_launcher_from_managed_command(line, spec))
         }),
@@ -428,7 +444,7 @@ pub(super) fn describe_launcher_check(
     // reminder is a real signal instead of firing on every launch.
     let installed_usable = installed
         .as_deref()
-        .is_some_and(|path| forktty_core::command_safety::is_executable_file(Path::new(path)));
+        .is_some_and(|path| is_effectively_executable_file(Path::new(path)));
     let status = match (&installed, &current) {
         (Some(installed_path), Some(current_path)) if installed_path == current_path => "ok",
         (Some(_), _) if installed_usable => "ok",
@@ -457,15 +473,16 @@ pub(super) fn read_claude_installed_profile(
         return Err(CliError::new("Claude hook specification is unavailable"));
     };
     let config = read_json_file(config_path)?;
-    let has_high_frequency = CLAUDE_HIGH_FREQUENCY_HOOK_ENTRIES
+    let has_per_tool = CLAUDE_HOOK_ENTRIES
         .iter()
+        .filter(|entry| is_claude_per_tool_event(entry.event_name))
         .any(|entry| config_has_forktty_hook(&config, spec, entry));
-    if has_high_frequency {
+    if has_per_tool {
         return Ok(Some(HookSetupProfile::Full));
     }
     let has_lifecycle = CLAUDE_HOOK_ENTRIES
         .iter()
-        .filter(|entry| !is_claude_high_frequency_event(entry.event_name))
+        .filter(|entry| !is_claude_per_tool_event(entry.event_name))
         .any(|entry| config_has_forktty_hook(&config, spec, entry));
     if has_lifecycle {
         Ok(Some(HookSetupProfile::Lifecycle))

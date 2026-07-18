@@ -70,14 +70,20 @@ chmod +x forktty-0.2.0-alpha.18-x86_64.AppImage
 ./forktty-0.2.0-alpha.18-x86_64.AppImage
 ```
 
-The AppImage always ships the vendored libghostty-vt library and prefers the
-host's GUI stack: when the host provides GTK4, ForkTTY runs against the
-system GTK4/libadwaita for native cursor themes, fontconfig, and portal
-integration, and the bundled GTK copy is used only as a fallback on hosts
-without GTK4. Set `FORKTTY_APPIMAGE_GTK_RUNTIME=bundled`, `host`, or `auto`
-to force or debug that runtime choice. It depends on the host system for
-glibc, the GSettings/GIO data tree, Wayland/X11 session services, fontconfig,
-the
+The AppImage always ships the vendored libghostty-vt library plus a bundled
+GTK4/libadwaita fallback. In `auto` mode AppRun performs a real eager loader
+compatibility probe with the effective loader environment: it uses the host
+GTK/libadwaita stack only when both the ForkTTY binary and
+`ghostty-gtk-embed.so` load successfully, otherwise it adds the bundled stack.
+Set `FORKTTY_APPIMAGE_GTK_RUNTIME=bundled`, `host`, or `auto` to force or debug
+that runtime choice. Terminal children enter ForkTTY's GTK-linked
+`appimage-child-exec` helper while the selected AppRun loader path is still
+active; AppImage `LD_LIBRARY_PATH` entries and runtime variables are sanitized
+only after the helper has loaded, immediately before it executes the real
+shell or command. Embedded Bash, Zsh, fish, Elvish, and Nushell sessions retain
+Ghostty's packaged shell integration and `TERM=xterm-ghostty` identity across
+that handoff. The AppImage still depends on the host system for glibc, the
+GSettings/GIO data tree, Wayland/X11 session services, fontconfig, the
 OpenGL/Vulkan/Mesa driver stack, and desktop notification services.
 It is the primary downloadable artifact for alpha releases and works on
 most modern distros that ship a recent glibc, but it should
@@ -197,9 +203,11 @@ sudo dpkg -i target/packaging/deb/forktty_*.deb
 ```
 
 `scripts/build-deb.sh` and `scripts/build-appimage.sh` call
-`scripts/ghostty-gtk-lib-probe.sh --ensure --print-path` before packaging and
-fail if `ghostty-gtk-embed.so` cannot be built, located, or verified. The
-verified library is installed into `usr/lib` beside the `forktty` binary so
+`scripts/ghostty-gtk-lib-probe.sh --ensure --print-path` before packaging. Each
+`--ensure` invocation enters Zig's incremental build graph and then verifies all
+mandatory embedding ABI symbols; packaging fails if `ghostty-gtk-embed.so`
+cannot be built, located, or verified. The verified library is installed into
+`usr/lib` beside the `forktty` binary so
 installed terminal panes can load it through the binary RUNPATH without
 `FORKTTY_GHOSTTY_GTK_LIB`.
 Debian packages also install ForkTTY copyright/license information and
@@ -210,8 +218,14 @@ Build the AppImage locally (requires `appimagetool` on
 
 ```bash
 bash scripts/build-appimage.sh
-./target/packaging/appimage/forktty-*-x86_64.AppImage
+scripts/check-appimage-bundled-container.sh \
+  target/packaging/appimage/forktty-0.2.0-alpha.18-x86_64.AppImage
+./target/packaging/appimage/forktty-0.2.0-alpha.18-x86_64.AppImage
 ```
+
+The bundled-mode check requires `bubblewrap`; it extracts the artifact, masks
+host GTK/libadwaita, and exercises the child helper and packaged Bash
+integration without publishing or pulling a container image.
 
 Set `APPIMAGE_UPDATE_INFO=1` when building release-style AppImages with
 embedded update metadata; this requires `zsyncmake` on `PATH` and emits a
@@ -285,9 +299,39 @@ forktty split-surface --axis horizontal
 forktty read-screen --scope visible
 forktty capture-tail --lines 40
 forktty notify "Build complete" --title Build
+forktty notifications --limit 50
 forktty context-snapshot --workspace-name main --json
 forktty worktree-list --cwd "$PWD"
 ```
+
+`forktty notifications` reads exactly one retained-history page. Use
+`--limit 1..200` and the first returned notification id as an exclusive
+`--before-id` cursor for the next older page; ForkTTY does not auto-fetch the
+remaining history.
+
+Notification create/list results and `context.snapshot` retain terminal
+metadata but omit binary `icon_data`. Normal compact JSON-RPC response lines are
+capped at 64 MiB including the newline; oversized results become a same-id
+`response_too_large` error. Remote rows report `connected` from current terminal
+I/O readiness, so diagnostic runtime fields may remain visible while it is
+false; this is not an independent SSH heartbeat or network/authentication probe.
+
+Create and Attach resolve a modeled worktree by the exact pair of its worktree
+name and verified canonical path. Repeating Create, or following Create with
+Attach for that same identity, selects the existing workspace and returns its
+existing ID without adding another surface; same-named worktrees at different
+canonical paths remain separate.
+
+Worktree reads and mutations from the GTK dialog and socket share coordination
+inside the running ForkTTY process. Competing Create, Attach, Remove, and Merge
+operations serialize through commit or rollback, but this is not a
+cross-process or distributed Git lock. Removal first suppresses automatic
+respawn for the exact target's surfaces, closes them as one quiesced set, and
+keeps suppression active through model commit or the complete rollback
+restoration attempt. A partial close or filesystem failure restores the prior
+runtime/model state when terminal respawn succeeds; if respawn fails, ForkTTY
+records blocking terminal status before releasing suppression and prevents
+automatic reconciliation from retrying it blindly.
 
 Use `forktty capabilities --json` for the runtime method list and
 `forktty examples` for a compact set of agent-status examples. The socket is
@@ -300,6 +344,11 @@ Socket requests are one JSON-RPC object per line over the owner-only Unix
 socket at `$XDG_RUNTIME_DIR/forktty.sock` (with an owner-only fallback under
 `/tmp/forktty-<uid>/`). See [SPEC.md](SPEC.md#socket-api) for the protocol and
 [docs/socket-api.md](docs/socket-api.md) for stability tiers.
+
+Socket connects are deadline-bounded even when a listener's accept backlog is
+full. ForkTTY treats that timeout as an occupied socket and preserves its inode.
+On application close, already-admitted socket requests drain before scrollback,
+live directories, session data, and configured PTY cleanup are finalized.
 
 ### Upgrading from orchestration builds
 
@@ -362,7 +411,8 @@ an AppImage launcher, generated hook commands set `APPIMAGE_EXTRACT_AND_RUN=1`
 for the ForkTTY CLI child so short hooks do not keep a FUSE AppImage mount
 alive. Claude Code setup uses the lifecycle profile by default, avoiding
 blocking per-tool hooks on every tool call; pass `--full` to include
-`PreToolUse`, `PostToolUse`, `PostToolUseFailure`, and `PostToolBatch`.
+`PreToolUse`, `PostToolUse`, and `PostToolUseFailure`. `PostToolBatch` remains
+in the lifecycle profile so pending prompt correlations can be completed.
 Re-running setup migrates Claude to
 the lifecycle profile unless `--full` is passed. `hooks remove` removes only
 ForkTTY-managed entries/plugins and leaves unrelated agent hooks in place.
@@ -398,6 +448,14 @@ forktty hooks doctor codex     # inspect socket, launcher, env, hook config
 forktty hooks test codex       # round-trip a status update through the socket
 ```
 
+`hooks doctor` succeeds only when the complete ForkTTY-managed installation is
+healthy. Its version-1 JSON keeps `launcherCheck` and adds
+`installationCheck`; malformed/partial configs, missing or modified generated
+assets, non-executable Antigravity wrappers, or an unusable recorded launcher
+make both `installationCheck.ok` and the top-level `ok` false. Supported event
+counts are Codex 10, Claude 26 lifecycle / 29 full, Antigravity 3, and OpenCode
+11.
+
 Each agent's hook commands honor a per-agent disable variable:
 
 - `FORKTTY_CODEX_HOOKS_DISABLED=1`
@@ -408,6 +466,14 @@ Each agent's hook commands honor a per-agent disable variable:
 Hooks report status, progress, logs, and prompt notifications through
 the same local socket pipeline. Manual hook-event commands can pass
 `--socket <path>` when they run outside a ForkTTY-spawned shell.
+Claude `SessionStart` enrichment requires workspace, surface, and absolute
+socket provenance together; incomplete provenance returns the provider's exact
+continue response without touching the socket. A persisted `Suspended`
+lifecycle is a tombstone: late hooks are ignored without advancing event order
+or producing side effects until explicit resume. Prompt results mark only the
+matching in-app prompt as read history and close its desktop notification;
+stale results and unrelated prompts remain untouched. Invalid persisted resume
+metadata records a terminal error and never opens a fallback shell.
 For Codex and Claude Code, `SubagentStop` keeps the parent session running
 because only the nested subagent ended. Claude Code `TeammateIdle` publishes
 the teammate as ready/idle.
@@ -415,13 +481,14 @@ the teammate as ready/idle.
 ## Features
 
 - Native GTK4/libadwaita desktop shell with embedded Ghostty-backed terminals.
-- Recursive split panes, pane focus/close, command palette, settings dialog, notification panel, and workspace sidebar.
+- Recursive split panes, pane focus/close, command palette, settings dialog, notification panel, and workspace sidebar. Pane/menu actions stay bound to their captured surface, while maximize applies only to a real multi-pane tree and clears when it collapses.
 - Quake/dropdown mode through config and F12 where global shortcuts are supported.
 - Direct Unix socket JSON-RPC server for workspace (including SSH remote workspaces), surface, terminal read/capture, topology tree/top health inspection, pane-tab, notification, worktree, metadata, persisted agent-session inventory/resume, compact status summaries, context identify, event-stream, and capabilities; CLI wrappers add bounded lifecycle waits over read-only socket calls.
+- SSH sidebar metadata reports `ssh:<host> · connected` or `ssh:<host> · disconnected` from local terminal readiness, not a network heartbeat.
 - Agent HUD in the GTK titlebar for lifecycle, last activity, attention, focus, and resume across workspaces.
 - Git worktree create/attach/remove/merge/status with dirty-state protection and hook execution inside verified worktrees. Setup hooks are advisory; teardown hook failures or teardown-created dirty state block removal.
 - Session restore for workspace order, active workspace, pane tree, focused surface, each local terminal pane's last live cwd, branch, and worktree metadata.
-- Prompt-aware notifications from ForkTTY hooks and terminal events, bounded visible prompt fallback, Ghostty bell, and hook/socket events. The notification panel groups prompts/current-workspace/history and its latest-target action prioritizes unread prompts before lower-urgency history.
+- Prompt-aware notifications from ForkTTY hooks and terminal events, bounded visible prompt fallback, Ghostty bell, and hook/socket events. While open, the notification panel reconciles prompts/current-workspace/history every 500 ms from one current snapshot; Dismiss and Clear refresh immediately, and Open Latest always uses the reconciled target.
 - Source-only experimental WebKitGTK6 browser panes (behind the `browser` feature) with scriptable snapshot/click/fill/eval verbs, per-profile persistent WebKit sessions, profile CRUD, history/bookmark socket plus CLI access, and history/bookmark import from local Firefox/Chromium-family profiles.
 - Bounded config/session/socket handling and local-only privacy defaults.
 
@@ -460,7 +527,7 @@ anonymous_ping = true
 
 `notification_command` is split with `shell_words`; ForkTTY does not use `sh -c`. The first token must be an absolute executable path. Notification title/body are passed through `FORKTTY_NOTIFICATION_TITLE` and `FORKTTY_NOTIFICATION_BODY`; OSC 99 `f`/`t` metadata is exposed as `FORKTTY_NOTIFICATION_TERMINAL_APP` and `FORKTTY_NOTIFICATION_TERMINAL_TYPES_JSON`. `blocked_terminal_apps` and `blocked_terminal_types` suppress terminal-originated OSC 99 notifications whose exact `f` application or `t` type matches one of the listed strings.
 
-`persistent_scrollback_lines` is off by default; when set above `0`, ForkTTY stores a bounded plain-text tail per surface in `session-v2.json` and restores it before the fresh shell starts. Embedded Ghostty panes use the limited text ABI to read that tail from the end of full scrollback without materializing an unbounded buffer; older embedding libraries without the limited ABI fall back to recent visible text. `persist_terminal_processes` is also off by default and can be toggled from Settings > Worktrees; when set to `true` and `dtach` is available on an absolute `PATH` entry, plain terminal panes run under a detach/reattach broker so generic shells, dev servers, REPLs, editors, and long-running commands can survive a GTK UI restart and re-attach on relaunch. AppImage-launched brokers close inherited AppImage runtime file descriptors before `dtach` starts, so surviving brokers do not keep the FUSE AppImage mount alive after the GTK window closes. Explicit pane close/restart terminates the matching ForkTTY-managed broker process tree and removes the per-surface broker socket, so a later reused surface id starts fresh instead of attaching to stale detached state. Disabling the setting cleans stale detached sessions while preserving currently visible panes until they close; closing the GTK window with the setting disabled cleans visible managed brokers too. Starting with the setting disabled cleans old managed sessions before restore. Agent panes continue to use provider resume, and SSH, browser, and project-action panes are not wrapped. If `dtach` is missing, ForkTTY falls back to normal ephemeral terminal spawning. Live embedded panes follow Ghostty's `scrollback-limit` budget (10 MB by default) and `scrollbar = system|never` preference, so mouse-wheel scrollback and the vertical scrollbar come from Ghostty config while legacy ForkTTY `scrollback_lines` is treated as a compatibility key and omitted from new saves. Terminal font, colors, cursor/faint opacity, bell behavior, mouse scroll multiplier, cell size adjustments, and inactive split dimming come from Ghostty's config (`~/.config/ghostty/config.ghostty` or the legacy `~/.config/ghostty/config`) when present, including `config-file`, `theme`, named colors, 16-color palette entries, `cursor-opacity`, `faint-opacity`, `bell-features`, `mouse-scroll-multiplier`, `adjust-cell-width`, `adjust-cell-height`, `unfocused-split-opacity`, and `unfocused-split-fill`; no system Ghostty install is required. Legacy ForkTTY font/theme/scrollback/bell/renderer keys are kept only for config compatibility and omitted from new saves. Terminal panes require the embedded Ghostty GTK widget; if `ghostty-gtk-embed.so` is missing or fails to load, panes report a spawn failure rather than opening with the old renderer.
+`persistent_scrollback_lines` is off by default; when set above `0`, ForkTTY stores a bounded plain-text tail per surface in `session-v2.json` and restores it before the fresh shell starts. Embedded Ghostty panes use the limited text ABI to read that tail from the end of full scrollback without materializing an unbounded buffer; older embedding libraries without the limited ABI fall back to recent visible text. `persist_terminal_processes` is also off by default and can be toggled from Settings > Worktrees; when set to `true` and `dtach` is available on an absolute `PATH` entry, plain terminal panes run under a detach/reattach broker so generic shells, dev servers, REPLs, editors, and long-running commands can survive a GTK UI restart and re-attach on relaunch. AppImage-launched brokers close inherited AppImage runtime file descriptors before `dtach` starts, so surviving brokers do not keep the FUSE AppImage mount alive after the GTK window closes. Explicit pane close/restart terminates the matching ForkTTY-managed broker process tree and removes the per-surface broker socket, so a later reused surface id starts fresh instead of attaching to stale detached state. Disabling the setting cleans stale detached sessions while preserving currently visible panes until they close; closing the GTK window with the setting disabled cleans visible managed brokers too. Starting with the setting disabled cleans old managed sessions before restore. Agent panes continue to use provider resume, and SSH, browser, and project-action panes are not wrapped. If `dtach` is missing, ForkTTY falls back to normal ephemeral terminal spawning. Live embedded panes follow Ghostty's `scrollback-limit` budget (10 MB by default) and `scrollbar = system|never` preference, so mouse-wheel scrollback and the vertical scrollbar come from Ghostty config while legacy ForkTTY `scrollback_lines` is treated as a compatibility key and omitted from new saves. Terminal font, colors, cursor blink/opacity, faint opacity, bell behavior, mouse scroll multiplier, cell size adjustments, and inactive split dimming come from Ghostty's config (`~/.config/ghostty/config.ghostty` or the legacy `~/.config/ghostty/config`) when present, including `config-file`, `theme`, named colors, 16-color palette entries, `cursor-style-blink`, `cursor-opacity`, `faint-opacity`, `bell-features`, `mouse-scroll-multiplier`, `adjust-cell-width`, `adjust-cell-height`, `unfocused-split-opacity`, and `unfocused-split-fill`; no system Ghostty install is required. Legacy ForkTTY font/theme/scrollback/bell/renderer keys are kept only for config compatibility and omitted from new saves. Terminal panes require the embedded Ghostty GTK widget; if `ghostty-gtk-embed.so` is missing or fails to load, panes report a spawn failure rather than opening with the old renderer. A close request emitted by the Ghostty widget uses ForkTTY's normal Close Pane confirmation, while socket/API close remains noninteractive for explicit automation.
 
 `updates.auto_check = true` checks GitHub Releases no more than once every 24 hours. The stamp is written on both success and failure so offline machines are not probed on every launch.
 
@@ -476,7 +543,7 @@ GTK/Ghostty sessions are stored as:
 ~/.local/state/forktty/session-v2.json
 ```
 
-ForkTTY imports legacy `session.json` when present, but saves the native runtime as v2. By default restore re-spawns fresh Ghostty-backed terminals; scrollback restore is limited to the opt-in plain-text tail controlled by `persistent_scrollback_lines`, and embedded Ghostty panes currently source that tail from visible text rather than off-screen scrollback. With `general.persist_terminal_processes = true` and `dtach` available, plain terminal process trees survive through the broker and restored panes re-attach by persisted surface id. If the setting is false on startup, old ForkTTY-managed broker sessions are cleaned before restore. Corrupt or structurally invalid session files are quarantined.
+ForkTTY imports legacy `session.json` when present, but saves the native runtime as v2. By default restore re-spawns fresh Ghostty-backed terminals; scrollback restore is limited to the opt-in plain-text tail controlled by `persistent_scrollback_lines`, and embedded Ghostty panes source that tail from the bounded end of full scrollback when the limited ABI is available. With `general.persist_terminal_processes = true` and `dtach` available, plain terminal process trees survive through the broker and restored panes re-attach by persisted surface id. If the setting is false on startup, old ForkTTY-managed broker sessions are cleaned before restore. Corrupt or structurally invalid session files are quarantined.
 
 ## Security Summary
 
@@ -493,7 +560,7 @@ See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
 
 - Linux only. There are no supported macOS or Windows builds.
 - libadwaita 1.4+ is required by the native terminal integration.
-- The AppImage ships a bundled GTK4/libadwaita fallback plus Ghostty and gtk4-layer-shell, but prefers a host GTK stack when available and still relies on the host's glibc, fontconfig, OpenGL/Vulkan/Mesa driver stack, display-server libraries, and desktop session services. Test it on the target distro/desktop environment; prefer the `.deb` on Debian/Ubuntu when package-manager integration matters.
+- The AppImage ships a bundled GTK4/libadwaita fallback plus Ghostty and gtk4-layer-shell, but prefers the host GTK stack only when the eager loader compatibility probe succeeds; it still relies on the host's glibc, fontconfig, OpenGL/Vulkan/Mesa driver stack, display-server libraries, and desktop session services. Test it on the target distro/desktop environment; prefer the `.deb` on Debian/Ubuntu when package-manager integration matters.
 - PTY/process persistence is opt-in for plain terminal panes through `general.persist_terminal_processes` and requires `dtach`; by default restored sessions spawn fresh shells. Scrollback persistence is opt-in, plain-text only, and bounded.
 - OSC 9 and basic OSC 99 terminal notifications are parsed from the Ghostty-owned PTY stream and rate-limited per surface; OSC 99 title/body base64 payloads and same-id title/body chunks are decoded with multipart title/body kept separate, same-id update/close controls affect ForkTTY's notification model, and in-app Open/Dismiss/Clear All plus basic same-id buttons can send OSC 99 reports. Targeted desktop notifications expose a best-effort Open action, notification dismiss/clear closes matching desktop and OSC 99 tracked notifications, icon names, application-name icon fallback, application/type filtering metadata, occasion filtering, urgency, expiry, and sound metadata inform notification handling, positive `w` expiry values dismiss in-app notifications, and bounded `p=icon` data can be cached by `g`; broader chunk lifecycle behavior remains partial.
 - Quake global shortcuts and layer-shell placement depend on desktop/compositor support.
@@ -538,6 +605,8 @@ cargo test -p forktty-ui-gtk --all-targets --no-default-features --features brow
 desktop-file-validate packaging/linux/dev.forktty.forktty.desktop
 bash scripts/build-deb.sh
 bash scripts/build-appimage.sh
+scripts/check-appimage-bundled-container.sh \
+  target/packaging/appimage/forktty-0.2.0-alpha.18-x86_64.AppImage
 ```
 
 See [SPEC.md](SPEC.md), [ROADMAP.md](ROADMAP.md), and [docs/native-gtk-ghostty.md](docs/native-gtk-ghostty.md).

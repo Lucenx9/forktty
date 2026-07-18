@@ -564,23 +564,18 @@ export GDK_DISABLE
 # GTK/libadwaita fallback, but modern hosts should use their own GTK stack so it
 # can match the host fontconfig/display/GL driver stack. Force a choice with
 # FORKTTY_APPIMAGE_GTK_RUNTIME=bundled|host|auto when debugging packaging.
-host_gtk_stack_available() {
-  if command -v ldconfig >/dev/null 2>&1; then
-    cache="$(ldconfig -p 2>/dev/null || true)"
-  elif [ -x /sbin/ldconfig ]; then
-    cache="$(/sbin/ldconfig -p 2>/dev/null || true)"
-  else
-    return 1
-  fi
-  [ -n "$cache" ] || return 1
-  printf '%s\n' "$cache" | grep -q 'libgtk-4\.so\.1' || return 1
-  printf '%s\n' "$cache" | grep -q 'libadwaita-1\.so\.0' || return 1
+host_ld_library_path="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+host_gtk_stack_compatible() {
+  LD_LIBRARY_PATH="$host_ld_library_path" \
+  LD_PRELOAD="$HERE/usr/lib/ghostty-gtk-embed.so${LD_PRELOAD:+:$LD_PRELOAD}" \
+  LD_BIND_NOW=1 \
+  "$HERE/usr/bin/forktty" --version >/dev/null 2>&1
 }
 
 gtk_runtime="${FORKTTY_APPIMAGE_GTK_RUNTIME:-auto}"
 case "$gtk_runtime" in
   auto | "")
-    if host_gtk_stack_available; then
+    if host_gtk_stack_compatible; then
       use_bundled_gtk=0
     else
       use_bundled_gtk=1
@@ -601,7 +596,7 @@ esac
 if [ "$use_bundled_gtk" = 1 ]; then
   export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/bundled${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 else
-  export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  export LD_LIBRARY_PATH="$host_ld_library_path"
 fi
 if [ -n "${XDG_DATA_DIRS:-}" ]; then
   export XDG_DATA_DIRS="$HERE/usr/share:$XDG_DATA_DIRS"

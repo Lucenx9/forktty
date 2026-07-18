@@ -131,30 +131,22 @@ fn build_pane_chrome_with_content(
         let state_for_h = state.clone();
         let sid_h = surface_id_owned.clone();
         split_h.connect_clicked(move |_| {
-            focus_surface_and(&state_for_h, &sid_h, |s| {
-                split_active_surface(s, SplitAxis::Horizontal)
-            });
+            request_split_surface_by_id(&state_for_h, &sid_h, SplitAxis::Horizontal);
         });
         let state_for_v = state.clone();
         let sid_v = surface_id_owned.clone();
         split_v.connect_clicked(move |_| {
-            focus_surface_and(&state_for_v, &sid_v, |s| {
-                split_active_surface(s, SplitAxis::Vertical)
-            });
+            request_split_surface_by_id(&state_for_v, &sid_v, SplitAxis::Vertical);
         });
         let state_for_single_h = state.clone();
         let sid_single_h = surface_id_owned.clone();
         single_split_h.connect_clicked(move |_| {
-            focus_surface_and(&state_for_single_h, &sid_single_h, |s| {
-                split_active_surface(s, SplitAxis::Horizontal)
-            });
+            request_split_surface_by_id(&state_for_single_h, &sid_single_h, SplitAxis::Horizontal);
         });
         let state_for_single_v = state.clone();
         let sid_single_v = surface_id_owned.clone();
         single_split_v.connect_clicked(move |_| {
-            focus_surface_and(&state_for_single_v, &sid_single_v, |s| {
-                split_active_surface(s, SplitAxis::Vertical)
-            });
+            request_split_surface_by_id(&state_for_single_v, &sid_single_v, SplitAxis::Vertical);
         });
         let state_for_single_nt = state.clone();
         let sid_single_nt = surface_id_owned.clone();
@@ -166,16 +158,16 @@ fn build_pane_chrome_with_content(
             let state_for_browser = state.clone();
             let sid_browser = surface_id_owned.clone();
             open_browser.connect_clicked(move |_| {
-                focus_surface_and(&state_for_browser, &sid_browser, |s| {
-                    open_browser_active(s, SplitAxis::Horizontal)
-                });
+                open_browser_by_surface_id(&state_for_browser, &sid_browser, SplitAxis::Horizontal);
             });
             let state_for_single_browser = state.clone();
             let sid_single_browser = surface_id_owned.clone();
             single_open_browser.connect_clicked(move |_| {
-                focus_surface_and(&state_for_single_browser, &sid_single_browser, |s| {
-                    open_browser_active(s, SplitAxis::Horizontal)
-                });
+                open_browser_by_surface_id(
+                    &state_for_single_browser,
+                    &sid_single_browser,
+                    SplitAxis::Horizontal,
+                );
             });
         }
         let state_for_nt = state.clone();
@@ -581,10 +573,35 @@ pub(super) fn show_close_pane_confirmation(
     state: &SocketAppState,
     surface_id: &str,
 ) -> gtk::Window {
+    let state_for_close = state.clone();
+    let surface_id_for_close = surface_id.to_string();
+    show_close_pane_confirmation_if(
+        parent,
+        state,
+        surface_id,
+        Rc::new(|| true),
+        Rc::new(move || {
+            focus_surface_and(&state_for_close, &surface_id_for_close, |state| {
+                close_surface_by_id(state, &surface_id_for_close);
+            });
+        }),
+    )
+}
+
+pub(super) fn show_close_pane_confirmation_if(
+    parent: &adw::ApplicationWindow,
+    state: &SocketAppState,
+    surface_id: &str,
+    target_is_current: Rc<dyn Fn() -> bool>,
+    close_target: Rc<dyn Fn()>,
+) -> gtk::Window {
+    // Generation-bound callers use the predicate to retire a stale dialog and
+    // an exact close action to recheck identity atomically at mutation time.
     let state = state.clone();
     let surface_id = surface_id.to_string();
     let state_for_lifecycle = state.clone();
     let surface_id_for_lifecycle = surface_id.clone();
+    let target_is_current_for_lifecycle = Rc::clone(&target_is_current);
     let confirmation = close_pane_confirmation(&state, &surface_id);
     let dialog = show_destructive_confirmation(
         parent,
@@ -597,15 +614,14 @@ pub(super) fn show_close_pane_confirmation(
             let still_exists = state
                 .model
                 .lock()
-                .is_ok_and(|model| model.surface(&surface_id).is_some());
+                .is_ok_and(|model| model.surface(&surface_id).is_some())
+                && target_is_current();
             if still_exists {
                 // Close by explicit id: the active workspace may have changed
                 // (e.g. socket workspace.select) while the dialog was open, so
                 // closing the "active" surface could target the wrong pane.
                 // Focus first so the surviving neighbor inherits focus as before.
-                focus_surface_and(&state, &surface_id, |state| {
-                    close_surface_by_id(state, &surface_id);
-                });
+                close_target();
             }
         },
     );
@@ -617,7 +633,8 @@ pub(super) fn show_close_pane_confirmation(
         let target_exists = state_for_lifecycle
             .model
             .lock()
-            .is_ok_and(|model| model.surface(&surface_id_for_lifecycle).is_some());
+            .is_ok_and(|model| model.surface(&surface_id_for_lifecycle).is_some())
+            && target_is_current_for_lifecycle();
         if target_exists {
             glib::ControlFlow::Continue
         } else {
@@ -635,7 +652,10 @@ pub(super) fn record_terminal_spawn_failure(
     message: &str,
     notification_dispatch: bool,
 ) {
-    if let Ok(mut model) = model.lock() {
+    let creation = {
+        let Ok(mut model) = model.lock() else {
+            return;
+        };
         let value = if message.trim().is_empty() {
             "Spawn failed".to_string()
         } else {
@@ -653,16 +673,19 @@ pub(super) fn record_terminal_spawn_failure(
             LogLevel::Error,
             format!("Terminal {surface_id} spawn failed: {message}"),
         );
-        let notification = model.create_notification(
+        model.create_notification_with_evictions(
             "Terminal spawn failed",
             message,
             NotificationKind::Error,
             Some(workspace_id.to_string()),
             Some(surface_id.to_string()),
-        );
-        if notification_dispatch {
-            dispatch_notification_with_loaded_config(&notification);
-        }
+        )
+    };
+    for notification_id in creation.evicted_desktop_notification_ids {
+        forktty_core::close_desktop_notification(&notification_id);
+    }
+    if notification_dispatch {
+        dispatch_notification_with_loaded_config(&creation.notification);
     }
 }
 

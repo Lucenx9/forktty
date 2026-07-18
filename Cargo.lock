@@ -728,6 +728,7 @@ dependencies = [
  "git2",
  "libc",
  "rusqlite",
+ "serde",
  "serde_json",
  "serial_test",
  "tempfile",

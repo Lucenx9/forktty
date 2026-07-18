@@ -59,6 +59,9 @@ unset FORKTTY_WORKSPACE_ID FORKTTY_SURFACE_ID
 
 mkdir -p "$XDG_CONFIG_HOME/forktty" "$XDG_STATE_HOME/forktty"
 cat >"$XDG_CONFIG_HOME/forktty/config.toml" <<'EOF'
+[general]
+shell = "/bin/bash"
+
 [notifications]
 desktop = false
 sound = false
@@ -107,7 +110,13 @@ read_screen_json() {
 
 snapshot_field() {
   local field="$1"
-  read_screen_json | python3 -c 'import json,sys; print(json.load(sys.stdin)[sys.argv[1]])' "$field"
+  surface_snapshot_field "$surface_id" "$field"
+}
+
+surface_snapshot_field() {
+  local id="$1"
+  local field="$2"
+  read_surface_json "$id" | python3 -c 'import json,sys; print(json.load(sys.stdin)[sys.argv[1]])' "$field"
 }
 
 surface_count() {
@@ -152,6 +161,8 @@ send_text_wait() {
     sleep 0.25
   done
   echo "gtk-ghostty smoke: $label did not become writable" >&2
+  "$BIN" --socket "$FORKTTY_SOCKET_PATH" surfaces --json >&2 || true
+  cat "$TMP_DIR/forktty.stderr" >&2 || true
   exit 1
 }
 
@@ -231,6 +242,9 @@ send_text_wait "$surface_id" $'echo forktty-smoke-ok\r' "initial terminal"
 wait_surface_contains "$surface_id" "forktty-smoke-ok" "initial terminal readback"
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" capture-tail --surface-id "$surface_id" --lines 5 |
   grep -q "forktty-smoke-ok"
+send_text_wait "$surface_id" $'printf "forktty-smoke-term=%s\\n" "$TERM"; if declare -F __ghostty_precmd >/dev/null; then echo forktty-smoke-bash-integration=ok; else echo forktty-smoke-bash-integration=missing; fi\r' "Bash integration terminal"
+wait_surface_contains "$surface_id" "forktty-smoke-term=xterm-ghostty" "Ghostty terminal identity"
+wait_surface_contains "$surface_id" "forktty-smoke-bash-integration=ok" "Ghostty Bash integration"
 if ! wait_surface_pid "$surface_id"; then
   echo "gtk-ghostty smoke: surface $surface_id did not expose a child pid" >&2
   cat "$TMP_DIR/forktty.stderr" >&2 || true
@@ -248,6 +262,8 @@ fi
 scrollback_fill_command="i=0; while [ \$i -lt $scrollback_fill_lines ]; do printf 'forktty-smoke-scroll-fill-%03d\\n' \"\$i\"; i=\$((i + 1)); done; printf 'forktty-smoke-scroll-fill-%s\\n' complete"
 send_text_wait "$surface_id" "${scrollback_fill_command}"$'\r' "scrollback fill terminal"
 wait_surface_contains "$surface_id" "forktty-smoke-scroll-fill-complete" "scrollback fill marker"
+"$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --surface-id "$surface_id" --scope all --max-bytes 64 --json |
+  python3 -c 'import json,sys; snapshot=json.load(sys.stdin); assert snapshot["truncated"] and snapshot["total_lines"] > snapshot["lines"], snapshot'
 if surface_contains "$surface_id" "$scrollback_restore_marker"; then
   echo "gtk-ghostty smoke: scrollback restore marker remained visible after fill" >&2
   exit 1
@@ -332,6 +348,37 @@ if [[ "$zoom_changed" != "1" ]]; then
   exit 1
 fi
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --surface-id "$surface_id" | grep -q "forktty-smoke-after-restart"
+
+zoom_tab_surface_id="$("$BIN" --socket "$FORKTTY_SOCKET_PATH" new-tab --surface-id "$surface_id" --json |
+  python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+send_text_wait "$zoom_tab_surface_id" $'echo forktty-smoke-zoom-tab-ok\r' "zoomed tab terminal"
+wait_surface_contains "$zoom_tab_surface_id" "forktty-smoke-zoom-tab-ok" "zoomed tab terminal readback"
+zoom_inherited=0
+for _ in {1..40}; do
+  original_cols="$(surface_snapshot_field "$surface_id" cols)"
+  new_tab_cols="$(surface_snapshot_field "$zoom_tab_surface_id" cols)"
+  if (( original_cols > 0 && new_tab_cols == original_cols )); then
+    zoom_inherited=1
+    break
+  fi
+  sleep 0.25
+done
+if [[ "$zoom_inherited" != "1" ]]; then
+  echo "gtk-ghostty smoke: new tab did not inherit zoom ($new_tab_cols cols, expected $original_cols)" >&2
+  exit 1
+fi
+"$BIN" --socket "$FORKTTY_SOCKET_PATH" close-surface "$zoom_tab_surface_id" >/dev/null
+for _ in {1..40}; do
+  if ! surface_exists "$zoom_tab_surface_id"; then
+    break
+  fi
+  sleep 0.25
+done
+if surface_exists "$zoom_tab_surface_id"; then
+  echo "gtk-ghostty smoke: zoom inheritance tab did not close" >&2
+  exit 1
+fi
+"$BIN" --socket "$FORKTTY_SOCKET_PATH" focus-surface "$surface_id" >/dev/null
 
 gapplication action dev.forktty.forktty zoom-out >/dev/null
 gapplication action dev.forktty.forktty zoom-reset >/dev/null

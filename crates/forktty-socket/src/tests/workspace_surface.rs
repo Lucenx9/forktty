@@ -2,6 +2,225 @@
 
 use super::*;
 
+#[derive(Debug)]
+struct BlocksAfterCloseBackend {
+    inner: HeadlessTerminalBackend,
+    close_started: Mutex<Option<mpsc::Sender<()>>>,
+    release_close: Mutex<mpsc::Receiver<()>>,
+}
+
+impl BlocksAfterCloseBackend {
+    fn new(close_started: mpsc::Sender<()>, release_close: mpsc::Receiver<()>) -> Self {
+        Self {
+            inner: HeadlessTerminalBackend::new(),
+            close_started: Mutex::new(Some(close_started)),
+            release_close: Mutex::new(release_close),
+        }
+    }
+}
+
+impl TerminalBackend for BlocksAfterCloseBackend {
+    fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+        self.inner.spawn(request)
+    }
+
+    fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
+        self.inner.send_text(surface_id, text)
+    }
+
+    fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
+        self.inner.resize(surface_id, cols, rows)
+    }
+
+    fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+        self.inner.close(surface_id)?;
+        if let Some(started) = self
+            .close_started
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?
+            .take()
+        {
+            let _ = started.send(());
+            self.release_close
+                .lock()
+                .map_err(|_| TerminalError::LockPoisoned)?
+                .recv()
+                .map_err(|err| TerminalError::Backend(err.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+        self.inner.surfaces()
+    }
+}
+
+#[tokio::test]
+async fn workspace_creates_wait_for_surface_set_guard_before_model_and_runtime_commit() {
+    let (state, backend) = test_state();
+    let guard = state.surface_set_guard().await;
+    let plain_state = state.clone();
+    let mut plain = tokio::spawn(async move {
+        dispatch(
+            &plain_state,
+            "workspace.create",
+            json!({"name": "plain", "workingDir": "/tmp"}),
+        )
+        .await
+    });
+    let ssh_state = state.clone();
+    let mut ssh = tokio::spawn(async move {
+        dispatch(
+            &ssh_state,
+            "workspace.create_ssh",
+            json!({"name": "remote", "workingDir": "/tmp", "host": "example.test"}),
+        )
+        .await
+    });
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut plain)
+            .await
+            .is_err(),
+        "plain workspace creation must wait for the surface transaction"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut ssh)
+            .await
+            .is_err(),
+        "SSH workspace creation must wait for the surface transaction"
+    );
+    assert_eq!(state.model.lock().unwrap().list_workspaces().len(), 1);
+    assert_eq!(backend.surfaces().unwrap().len(), 1);
+
+    drop(guard);
+    plain.await.unwrap().unwrap();
+    ssh.await.unwrap().unwrap();
+
+    let model_surface_ids = state
+        .model
+        .lock()
+        .unwrap()
+        .list_surfaces(None)
+        .into_iter()
+        .map(|surface| surface.id)
+        .collect::<BTreeSet<_>>();
+    let runtime_surface_ids = backend
+        .surfaces()
+        .unwrap()
+        .into_iter()
+        .map(|surface| surface.surface_id)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(model_surface_ids, runtime_surface_ids);
+    assert_eq!(model_surface_ids.len(), 3);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn surface_close_suppresses_controller_auto_spawn_until_model_commit() {
+    let (close_started_tx, close_started_rx) = mpsc::channel();
+    let (release_close_tx, release_close_rx) = mpsc::channel();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(BlocksAfterCloseBackend::new(
+        close_started_tx,
+        release_close_rx,
+    ));
+    let state = SocketAppState::new(
+        model.clone(),
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+    let surface_id = model.lock().unwrap().list_surfaces(None)[0].id.clone();
+
+    let close_state = state.clone();
+    let close_surface_id = surface_id.clone();
+    let close = tokio::spawn(async move {
+        dispatch(
+            &close_state,
+            "surface.close",
+            json!({"surface_id": close_surface_id}),
+        )
+        .await
+    });
+    close_started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("surface.close should remove the target runtime before model commit");
+
+    assert!(model.lock().unwrap().surface(&surface_id).is_some());
+    assert!(state
+        .suppressed_auto_spawn_surface_ids()
+        .contains(&surface_id));
+    assert!(backend
+        .surfaces()
+        .unwrap()
+        .iter()
+        .all(|surface| surface.surface_id != surface_id));
+
+    release_close_tx.send(()).unwrap();
+    close.await.unwrap().unwrap();
+    assert!(model.lock().unwrap().surface(&surface_id).is_none());
+    assert!(state.suppressed_auto_spawn_surface_ids().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn workspace_close_suppresses_controller_auto_spawn_until_model_commit() {
+    let (close_started_tx, close_started_rx) = mpsc::channel();
+    let (release_close_tx, release_close_rx) = mpsc::channel();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(BlocksAfterCloseBackend::new(
+        close_started_tx,
+        release_close_rx,
+    ));
+    let state = SocketAppState::new(
+        model.clone(),
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&state, PathBuf::from("/tmp")).unwrap();
+    let created = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "closing", "workingDir": "/tmp"}),
+    )
+    .await
+    .unwrap();
+    let workspace_id = created["id"].as_str().unwrap().to_string();
+    let surface_id = created["focused_surface_id"].as_str().unwrap().to_string();
+
+    let close_state = state.clone();
+    let close_workspace_id = workspace_id.clone();
+    let close = tokio::spawn(async move {
+        dispatch(
+            &close_state,
+            "workspace.close",
+            json!({"id": close_workspace_id}),
+        )
+        .await
+    });
+    close_started_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("workspace.close should remove the target runtime before model commit");
+
+    assert!(model.lock().unwrap().surface(&surface_id).is_some());
+    assert!(state
+        .suppressed_auto_spawn_surface_ids()
+        .contains(&surface_id));
+    assert!(backend
+        .surfaces()
+        .unwrap()
+        .iter()
+        .all(|surface| surface.surface_id != surface_id));
+
+    release_close_tx.send(()).unwrap();
+    close.await.unwrap().unwrap();
+    assert!(model.lock().unwrap().surface(&surface_id).is_none());
+    assert!(state.suppressed_auto_spawn_surface_ids().is_empty());
+}
+
 #[tokio::test]
 async fn dispatches_workspace_and_surface_parity_methods() {
     let (state, backend) = test_state();
@@ -827,6 +1046,32 @@ async fn workspace_close_keeps_model_when_backend_close_fails() {
     assert_eq!(backend.surfaces().unwrap().len(), 1);
 }
 
+#[test]
+fn rollback_restore_refreshes_suspended_surface_instead_of_using_idle_snapshot() {
+    let (state, backend) = test_state();
+    let surface = state.model.lock().unwrap().list_surfaces(None)[0].clone();
+    let stale_surface = surface.clone();
+    close_terminal_surface_if_present(&state, &surface.id).unwrap();
+    {
+        let mut model = state.model.lock().unwrap();
+        model.set_surface_agent_session(&surface.id, forktty_core::AgentKind::Codex, "session-1");
+        assert!(model.set_surface_agent_session_lifecycle(
+            &surface.id,
+            forktty_core::AgentSessionLifecycle::Suspended,
+        ));
+    }
+
+    assert!(stale_surface.agent_session.is_none());
+    restore_current_terminal_surfaces_after_failure(&state, std::slice::from_ref(&surface.id))
+        .unwrap();
+
+    assert!(backend
+        .surfaces()
+        .unwrap()
+        .iter()
+        .all(|runtime| runtime.surface_id != surface.id));
+}
+
 #[tokio::test]
 async fn workspace_close_restores_already_closed_surfaces_when_later_close_fails() {
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
@@ -874,6 +1119,42 @@ async fn workspace_close_restores_already_closed_surfaces_when_later_close_fails
     assert!(runtime_surfaces.contains(&first_surface_id.to_string()));
     assert!(runtime_surfaces.contains(&second_surface_id));
     assert_eq!(runtime_surfaces.len(), 2);
+}
+
+#[test]
+fn partial_close_does_not_spawn_a_surface_that_was_already_absent() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let backend = Arc::new(FailsSecondCloseBackend::default());
+    let state = SocketAppState::new(
+        model.clone(),
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let surfaces = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", PathBuf::from("/tmp"));
+        model.add_tab(&workspace.focused_surface_id).unwrap();
+        model.list_surfaces(Some(&workspace.id))
+    };
+    assert_eq!(surfaces.len(), 2);
+    spawn_surface_terminal(&state, &surfaces[1]).unwrap();
+
+    let error = close_terminal_surfaces_or_restore(&state, &surfaces).unwrap_err();
+
+    assert!(error.contains("second close failed"), "{error}");
+    let runtime_surface_ids = backend
+        .surfaces()
+        .unwrap()
+        .into_iter()
+        .map(|surface| surface.surface_id)
+        .collect::<BTreeSet<_>>();
+    assert!(
+        !runtime_surface_ids.contains(&surfaces[0].id),
+        "rollback must not spawn a runtime that was absent before the transaction"
+    );
+    assert!(runtime_surface_ids.contains(&surfaces[1].id));
 }
 
 #[tokio::test]
