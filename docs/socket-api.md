@@ -122,9 +122,25 @@ the older binary's `forktty mcp remove --dry-run`, legacy
 `forktty mcp remove gemini --dry-run`, and `forktty skills remove --dry-run`,
 then apply those removal commands. The former skill remover leaves marker-owned
 `forktty-agent-orchestration.bak-*` sibling directories, which must also be
-removed after inspecting their `SKILL.md` without following symlinks. If that
-binary is unavailable, follow the ownership-marker checks in the
-[README migration guide](../README.md#upgrading-from-orchestration-builds).
+removed after inspecting their `SKILL.md` without following symlinks.
+
+If the older binary is unavailable, back up the affected files and remove only
+entries carrying ForkTTY's ownership marker:
+
+- Codex: `[mcp_servers.forktty]` in `$CODEX_HOME/config.toml` or
+  `~/.codex/config.toml` only when `env.FORKTTY_MCP_MANAGED = "forktty"`.
+- Claude Code: `mcpServers.forktty` in `~/.claude.json` only when
+  `env.FORKTTY_MCP_MANAGED` is `forktty`.
+- Antigravity: the same JSON check in `~/.gemini/config/mcp_config.json`.
+- Legacy Gemini: the same JSON check in `~/.gemini/settings.json`.
+- Agent Skills and Claude Code: the active
+  `forktty-agent-orchestration` directory and sibling
+  `forktty-agent-orchestration.bak-*` directories under
+  `~/.agents/skills/` or `${CLAUDE_CONFIG_DIR:-~/.claude}/skills/`, only when
+  each candidate is a real directory rather than a symlink and its `SKILL.md`
+  contains `<!-- forktty-managed-agent-skill -->`.
+
+Leave unmarked entries and directories untouched; they are user-managed.
 
 ## Change Rules
 

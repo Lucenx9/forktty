@@ -4,6 +4,11 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Changed
+- Simplified the repository overview around installation and first-use paths,
+  moved detailed contracts to their dedicated guides, and refreshed the README
+  and public site with a current workspace screenshot.
+
 ## [0.2.0-alpha.19] - 2026-07-18
 
 ### Removed
