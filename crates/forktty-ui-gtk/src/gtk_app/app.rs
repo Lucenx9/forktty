@@ -97,7 +97,17 @@ pub(super) fn install_gtk_runtime_defaults() {
 /// default lingered from the removed GTK/Pango/Cairo terminal renderer; an
 /// explicit `GSK_RENDERER` override is still honored for QA/debugging.
 fn default_gsk_renderer() -> &'static str {
-    "ngl"
+    default_gsk_renderer_for_gtk_minor(gtk::minor_version())
+}
+
+fn default_gsk_renderer_for_gtk_minor(minor: u32) -> &'static str {
+    // GTK 4.20 renamed the new OpenGL renderer selector from `ngl` to `gl`.
+    // GTK 4.18 still warns for `gl`, so keep the legacy spelling through 4.18.
+    if minor >= 20 {
+        "gl"
+    } else {
+        "ngl"
+    }
 }
 
 fn gdk_disable_with_ghostty_opengl_defaults(value: &str) -> String {
@@ -1546,7 +1556,7 @@ pub(super) fn install_session_autosave(state: &SocketAppState, ui_alive: Rc<Cell
 mod tests {
     use super::{
         app_chrome_override_css, app_chrome_override_priority, default_gsk_renderer,
-        gdk_disable_with_ghostty_opengl_defaults,
+        default_gsk_renderer_for_gtk_minor, gdk_disable_with_ghostty_opengl_defaults,
     };
     use gtk4 as gtk;
 
@@ -1557,7 +1567,15 @@ mod tests {
         // default must be a GL renderer, never cairo.
         let renderer = default_gsk_renderer();
         assert_ne!(renderer, "cairo");
-        assert_eq!(renderer, "ngl");
+        assert!(matches!(renderer, "ngl" | "gl"));
+    }
+
+    #[test]
+    fn default_gsk_renderer_uses_the_name_supported_without_warning() {
+        assert_eq!(default_gsk_renderer_for_gtk_minor(14), "ngl");
+        assert_eq!(default_gsk_renderer_for_gtk_minor(18), "ngl");
+        assert_eq!(default_gsk_renderer_for_gtk_minor(20), "gl");
+        assert_eq!(default_gsk_renderer_for_gtk_minor(22), "gl");
     }
 
     #[test]

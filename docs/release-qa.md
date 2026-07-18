@@ -58,6 +58,8 @@ DBus session against isolated config/data/state/socket paths under
 input/readback, tab create/select/close, runtime zoom reflow/reset, GTK action
 split/focus behavior, socket split readback, live pane close, restart with
 scrollback restore, and the socket notification create/list/clear flow. The
+scrollback assertion accepts the documented fragment-line fallback when the
+optional extended total-lines ABI is absent from the loaded Ghostty library. The
 temporary config disables desktop notifications and telemetry so the smoke does
 not depend on host notification services. It uses the current display or
 `xvfb-run` when available.
@@ -198,7 +200,7 @@ rebuilding.
 - `printf '{"id":"x","method":"surface.send_text","params":{"surface_id":"<surface-id>","text":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `text` parameter instead of reporting a successful no-op send.
 - `printf '{"id":"x","method":"nonsense.bogus","params":{}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"method_not_found"`.
 - Against a stub socket that returns a different response `id`, `forktty ping --socket <stub>` errors with a response-id mismatch that names the method and socket path.
-- Against a stub socket that returns `{"id":null,"ok":false,"error":{"code":"request_too_large","message":"Request exceeds 1 MiB"}}`, the CLI surfaces `request_too_large` instead of reporting a response-id mismatch.
+- Against a stub socket that returns `{"id":null,"ok":false,"error":{"code":"payload_too_large","message":"Request exceeds 1 MiB"}}`, the CLI surfaces `payload_too_large` instead of reporting a response-id mismatch.
 - Close a split pane, then send `surface.send_text` or `notification.create` for that closed pane's `surface_id` — response includes `"code":"not_found"` and no notification row is added.
 - If replacement terminal spawn fails while closing the only pane in a workspace over the socket, the close request reports the spawn error and keeps the old pane and terminal visible.
 - Close the last workspace over the socket from a project directory — ForkTTY creates the replacement `main` workspace in that project directory, not the app launch directory.
@@ -337,8 +339,10 @@ checking that the opt-in browser feature still builds and starts.
   present.
 - Confirm `forktty --version`, `forktty --help`, `forktty doctor`, and `forktty hooks setup --dry-run codex` work from the AppImage.
 - Launch the GTK app and walk the basic terminal, split-pane, desktop icon, and notification checks above.
-- ForkTTY defaults to `GSK_RENDERER=ngl`. If the GTK UI renders incorrectly,
-  retry with `GSK_RENDERER=gl` (or `cairo` only as a last resort; it is slower
+- ForkTTY defaults to the new OpenGL renderer name supported by the loaded GTK:
+  `GSK_RENDERER=ngl` through GTK 4.18 and `GSK_RENDERER=gl` from GTK 4.20. If
+  the GTK UI renders incorrectly, retry with the other GL spelling (or `cairo`
+  only as a last resort; it is slower
   and far heavier on memory under sustained redraws) and compare against the
   `.deb`; treat AppImage-only GL/Vulkan artifacts as package notes, not as
   proof that the native GTK runtime is broken.
