@@ -174,6 +174,10 @@ async fn system_identify_ignores_non_utf8_live_terminal_cwd() {
         identify["surface"]["effective_project_cwd"],
         initial_cwd.to_str().unwrap()
     );
+    assert_eq!(
+        identify["workspace"]["effective_project_cwd"],
+        initial_cwd.to_str().unwrap()
+    );
 }
 
 #[tokio::test]
