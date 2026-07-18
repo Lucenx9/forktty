@@ -18,6 +18,7 @@
     <name>Lucenx9</name>
   </developer>
   <releases>
+    <release version="0.2.0-alpha.19" date="2026-07-18" type="development" />
     <release version="0.2.0-alpha.18" date="2026-07-06" type="development" />
     <release version="0.2.0-alpha.17" date="2026-07-03" type="development" />
     <release version="0.2.0-alpha.16" date="2026-06-27" type="development" />

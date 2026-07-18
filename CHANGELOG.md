@@ -4,6 +4,8 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.19] - 2026-07-18
+
 ### Removed
 - Simplified ForkTTY back to a terminal-workspace core by removing the built-in
   task Router, provider-neutral Team/Workflow/Feed stores and socket methods,
