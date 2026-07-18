@@ -32,7 +32,7 @@ pub(super) fn replace_leaf_with_split(
     node: &mut PaneNode,
     target_surface_id: &str,
     axis: SplitAxis,
-    new_leaf: PaneNode,
+    new_leaf: &PaneNode,
 ) -> bool {
     match node {
         // Match a leaf whose tabs contain the target (splitting on active tab).
@@ -41,7 +41,7 @@ pub(super) fn replace_leaf_with_split(
             let original_leaf = node.clone();
             *node = PaneNode::Split {
                 axis,
-                children: vec![original_leaf, new_leaf],
+                children: vec![original_leaf, new_leaf.clone()],
                 sizes: vec![0.5, 0.5],
             };
             true
@@ -58,7 +58,7 @@ pub(super) fn replace_leaf_with_split(
                         &children[index],
                         PaneNode::Leaf { tabs, .. } if tabs.iter().any(|id| id == target_surface_id)
                     ) {
-                        children.insert(index + 1, new_leaf);
+                        children.insert(index + 1, new_leaf.clone());
                         rebalance_split_sizes(sizes, children.len());
                         return true;
                     }
@@ -66,16 +66,16 @@ pub(super) fn replace_leaf_with_split(
                         &mut children[index],
                         target_surface_id,
                         axis,
-                        new_leaf.clone(),
+                        new_leaf,
                     ) {
                         return true;
                     }
                 }
                 false
             } else {
-                children.iter_mut().any(|child| {
-                    replace_leaf_with_split(child, target_surface_id, axis, new_leaf.clone())
-                })
+                children
+                    .iter_mut()
+                    .any(|child| replace_leaf_with_split(child, target_surface_id, axis, new_leaf))
             }
         }
     }
@@ -646,12 +646,12 @@ pub(super) fn set_leaf_active_for_surface(node: &mut PaneNode, surface_id: &str)
 pub(super) fn push_tab_to_leaf(
     node: &mut PaneNode,
     near_surface_id: &str,
-    new_tab_id: SurfaceId,
+    new_tab_id: &str,
 ) -> bool {
     match node {
         PaneNode::Leaf { tabs, active } => {
             if tabs.iter().any(|id| id == near_surface_id) {
-                tabs.push(new_tab_id);
+                tabs.push(new_tab_id.to_string());
                 *active = tabs.len() - 1;
                 true
             } else {
@@ -660,6 +660,6 @@ pub(super) fn push_tab_to_leaf(
         }
         PaneNode::Split { children, .. } => children
             .iter_mut()
-            .any(|child| push_tab_to_leaf(child, near_surface_id, new_tab_id.clone())),
+            .any(|child| push_tab_to_leaf(child, near_surface_id, new_tab_id)),
     }
 }

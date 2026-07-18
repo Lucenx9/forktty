@@ -1182,12 +1182,9 @@ impl WorkspaceModel {
             .workspaces
             .get_mut(&source.workspace_id)
             .expect("workspace existence verified above");
-        let inserted = replace_leaf_with_split(
-            &mut workspace.pane_tree,
-            surface_id,
-            axis,
-            PaneNode::single_leaf(new_id.clone()),
-        );
+        let new_leaf = PaneNode::single_leaf(new_id.clone());
+        let inserted =
+            replace_leaf_with_split(&mut workspace.pane_tree, surface_id, axis, &new_leaf);
         debug_assert!(inserted, "leaf existence pre-validated");
         if !inserted {
             return None;
@@ -1307,7 +1304,7 @@ impl WorkspaceModel {
             .workspaces
             .get_mut(&workspace_id)
             .expect("workspace verified above");
-        if !push_tab_to_leaf(&mut workspace.pane_tree, near_surface_id, new_id.clone()) {
+        if !push_tab_to_leaf(&mut workspace.pane_tree, near_surface_id, &new_id) {
             return None;
         }
         workspace.focused_surface_id = new_id.clone();
