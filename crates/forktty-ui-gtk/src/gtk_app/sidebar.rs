@@ -6,7 +6,7 @@ use std::path::Path;
 
 pub(super) struct SidebarWorkspaceRow {
     workspace: forktty_core::Workspace,
-    meta: String,
+    pub(super) meta: String,
     summary: String,
     status: Option<WorkspaceStatusBadge>,
     pub(super) pane_count: usize,
@@ -25,7 +25,7 @@ pub(super) struct SidebarSnapshot {
     active_status_label: Option<String>,
     pub(super) active_full_path: Option<String>,
     pub(super) active_pane_label: Option<String>,
-    signature: String,
+    pub(super) signature: String,
 }
 
 #[derive(Clone)]
@@ -440,16 +440,14 @@ pub(super) fn refresh_sidebar(
         primary_click.connect_released(move |_, _n_press, _x, _y| {
             close_sidebar_context_menu(&ui_for_click);
             ui_for_click.sidebar.select_row(Some(&row_for_click));
-            select_sidebar_workspace(
-                &state_for_click,
-                &workspace_id_for_click,
-                &controller_for_click,
-            );
-            schedule_sidebar_refresh(
-                ui_for_click.clone(),
-                state_for_click.clone(),
-                controller_for_click.clone(),
-            );
+            let state = state_for_click.clone();
+            let workspace_id = workspace_id_for_click.clone();
+            let controller = controller_for_click.clone();
+            let ui = ui_for_click.clone();
+            glib::spawn_future_local(async move {
+                select_sidebar_workspace(&state, &workspace_id, &controller).await;
+                schedule_sidebar_refresh(ui, state, controller);
+            });
         });
         row.add_controller(primary_click);
 
@@ -469,12 +467,14 @@ pub(super) fn refresh_sidebar(
             }
             close_sidebar_context_menu(&ui_for_key);
             ui_for_key.sidebar.select_row(Some(&row_for_key));
-            select_sidebar_workspace(&state_for_key, &workspace_id_for_key, &controller_for_key);
-            schedule_sidebar_refresh(
-                ui_for_key.clone(),
-                state_for_key.clone(),
-                controller_for_key.clone(),
-            );
+            let state = state_for_key.clone();
+            let workspace_id = workspace_id_for_key.clone();
+            let controller = controller_for_key.clone();
+            let ui = ui_for_key.clone();
+            glib::spawn_future_local(async move {
+                select_sidebar_workspace(&state, &workspace_id, &controller).await;
+                schedule_sidebar_refresh(ui, state, controller);
+            });
             glib::Propagation::Stop
         });
         row.add_controller(key);
@@ -539,6 +539,8 @@ pub(super) fn refresh_sidebar(
 }
 
 pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
+    let terminal_surfaces = state.terminal.surfaces().unwrap_or_default();
+    let ready_surface_ids = ready_surface_ids(state, &terminal_surfaces).unwrap_or_default();
     let Ok(model) = state.model.lock() else {
         return SidebarSnapshot {
             rows: Vec::new(),
@@ -584,9 +586,12 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
         );
         let surfaces = model.list_surfaces(Some(&workspace.id));
         let pane_count = collect_panes(&workspace.pane_tree).len();
-        let ssh_host = surfaces.iter().find_map(|s| {
-            if let forktty_core::SurfaceKind::Ssh { host } = &s.kind {
-                Some(host.clone())
+        let ssh_state = surfaces.iter().find_map(|surface| {
+            if let forktty_core::SurfaceKind::Ssh { host } = &surface.kind {
+                Some((
+                    host.clone(),
+                    ready_surface_ids.contains(surface.id.as_str()),
+                ))
             } else {
                 None
             }
@@ -594,7 +599,13 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
         let agent_project_cwd = model
             .surface(&workspace.focused_surface_id)
             .and_then(surface_agent_resume_cwd);
-        let meta = workspace_meta_line(&workspace, ssh_host.as_deref(), agent_project_cwd);
+        let meta = workspace_meta_line(
+            &workspace,
+            ssh_state
+                .as_ref()
+                .map(|(host, connected)| (host.as_str(), *connected)),
+            agent_project_cwd,
+        );
         rows.push(SidebarWorkspaceRow {
             workspace,
             meta,
@@ -691,12 +702,17 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
 
 pub(super) fn workspace_meta_line(
     workspace: &forktty_core::Workspace,
-    ssh_host: Option<&str>,
+    ssh_state: Option<(&str, bool)>,
     effective_project_cwd: Option<&Path>,
 ) -> String {
     let mut parts = Vec::new();
-    if let Some(host) = ssh_host {
+    if let Some((host, connected)) = ssh_state {
         parts.push(format!("ssh:{host}"));
+        parts.push(if connected {
+            "connected".to_string()
+        } else {
+            "disconnected".to_string()
+        });
     }
     if !workspace.git_branch.trim().is_empty() {
         parts.push(workspace.git_branch.clone());
@@ -738,12 +754,12 @@ fn title_matches_path_echo(title: &str, path: &Path) -> bool {
     title == compact.as_str() || title == full.as_ref() || full.ends_with(&format!("/{title}"))
 }
 
-pub(super) fn select_sidebar_workspace(
+pub(super) async fn select_sidebar_workspace(
     state: &SocketAppState,
     workspace_id: &str,
     controller: &Rc<RefCell<TerminalController>>,
 ) {
-    if let Err(err) = select_workspace_with_terminal(state, workspace_id) {
+    if let Err(err) = select_workspace_with_terminal(state, workspace_id).await {
         eprintln!("Failed to spawn selected workspace terminal: {err}");
         create_global_notification(
             state,

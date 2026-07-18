@@ -258,6 +258,7 @@ mod tests {
             ]),
             CliAction::AppImageChildExec(AppImageChildExecRequest {
                 env: Vec::new(),
+                unset: Vec::new(),
                 argv: vec![
                     OsString::from("/usr/bin/dtach"),
                     OsString::from("-A"),

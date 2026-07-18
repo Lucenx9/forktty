@@ -1,6 +1,7 @@
 //! Builds a workspace-local snapshot from the terminal, model, and metadata state.
 
 use crate::context_params::ContextSnapshotRequest;
+use crate::notification_view::notification_views;
 use crate::{
     agent_health_rows, agent_session_rows, current_unix_epoch_ms, remote, status_runtime,
     surface_effective_project_cwd, topology_view, DispatchError, SocketAppState,
@@ -20,6 +21,7 @@ pub(crate) async fn snapshot(
     let request = ContextSnapshotRequest::decode(state, params)?;
     crate::sync_live_surface_cwds(state)?;
     let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
+    let ready_surface_ids = remote::ready_surface_ids(state, &terminal_surfaces)?;
     let now_ms = current_unix_epoch_ms();
 
     let (
@@ -64,7 +66,7 @@ pub(crate) async fn snapshot(
             .collect::<HashMap<_, _>>();
         let remotes = model_surfaces
             .iter()
-            .filter_map(|surface| remote::row(surface, &model, &terminal_by_id))
+            .filter_map(|surface| remote::row(surface, &model, &terminal_by_id, &ready_surface_ids))
             .collect::<Vec<_>>();
         let notifications = model
             .list_notifications()
@@ -137,20 +139,13 @@ pub(crate) async fn snapshot(
     }))
 }
 
-fn context_snapshot_notification_rows(notifications: &[NotificationItem]) -> Vec<NotificationItem> {
+fn context_snapshot_notification_rows(
+    notifications: &[NotificationItem],
+) -> Vec<crate::notification_view::NotificationView<'_>> {
     let start = notifications
         .len()
         .saturating_sub(MAX_CONTEXT_SNAPSHOT_NOTIFICATIONS);
-    notifications[start..]
-        .iter()
-        .cloned()
-        .map(|mut notification| {
-            if let Some(metadata) = notification.terminal_metadata.as_mut() {
-                metadata.icon_data = None;
-            }
-            notification
-        })
-        .collect()
+    notification_views(&notifications[start..])
 }
 
 fn context_snapshot_terminal_tails(

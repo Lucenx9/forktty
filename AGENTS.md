@@ -55,6 +55,7 @@ Packaging (validate locally before tagging a release):
 bash scripts/build-deb.sh        # → target/packaging/deb/; builds/verifies ghostty-gtk-embed.so
 scripts/check-deb-piuparts.sh    # optional .deb install/purge check; defaults to Debian 13/trixie
 bash scripts/build-appimage.sh   # → target/packaging/appimage/; builds/verifies ghostty-gtk-embed.so, needs appimagetool on PATH
+scripts/check-appimage-bundled-container.sh /path/to/forktty.AppImage  # bundled/helper smoke; explicit path avoids ambiguity; needs bubblewrap
 ```
 
 ## Critical constraints (violating these has broken releases before)
@@ -69,7 +70,8 @@ bash scripts/build-appimage.sh   # → target/packaging/appimage/; builds/verifi
 - **Browser feature is source-only**: release artifacts (AppImage, deb) are built with `--no-default-features --features gtk-ghostty` and must never include the browser feature. Browser code stays behind `#[cfg(feature = "browser")]` and must keep compiling.
 - **Single-instance app**: the GtkApplication uses DBus single-instance; a second launch delegates to the running one and exits immediately. Kill existing instances before launching for manual testing.
 - **Test sockets**: bind under `$XDG_RUNTIME_DIR`, never `/tmp` — the socket security check rejects parents owned by another uid (e.g. root-owned `/tmp`).
-- **AppImage library policy**: `usr/lib` carries ForkTTY's private runtime libraries (`libghostty-vt`, `ghostty-gtk-embed.so`, and `libgtk4-layer-shell.so`). `usr/lib/bundled` carries the GTK/libadwaita userspace stack and is always added by AppRun so terminal panes do not depend on host GTK packages. Canonical excludelist libraries (glibc, fontconfig, freetype, harfbuzz, wayland-*, X11/xcb, OpenGL/Vulkan/Mesa/driver stack) are never bundled.
+- **Worktree identity and transactions**: modeled worktree identity is the exact `(worktree_name, canonical_path)` pair; retries must reuse an existing exact-identity workspace ID and allocate no new modeled surface, without collapsing same-named worktrees at different canonical paths. GTK and socket paths must share `SocketAppState`'s process-local worktree/surface guards (worktree guard first) through commit or complete rollback. Removal must suppress controller auto-spawn before closing the exact target's surfaces and retain suppression through model commit or the complete rollback restoration attempt; if a rollback terminal respawn fails, record a blocking terminal error status before releasing suppression. These guards are not a cross-process Git lock.
+- **AppImage library policy**: `usr/lib` carries ForkTTY's private runtime libraries (`libghostty-vt`, `ghostty-gtk-embed.so`, and `libgtk4-layer-shell.so`). `usr/lib/bundled` carries the GTK/libadwaita fallback. AppRun `auto` mode uses an eager loader compatibility probe with the effective host loader environment and selects host GTK only when both the ForkTTY binary and embedded Ghostty library load; otherwise it adds `usr/lib/bundled`. Canonical excludelist libraries (glibc, fontconfig, freetype, harfbuzz, wayland-*, X11/xcb, OpenGL/Vulkan/Mesa/driver stack) are never bundled.
 
 ## Architecture
 

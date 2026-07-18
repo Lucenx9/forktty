@@ -348,6 +348,136 @@ async fn agent_hibernate_marks_idle_ready_session_suspended_and_closes_backend()
 
 #[tokio::test]
 #[serial_test::serial]
+async fn suspended_agent_ignores_late_hook_mutations_without_advancing_order_and_restores() {
+    let dir = tempfile::tempdir().unwrap();
+    write_fake_codex(dir.path());
+    let _path = EnvGuard::set("PATH", dir.path().to_str().unwrap());
+    let (state, _backend) = test_state();
+    let (workspace_id, surface_id) = {
+        let mut model = state.model.lock().unwrap();
+        let workspace = model.active_workspace().unwrap();
+        let surface_id = workspace.focused_surface_id.clone();
+        assert!(model.set_surface_agent_session(
+            &surface_id,
+            AgentKind::Codex,
+            "suspended-session",
+        ));
+        assert!(
+            model.set_surface_agent_session_lifecycle(&surface_id, AgentSessionLifecycle::Idle,)
+        );
+        assert!(model.set_surface_agent_session_last_activity_ms(&surface_id, 1));
+        (workspace.id, surface_id)
+    };
+    dispatch(
+        &state,
+        "agent.hibernate",
+        json!({"surface_id": surface_id, "min_idle_ms": 0}),
+    )
+    .await
+    .unwrap();
+
+    let before = {
+        let model = state.model.lock().unwrap();
+        (
+            model.list_status(&workspace_id),
+            model.list_progress(&workspace_id),
+            model.list_logs(&workspace_id),
+            model.list_notifications(),
+            model.to_session_data(),
+        )
+    };
+    let hook_target = || {
+        json!({
+            "workspace_id": workspace_id,
+            "surface_id": surface_id,
+            "hook_session_id": "suspended-session",
+            "hook_event_name": "post-tool",
+            "hook_event_clock": "boottime-ns",
+            "hook_event_order": 200,
+        })
+    };
+    let mut status = hook_target();
+    status["key"] = json!("agent:codex");
+    status["label"] = json!("Codex");
+    status["value"] = json!("Running");
+    let mut clear = hook_target();
+    clear["key"] = json!(surface_status_key(&surface_id));
+    let mut progress = hook_target();
+    progress["key"] = json!("agent:codex:tokens");
+    progress["label"] = json!("Codex tokens");
+    progress["value"] = json!(42);
+    let mut log = hook_target();
+    log["level"] = json!("error");
+    log["message"] = json!("late log");
+    let mut notification = hook_target();
+    notification["title"] = json!("Late notification");
+    notification["body"] = json!("must stay hidden");
+    notification["kind"] = json!("prompt");
+
+    for (method, params) in [
+        ("metadata.set_status", status),
+        ("metadata.clear_status", clear),
+        ("metadata.set_progress", progress),
+        ("metadata.log", log),
+        ("notification.create", notification),
+    ] {
+        assert_eq!(
+            dispatch(&state, method, params).await.unwrap(),
+            json!({"ignored": true}),
+            "{method} mutated a suspended surface",
+        );
+    }
+
+    let session_data = {
+        let model = state.model.lock().unwrap();
+        assert_eq!(model.list_status(&workspace_id), before.0);
+        assert_eq!(model.list_progress(&workspace_id), before.1);
+        assert_eq!(model.list_logs(&workspace_id), before.2);
+        assert_eq!(model.list_notifications(), before.3);
+        assert_eq!(model.to_session_data(), before.4);
+        model.to_session_data()
+    };
+    let mut restored = WorkspaceModel::new();
+    restored.restore_session(session_data, &[]);
+    assert_eq!(
+        restored
+            .surface(&surface_id)
+            .unwrap()
+            .agent_session
+            .as_ref()
+            .unwrap()
+            .lifecycle,
+        AgentSessionLifecycle::Suspended,
+    );
+
+    {
+        let mut model = state.model.lock().unwrap();
+        assert!(
+            model.set_surface_agent_session_lifecycle(&surface_id, AgentSessionLifecycle::Idle,)
+        );
+    }
+    let resumed = dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "workspace_id": workspace_id,
+            "surface_id": surface_id,
+            "key": "agent:codex",
+            "label": "Codex",
+            "value": "Running",
+            "hook_session_id": "suspended-session",
+            "hook_event_name": "prompt-submit",
+            "hook_event_clock": "boottime-ns",
+            "hook_event_order": 100,
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(resumed["value"], "Running");
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn agent_hibernate_close_failure_rolls_back_visible_state() {
     let dir = tempfile::tempdir().unwrap();
     write_fake_codex(dir.path());

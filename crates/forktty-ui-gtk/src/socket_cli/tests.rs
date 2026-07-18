@@ -6,6 +6,7 @@ use std::thread;
 mod browser;
 mod hook_behavior;
 mod hook_config_files;
+mod hook_health;
 mod hook_setup;
 mod provider_integrations;
 mod status_workflow;

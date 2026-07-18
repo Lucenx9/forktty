@@ -19,12 +19,12 @@ pub(crate) fn notify_worktree_setup_warning(
     let Some(warning) = warning else {
         return Ok(());
     };
-    let item = {
+    let creation = {
         let mut model = state
             .model
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
-        model.create_notification(
+        model.create_notification_with_evictions(
             "Worktree Setup Hook Failed",
             warning,
             NotificationKind::Error,
@@ -32,6 +32,10 @@ pub(crate) fn notify_worktree_setup_warning(
             None,
         )
     };
+    for notification_id in creation.evicted_desktop_notification_ids {
+        state.close_desktop_notification(&notification_id);
+    }
+    let item = creation.notification;
     if state.notification_dispatch {
         dispatch_notification_with_loaded_config(&item);
     }

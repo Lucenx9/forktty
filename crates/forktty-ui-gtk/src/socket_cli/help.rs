@@ -51,7 +51,7 @@ Usage:
   forktty log [message] [--message <message>] [--level info|warn|error]
   forktty logs [--workspace-id <id>]
   forktty clear-logs [--workspace-id <id>]
-  forktty notifications [--json]
+  forktty notifications [--limit <n>] [--before-id <id>] [--json]
   forktty clear-notifications
   forktty hooks setup [--full] [codex] [claude] [antigravity] [opencode]
       default setup agents: codex, claude, antigravity, opencode
@@ -123,6 +123,7 @@ ForkTTY examples
 // Curated ergonomic command set, not every low-level socket alias.
 pub(super) const COMPLETION_COMMANDS: &[&str] = &[
     "list",
+    "notifications",
     "surfaces",
     "agents",
     "agent-health",
@@ -141,6 +142,7 @@ pub(super) const COMPLETION_COMMANDS: &[&str] = &[
 ];
 
 pub(super) const STATUS_SUBCOMMANDS: &[&str] = &["summary", "explain", "watch"];
+pub(super) const NOTIFICATION_OPTIONS: &[&str] = &["--limit", "--before-id"];
 
 #[cfg(feature = "browser")]
 pub(super) const BROWSER_HELP_TEXT: &str = "\

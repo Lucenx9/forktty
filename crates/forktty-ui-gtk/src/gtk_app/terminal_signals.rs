@@ -19,7 +19,7 @@ pub(super) fn attach_terminal_signal_handlers(
     request: &SpawnRequest,
     surface_pids: &Rc<RefCell<BTreeMap<String, SurfacePid>>>,
     state: Option<SocketAppState>,
-    spawn_token: u64,
+    generation: u64,
 ) {
     let surface_id = request.surface_id.clone();
     let focus_model = model.clone();
@@ -95,11 +95,11 @@ pub(super) fn attach_terminal_signal_handlers(
                     .iter()
                     .any(|event| matches!(event, GhosttyEvent::VisibleContentChanged));
                 if child_exited
-                    && !child_exit_matches_current_spawn(
+                    && !child_exit_matches_current_generation(
                         &events,
                         &mut pump_surface_pids.borrow_mut(),
                         &pump_surface_id,
-                        spawn_token,
+                        generation,
                     )
                 {
                     return glib::ControlFlow::Break;
@@ -170,11 +170,11 @@ pub(super) fn attach_terminal_signal_handlers(
 }
 
 #[cfg(feature = "gtk-ghostty")]
-fn child_exit_matches_current_spawn(
+fn child_exit_matches_current_generation(
     events: &[GhosttyEvent],
     surface_pids: &mut BTreeMap<String, SurfacePid>,
     surface_id: &str,
-    spawn_token: u64,
+    generation: u64,
 ) -> bool {
     if !events
         .iter()
@@ -182,7 +182,7 @@ fn child_exit_matches_current_spawn(
     {
         return true;
     }
-    remove_surface_pid_for_spawn(surface_pids, surface_id, spawn_token)
+    remove_surface_pid_for_generation(surface_pids, surface_id, generation)
 }
 
 fn persist_terminal_scrollback_snapshot(
@@ -255,18 +255,25 @@ fn apply_ghostty_events_to_model_with_config(
                 }
             }
             GhosttyEvent::Bell => {
-                if let Ok(mut model) = model.lock() {
+                let creation = if let Ok(mut model) = model.lock() {
                     if model.surface(surface_id).is_none() {
                         continue;
                     }
-                    let notification = model.create_notification(
+                    Some(model.create_notification_with_evictions(
                         "Terminal bell",
                         "A terminal requested attention",
                         NotificationKind::Info,
                         Some(workspace_id.to_string()),
                         Some(surface_id.to_string()),
-                    );
-                    dispatch_notification_with_loaded_config(&notification);
+                    ))
+                } else {
+                    None
+                };
+                if let Some(creation) = creation {
+                    for notification_id in creation.evicted_desktop_notification_ids {
+                        close_desktop_notification(&notification_id);
+                    }
+                    dispatch_notification_with_loaded_config(&creation.notification);
                 }
             }
             GhosttyEvent::PtyWrite(_) | GhosttyEvent::VisibleContentChanged => {
@@ -307,20 +314,26 @@ fn apply_ghostty_events_to_model_with_config(
                             if !osc99_notification_passes_filters(config, metadata.as_ref()) {
                                 continue;
                             }
-                            let Some((notification, should_dispatch)) = upsert_osc99_notification(
-                                &mut model,
-                                metadata_notification_limiter,
-                                workspace_id,
-                                surface_id,
-                                Osc99NotificationUpdate {
-                                    id,
-                                    title,
-                                    body,
-                                    metadata,
-                                },
-                            ) else {
+                            let Some((notification, should_dispatch, evicted_desktop_ids)) =
+                                upsert_osc99_notification(
+                                    &mut model,
+                                    metadata_notification_limiter,
+                                    workspace_id,
+                                    surface_id,
+                                    Osc99NotificationUpdate {
+                                        id,
+                                        title,
+                                        body,
+                                        metadata,
+                                    },
+                                )
+                            else {
                                 continue;
                             };
+                            drop(model);
+                            for notification_id in evicted_desktop_ids {
+                                close_desktop_notification(&notification_id);
+                            }
                             if should_dispatch {
                                 dispatch_notification_with_loaded_config(&notification);
                             }
@@ -369,7 +382,7 @@ fn apply_ghostty_events_to_model_with_config(
                 }
             }
             GhosttyEvent::ChildExit { status } => {
-                if let Ok(mut model) = model.lock() {
+                let creation = if let Ok(mut model) = model.lock() {
                     if model.surface(surface_id).is_none() {
                         continue;
                     }
@@ -394,7 +407,7 @@ fn apply_ghostty_events_to_model_with_config(
                         format!("Exited ({status})"),
                         Some("yellow".to_string()),
                     );
-                    let notification = model.create_notification(
+                    Some(model.create_notification_with_evictions(
                         "Terminal exited",
                         format!(
                             "Process exited with status {status}. Use Restart Pane to spawn it again."
@@ -402,8 +415,15 @@ fn apply_ghostty_events_to_model_with_config(
                         NotificationKind::Info,
                         Some(workspace_id.to_string()),
                         Some(surface_id.to_string()),
-                    );
-                    dispatch_notification_with_loaded_config(&notification);
+                    ))
+                } else {
+                    None
+                };
+                if let Some(creation) = creation {
+                    for notification_id in creation.evicted_desktop_notification_ids {
+                        close_desktop_notification(&notification_id);
+                    }
+                    dispatch_notification_with_loaded_config(&creation.notification);
                 }
             }
         }
@@ -1352,7 +1372,7 @@ fn upsert_osc99_notification(
     workspace_id: &str,
     surface_id: &str,
     update: Osc99NotificationUpdate,
-) -> Option<(NotificationItem, bool)> {
+) -> Option<(NotificationItem, bool, Vec<String>)> {
     model.surface(surface_id)?;
     limiter.prune_stale_notifications(model);
     let Osc99NotificationUpdate {
@@ -1395,7 +1415,7 @@ fn upsert_osc99_notification(
                     .set_notification_terminal_metadata(&notification.id, next_metadata)
                     .unwrap_or(notification);
                 let should_dispatch = limiter.should_dispatch(workspace_id, surface_id);
-                return Some((notification, should_dispatch));
+                return Some((notification, should_dispatch, Vec::new()));
             }
             limiter.forget_notification(workspace_id, surface_id, &id);
         }
@@ -1404,35 +1424,39 @@ fn upsert_osc99_notification(
             return None;
         }
         let title = title.unwrap_or_else(|| "Terminal notification".to_string());
-        let notification = model.create_notification(
+        let creation = model.create_notification_with_evictions(
             title,
             body,
             NotificationKind::Info,
             Some(workspace_id.to_string()),
             Some(surface_id.to_string()),
         );
+        let evicted_desktop_notification_ids = creation.evicted_desktop_notification_ids;
+        let notification = creation.notification;
         let notification = model
             .set_notification_terminal_metadata(&notification.id, metadata)
             .unwrap_or(notification);
         limiter.remember_notification(workspace_id, surface_id, &id, notification.id.clone());
-        return Some((notification, true));
+        return Some((notification, true, evicted_desktop_notification_ids));
     }
 
     if !limiter.should_dispatch(workspace_id, surface_id) {
         return None;
     }
     let title = title.unwrap_or_else(|| "Terminal notification".to_string());
-    let notification = model.create_notification(
+    let creation = model.create_notification_with_evictions(
         title,
         body,
         NotificationKind::Info,
         Some(workspace_id.to_string()),
         Some(surface_id.to_string()),
     );
+    let evicted_desktop_notification_ids = creation.evicted_desktop_notification_ids;
+    let notification = creation.notification;
     let notification = model
         .set_notification_terminal_metadata(&notification.id, metadata)
         .unwrap_or(notification);
-    Some((notification, true))
+    Some((notification, true, evicted_desktop_notification_ids))
 }
 
 fn schedule_osc99_notification_expiry(
@@ -1534,12 +1558,12 @@ mod ghostty_tests {
     }
 
     #[test]
-    fn child_exit_batch_rejects_stale_spawn_tokens() {
+    fn child_exit_batch_rejects_stale_generations() {
         let mut pids = BTreeMap::from([(
             "surface-1".to_string(),
             SurfacePid {
                 pid: 123,
-                spawn_token: 2,
+                generation: 2,
             },
         )]);
         let events = [
@@ -1547,14 +1571,14 @@ mod ghostty_tests {
             GhosttyEvent::ChildExit { status: 0 },
         ];
 
-        assert!(!child_exit_matches_current_spawn(
+        assert!(!child_exit_matches_current_generation(
             &events,
             &mut pids,
             "surface-1",
             1
         ));
-        assert_eq!(pids["surface-1"].spawn_token, 2);
-        assert!(child_exit_matches_current_spawn(
+        assert_eq!(pids["surface-1"].generation, 2);
+        assert!(child_exit_matches_current_generation(
             &events,
             &mut pids,
             "surface-1",

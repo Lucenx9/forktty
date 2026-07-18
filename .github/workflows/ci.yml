@@ -170,7 +170,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential libssl-dev desktop-file-utils \
             libgtk-4-dev libadwaita-1-dev git appstream curl zsync \
-            meson ninja-build python3-gi libxml2-utils pkg-config xvfb xauth
+            meson ninja-build python3-gi libxml2-utils pkg-config xvfb xauth bubblewrap
 
       - name: Install Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
@@ -268,6 +268,7 @@ jobs:
               exit 1
             fi
           done
+          scripts/check-appimage-bundled-container.sh "$appimage_artifact"
 
           smoke_home="$(mktemp -d)"
           export HOME="$smoke_home/home"

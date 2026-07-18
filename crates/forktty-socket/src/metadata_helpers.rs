@@ -142,6 +142,8 @@ pub(crate) fn optional_hook_status_metadata(
         .unwrap_or_default();
     let clock = optional_non_blank_string_param(params, "hook_event_clock")?.map(str::to_string);
     let turn_id = optional_non_blank_string_param(params, "hook_turn_id")?.map(str::to_string);
+    let session_id =
+        optional_non_blank_string_param(params, "hook_session_id")?.map(str::to_string);
 
     if event.is_empty() && order.is_none() && clock.is_none() && turn_id.is_none() {
         return Ok(None);
@@ -154,8 +156,12 @@ pub(crate) fn optional_hook_status_metadata(
     if let Some(turn_id) = &turn_id {
         ensure_max_text_size("hook_turn_id", turn_id)?;
     }
+    if let Some(session_id) = &session_id {
+        ensure_max_text_size("hook_session_id", session_id)?;
+    }
 
     Ok(Some(StatusHookMetadata {
+        session_id,
         event,
         order,
         clock,

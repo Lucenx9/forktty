@@ -269,28 +269,8 @@ pub(in crate::socket_cli) const CLAUDE_HOOK_ENTRIES: &[HookEntrySpec] = &[
     },
 ];
 
-pub(in crate::socket_cli) const CLAUDE_HIGH_FREQUENCY_HOOK_ENTRIES: &[HookEntrySpec] = &[
-    HookEntrySpec {
-        event_name: "PreToolUse",
-        hook_event_name: "pre-tool",
-        timeout: HOOK_ENTRY_TIMEOUT_SECS,
-    },
-    HookEntrySpec {
-        event_name: "PostToolUse",
-        hook_event_name: "post-tool",
-        timeout: HOOK_ENTRY_TIMEOUT_SECS,
-    },
-    HookEntrySpec {
-        event_name: "PostToolUseFailure",
-        hook_event_name: "post-tool-failure",
-        timeout: HOOK_ENTRY_TIMEOUT_SECS,
-    },
-    HookEntrySpec {
-        event_name: "PostToolBatch",
-        hook_event_name: "post-tool-batch",
-        timeout: HOOK_ENTRY_TIMEOUT_SECS,
-    },
-];
+pub(in crate::socket_cli) const CLAUDE_PER_TOOL_HOOK_ENTRIES: &[&str] =
+    &["PreToolUse", "PostToolUse", "PostToolUseFailure"];
 
 // Antigravity CLI v1.0.3 parses exactly these hook events from hooks.json;
 // unknown event names are dropped silently (verified against the binary's

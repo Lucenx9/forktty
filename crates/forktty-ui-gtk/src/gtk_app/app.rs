@@ -5,6 +5,70 @@ use super::*;
 const TERMINAL_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 const WORKBENCH_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ClosePhase {
+    Running,
+    Draining,
+    Finalizing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CloseRequestAction {
+    StartDrain,
+    Stop,
+    Proceed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct CloseTransition {
+    pub(super) phase: ClosePhase,
+    pub(super) ui_alive: bool,
+    pub(super) action: CloseRequestAction,
+}
+
+pub(super) fn close_request_transition(phase: ClosePhase, ui_alive: bool) -> CloseTransition {
+    match phase {
+        ClosePhase::Running => CloseTransition {
+            phase: ClosePhase::Draining,
+            ui_alive,
+            action: CloseRequestAction::StartDrain,
+        },
+        ClosePhase::Draining => CloseTransition {
+            phase,
+            ui_alive,
+            action: CloseRequestAction::Stop,
+        },
+        ClosePhase::Finalizing => CloseTransition {
+            phase,
+            ui_alive,
+            action: CloseRequestAction::Proceed,
+        },
+    }
+}
+
+pub(super) fn close_drain_completed_transition(
+    phase: ClosePhase,
+    _ui_alive: bool,
+) -> Option<CloseTransition> {
+    (phase == ClosePhase::Draining).then_some(CloseTransition {
+        phase: ClosePhase::Finalizing,
+        ui_alive: false,
+        action: CloseRequestAction::Proceed,
+    })
+}
+
+pub(super) fn run_close_persistence_steps(
+    snapshot_scrollback: impl FnOnce(),
+    sync_live_cwds: impl FnOnce(),
+    save_session: impl FnOnce(),
+    cleanup_ptys: impl FnOnce(),
+) {
+    snapshot_scrollback();
+    sync_live_cwds();
+    save_session();
+    cleanup_ptys();
+}
+
 pub(super) fn install_gtk_runtime_defaults() {
     if std::env::var_os("GSK_RENDERER").is_none() {
         std::env::set_var("GSK_RENDERER", default_gsk_renderer());
@@ -168,13 +232,14 @@ pub(super) fn build_ui(app: &adw::Application) {
     #[cfg(feature = "browser")]
     let (browser_cmd_tx, browser_cmd_rx) =
         async_channel::unbounded::<forktty_core::BrowserCommand>();
-    let state = SocketAppState::new(model.clone(), backend, shell.clone(), socket_path);
+    let state = SocketAppState::new(model.clone(), backend.clone(), shell.clone(), socket_path);
     #[cfg(feature = "browser")]
     let state = state.with_browser_cmd(browser_cmd_tx);
     if let Some(message) = config_load_warning.as_deref() {
         create_global_notification(&state, "Config Issue", message, NotificationKind::Error);
     }
     let ui_alive = Rc::new(Cell::new(true));
+    let close_phase = Rc::new(Cell::new(ClosePhase::Running));
     let socket_server_handle = Rc::new(RefCell::new(None::<SocketServerHandle>));
 
     let header = adw::HeaderBar::new();
@@ -504,6 +569,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         terminal_stack.borrow().clone(),
         window.clone(),
         model.clone(),
+        backend,
     )));
     controller
         .borrow_mut()
@@ -704,22 +770,71 @@ pub(super) fn build_ui(app: &adw::Application) {
         install_global_quake_shortcut(&window, ui_alive.clone());
     }
     let state_for_close = state.clone();
+    let controller_for_close = controller.clone();
     let alive_for_close = ui_alive.clone();
+    let phase_for_close = close_phase.clone();
     let socket_server_for_close = socket_server_handle.clone();
+    let window_for_close = window.downgrade();
     window.connect_close_request(move |_| {
-        alive_for_close.set(false);
-        if let Some(mut server) = socket_server_for_close.borrow_mut().take() {
-            server.shutdown();
+        let transition = close_request_transition(phase_for_close.get(), alive_for_close.get());
+        phase_for_close.set(transition.phase);
+        alive_for_close.set(transition.ui_alive);
+
+        match transition.action {
+            CloseRequestAction::Proceed => glib::Propagation::Proceed,
+            CloseRequestAction::Stop => glib::Propagation::Stop,
+            CloseRequestAction::StartDrain => {
+                let server = socket_server_for_close.borrow_mut().take();
+                let state = state_for_close.clone();
+                let controller = controller_for_close.clone();
+                let ui_alive = alive_for_close.clone();
+                let close_phase = phase_for_close.clone();
+                let window = window_for_close.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    if let Some(server) = server {
+                        server.shutdown_and_wait().await;
+                    }
+
+                    let close_config = config::load_config().ok();
+                    let persistent_scrollback_lines = close_config
+                        .as_ref()
+                        .map(|config| config.appearance.persistent_scrollback_lines)
+                        .unwrap_or(0);
+                    let cleanup_pty_persistence = close_config
+                        .as_ref()
+                        .map(|config| !config.general.persist_terminal_processes)
+                        .unwrap_or(false);
+                    run_close_persistence_steps(
+                        || {
+                            controller
+                                .borrow()
+                                .snapshot_live_embedded_scrollback(persistent_scrollback_lines);
+                        },
+                        || {
+                            let _ = forktty_socket::sync_live_surface_cwds(&state);
+                        },
+                        || save_session_from_state(&state),
+                        || {
+                            if cleanup_pty_persistence {
+                                cleanup_pty_persistence_sessions(&state, false);
+                            }
+                        },
+                    );
+
+                    let Some(transition) =
+                        close_drain_completed_transition(close_phase.get(), ui_alive.get())
+                    else {
+                        return;
+                    };
+                    close_phase.set(transition.phase);
+                    ui_alive.set(transition.ui_alive);
+                    if let Some(window) = window.upgrade() {
+                        window.close();
+                    }
+                });
+                glib::Propagation::Stop
+            }
         }
-        let _ = forktty_socket::sync_live_surface_cwds(&state_for_close);
-        save_session_from_state(&state_for_close);
-        let cleanup_pty_persistence_on_close = config::load_config()
-            .map(|config| !config.general.persist_terminal_processes)
-            .unwrap_or(false);
-        if cleanup_pty_persistence_on_close {
-            cleanup_pty_persistence_sessions(&state_for_close, false);
-        }
-        glib::Propagation::Proceed
     });
 
     window.present();
@@ -754,9 +869,10 @@ pub(super) fn build_ui(app: &adw::Application) {
     let enable_pr_lookup_on_startup = app_config.general.enable_pr_lookup;
     let persist_terminal_processes_on_startup = app_config.general.persist_terminal_processes;
     let alive_for_bootstrap = ui_alive.clone();
+    let phase_for_bootstrap = close_phase.clone();
     let socket_server_for_bootstrap = socket_server_handle.clone();
     glib::idle_add_local_once(move || {
-        if !alive_for_bootstrap.get() {
+        if !alive_for_bootstrap.get() || phase_for_bootstrap.get() != ClosePhase::Running {
             return;
         }
         if !persist_terminal_processes_on_startup {
@@ -1124,18 +1240,22 @@ pub(super) fn restore_or_bootstrap_workspaces(
     match session::load_session() {
         Ok(Some(mut data)) if !data.workspaces.is_empty() => {
             let repaired_paths = repair_restored_workspace_paths(&mut data, &cwd);
+            let worktree_identity_snapshots =
+                WorktreeIdentitySnapshot::from_workspaces(&data.workspaces);
+            let resolved_worktree_identities =
+                resolve_worktree_identity_snapshots(worktree_identity_snapshots);
             {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
-                model.restore_session(data);
+                model.restore_session(data, &resolved_worktree_identities);
                 // session::load_session already runs validate_session_data, but
                 // running the invariant repair here is cheap and turns any
                 // belt-and-suspenders mismatch (e.g. an empty pane tree slipping
                 // past validation in a future migration) into a no-op rather than
                 // an inconsistent UI.
-                let _ = model.repair_session_invariants();
+                let _ = model.repair_session_invariants(&resolved_worktree_identities);
             }
             if repaired_paths > 0 {
                 create_global_notification(
@@ -1278,8 +1398,14 @@ pub(super) fn save_session_from_state(state: &SocketAppState) {
 }
 
 fn session_data_from_state(state: &SocketAppState) -> Option<session::SessionData> {
+    let worktree_identity_snapshots = {
+        let model = state.model.lock().ok()?;
+        model.worktree_identity_snapshots()
+    };
+    let resolved_worktree_identities =
+        resolve_worktree_identity_snapshots(worktree_identity_snapshots);
     let mut model = state.model.lock().ok()?;
-    let _ = model.repair_session_invariants();
+    let _ = model.repair_session_invariants(&resolved_worktree_identities);
     Some(model.to_session_data())
 }
 
@@ -1308,9 +1434,10 @@ pub(super) fn refresh_listening_ports(
     in_flight: Arc<AtomicBool>,
     generation: Arc<AtomicU64>,
 ) {
-    let (model, targets) = {
+    let (model, backend, workspace_surface_ids, surface_pids) = {
         let controller = controller.borrow();
         let model = controller.model.clone();
+        let backend = controller.backend_for_generation_checks();
         let Ok(model_guard) = model.lock() else {
             return;
         };
@@ -1322,21 +1449,43 @@ pub(super) fn refresh_listening_ports(
         let mut surface_pids = controller.surface_pids.borrow_mut();
         surface_pids.retain(|surface_id, _| live_surface_ids.contains(surface_id));
         let surface_pids = surface_pids.clone();
-        let targets = model_guard
+        let workspace_surface_ids = model_guard
             .list_workspaces()
             .into_iter()
             .map(|workspace| {
-                let roots = model_guard
+                let surface_ids = model_guard
                     .list_surfaces(Some(&workspace.id))
-                    .iter()
-                    .filter_map(|surface| surface_pids.get(&surface.id).map(|entry| entry.pid))
+                    .into_iter()
+                    .map(|surface| surface.id)
                     .collect::<Vec<_>>();
-                (workspace.id, roots)
+                (workspace.id, surface_ids)
             })
             .collect::<Vec<_>>();
         drop(model_guard);
-        (model, targets)
+        (model, backend, workspace_surface_ids, surface_pids)
     };
+    let targets = workspace_surface_ids
+        .into_iter()
+        .map(|(workspace_id, surface_ids)| {
+            let roots = surface_ids
+                .into_iter()
+                .filter_map(|surface_id| {
+                    let entry = *surface_pids.get(&surface_id)?;
+                    current_embedded_surface_pid(&backend, &surface_id, entry)
+                        .map(|pid| (pid, surface_id, entry.generation))
+                })
+                .collect::<Vec<_>>();
+            (workspace_id, roots)
+        })
+        .collect::<Vec<_>>();
+    let observed_generations = targets
+        .iter()
+        .flat_map(|(_, roots)| {
+            roots
+                .iter()
+                .map(|(_, surface_id, generation)| (surface_id.clone(), *generation))
+        })
+        .collect::<Vec<_>>();
     if targets.iter().all(|(_, roots)| roots.is_empty()) {
         generation.fetch_add(1, Ordering::SeqCst);
         if let Ok(mut model) = model.lock() {
@@ -1358,7 +1507,8 @@ pub(super) fn refresh_listening_ports(
                 let ports = if roots.is_empty() {
                     Vec::new()
                 } else {
-                    forktty_core::ports::listening_ports(&roots, proc_root)
+                    let root_pids = roots.into_iter().map(|(pid, _, _)| pid).collect::<Vec<_>>();
+                    forktty_core::ports::listening_ports(&root_pids, proc_root)
                         .into_iter()
                         .collect()
                 };
@@ -1367,11 +1517,13 @@ pub(super) fn refresh_listening_ports(
             .collect::<Vec<_>>();
         glib::MainContext::default().invoke(move || {
             if generation.load(Ordering::SeqCst) == scan_generation {
-                if let Ok(mut model) = model.lock() {
-                    for (workspace_id, ports) in results {
-                        model.set_listening_ports(&workspace_id, ports);
+                let _ = backend.with_surface_generations(observed_generations, || {
+                    if let Ok(mut model) = model.lock() {
+                        for (workspace_id, ports) in results {
+                            model.set_listening_ports(&workspace_id, ports);
+                        }
                     }
-                }
+                });
             }
             in_flight.store(false, Ordering::SeqCst);
         });

@@ -1,6 +1,74 @@
 use super::*;
 
 #[test]
+fn notifications_forwards_one_page_request_with_limit_and_cursor() {
+    let requests = with_socket_server(
+        1,
+        |req| {
+            json!({
+                "id": req["id"],
+                "ok": true,
+                "result": [{
+                    "id": "notification-43",
+                    "title": "Latest",
+                    "body": "One full page",
+                    "kind": "info",
+                    "read": false,
+                }],
+            })
+            .to_string()
+        },
+        |socket_path| {
+            handle_notifications(
+                &ctx_for(socket_path),
+                strings(&["--limit", "1", "--before-id", "notification-42"]),
+            )
+            .unwrap();
+        },
+    );
+
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["method"], "notification.list");
+    assert_eq!(
+        requests[0]["params"],
+        json!({
+            "limit": 1,
+            "before_id": "notification-42",
+        })
+    );
+}
+
+#[test]
+fn notifications_rejects_invalid_page_arguments_before_socket_access() {
+    let context = ctx_for(Path::new("/tmp/forktty-nonexistent.sock"));
+
+    for value in ["0", "201"] {
+        assert_err_contains(
+            handle_notifications(&context, strings(&["--limit", value])),
+            "from 1 to 200",
+        );
+    }
+    for value in ["-1", "not-a-number"] {
+        assert_err_contains(
+            handle_notifications(&context, strings(&["--limit", value])),
+            "--limit must be a number",
+        );
+    }
+    assert_err_contains(
+        handle_notifications(&context, strings(&["--limit"])),
+        "--limit requires a value",
+    );
+    assert_err_contains(
+        handle_notifications(&context, strings(&["--before-id", ""])),
+        "--before-id requires a value",
+    );
+    assert_err_contains(
+        handle_notifications(&context, strings(&["--before-id"])),
+        "--before-id requires a value",
+    );
+}
+
+#[test]
 fn statusline_requests_status_summary_with_workspace_selector() {
     let request = with_socket_response(
         |req| {
@@ -293,6 +361,37 @@ fn completions_only_advertise_supported_grouped_commands() {
     assert!(fish.contains("__fish_seen_subcommand_from status"));
     assert!(!fish.contains("__fish_seen_subcommand_from team"));
 }
+
+#[test]
+fn notification_paging_is_available_in_all_shell_completions() {
+    let bash = completion_script_for_test("bash").unwrap();
+    assert!(bash.contains("notifications"));
+    assert!(bash.contains("--limit --before-id"));
+    assert!(bash.contains("if [[ \"$command\" == notifications && $COMP_CWORD -ge 2 ]]"));
+
+    let zsh = completion_script_for_test("zsh").unwrap();
+    assert!(zsh.contains("notifications"));
+    assert!(zsh.contains("--limit --before-id"));
+    assert!(zsh.contains(
+        "elif [[ $words[2] == notifications ]]; then\n    _describe 'notification option' notification_options"
+    ));
+
+    let fish = completion_script_for_test("fish").unwrap();
+    assert!(fish.contains("__fish_seen_subcommand_from notifications"));
+    assert!(fish.contains("-l limit"));
+    assert!(fish.contains("-l before-id"));
+}
+
+#[test]
+fn notification_option_source_drives_all_shell_completion_renderers() {
+    for shell in ["bash", "zsh", "fish"] {
+        let script =
+            completion_script_with_notification_options_for_test(shell, &["--sentinel-option"])
+                .unwrap();
+        assert!(script.contains("sentinel-option"), "missing from {shell}");
+    }
+}
+
 #[test]
 fn project_actions_request_action_list_with_cwd() {
     let request = with_socket_response(

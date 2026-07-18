@@ -5,18 +5,29 @@ use crate::agent_guide;
 use super::super::{
     now_nanos, read_optional_stdin_json, safe_string_field, sanitize_for_terminal,
     send_socket_request_with_timeout, socket_path_from_env, string_field, trimmed_env,
-    write_stdout_line, CliContext, CliError, CliResult,
+    write_stdout_line, write_stdout_text, CliContext, CliError, CliResult,
 };
 use super::install::{agent_spec, normalize_agent_name};
 use super::{
     supported_agent_keys, AgentSpec, HOOK_CONTINUE_JSON, HOOK_EVENT_CLOCK, HOOK_EVENT_ORDER_PARAM,
-    HOOK_STATUS_TIMEOUT, HOOK_TOKEN_CEILING_DEFAULT, HOOK_TOOL_LABEL_MAX,
+    HOOK_STATUS_TIMEOUT,
 };
 use serde_json::{json, Map, Value};
 use std::collections::VecDeque;
-use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+
+mod payload;
+mod token_usage;
+
+pub(in crate::socket_cli) use payload::{
+    extract_first_string_like, extract_hook_compact_trigger, extract_hook_message,
+    extract_hook_permission_mode, extract_hook_session_id, extract_hook_source,
+    extract_hook_tool_error, extract_hook_tool_name, extract_hook_turn_id, short_hash,
+};
+use payload::{extract_hook_notification_type, hook_notification_needs_attention};
+pub(in crate::socket_cli) use token_usage::{
+    format_token_usage_block, read_token_usage_from_transcript, resolve_token_ceiling, TokenUsage,
+};
 
 pub(in crate::socket_cli) fn handle_hook_event(
     context: &CliContext,
@@ -62,6 +73,11 @@ pub(in crate::socket_cli) fn handle_hook_event(
         );
         print!("{HOOK_CONTINUE_JSON}");
         return Ok(());
+    }
+
+    if spec.key == "claude" && event == "session-start" && forktty_hook_context_from_env().is_none()
+    {
+        return write_stdout_text(HOOK_CONTINUE_JSON);
     }
 
     let payload = match read_optional_stdin_json() {
@@ -113,7 +129,9 @@ pub(in crate::socket_cli) fn handle_hook_event(
         }
     }
     let enrichments = gather_hook_enrichments(context, spec, &event, &payload);
-    if let Some(token_action) = build_token_progress_action(spec, &enrichments, &event, &order) {
+    if let Some(token_action) =
+        build_token_progress_action(spec, &enrichments, &event, &payload, &order)
+    {
         if should_send_hook_actions(context) {
             let _ = send_socket_request_with_timeout(
                 &context.socket_path,
@@ -233,6 +251,10 @@ pub(in crate::socket_cli) fn add_hook_metadata(
     order: &str,
 ) -> Value {
     params.insert(
+        "hook_agent".to_string(),
+        Value::String(spec.key.to_string()),
+    );
+    params.insert(
         HOOK_EVENT_ORDER_PARAM.to_string(),
         Value::String(order.to_string()),
     );
@@ -247,13 +269,92 @@ pub(in crate::socket_cli) fn add_hook_metadata(
     if let Some(turn_id) = extract_hook_turn_id(event, payload) {
         params.insert("hook_turn_id".to_string(), Value::String(turn_id));
     }
-    if let Some(session_id) = extract_hook_session_id(payload) {
-        params.insert("hook_session_id".to_string(), Value::String(session_id));
+    let session_id = extract_hook_session_id(payload);
+    if let Some(session_id) = session_id.as_ref() {
+        params.insert(
+            "hook_session_id".to_string(),
+            Value::String(session_id.clone()),
+        );
+    }
+    if let (Some(kind), Some(session_id)) =
+        (hook_prompt_kind(event, payload), session_id.as_deref())
+    {
+        let correlation_id = extract_hook_correlation_id(event, payload);
+        let identity = correlation_id.as_deref().unwrap_or(order);
+        let prompt_id = format!("{}/{}/{kind}/{identity}", spec.key, short_hash(session_id));
+        params.insert(
+            "hook_prompt_kind".to_string(),
+            Value::String(kind.to_string()),
+        );
+        if let Some(correlation_id) = correlation_id {
+            params.insert(
+                "hook_correlation_id".to_string(),
+                Value::String(correlation_id),
+            );
+        }
+        params.insert("hook_prompt_id".to_string(), Value::String(prompt_id));
     }
     if let Some(cwd) = hook_session_cwd_for_metadata(spec, payload) {
         params.insert("hook_session_cwd".to_string(), Value::String(cwd));
     }
     Value::Object(params)
+}
+
+fn hook_prompt_kind(event: &str, payload: &Value) -> Option<&'static str> {
+    match event {
+        "permission-request" | "permission-replied" | "permission-result" | "permission-denied"
+        | "post-tool-batch" => Some("permission"),
+        "elicitation" | "elicitation-result" => Some("elicitation"),
+        "notification" => match extract_hook_notification_type(payload).as_deref() {
+            Some("permission_prompt") => Some("permission"),
+            Some("elicitation_dialog") => Some("elicitation"),
+            Some("idle_prompt") => Some("attention"),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn extract_hook_correlation_id(event: &str, payload: &Value) -> Option<String> {
+    let explicit = extract_first_string_like(
+        payload,
+        &[
+            "prompt_id",
+            "promptId",
+            "request_id",
+            "requestId",
+            "requestID",
+            "permission_id",
+            "permissionId",
+            "permissionID",
+            "elicitation_id",
+            "elicitationId",
+            "tool_use_id",
+            "toolUseId",
+            "call_id",
+            "callId",
+        ],
+    )
+    .or_else(|| {
+        (event == "permission-request")
+            .then(|| {
+                payload
+                    .pointer("/raw/properties/id")
+                    .or_else(|| payload.pointer("/properties/id"))
+                    .and_then(value_as_non_blank_string)
+            })
+            .flatten()
+    });
+    explicit.map(|value| format!("id:{}", short_hash(&value)))
+}
+
+fn value_as_non_blank_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) if !value.trim().is_empty() => Some(value.trim().to_string()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
 }
 
 pub(in crate::socket_cli) fn hook_session_cwd_for_metadata(
@@ -377,7 +478,17 @@ impl<'a> HookActionBuilder<'a> {
         let mut params = self.target.clone();
         params.insert("level".to_string(), Value::String(level.to_string()));
         params.insert("message".to_string(), Value::String(message));
-        ("metadata.log".to_string(), Value::Object(params))
+        (
+            "metadata.log".to_string(),
+            add_hook_metadata(params, self.spec, self.event, self.payload, self.order),
+        )
+    }
+
+    fn notification(&self, params: Map<String, Value>) -> (String, Value) {
+        (
+            "notification.create".to_string(),
+            add_hook_metadata(params, self.spec, self.event, self.payload, self.order),
+        )
     }
 
     fn status(&self, value: &str, color: &str, event_name: &str) -> (String, Value) {
@@ -491,7 +602,7 @@ impl<'a> HookActionBuilder<'a> {
                 },
             ),
             self.status("Needs input", "yellow", self.event),
-            ("notification.create".to_string(), Value::Object(note)),
+            self.notification(note),
         ]
     }
 
@@ -534,7 +645,7 @@ impl<'a> HookActionBuilder<'a> {
                 },
             ),
             self.status("Permission required", "yellow", self.event),
-            ("notification.create".to_string(), Value::Object(note)),
+            self.notification(note),
         ]
     }
 
@@ -575,7 +686,7 @@ impl<'a> HookActionBuilder<'a> {
                 },
             ),
             self.status("Error", "red", self.event),
-            ("notification.create".to_string(), Value::Object(note)),
+            self.notification(note),
         ]
     }
 
@@ -656,7 +767,7 @@ impl<'a> HookActionBuilder<'a> {
                 Value::String(format!("{tool} returned an error response.")),
             );
             note.insert("kind".to_string(), Value::String("error".to_string()));
-            actions.push(("notification.create".to_string(), Value::Object(note)));
+            actions.push(self.notification(note));
         }
         actions
     }
@@ -732,6 +843,18 @@ impl<'a> HookActionBuilder<'a> {
     }
 
     fn handle_elicitation(&self) -> Vec<(String, Value)> {
+        let body = if self.message.is_empty() {
+            format!("{} requested additional input.", self.spec.label)
+        } else {
+            self.message.clone()
+        };
+        let mut note = self.target.clone();
+        note.insert(
+            "title".to_string(),
+            Value::String(format!("{} input required", self.spec.label)),
+        );
+        note.insert("body".to_string(), Value::String(body));
+        note.insert("kind".to_string(), Value::String("prompt".to_string()));
         vec![
             self.log(
                 "warn",
@@ -742,6 +865,7 @@ impl<'a> HookActionBuilder<'a> {
                 },
             ),
             self.status("Needs input", "yellow", self.event),
+            self.notification(note),
         ]
     }
 
@@ -785,7 +909,7 @@ impl<'a> HookActionBuilder<'a> {
                 format!("{} context compacting{trigger_msg}", self.spec.label),
             ),
             self.status("Compacting", "yellow", self.event),
-            ("notification.create".to_string(), Value::Object(note)),
+            self.notification(note),
         ]
     }
 
@@ -909,26 +1033,25 @@ pub(in crate::socket_cli) struct HookEnrichments {
     pub(in crate::socket_cli) workspace: Option<HookWorkspaceContext>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::socket_cli) struct ForkttyHookContext {
+    pub(in crate::socket_cli) workspace_id: String,
+    pub(in crate::socket_cli) surface_id: String,
+    pub(in crate::socket_cli) socket_path: String,
+}
+
+pub(in crate::socket_cli) fn forktty_hook_context_from_env() -> Option<ForkttyHookContext> {
+    Some(ForkttyHookContext {
+        workspace_id: trimmed_env("FORKTTY_WORKSPACE_ID")?,
+        surface_id: trimmed_env("FORKTTY_SURFACE_ID")?,
+        socket_path: socket_path_from_env()?.display().to_string(),
+    })
+}
+
 #[derive(Clone)]
 pub(in crate::socket_cli) struct HookWorkspaceContext {
     pub(in crate::socket_cli) name: String,
     pub(in crate::socket_cli) git_branch: Option<String>,
-}
-
-#[derive(Clone, Copy)]
-pub(in crate::socket_cli) struct TokenUsage {
-    pub(in crate::socket_cli) input: u64,
-    pub(in crate::socket_cli) output: u64,
-    pub(in crate::socket_cli) cache_read: u64,
-    pub(in crate::socket_cli) cache_creation: u64,
-}
-
-impl TokenUsage {
-    fn input_total(self) -> u64 {
-        self.input
-            .saturating_add(self.cache_read)
-            .saturating_add(self.cache_creation)
-    }
 }
 
 pub(in crate::socket_cli) fn gather_hook_enrichments(
@@ -945,7 +1068,10 @@ pub(in crate::socket_cli) fn gather_hook_enrichments(
         return enrichments;
     }
     if event == "session-start" {
-        enrichments.workspace = hook_workspace_context(context);
+        let Some(hook_context) = forktty_hook_context_from_env() else {
+            return enrichments;
+        };
+        enrichments.workspace = hook_workspace_context(context, &hook_context);
     }
     if event == "prompt-submit" {
         if let Some(path) =
@@ -959,8 +1085,8 @@ pub(in crate::socket_cli) fn gather_hook_enrichments(
 
 pub(in crate::socket_cli) fn hook_workspace_context(
     context: &CliContext,
+    hook_context: &ForkttyHookContext,
 ) -> Option<HookWorkspaceContext> {
-    let workspace_id = trimmed_env("FORKTTY_WORKSPACE_ID")?;
     if !should_send_hook_actions(context) {
         return None;
     }
@@ -972,7 +1098,7 @@ pub(in crate::socket_cli) fn hook_workspace_context(
     )
     .ok()?;
     workspaces.as_array()?.iter().find_map(|workspace| {
-        if string_field(workspace, "id") != Some(workspace_id.as_str()) {
+        if string_field(workspace, "id") != Some(hook_context.workspace_id.as_str()) {
             return None;
         }
         let name = safe_string_field(workspace, "name")?;
@@ -989,6 +1115,7 @@ pub(in crate::socket_cli) fn build_token_progress_action(
     spec: &AgentSpec,
     enrichments: &HookEnrichments,
     event: &str,
+    payload: &Value,
     order: &str,
 ) -> Option<Value> {
     let usage = enrichments.token_usage?;
@@ -1007,7 +1134,7 @@ pub(in crate::socket_cli) fn build_token_progress_action(
     );
     params.insert("value".to_string(), json!(total));
     params.insert("total".to_string(), json!(resolve_token_ceiling()));
-    Some(add_hook_metadata(params, spec, event, &Value::Null, order))
+    Some(add_hook_metadata(params, spec, event, payload, order))
 }
 
 pub(in crate::socket_cli) fn build_hook_response(
@@ -1016,8 +1143,9 @@ pub(in crate::socket_cli) fn build_hook_response(
     enrichments: &HookEnrichments,
 ) -> CliResult<Value> {
     if spec.key == "claude" && event == "session-start" {
-        let workspace_id =
-            trimmed_env("FORKTTY_WORKSPACE_ID").unwrap_or_else(|| "(none)".to_string());
+        let Some(hook_context) = forktty_hook_context_from_env() else {
+            return serde_json::from_str(HOOK_CONTINUE_JSON.trim()).map_err(Into::into);
+        };
         let workspace_line = enrichments
             .workspace
             .as_ref()
@@ -1032,13 +1160,13 @@ pub(in crate::socket_cli) fn build_hook_response(
                         .unwrap_or_default()
                 )
             })
-            .unwrap_or_else(|| format!("Workspace: {workspace_id}; branch unknown."));
+            .unwrap_or_else(|| {
+                format!("Workspace: {}; branch unknown.", hook_context.workspace_id)
+            });
         let mut context_lines = vec![
             format!(
                 "Running inside ForkTTY. workspace_id={} surface_id={} socket={}.",
-                workspace_id,
-                trimmed_env("FORKTTY_SURFACE_ID").unwrap_or_else(|| "(none)".to_string()),
-                trimmed_env("FORKTTY_SOCKET_PATH").unwrap_or_else(|| "(default)".to_string()),
+                hook_context.workspace_id, hook_context.surface_id, hook_context.socket_path,
             ),
             workspace_line,
             "ForkTTY CLI/socket: context-snapshot gives a compact read-only view; list, surfaces, tree, read-screen, and capture-tail inspect panes; focus-surface and send-text target them.".to_string(),
@@ -1060,13 +1188,11 @@ pub(in crate::socket_cli) fn build_hook_response(
             "additionalContext".to_string(),
             Value::String(additional_context),
         );
-        if trimmed_env("FORKTTY_WORKSPACE_ID").is_some() {
-            if let Some(workspace) = &enrichments.workspace {
-                hook_output.insert(
-                    "sessionTitle".to_string(),
-                    Value::String(workspace.name.clone()),
-                );
-            }
+        if let Some(workspace) = &enrichments.workspace {
+            hook_output.insert(
+                "sessionTitle".to_string(),
+                Value::String(workspace.name.clone()),
+            );
         }
         return Ok(json!({
             "continue": true,
@@ -1102,331 +1228,4 @@ pub(in crate::socket_cli) fn build_hook_response(
         return Ok(json!({}));
     }
     serde_json::from_str(HOOK_CONTINUE_JSON.trim()).map_err(Into::into)
-}
-
-pub(in crate::socket_cli) fn extract_hook_message(payload: &Value) -> String {
-    extract_first_string(
-        payload,
-        &[
-            "message",
-            "body",
-            "reason",
-            "error",
-            "summary",
-            "detail",
-            "title",
-            "text",
-            "last_assistant_message",
-        ],
-    )
-    .unwrap_or_default()
-}
-
-pub(in crate::socket_cli) fn extract_hook_source(payload: &Value) -> Option<String> {
-    extract_first_string_like(payload, &["source", "trigger", "reason"])
-        .map(|value| sanitize_for_terminal(&value).chars().take(32).collect())
-}
-
-pub(in crate::socket_cli) fn extract_hook_compact_trigger(payload: &Value) -> Option<String> {
-    extract_first_string_like(
-        payload,
-        &["trigger", "compact_trigger", "compactTrigger", "reason"],
-    )
-    .map(|value| sanitize_for_terminal(&value).chars().take(32).collect())
-}
-
-pub(in crate::socket_cli) fn extract_hook_tool_name(payload: &Value) -> Option<String> {
-    let sanitized = sanitize_for_terminal(&extract_first_string_like(
-        payload,
-        &["tool_name", "toolName", "tool", "name"],
-    )?);
-    if sanitized.chars().count() <= HOOK_TOOL_LABEL_MAX {
-        Some(sanitized)
-    } else {
-        Some(format!(
-            "{}...",
-            sanitized
-                .chars()
-                .take(HOOK_TOOL_LABEL_MAX.saturating_sub(3))
-                .collect::<String>()
-        ))
-    }
-}
-
-fn extract_hook_notification_type(payload: &Value) -> Option<String> {
-    extract_first_string_like(payload, &["notification_type", "notificationType"])
-        .map(|value| sanitize_for_terminal(&value).chars().take(64).collect())
-        .filter(|value: &String| !value.is_empty())
-}
-
-fn hook_notification_needs_attention(payload: &Value, message: &str) -> bool {
-    match extract_hook_notification_type(payload)
-        .as_deref()
-        .map(str::trim)
-    {
-        Some("permission_prompt" | "idle_prompt" | "elicitation_dialog") => true,
-        Some("auth_success" | "elicitation_complete" | "elicitation_response") => false,
-        Some(_) => true,
-        None => {
-            // Legacy Claude payloads omitted notification_type. Preserve the
-            // conservative fallback, except for the documented background-task
-            // completion notification that does not need user attention.
-            let lower = message.trim().to_ascii_lowercase();
-            !lower.starts_with("background task completed:")
-        }
-    }
-}
-
-pub(in crate::socket_cli) fn extract_hook_tool_error(payload: &Value) -> bool {
-    // Inspect only the documented error container — the tool result object
-    // (`tool_response`) and, as a fallback, the payload root — one level deep.
-    //
-    // A previous version walked the *entire* payload recursively and flagged an
-    // error on any `error`/`is_error`/`isError` key anywhere inside it. Codex
-    // PostToolUse payloads carry rich, nested tool output (e.g. MCP
-    // `structuredContent`, JSON-emitting commands) that legitimately contains
-    // nested `error` keys even on success, so the recursive scan produced
-    // spurious "error" log lines and notifications on routine Codex use. Both
-    // the Claude (`tool_response.is_error`) and MCP (`tool_response.isError`)
-    // contracts expose the flag at the top of the response, so a single-level
-    // check is sufficient and far less noisy.
-    [payload.get("tool_response"), Some(payload)]
-        .into_iter()
-        .flatten()
-        .any(object_signals_tool_error)
-}
-
-pub(in crate::socket_cli) fn object_signals_tool_error(value: &Value) -> bool {
-    let Some(object) = value.as_object() else {
-        return false;
-    };
-    for key in ["is_error", "isError", "error"] {
-        match object.get(key) {
-            Some(Value::Bool(true)) => return true,
-            Some(Value::String(value)) if !value.trim().is_empty() => return true,
-            Some(Value::Object(value))
-                if value.contains_key("message")
-                    || value.contains_key("type")
-                    || value.contains_key("code") =>
-            {
-                return true
-            }
-            _ => {}
-        }
-    }
-    false
-}
-
-pub(in crate::socket_cli) fn extract_hook_permission_mode(payload: &Value) -> Option<String> {
-    extract_first_string_like(payload, &["permission_mode", "permissionMode"])
-        .map(|value| {
-            sanitize_for_terminal(&value)
-                .chars()
-                .take(64)
-                .collect::<String>()
-        })
-        .filter(|value| !value.is_empty())
-}
-
-pub(in crate::socket_cli) fn extract_hook_session_id(payload: &Value) -> Option<String> {
-    // conversationId is Antigravity's session identifier.
-    extract_first_string_like(
-        payload,
-        &[
-            "session_id",
-            "sessionId",
-            "sessionID",
-            "conversationId",
-            "conversation_id",
-        ],
-    )
-    .map(|value| {
-        sanitize_for_terminal(&value)
-            .chars()
-            .take(96)
-            .collect::<String>()
-    })
-    .filter(|value| !value.is_empty())
-}
-
-pub(in crate::socket_cli) fn extract_hook_turn_id(event: &str, payload: &Value) -> Option<String> {
-    let explicit = extract_first_string_like(
-        payload,
-        &[
-            "turn_id",
-            "turnId",
-            "prompt_id",
-            "promptId",
-            "request_id",
-            "requestId",
-            "message_id",
-            "messageId",
-            "event_id",
-            "eventId",
-            "sequence",
-            "seq",
-        ],
-    );
-    if let Some(explicit) = explicit {
-        return Some(format!("id:{}", short_hash(&explicit)));
-    }
-    if event != "prompt-submit" {
-        return None;
-    }
-    extract_first_string_like(payload, &["prompt", "message", "text", "body"])
-        .map(|prompt| format!("prompt:{}", short_hash(&prompt)))
-}
-
-pub(in crate::socket_cli) fn extract_first_string(
-    payload: &Value,
-    keys: &[&str],
-) -> Option<String> {
-    let mut queue = VecDeque::from([payload]);
-    while let Some(current) = queue.pop_front() {
-        let Some(object) = current.as_object() else {
-            continue;
-        };
-        for key in keys {
-            if let Some(value) = object.get(*key).and_then(Value::as_str) {
-                let trimmed = value.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            }
-        }
-        for value in object.values() {
-            if value.is_object() {
-                queue.push_back(value);
-            }
-        }
-    }
-    None
-}
-
-pub(in crate::socket_cli) fn extract_first_string_like(
-    payload: &Value,
-    keys: &[&str],
-) -> Option<String> {
-    let mut queue = VecDeque::from([payload]);
-    while let Some(current) = queue.pop_front() {
-        let Some(object) = current.as_object() else {
-            continue;
-        };
-        for key in keys {
-            match object.get(*key) {
-                Some(Value::String(value)) if !value.trim().is_empty() => {
-                    return Some(value.trim().to_string())
-                }
-                Some(Value::Number(value)) => return Some(value.to_string()),
-                Some(Value::Bool(value)) => return Some(value.to_string()),
-                _ => {}
-            }
-        }
-        for value in object.values() {
-            if value.is_object() {
-                queue.push_back(value);
-            }
-        }
-    }
-    None
-}
-
-pub(in crate::socket_cli) fn short_hash(value: &str) -> String {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for byte in value.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("{hash:016x}")
-}
-
-pub(in crate::socket_cli) fn read_token_usage_from_transcript(path: &Path) -> Option<TokenUsage> {
-    let metadata = fs::metadata(path).ok()?;
-    if !metadata.is_file() {
-        return None;
-    }
-    let size = metadata.len();
-    if size == 0 {
-        return None;
-    }
-    let mut file = File::open(path).ok()?;
-    let chunk_size = size.min(64 * 1024);
-    file.seek(SeekFrom::Start(size - chunk_size)).ok()?;
-    let mut buffer = vec![0; chunk_size as usize];
-    file.read_exact(&mut buffer).ok()?;
-    let text = String::from_utf8_lossy(&buffer);
-    for raw in text.lines().rev() {
-        let line = raw.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let Ok(entry) = serde_json::from_str::<Value>(line) else {
-            continue;
-        };
-        let Some(usage) = entry
-            .get("message")
-            .and_then(|message| message.get("usage"))
-            .or_else(|| entry.get("usage"))
-        else {
-            continue;
-        };
-        return Some(TokenUsage {
-            input: usage
-                .get("input_tokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-            output: usage
-                .get("output_tokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-            cache_read: usage
-                .get("cache_read_input_tokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-            cache_creation: usage
-                .get("cache_creation_input_tokens")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
-        });
-    }
-    None
-}
-
-pub(in crate::socket_cli) fn resolve_token_ceiling() -> u64 {
-    trimmed_env("FORKTTY_HOOK_TOKEN_CEILING")
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(HOOK_TOKEN_CEILING_DEFAULT)
-}
-
-pub(in crate::socket_cli) fn format_token_usage_block(usage: TokenUsage) -> String {
-    let total = usage.input_total();
-    let ceiling = resolve_token_ceiling();
-    let pct = if ceiling > 0 {
-        ((total as f64 / ceiling as f64) * 100.0).round().min(100.0) as u64
-    } else {
-        0
-    };
-    format!(
-        "ForkTTY token estimate (latest assistant turn): ~{} / {} input tokens ({}% — input={}, cache_read={}, cache_creation={}, output={}).",
-        format_thousands(total),
-        format_thousands(ceiling),
-        pct,
-        usage.input,
-        usage.cache_read,
-        usage.cache_creation,
-        usage.output,
-    )
-}
-
-pub(in crate::socket_cli) fn format_thousands(value: u64) -> String {
-    let text = value.to_string();
-    let mut out = String::new();
-    for (index, ch) in text.chars().rev().enumerate() {
-        if index > 0 && index % 3 == 0 {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out.chars().rev().collect()
 }

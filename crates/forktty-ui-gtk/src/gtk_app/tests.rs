@@ -5,9 +5,17 @@ use super::*;
 use git2::Repository;
 
 mod agent_hud;
+mod backend_io;
+mod backend_runtime;
+mod design_system;
 mod notifications;
+mod restart_and_restore;
 mod sidebar;
+mod surface_actions;
+mod tab_drag;
 mod terminal_config;
+mod terminal_lifecycle;
+mod workspace_navigation;
 mod worktree_actions;
 
 fn make_temp_repo() -> tempfile::TempDir {
@@ -100,6 +108,7 @@ fn drive_backend_send_text(
             surface_id,
             text,
             reply,
+            ..
         } => {
             assert_eq!(surface_id, expected_surface_id);
             assert_eq!(text, expected_text);
@@ -239,6 +248,43 @@ impl TerminalBackend for CloseFailsBackend {
     }
 }
 
+#[derive(Debug, Default)]
+struct SecondCloseFailsBackend {
+    inner: forktty_terminal::HeadlessTerminalBackend,
+    close_count: Mutex<usize>,
+}
+
+impl TerminalBackend for SecondCloseFailsBackend {
+    fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+        self.inner.spawn(request)
+    }
+
+    fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
+        self.inner.send_text(surface_id, text)
+    }
+
+    fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
+        self.inner.resize(surface_id, cols, rows)
+    }
+
+    fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+        let mut close_count = self
+            .close_count
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        *close_count += 1;
+        if *close_count == 2 {
+            return Err(TerminalError::Backend("second close failed".to_string()));
+        }
+        drop(close_count);
+        self.inner.close(surface_id)
+    }
+
+    fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+        self.inner.surfaces()
+    }
+}
+
 #[derive(Debug)]
 struct CloseObservesModelLockBackend {
     surfaces: Mutex<BTreeMap<String, TerminalSurfaceState>>,
@@ -309,847 +355,6 @@ impl TerminalBackend for CloseObservesModelLockBackend {
             .cloned()
             .collect())
     }
-}
-
-#[test]
-fn gtk_backend_rolls_back_spawn_when_ui_channel_is_closed() {
-    let (tx, rx) = mpsc::channel();
-    drop(rx);
-    let backend = GtkTerminalBackend::new(tx);
-
-    let err = backend.spawn(test_spawn_request()).unwrap_err();
-
-    assert!(matches!(err, TerminalError::Backend(_)));
-    assert!(backend.surfaces().unwrap().is_empty());
-}
-
-#[test]
-fn gtk_backend_restores_existing_surface_when_duplicate_spawn_send_fails() {
-    let (tx, rx) = mpsc::channel();
-    let backend = GtkTerminalBackend::new(tx);
-    backend.spawn(test_spawn_request()).unwrap();
-    backend.mark_surface_ready("surface-1").unwrap();
-    drop(rx);
-
-    let mut duplicate = test_spawn_request();
-    duplicate.shell = "/bin/zsh".to_string();
-    duplicate.cwd = PathBuf::from("/tmp/changed");
-
-    let err = backend.spawn(duplicate).unwrap_err();
-
-    assert!(matches!(err, TerminalError::Backend(_)));
-    let mut surfaces = backend.surfaces().unwrap();
-    assert_eq!(surfaces.len(), 1);
-    let surface = surfaces.remove(0);
-    assert_eq!(surface.surface_id, "surface-1");
-    assert_eq!(surface.shell, "/bin/sh");
-    assert_eq!(surface.cwd, PathBuf::from("/tmp"));
-    let err = backend
-        .send_text("surface-1", "echo still-ready\n")
-        .unwrap_err();
-    assert!(matches!(err, TerminalError::Backend(_)));
-}
-
-#[test]
-fn gtk_backend_rolls_back_resize_when_ui_channel_is_closed() {
-    let (tx, rx) = mpsc::channel();
-    let backend = GtkTerminalBackend::new(tx);
-    backend.spawn(test_spawn_request()).unwrap();
-    drop(rx);
-
-    let err = backend.resize("surface-1", 120, 40).unwrap_err();
-
-    assert!(matches!(err, TerminalError::Backend(_)));
-    let mut surfaces = backend.surfaces().unwrap();
-    let surface = surfaces.remove(0);
-    assert_eq!((surface.cols, surface.rows), (80, 24));
-}
-
-#[test]
-fn embedded_runtime_size_sync_updates_backend_metadata() {
-    let backend = forktty_terminal::HeadlessTerminalBackend::new();
-    backend.spawn(test_spawn_request()).unwrap();
-    let snapshot =
-        TerminalTextSnapshot::from_text("surface-1", "", 166, 42, TerminalTextCapture::Visible, 0);
-
-    let changed =
-        sync_terminal_surface_size_from_snapshot(&backend, "surface-1", &snapshot).unwrap();
-
-    assert!(changed);
-    let mut surfaces = backend.surfaces().unwrap();
-    assert_eq!(surfaces.len(), 1);
-    let surface = surfaces.remove(0);
-    assert_eq!((surface.cols, surface.rows), (166, 42));
-}
-
-#[test]
-fn gtk_backend_rolls_back_close_when_ui_channel_is_closed() {
-    let (tx, rx) = mpsc::channel();
-    let backend = GtkTerminalBackend::new(tx);
-    backend.spawn(test_spawn_request()).unwrap();
-    drop(rx);
-
-    let err = backend.close("surface-1").unwrap_err();
-
-    assert!(matches!(err, TerminalError::Backend(_)));
-    let surfaces = backend.surfaces().unwrap();
-    assert_eq!(surfaces.len(), 1);
-    assert_eq!(surfaces[0].pid, None);
-}
-
-#[test]
-fn gtk_terminal_backend_blocks_send_until_ready() {
-    let (tx, rx) = mpsc::channel();
-    let backend = GtkTerminalBackend::new(tx);
-    backend.spawn(test_spawn_request()).unwrap();
-    assert!(matches!(rx.recv().unwrap(), GtkTerminalCommand::Spawn(_)));
-
-    assert!(matches!(
-        backend.send_text("surface-1", "echo before-ready\n"),
-        Err(TerminalError::NotReady(surface)) if surface == "surface-1"
-    ));
-
-    backend.mark_surface_ready("surface-1").unwrap();
-    drive_backend_send_text(&backend, &rx, "surface-1", "echo ready\n", Ok(())).unwrap();
-}
-
-#[test]
-fn gtk_terminal_backend_propagates_controller_send_text_failure() {
-    let (tx, rx) = mpsc::channel();
-    let backend = GtkTerminalBackend::new(tx);
-    backend.spawn(test_spawn_request()).unwrap();
-    assert!(matches!(rx.recv().unwrap(), GtkTerminalCommand::Spawn(_)));
-    backend.mark_surface_ready("surface-1").unwrap();
-
-    let err = drive_backend_send_text(
-        &backend,
-        &rx,
-        "surface-1",
-        "echo rejected\n",
-        Err(TerminalError::Backend(
-            "ghostty rejected send-text".to_string(),
-        )),
-    )
-    .unwrap_err();
-
-    assert!(err.contains("ghostty rejected send-text"));
-}
-
-#[test]
-fn gtk_terminal_backend_rejects_duplicate_spawn_without_clearing_ready() {
-    let (tx, rx) = mpsc::channel();
-    let backend = GtkTerminalBackend::new(tx);
-    backend.spawn(test_spawn_request()).unwrap();
-    assert!(matches!(rx.recv().unwrap(), GtkTerminalCommand::Spawn(_)));
-    backend.mark_surface_ready("surface-1").unwrap();
-
-    let err = backend.spawn(test_spawn_request()).unwrap_err();
-
-    assert!(err.to_string().contains("surface already exists"));
-    drive_backend_send_text(&backend, &rx, "surface-1", "echo still-ready\n", Ok(())).unwrap();
-}
-
-#[test]
-fn terminal_widget_ops_reset_sends_form_feed() {
-    let widget = TestTerminalWidget::default();
-    widget.reset_and_clear();
-    assert_eq!(widget.sent_text(), vec!["\x0c"]);
-}
-
-#[test]
-fn context_menu_copy_targets_focused_ghostty_widget() {
-    let widget = TestTerminalWidget::default();
-
-    assert!(copy_terminal_if_focused(&widget));
-
-    assert_eq!(widget.calls(), vec!["copy_text"]);
-}
-
-#[test]
-fn embedded_terminal_accelerators_route_clipboard_and_search_actions() {
-    let mods = gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK;
-
-    assert_eq!(
-        embedded_surface_action_for_accelerator(gtk::gdk::Key::C, mods),
-        Some(EmbeddedSurfaceAction::Copy)
-    );
-    assert_eq!(
-        embedded_surface_action_for_accelerator(gtk::gdk::Key::v, mods),
-        Some(EmbeddedSurfaceAction::Paste)
-    );
-    assert_eq!(
-        embedded_surface_action_for_accelerator(gtk::gdk::Key::A, mods),
-        Some(EmbeddedSurfaceAction::SelectAll)
-    );
-    assert_eq!(
-        embedded_surface_action_for_accelerator(gtk::gdk::Key::f, mods),
-        Some(EmbeddedSurfaceAction::StartSearch)
-    );
-    assert_eq!(
-        embedded_surface_action_for_accelerator(
-            gtk::gdk::Key::C,
-            mods | gtk::gdk::ModifierType::ALT_MASK
-        ),
-        None
-    );
-    assert_eq!(
-        embedded_surface_action_for_accelerator(
-            gtk::gdk::Key::C,
-            gtk::gdk::ModifierType::CONTROL_MASK
-        ),
-        None
-    );
-}
-
-#[test]
-fn embedded_terminal_context_menu_exposes_enabled_ghostty_actions() {
-    let actions = EMBEDDED_CONTEXT_MENU_ACTIONS
-        .iter()
-        .map(|item| (item.label, item.action))
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        actions,
-        vec![
-            ("Copy", EmbeddedSurfaceAction::Copy),
-            ("Paste", EmbeddedSurfaceAction::Paste),
-            ("Select All", EmbeddedSurfaceAction::SelectAll),
-            ("Find", EmbeddedSurfaceAction::StartSearch),
-            ("Reset and Clear", EmbeddedSurfaceAction::ClearScreen),
-        ]
-    );
-}
-
-#[test]
-fn terminal_navigation_forwarder_claims_focus_after_writing_input() {
-    use forktty_terminal::ghostty::core::{TerminalKey, TerminalKeyInput};
-
-    let widget = TestTerminalWidget::default();
-    let input = TerminalInput::Key(TerminalKeyInput::new(TerminalKey::ArrowUp));
-
-    forward_terminal_navigation_input(&widget, input.clone());
-
-    assert_eq!(widget.inputs(), vec![input]);
-    assert_eq!(widget.focus_calls(), 1);
-}
-
-#[test]
-fn ghostty_runtime_marks_surface_ready_after_spawn() {
-    let runtime = TestTerminalRuntimeHarness::new();
-
-    runtime.spawn(test_spawn_request());
-
-    assert!(runtime.backend_ready("surface-1"));
-    assert!(runtime.child_pid("surface-1").is_some());
-}
-
-#[test]
-fn renderer_maps_theme_colors_to_ansi_palette() {
-    let config = config::AppConfig::default();
-    let palette = RendererPalette::from_terminal_colors(&terminal_colors_for_config(&config));
-
-    assert_eq!(palette.ansi.len(), 16);
-    assert_eq!(palette.background.to_string(), "#181818");
-}
-
-#[test]
-fn orphaned_backend_surfaces_flags_only_unmodeled_non_pending() {
-    let to_set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>();
-    let backend = to_set(&["surface-1", "surface-2", "surface-3"]);
-    let model = to_set(&["surface-1"]);
-    // surface-3 has an in-flight spawn; its backend entry is committed before the
-    // model entry becomes observable, so it must not be reaped.
-    let mut pending = BTreeMap::new();
-    mark_spawn_command_pending(&mut pending, "surface-3");
-
-    let orphans = orphaned_backend_surfaces(&backend, &model, &pending);
-
-    assert_eq!(orphans, vec!["surface-2".to_string()]);
-}
-
-#[test]
-fn pending_spawn_command_protects_unmodeled_backend_until_model_commit() {
-    let to_set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>();
-    let backend = to_set(&["surface-2"]);
-    let mut pending = BTreeMap::new();
-
-    mark_spawn_command_pending(&mut pending, "surface-2");
-    assert!(orphaned_backend_surfaces(&backend, &BTreeSet::new(), &pending).is_empty());
-
-    let model = to_set(&["surface-2"]);
-    clear_modeled_pending_spawns(&mut pending, &model, &backend);
-    assert!(pending.is_empty());
-}
-
-#[test]
-fn orphaned_backend_surfaces_keeps_fully_modeled_backend() {
-    let to_set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>();
-    let backend = to_set(&["surface-1", "surface-2"]);
-    let model = to_set(&["surface-1", "surface-2", "surface-3"]);
-
-    assert!(orphaned_backend_surfaces(&backend, &model, &BTreeMap::new()).is_empty());
-}
-
-#[test]
-fn pending_spawn_command_reaps_backend_if_model_commit_is_lost() {
-    let to_set = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<BTreeSet<_>>();
-    let backend = to_set(&["surface-2"]);
-    let model = BTreeSet::new();
-    let mut pending = BTreeMap::new();
-
-    mark_spawn_command_pending(&mut pending, "surface-2");
-    clear_modeled_pending_spawns(&mut pending, &model, &backend);
-    assert!(orphaned_backend_surfaces(&backend, &model, &pending).is_empty());
-
-    clear_modeled_pending_spawns(&mut pending, &model, &backend);
-    assert_eq!(
-        orphaned_backend_surfaces(&backend, &model, &pending),
-        vec!["surface-2".to_string()]
-    );
-}
-
-#[test]
-fn gtk_backend_rejects_send_text_after_surface_exits() {
-    let (tx, rx) = mpsc::channel();
-    let backend = GtkTerminalBackend::new(tx);
-    backend.spawn(test_spawn_request()).unwrap();
-    assert!(matches!(rx.recv().unwrap(), GtkTerminalCommand::Spawn(_)));
-    backend.mark_surface_ready("surface-1").unwrap();
-    assert!(backend.surface_ready("surface-1").unwrap());
-    drive_backend_send_text(&backend, &rx, "surface-1", "echo ok\n", Ok(())).unwrap();
-
-    backend.mark_surface_pid("surface-1", 4242).unwrap();
-    assert_eq!(backend.surfaces().unwrap()[0].pid, Some(4242));
-
-    backend.mark_surface_not_ready("surface-1").unwrap();
-    backend.clear_surface_pid("surface-1").unwrap();
-    assert!(!backend.surface_ready("surface-1").unwrap());
-
-    let err = backend
-        .send_text("surface-1", "echo after-exit\n")
-        .unwrap_err();
-    assert!(matches!(err, TerminalError::NotReady(surface) if surface == "surface-1"));
-    assert_eq!(backend.surfaces().unwrap().len(), 1);
-}
-
-#[test]
-fn child_exit_pid_removal_ignores_stale_spawn_tokens() {
-    let mut pids = BTreeMap::new();
-    pids.insert(
-        "surface-1".to_string(),
-        SurfacePid {
-            pid: 1002,
-            spawn_token: 2,
-        },
-    );
-
-    assert!(!remove_surface_pid_for_spawn(&mut pids, "surface-1", 1));
-    assert_eq!(pids["surface-1"].spawn_token, 2);
-
-    assert!(remove_surface_pid_for_spawn(&mut pids, "surface-1", 2));
-    assert!(pids.is_empty());
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-fn proc_stat_parent_pid_parses_process_names_with_spaces_and_parens() {
-    assert_eq!(
-        proc_stat_parent_pid("1234 (shell (worker) one) S 42 1 1 0 -1 4194304"),
-        Some(42)
-    );
-    assert_eq!(proc_stat_parent_pid("not a proc stat line"), None);
-}
-
-#[test]
-fn embedded_focus_retry_only_targets_current_model_focus() {
-    let mut model = WorkspaceModel::new();
-    let first = model.create_workspace("first", "/tmp/first");
-    let first_surface_id = first.focused_surface_id.clone();
-    let second = model.create_workspace("second", "/tmp/second");
-    let second_surface_id = second.focused_surface_id.clone();
-    let model = Arc::new(Mutex::new(model));
-
-    assert!(model_focus_still_targets_surface(
-        &model,
-        &second_surface_id
-    ));
-    assert!(!model_focus_still_targets_surface(
-        &model,
-        &first_surface_id
-    ));
-}
-
-#[test]
-fn embedded_child_exit_sets_closed_status_without_notification_for_clean_exit() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp");
-    let workspace_id = workspace.id.clone();
-    let surface_id = workspace.focused_surface_id.clone();
-
-    let notification = apply_embedded_child_exit(&mut model, &workspace_id, &surface_id, Some(0));
-
-    assert!(notification.is_none());
-    let status = model
-        .list_status(&workspace_id)
-        .into_iter()
-        .find(|entry| entry.key == surface_status_key(&surface_id))
-        .expect("status entry");
-    assert_eq!(status.value, "Closed");
-    assert_eq!(status.color, None);
-    assert!(model.list_notifications().is_empty());
-}
-
-#[test]
-fn embedded_child_exit_marks_agent_session_ended() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp");
-    let workspace_id = workspace.id.clone();
-    let surface_id = workspace.focused_surface_id.clone();
-    assert!(model.set_surface_agent_session(
-        &surface_id,
-        forktty_core::AgentKind::Codex,
-        "codex-session-1",
-    ));
-
-    let notification = apply_embedded_child_exit(&mut model, &workspace_id, &surface_id, Some(0));
-
-    assert!(notification.is_none());
-    assert_eq!(
-        model
-            .surface(&surface_id)
-            .and_then(|surface| surface.agent_session.as_ref())
-            .map(|session| session.lifecycle),
-        Some(forktty_core::AgentSessionLifecycle::Ended)
-    );
-}
-
-#[test]
-fn embedded_child_exit_flags_abnormal_exit_with_notification() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp");
-    let workspace_id = workspace.id.clone();
-    let surface_id = workspace.focused_surface_id.clone();
-
-    let notification = apply_embedded_child_exit(&mut model, &workspace_id, &surface_id, Some(3))
-        .expect("abnormal exit notification");
-
-    assert_eq!(notification.title, "Terminal exited");
-    assert!(notification.body.contains("status 3"));
-    let status = model
-        .list_status(&workspace_id)
-        .into_iter()
-        .find(|entry| entry.key == surface_status_key(&surface_id))
-        .expect("status entry");
-    assert_eq!(status.value, "Exited (3)");
-    assert_eq!(status.color, Some("yellow".to_string()));
-}
-
-#[test]
-fn embedded_child_exit_ignores_closed_surface() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp");
-    let workspace_id = workspace.id.clone();
-
-    let notification =
-        apply_embedded_child_exit(&mut model, &workspace_id, "missing-surface", Some(1));
-
-    assert!(notification.is_none());
-    assert!(model.list_status(&workspace_id).is_empty());
-}
-
-#[test]
-fn detects_visible_prompt_text() {
-    assert!(looks_like_prompt("build finished\n> "));
-    assert!(looks_like_prompt("? Continue (Y/n)"));
-    assert!(looks_like_prompt("Do you want to proceed?"));
-    assert!(!looks_like_prompt("ordinary terminal output"));
-}
-
-#[test]
-fn prompt_notification_ignores_closed_surface() {
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let (workspace_id, closed_surface_id) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("main", "/tmp");
-        let split = model
-            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
-            .unwrap();
-        model.close_surface(&split.id).unwrap();
-        (workspace.id, split.id)
-    };
-
-    let notification = create_prompt_notification_if_surface_exists(
-        &model,
-        &workspace_id,
-        &closed_surface_id,
-        "Continue?",
-    );
-
-    assert!(notification.is_none());
-    assert!(model.lock().unwrap().list_notifications().is_empty());
-}
-
-#[test]
-fn prompt_notification_requires_surface_workspace_match() {
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let (workspace_id, surface_id) = {
-        let mut model = model.lock().unwrap();
-        let first = model.create_workspace("first", "/tmp/first");
-        let second = model.create_workspace("second", "/tmp/second");
-        (first.id, second.focused_surface_id)
-    };
-
-    let notification = create_prompt_notification_if_surface_exists(
-        &model,
-        &workspace_id,
-        &surface_id,
-        "Continue?",
-    );
-
-    assert!(notification.is_none());
-    assert!(model.lock().unwrap().list_notifications().is_empty());
-}
-
-#[test]
-fn prompt_notification_records_live_surface() {
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let (workspace_id, surface_id) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("main", "/tmp");
-        (workspace.id, workspace.focused_surface_id)
-    };
-
-    let notification = create_prompt_notification_if_surface_exists(
-        &model,
-        &workspace_id,
-        &surface_id,
-        "Continue?",
-    );
-
-    assert!(notification.is_some());
-    assert_eq!(model.lock().unwrap().list_notifications().len(), 1);
-}
-
-#[test]
-fn close_active_workspace_keeps_a_terminal_when_closing_last_workspace() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let project_cwd = project_dir.path().to_path_buf();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let closed_surface_id = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("project", &project_cwd);
-        workspace.focused_surface_id
-    };
-    spawn_focused_surface_if_needed(&state).unwrap();
-
-    crate::test_env::with_isolated_user_dirs(|| close_active_workspace(&state));
-
-    let workspaces = model.lock().unwrap().list_workspaces();
-    assert_eq!(workspaces.len(), 1);
-    assert_eq!(workspaces[0].name, "main");
-    assert_eq!(workspaces[0].working_dir, project_cwd);
-    assert!(terminal.sent_text(&closed_surface_id).is_err());
-    let surfaces = terminal.surfaces().unwrap();
-    assert_eq!(surfaces.len(), 1);
-    assert_eq!(surfaces[0].workspace_id, workspaces[0].id);
-    assert_eq!(surfaces[0].cwd, project_cwd);
-}
-
-#[test]
-fn close_active_surface_keeps_old_surface_when_replacement_spawn_fails() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let project_cwd = project_dir.path().to_path_buf();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(SecondSpawnFailsBackend::default());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (workspace_id, surface_id) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("project", &project_cwd);
-        (workspace.id, workspace.focused_surface_id)
-    };
-    spawn_focused_surface_if_needed(&state).unwrap();
-
-    close_active_surface(&state);
-
-    let model = model.lock().unwrap();
-    let workspaces = model.list_workspaces();
-    assert_eq!(workspaces.len(), 1);
-    assert_eq!(workspaces[0].id, workspace_id);
-    assert_eq!(workspaces[0].focused_surface_id, surface_id);
-    let model_surfaces = model.list_surfaces(Some(&workspace_id));
-    assert_eq!(model_surfaces.len(), 1);
-    assert_eq!(model_surfaces[0].id, surface_id);
-    let backend_surfaces = terminal.surfaces().unwrap();
-    assert_eq!(backend_surfaces.len(), 1);
-    assert_eq!(backend_surfaces[0].surface_id, surface_id);
-    assert!(model.list_notifications().iter().any(|notification| {
-        notification.title == "Close Pane Failed" && notification.body.contains("spawn failed")
-    }));
-}
-
-#[test]
-fn close_surface_by_id_targets_captured_surface_after_workspace_switch() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let other_dir = tempfile::tempdir().unwrap();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (first_workspace_id, captured_surface_id) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("project", project_dir.path());
-        (workspace.id, workspace.focused_surface_id)
-    };
-    spawn_focused_surface_if_needed(&state).unwrap();
-    // Simulates a socket `workspace.select` arriving while the Close Pane
-    // confirmation dialog is open: the active workspace changes between
-    // dialog-open and confirm.
-    let (other_workspace_id, other_surface_id) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("other", other_dir.path());
-        (workspace.id, workspace.focused_surface_id)
-    };
-    spawn_focused_surface_if_needed(&state).unwrap();
-
-    crate::test_env::with_isolated_user_dirs(|| close_surface_by_id(&state, &captured_surface_id));
-
-    let model = model.lock().unwrap();
-    assert_eq!(
-        model.active_workspace_id().as_deref(),
-        Some(other_workspace_id.as_str())
-    );
-    // The active workspace's pane survives; only the captured surface closed.
-    assert!(model.surface(&other_surface_id).is_some());
-    assert!(model.surface(&captured_surface_id).is_none());
-    let first_surfaces = model.list_surfaces(Some(&first_workspace_id));
-    assert_eq!(first_surfaces.len(), 1);
-    assert_ne!(first_surfaces[0].id, captured_surface_id);
-}
-
-#[test]
-fn add_new_tab_surface_rolls_back_model_when_spawn_fails() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let project_cwd = project_dir.path().to_path_buf();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(SecondSpawnFailsBackend::default());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (workspace_id, surface_id) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("project", &project_cwd);
-        (workspace.id, workspace.focused_surface_id)
-    };
-    spawn_focused_surface_if_needed(&state).unwrap();
-
-    add_new_tab_surface(&state, &surface_id);
-
-    let model = model.lock().unwrap();
-    let workspace = model
-        .list_workspaces()
-        .into_iter()
-        .find(|workspace| workspace.id == workspace_id)
-        .unwrap();
-    assert_eq!(workspace.focused_surface_id, surface_id);
-    assert_eq!(
-        workspace.pane_tree.leaf_tabs().unwrap(),
-        std::slice::from_ref(&surface_id)
-    );
-    assert_eq!(model.list_surfaces(Some(&workspace_id)).len(), 1);
-    assert!(model.list_notifications().iter().any(|notification| {
-        notification.title == "New Tab Failed" && notification.body.contains("spawn failed")
-    }));
-    let backend_surfaces = terminal.surfaces().unwrap();
-    assert_eq!(backend_surfaces.len(), 1);
-    assert_eq!(backend_surfaces[0].surface_id, surface_id);
-}
-
-#[test]
-fn new_tabs_and_splits_use_live_terminal_cwd() {
-    let launch_dir = tempfile::tempdir().unwrap();
-    let live_dir = tempfile::tempdir().unwrap();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let (tx, rx) = mpsc::channel();
-    let terminal = Arc::new(GtkTerminalBackend::new(tx));
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let surface_id = {
-        let mut model = model.lock().unwrap();
-        model
-            .create_workspace("project", launch_dir.path())
-            .focused_surface_id
-    };
-    spawn_focused_surface_if_needed(&state).unwrap();
-    assert!(matches!(
-        rx.recv_timeout(Duration::from_secs(1)).unwrap(),
-        GtkTerminalCommand::Spawn(_)
-    ));
-
-    let mut child = Command::new("/bin/sleep")
-        .arg("5")
-        .current_dir(live_dir.path())
-        .spawn()
-        .unwrap();
-    terminal.mark_surface_pid(&surface_id, child.id()).unwrap();
-
-    crate::test_env::with_isolated_user_dirs(|| add_new_tab_surface(&state, &surface_id));
-    let spawned_tab = rx.recv_timeout(Duration::from_secs(1)).unwrap();
-    let GtkTerminalCommand::Spawn(tab_request) = spawned_tab else {
-        panic!("new tab should enqueue a terminal spawn");
-    };
-    assert_eq!(tab_request.cwd, live_dir.path());
-
-    {
-        let mut model = model.lock().unwrap();
-        assert!(model.select_tab(&surface_id));
-        assert!(model.set_surface_cwd(&surface_id, launch_dir.path().to_path_buf()));
-    }
-    crate::test_env::with_isolated_user_dirs(|| {
-        split_active_surface(&state, SplitAxis::Horizontal)
-    });
-    let spawned_split = rx.recv_timeout(Duration::from_secs(1)).unwrap();
-    let _ = child.kill();
-    let _ = child.wait();
-
-    let GtkTerminalCommand::Spawn(split_request) = spawned_split else {
-        panic!("split should enqueue a terminal spawn");
-    };
-    assert_eq!(split_request.cwd, live_dir.path());
-    assert_eq!(
-        model.lock().unwrap().surface(&surface_id).unwrap().cwd,
-        live_dir.path()
-    );
-}
-
-#[test]
-fn split_active_surface_rolls_back_model_when_spawn_fails() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let project_cwd = project_dir.path().to_path_buf();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(SecondSpawnFailsBackend::default());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (workspace_id, surface_id) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("project", &project_cwd);
-        (workspace.id, workspace.focused_surface_id)
-    };
-    spawn_focused_surface_if_needed(&state).unwrap();
-
-    split_active_surface(&state, SplitAxis::Horizontal);
-
-    let model = model.lock().unwrap();
-    let workspace = model
-        .list_workspaces()
-        .into_iter()
-        .find(|workspace| workspace.id == workspace_id)
-        .unwrap();
-    assert_eq!(workspace.focused_surface_id, surface_id);
-    assert!(matches!(workspace.pane_tree, PaneNode::Leaf { .. }));
-    assert_eq!(model.list_surfaces(Some(&workspace_id)).len(), 1);
-    assert!(model.list_notifications().iter().any(|notification| {
-        notification.title == "Split Failed" && notification.body.contains("spawn failed")
-    }));
-    let backend_surfaces = terminal.surfaces().unwrap();
-    assert_eq!(backend_surfaces.len(), 1);
-    assert_eq!(backend_surfaces[0].surface_id, surface_id);
-}
-
-#[test]
-fn restored_ssh_surface_respawns_with_ssh_shell() {
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let surface_id = {
-        let mut model = model.lock().unwrap();
-        let workspace =
-            model.create_ssh_workspace("remote", "/tmp", "user@example.com".to_string());
-        workspace.focused_surface_id
-    };
-
-    // Mirrors session-restore / workspace-reselect: the focused surface is an
-    // Ssh surface that has no backend yet.
-    spawn_focused_surface_if_needed(&state).unwrap();
-
-    assert_eq!(
-        terminal.spawn_shell(&surface_id).unwrap(),
-        forktty_socket::resolve_ssh_binary()
-    );
-    assert_eq!(
-        terminal.spawn_args(&surface_id).unwrap(),
-        vec!["user@example.com".to_string()]
-    );
-}
-
-#[test]
-fn restored_agent_surface_respawns_with_resume_command() {
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let surface_id = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("main", "/tmp");
-        let surface_id = workspace.focused_surface_id;
-        assert!(model.set_surface_agent_session(
-            &surface_id,
-            forktty_core::AgentKind::Codex,
-            "codex-session-1",
-        ));
-        surface_id
-    };
-
-    spawn_focused_surface_if_needed(&state).unwrap();
-
-    assert_eq!(terminal.spawn_shell(&surface_id).unwrap(), "codex");
-    assert_eq!(
-        terminal.spawn_args(&surface_id).unwrap(),
-        vec!["resume".to_string(), "codex-session-1".to_string()]
-    );
 }
 
 #[test]
@@ -1238,1325 +443,6 @@ fn appimage_update_replaces_only_after_checksum_matches() {
 
     assert_eq!(std::fs::read(&target).unwrap(), b"new image");
     assert!(!temp.exists());
-}
-
-#[test]
-fn collect_panes_counts_panes_not_tabs() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp");
-    let first = workspace.focused_surface_id.clone();
-    model.add_tab(&first).unwrap();
-
-    let tree = model.active_workspace().unwrap().pane_tree;
-    // One leaf holding two tabs: two surfaces, one pane.
-    assert_eq!(collect_leaves(&tree).len(), 2);
-    assert_eq!(collect_panes(&tree).len(), 1);
-}
-
-#[test]
-fn focus_relative_pane_ignores_extra_tabs_in_a_single_pane() {
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal,
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("main", "/tmp");
-        let first = workspace.focused_surface_id.clone();
-        model.add_tab(&first).unwrap();
-    }
-
-    // Single pane with two tabs must not be treated as two panes.
-    assert!(!focus_relative_pane(&state, 1));
-    assert!(!focus_relative_pane(&state, -1));
-}
-
-#[test]
-fn close_pane_confirmation_distinguishes_multi_tab_leaf() {
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal,
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let tab_id = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("main", "/tmp");
-        let first = workspace.focused_surface_id.clone();
-        model.add_tab(&first).unwrap().id
-    };
-
-    let body = close_pane_confirmation(&state, &tab_id).body;
-
-    assert!(body.starts_with("Close tab "));
-    assert!(body.contains("Only this tab will be closed."));
-}
-
-#[test]
-fn close_tab_confirmation_uses_tab_title_and_button_labels() {
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal,
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let tab_id = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("main", "/tmp");
-        let first = workspace.focused_surface_id.clone();
-        model.add_tab(&first).unwrap().id
-    };
-
-    let confirmation = close_pane_confirmation(&state, &tab_id);
-
-    assert_eq!(confirmation.title, "Close Tab?");
-    assert_eq!(confirmation.confirm_label, "Close Tab");
-    assert!(confirmation.body.starts_with("Close tab "));
-}
-
-#[test]
-fn relative_pane_target_rejects_missing_focused_surface() {
-    let panes = vec![
-        "surface-1".to_string(),
-        "surface-2".to_string(),
-        "surface-3".to_string(),
-    ];
-
-    assert_eq!(relative_pane_target(&panes, "missing-surface", 1), None);
-    assert_eq!(
-        relative_pane_target(&panes, "surface-2", 1),
-        Some("surface-3".to_string())
-    );
-    assert_eq!(
-        relative_pane_target(&panes, "surface-2", -1),
-        Some("surface-1".to_string())
-    );
-}
-
-#[test]
-fn relative_pane_target_wraps_at_edges() {
-    let panes = vec![
-        "surface-1".to_string(),
-        "surface-2".to_string(),
-        "surface-3".to_string(),
-    ];
-
-    assert_eq!(
-        relative_pane_target(&panes, "surface-3", 1),
-        Some("surface-1".to_string())
-    );
-    assert_eq!(
-        relative_pane_target(&panes, "surface-1", -1),
-        Some("surface-3".to_string())
-    );
-}
-
-#[test]
-fn select_tab_in_focused_pane_wraps_and_jumps_edges() {
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal,
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (first, second, third) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("main", "/tmp");
-        let first = workspace.focused_surface_id.clone();
-        let second = model.add_tab(&first).unwrap().id;
-        let third = model.add_tab(&second).unwrap().id;
-        (first, second, third)
-    };
-
-    assert!(crate::test_env::with_isolated_user_dirs(|| {
-        select_tab_in_focused_pane(&state, TabNavigation::Previous)
-    }));
-    assert_eq!(
-        model
-            .lock()
-            .unwrap()
-            .active_workspace()
-            .unwrap()
-            .focused_surface_id,
-        second
-    );
-    assert!(crate::test_env::with_isolated_user_dirs(|| {
-        select_tab_in_focused_pane(&state, TabNavigation::Next)
-    }));
-    assert_eq!(
-        model
-            .lock()
-            .unwrap()
-            .active_workspace()
-            .unwrap()
-            .focused_surface_id,
-        third
-    );
-    assert!(crate::test_env::with_isolated_user_dirs(|| {
-        select_tab_in_focused_pane(&state, TabNavigation::First)
-    }));
-    assert_eq!(
-        model
-            .lock()
-            .unwrap()
-            .active_workspace()
-            .unwrap()
-            .focused_surface_id,
-        first
-    );
-    assert!(crate::test_env::with_isolated_user_dirs(|| {
-        select_tab_in_focused_pane(&state, TabNavigation::Last)
-    }));
-    assert_eq!(
-        model
-            .lock()
-            .unwrap()
-            .active_workspace()
-            .unwrap()
-            .focused_surface_id,
-        third
-    );
-}
-
-#[test]
-fn select_tab_in_focused_pane_saves_session_immediately() {
-    let home_dir = tempfile::tempdir().unwrap();
-    let state_dir = tempfile::tempdir().unwrap();
-    let data_dir = tempfile::tempdir().unwrap();
-    let home = home_dir.path().to_string_lossy();
-    let state_home = state_dir.path().to_string_lossy();
-    let data_home = data_dir.path().to_string_lossy();
-
-    crate::test_env::with_env(
-        &[
-            ("HOME", Some(home.as_ref())),
-            ("XDG_STATE_HOME", Some(state_home.as_ref())),
-            ("XDG_DATA_HOME", Some(data_home.as_ref())),
-        ],
-        || {
-            let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-            let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-            let state = SocketAppState::new(
-                model.clone(),
-                terminal,
-                "/bin/sh",
-                PathBuf::from("/tmp/forktty.sock"),
-            )
-            .with_notification_dispatch(false);
-            let (first, second) = {
-                let mut model = model.lock().unwrap();
-                let workspace = model.create_workspace("main", "/tmp");
-                let first = workspace.focused_surface_id.clone();
-                let second = model.add_tab(&first).unwrap().id;
-                assert!(model.select_tab(&first));
-                (first, second)
-            };
-
-            assert!(select_tab_in_focused_pane(&state, TabNavigation::Next));
-
-            let saved = forktty_core::session::load_session()
-                .unwrap()
-                .expect("tab selection should save a session immediately");
-            let workspace = saved
-                .workspaces
-                .iter()
-                .find(|workspace| workspace.id == "workspace-1")
-                .expect("workspace persisted");
-            assert_eq!(workspace.focused_surface_id, second);
-            assert_eq!(workspace.pane_tree.leaf_active_id(), Some(&second));
-            assert_ne!(workspace.pane_tree.leaf_active_id(), Some(&first));
-        },
-    );
-}
-
-#[test]
-fn close_active_terminal_does_not_spawn_terminal_for_remaining_browser() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let project_cwd = project_dir.path().to_path_buf();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (workspace_id, terminal_id, browser_id) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("project", &project_cwd);
-        let terminal_id = workspace.focused_surface_id.clone();
-        let browser = model
-            .open_browser(
-                &workspace.id,
-                "about:blank",
-                forktty_core::ProfileId::default(),
-                SplitAxis::Horizontal,
-            )
-            .unwrap();
-        assert!(model.focus_surface(&terminal_id));
-        (workspace.id, terminal_id, browser.id)
-    };
-    spawn_focused_surface_if_needed(&state).unwrap();
-
-    crate::test_env::with_isolated_user_dirs(|| close_active_surface(&state));
-
-    let model = model.lock().unwrap();
-    let workspace = model.list_workspaces().remove(0);
-    assert_eq!(workspace.focused_surface_id, browser_id);
-    let model_surfaces = model.list_surfaces(Some(&workspace_id));
-    assert_eq!(model_surfaces.len(), 1);
-    assert_eq!(model_surfaces[0].id, browser_id);
-    assert!(matches!(
-        model_surfaces[0].kind,
-        forktty_core::SurfaceKind::Browser { .. }
-    ));
-    assert!(terminal.surfaces().unwrap().is_empty());
-    assert!(terminal.sent_text(&terminal_id).is_err());
-}
-
-#[test]
-fn focus_workspace_keeps_previous_workspace_when_spawn_fails() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let project_cwd = project_dir.path().to_path_buf();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(SecondSpawnFailsBackend::default());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (first_workspace_id, second_workspace_id, second_surface_id) = {
-        let mut model = model.lock().unwrap();
-        let first = model.create_workspace("first", &project_cwd);
-        let second = model.create_workspace("second", &project_cwd);
-        (first.id, second.id, second.focused_surface_id)
-    };
-    spawn_focused_surface_if_needed(&state).unwrap();
-
-    focus_workspace(&state, &first_workspace_id);
-
-    let model = model.lock().unwrap();
-    assert_eq!(
-        model.active_workspace_id().as_deref(),
-        Some(second_workspace_id.as_str())
-    );
-    assert!(model.list_notifications().iter().any(|notification| {
-        notification.title == "Workspace Switch Failed"
-            && notification.body.contains("spawn failed")
-    }));
-    let backend_surfaces = terminal.surfaces().unwrap();
-    assert_eq!(backend_surfaces.len(), 1);
-    assert_eq!(backend_surfaces[0].surface_id, second_surface_id);
-}
-
-#[test]
-fn focus_workspace_does_not_respawn_failed_surface_until_restart() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let project_cwd = project_dir.path().to_path_buf();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(SecondSpawnFailsBackend::default());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (failed_workspace_id, failed_surface_id, active_surface_id) = {
-        let mut model = model.lock().unwrap();
-        let failed_workspace = model.create_workspace("failed", &project_cwd);
-        let failed_workspace_id = failed_workspace.id.clone();
-        let failed_surface_id = failed_workspace.focused_surface_id.clone();
-        model.set_status(
-            &failed_workspace_id,
-            surface_status_key(&failed_surface_id),
-            "Terminal",
-            "Spawn failed: /bin/missing-shell",
-            Some("red".to_string()),
-        );
-        let active_workspace = model.create_workspace("active", &project_cwd);
-        (
-            failed_workspace_id,
-            failed_surface_id,
-            active_workspace.focused_surface_id,
-        )
-    };
-    spawn_focused_surface_if_needed(&state).unwrap();
-
-    assert!(focus_workspace(&state, &failed_workspace_id));
-
-    let model = model.lock().unwrap();
-    assert_eq!(
-        model.active_workspace_id().as_deref(),
-        Some(failed_workspace_id.as_str())
-    );
-    assert!(!model.list_notifications().iter().any(|notification| {
-        notification.title == "Workspace Switch Failed"
-            && notification.body.contains("missing-shell")
-    }));
-    let backend_surfaces = terminal.surfaces().unwrap();
-    assert_eq!(backend_surfaces.len(), 1);
-    assert_eq!(backend_surfaces[0].surface_id, active_surface_id);
-    assert_ne!(backend_surfaces[0].surface_id, failed_surface_id);
-}
-
-#[test]
-fn open_agent_surface_keeps_unread_when_workspace_select_fails() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let project_cwd = project_dir.path().to_path_buf();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(SecondSpawnFailsBackend::default());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (active_workspace_id, agent_surface_id) = {
-        let mut model = model.lock().unwrap();
-        let agent_workspace = model.create_workspace("agent", &project_cwd);
-        let agent_surface_id = agent_workspace.focused_surface_id;
-        assert!(model.set_surface_agent_session(
-            &agent_surface_id,
-            forktty_core::AgentKind::Codex,
-            "codex-session-1",
-        ));
-        assert!(model.mark_surface_unread(&agent_surface_id, true));
-        let active = model.create_workspace("active", &project_cwd);
-        (active.id, agent_surface_id)
-    };
-    spawn_focused_surface_if_needed(&state).unwrap();
-
-    assert!(!open_agent_surface(&state, &agent_surface_id, None));
-
-    let model = model.lock().unwrap();
-    assert_eq!(
-        model.active_workspace_id().as_deref(),
-        Some(active_workspace_id.as_str())
-    );
-    assert!(model.surface(&agent_surface_id).unwrap().unread);
-}
-
-#[test]
-fn close_active_workspace_keeps_old_workspace_when_replacement_spawn_fails() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let project_cwd = project_dir.path().to_path_buf();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(SecondSpawnFailsBackend::default());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let surface_id = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("project", &project_cwd);
-        workspace.focused_surface_id
-    };
-    spawn_focused_surface_if_needed(&state).unwrap();
-
-    close_active_workspace(&state);
-
-    let model = model.lock().unwrap();
-    let workspaces = model.list_workspaces();
-    assert_eq!(workspaces.len(), 1);
-    assert_eq!(workspaces[0].name, "project");
-    assert_eq!(workspaces[0].working_dir, project_cwd);
-    assert!(workspaces[0].active);
-    let model_surfaces = model.list_surfaces(Some(&workspaces[0].id));
-    assert_eq!(model_surfaces.len(), 1);
-    assert_eq!(model_surfaces[0].id, surface_id);
-    let backend_surfaces = terminal.surfaces().unwrap();
-    assert_eq!(backend_surfaces.len(), 1);
-    assert_eq!(backend_surfaces[0].surface_id, surface_id);
-    assert!(model.list_notifications().iter().any(|notification| {
-        notification.title == "Close Workspace Failed" && notification.body.contains("spawn failed")
-    }));
-}
-
-#[test]
-fn close_workspace_by_id_targets_captured_workspace_after_workspace_switch() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let other_dir = tempfile::tempdir().unwrap();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (captured_workspace_id, captured_surface_id, active_workspace_id, active_surface_id) = {
-        let mut model = model.lock().unwrap();
-        let captured = model.create_workspace("project", project_dir.path());
-        let active = model.create_workspace("other", other_dir.path());
-        (
-            captured.id,
-            captured.focused_surface_id,
-            active.id,
-            active.focused_surface_id,
-        )
-    };
-    spawn_focused_surface_if_needed(&state).unwrap();
-
-    crate::test_env::with_isolated_user_dirs(|| {
-        close_workspace_by_id(&state, &captured_workspace_id)
-    });
-
-    let model = model.lock().unwrap();
-    assert_eq!(
-        model.active_workspace_id().as_deref(),
-        Some(active_workspace_id.as_str())
-    );
-    assert!(model.surface(&captured_surface_id).is_none());
-    assert!(model.surface(&active_surface_id).is_some());
-    assert!(model
-        .list_workspaces()
-        .iter()
-        .all(|workspace| workspace.id != captured_workspace_id));
-}
-
-#[test]
-fn close_active_workspace_keeps_model_when_backend_close_fails() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let project_cwd = project_dir.path().to_path_buf();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(CloseFailsBackend::default());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let surface_id = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("project", &project_cwd);
-        workspace.focused_surface_id
-    };
-    spawn_focused_surface_if_needed(&state).unwrap();
-
-    close_active_workspace(&state);
-
-    let model = model.lock().unwrap();
-    let workspaces = model.list_workspaces();
-    assert_eq!(workspaces.len(), 1);
-    assert_eq!(workspaces[0].name, "project");
-    assert_eq!(model.list_surfaces(Some(&workspaces[0].id)).len(), 1);
-    assert_eq!(terminal.surfaces().unwrap().len(), 1);
-    assert!(terminal
-        .surfaces()
-        .unwrap()
-        .iter()
-        .any(|surface| surface.surface_id == surface_id));
-    assert!(model
-        .list_notifications()
-        .iter()
-        .any(
-            |notification| notification.title == "Close Workspace Failed"
-                && notification.body.contains("close failed")
-        ));
-}
-
-#[test]
-fn restart_surface_records_failure_status_when_close_fails() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let project_cwd = project_dir.path().to_path_buf();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(CloseFailsBackend::default());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (workspace_id, surface_id) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("project", &project_cwd);
-        (workspace.id, workspace.focused_surface_id)
-    };
-    spawn_focused_surface_if_needed(&state).unwrap();
-
-    assert!(!restart_surface(&state, &surface_id));
-
-    let model = model.lock().unwrap();
-    let statuses = model.list_status(&workspace_id);
-    let status = statuses
-        .iter()
-        .find(|status| status.key == surface_status_key(&surface_id))
-        .unwrap();
-    assert!(status.value.starts_with("Restart failed:"));
-}
-
-#[test]
-fn spawn_surface_gtk_skips_browser_and_rewrites_ssh() {
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (browser, ssh) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("project", "/tmp/project");
-        let browser = model
-            .open_browser(
-                &workspace.id,
-                "about:blank",
-                forktty_core::ProfileId::default(),
-                SplitAxis::Horizontal,
-            )
-            .unwrap();
-        let ssh = model
-            .open_ssh(
-                &workspace.id,
-                "user@example.com".to_string(),
-                SplitAxis::Horizontal,
-            )
-            .unwrap();
-        (browser, ssh)
-    };
-
-    spawn_surface_gtk(&state, &browser).unwrap();
-    assert!(terminal.surfaces().unwrap().is_empty());
-
-    spawn_surface_gtk(&state, &ssh).unwrap();
-    assert!(terminal.spawn_shell(&ssh.id).unwrap().ends_with("ssh"));
-    assert_eq!(
-        terminal.spawn_args(&ssh.id).unwrap(),
-        vec!["user@example.com".to_string()]
-    );
-}
-
-#[test]
-fn close_tab_keeps_model_when_backend_close_fails() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let project_cwd = project_dir.path().to_path_buf();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(CloseFailsBackend::default());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (workspace_id, first_surface_id, second_surface_id) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("project", &project_cwd);
-        let first_surface_id = workspace.focused_surface_id.clone();
-        let second = model.add_tab(&first_surface_id).unwrap();
-        (workspace.id, first_surface_id, second.id)
-    };
-    for surface in model.lock().unwrap().list_surfaces(Some(&workspace_id)) {
-        terminal
-            .spawn(SpawnRequest::for_surface(
-                &surface,
-                "/bin/sh",
-                PathBuf::from("/tmp/forktty.sock"),
-            ))
-            .unwrap();
-    }
-
-    assert!(!close_tab_surface(&state, &second_surface_id));
-
-    let model = model.lock().unwrap();
-    assert!(model.surface(&first_surface_id).is_some());
-    assert!(model.surface(&second_surface_id).is_some());
-    let workspace = model
-        .list_workspaces()
-        .into_iter()
-        .find(|workspace| workspace.id == workspace_id)
-        .unwrap();
-    assert!(surface_is_in_multi_tab_leaf(
-        &workspace.pane_tree,
-        &second_surface_id
-    ));
-    assert!(model.list_notifications().iter().any(|notification| {
-        notification.title == "Close Tab Failed" && notification.body.contains("close failed")
-    }));
-    let backend_surfaces = terminal.surfaces().unwrap();
-    assert_eq!(backend_surfaces.len(), 2);
-    assert!(backend_surfaces
-        .iter()
-        .any(|surface| surface.surface_id == second_surface_id));
-}
-
-#[test]
-fn close_tab_surface_closes_model_and_backend_for_non_last_tab() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let project_cwd = project_dir.path().to_path_buf();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (workspace_id, first_surface_id, second_surface_id) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("project", &project_cwd);
-        let first_surface_id = workspace.focused_surface_id.clone();
-        let second = model.add_tab(&first_surface_id).unwrap();
-        (workspace.id, first_surface_id, second.id)
-    };
-    for surface in model.lock().unwrap().list_surfaces(Some(&workspace_id)) {
-        terminal
-            .spawn(SpawnRequest::for_surface(
-                &surface,
-                "/bin/sh",
-                PathBuf::from("/tmp/forktty.sock"),
-            ))
-            .unwrap();
-    }
-
-    assert!(crate::test_env::with_isolated_user_dirs(|| {
-        close_tab_surface(&state, &second_surface_id)
-    }));
-
-    let model = model.lock().unwrap();
-    assert!(model.surface(&first_surface_id).is_some());
-    assert!(model.surface(&second_surface_id).is_none());
-    let workspace = model
-        .list_workspaces()
-        .into_iter()
-        .find(|workspace| workspace.id == workspace_id)
-        .unwrap();
-    assert_eq!(workspace.focused_surface_id, first_surface_id);
-    assert_eq!(
-        workspace.pane_tree.leaf_tabs().unwrap(),
-        std::slice::from_ref(&first_surface_id)
-    );
-    let backend_surfaces = terminal.surfaces().unwrap();
-    assert_eq!(backend_surfaces.len(), 1);
-    assert_eq!(backend_surfaces[0].surface_id, first_surface_id);
-}
-
-#[test]
-fn close_tab_surface_holds_model_lock_while_closing_backend() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let project_cwd = project_dir.path().to_path_buf();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(CloseObservesModelLockBackend::new(model.clone()));
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (workspace_id, first_surface_id, second_surface_id) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("project", &project_cwd);
-        let first_surface_id = workspace.focused_surface_id.clone();
-        let second = model.add_tab(&first_surface_id).unwrap();
-        (workspace.id, first_surface_id, second.id)
-    };
-    for surface in model.lock().unwrap().list_surfaces(Some(&workspace_id)) {
-        terminal
-            .spawn(SpawnRequest::for_surface(
-                &surface,
-                "/bin/sh",
-                PathBuf::from("/tmp/forktty.sock"),
-            ))
-            .unwrap();
-    }
-
-    assert!(crate::test_env::with_isolated_user_dirs(|| {
-        close_tab_surface(&state, &second_surface_id)
-    }));
-
-    assert!(
-        !terminal.observed_model_unlocked(),
-        "backend close observed the model lock open before model close"
-    );
-    let model = model.lock().unwrap();
-    assert!(model.surface(&first_surface_id).is_some());
-    assert!(model.surface(&second_surface_id).is_none());
-}
-
-#[test]
-fn close_tab_surface_refuses_single_tab_leaf() {
-    let project_dir = tempfile::tempdir().unwrap();
-    let project_cwd = project_dir.path().to_path_buf();
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (workspace_id, surface_id) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("project", &project_cwd);
-        (workspace.id, workspace.focused_surface_id)
-    };
-    spawn_focused_surface_if_needed(&state).unwrap();
-
-    assert!(!close_tab_surface(&state, &surface_id));
-
-    let model = model.lock().unwrap();
-    let workspace = model
-        .list_workspaces()
-        .into_iter()
-        .find(|workspace| workspace.id == workspace_id)
-        .unwrap();
-    assert_eq!(workspace.focused_surface_id, surface_id);
-    assert_eq!(model.list_surfaces(Some(&workspace_id)).len(), 1);
-    let backend_surfaces = terminal.surfaces().unwrap();
-    assert_eq!(backend_surfaces.len(), 1);
-    assert_eq!(backend_surfaces[0].surface_id, surface_id);
-}
-
-#[test]
-fn blocks_auto_spawn_after_terminal_failure_until_restart() {
-    let failed = StatusEntry {
-        key: surface_status_key("surface-1"),
-        label: "Terminal".to_string(),
-        value: "Spawn failed: /bin/missing".to_string(),
-        color: Some("red".to_string()),
-    };
-    let restarting = StatusEntry {
-        key: surface_status_key("surface-1"),
-        label: "Terminal".to_string(),
-        value: "Restarting".to_string(),
-        color: Some("blue".to_string()),
-    };
-
-    assert!(surface_status_blocks_auto_spawn(
-        std::slice::from_ref(&failed),
-        "surface-1"
-    ));
-    assert!(!surface_status_blocks_auto_spawn(
-        &[restarting],
-        "surface-1"
-    ));
-}
-
-#[test]
-fn active_layout_signature_ignores_model_focus_changes() {
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let (first_surface_id, second_surface_id) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("main", "/tmp");
-        let first_surface_id = workspace.focused_surface_id.clone();
-        let second = model
-            .split_surface(&first_surface_id, SplitAxis::Horizontal)
-            .unwrap();
-        (first_surface_id, second.id)
-    };
-    let before = active_layout_snapshot(&model).unwrap().0;
-
-    assert!(model.lock().unwrap().focus_surface(&first_surface_id));
-    let after = active_layout_snapshot(&model).unwrap().0;
-
-    assert_eq!(before, after);
-    assert!(before.contains(&first_surface_id));
-    assert!(before.contains(&second_surface_id));
-    assert!(!before.contains("focus("));
-}
-
-#[test]
-fn active_layout_signature_ignores_active_tab_changes() {
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let (first_surface_id, second_surface_id) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("main", "/tmp");
-        let first_surface_id = workspace.focused_surface_id.clone();
-        let second = model.add_tab(&first_surface_id).unwrap();
-        (first_surface_id, second.id)
-    };
-    let before = active_layout_snapshot(&model).unwrap().0;
-
-    assert!(model.lock().unwrap().select_tab(&first_surface_id));
-    let after = active_layout_snapshot(&model).unwrap().0;
-    let workspace = model.lock().unwrap().active_workspace().unwrap();
-
-    assert_eq!(before, after);
-    assert!(before.contains(&first_surface_id));
-    assert!(before.contains(&second_surface_id));
-    assert!(!before.contains('*'));
-    assert_eq!(
-        active_tab_for_tabs(
-            &workspace.pane_tree,
-            &[first_surface_id.clone(), second_surface_id]
-        ),
-        Some(first_surface_id)
-    );
-}
-
-#[test]
-fn active_tab_index_for_leaf_clamps_or_returns_none() {
-    let tabs = vec!["surface-1".to_string()];
-
-    assert_eq!(active_tab_index_for_leaf(&tabs, 99), Some(0));
-    assert_eq!(active_tab_index_for_leaf(&[], 0), None);
-}
-
-#[test]
-fn chrome_refresh_signature_tracks_visual_state_changes() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp");
-    let workspace_id = workspace.id.clone();
-    let first_surface_id = workspace.focused_surface_id.clone();
-    let second_surface_id = model.add_tab(&first_surface_id).unwrap().id;
-    let chrome_surface_ids = vec![first_surface_id.clone(), second_surface_id.clone()];
-    let tab_strips = vec![vec![first_surface_id.clone(), second_surface_id.clone()]];
-    assert!(model.select_tab(&first_surface_id));
-    let base = chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips);
-
-    assert_eq!(
-        base,
-        chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips)
-    );
-
-    assert!(model.set_surface_title(&first_surface_id, "build"));
-    assert_ne!(
-        base,
-        chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips)
-    );
-
-    assert!(model.set_surface_title(&first_surface_id, "shell"));
-    assert!(model.mark_surface_unread(&second_surface_id, true));
-    assert_ne!(
-        base,
-        chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips)
-    );
-
-    assert!(model.mark_surface_unread(&second_surface_id, false));
-    assert!(model.select_tab(&second_surface_id));
-    assert_ne!(
-        base,
-        chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips)
-    );
-
-    assert!(model.select_tab(&first_surface_id));
-    assert!(model.set_surface_agent_session(
-        &first_surface_id,
-        forktty_core::AgentKind::Codex,
-        "session-1"
-    ));
-    let with_agent = chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips);
-    assert_ne!(base, with_agent);
-    assert!(model.set_surface_agent_session_lifecycle(
-        &first_surface_id,
-        forktty_core::AgentSessionLifecycle::NeedsInput
-    ));
-    assert_ne!(
-        with_agent,
-        chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips)
-    );
-
-    let browser_id = model
-        .open_browser(
-            &workspace_id,
-            "https://example.com/one",
-            forktty_core::ProfileId::default(),
-            SplitAxis::Horizontal,
-        )
-        .unwrap()
-        .id;
-    let browser_base = chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips);
-
-    assert!(model.set_surface_url(&browser_id, "https://example.com/two"));
-    assert_ne!(
-        browser_base,
-        chrome_refresh_signature(&model, &chrome_surface_ids, &tab_strips)
-    );
-}
-
-#[test]
-fn embedded_ghostty_context_tick_fallback_is_not_frame_rate() {
-    assert!(
-        EMBEDDED_GHOSTTY_CONTEXT_TICK_FALLBACK_INTERVAL >= Duration::from_secs(1),
-        "fallback context tick only drains app mailbox; frame-rate polling leaks idle memory"
-    );
-    assert!(
-        EMBEDDED_GHOSTTY_WAKEUP_CHECK_INTERVAL < EMBEDDED_GHOSTTY_CONTEXT_TICK_FALLBACK_INTERVAL,
-        "event-driven wakeup checks may be frequent because they only read an atomic flag"
-    );
-}
-
-#[test]
-fn embedded_ghostty_event_driven_ticks_are_not_capped_below_wakeup_rate() {
-    // The wakeup-check timer already coalesces output bursts to its own cadence;
-    // the tick floor must not throttle below it, or agent/TUI redraws would be
-    // capped well under the display frame rate. The old 100ms floor existed only
-    // to slow the cairo software-renderer leak; the GL renderer makes it
-    // unnecessary, and GTK's frame clock paces the actual redraw.
-    assert!(
-        EMBEDDED_GHOSTTY_CONTEXT_TICK_MIN_INTERVAL <= EMBEDDED_GHOSTTY_WAKEUP_CHECK_INTERVAL,
-        "tick floor must not throttle below the wakeup-check cadence"
-    );
-}
-
-#[test]
-fn tab_drop_target_uses_whole_strip_geometry() {
-    let targets = vec![
-        ("surface-1".to_string(), 10.0),
-        ("surface-2".to_string(), 30.0),
-        ("surface-3".to_string(), 50.0),
-    ];
-
-    assert_eq!(
-        tab_drop_target_at_x(&targets, 0.0),
-        Some(("surface-1", forktty_core::MovePosition::Before))
-    );
-    assert_eq!(
-        tab_drop_target_at_x(&targets, 20.0),
-        Some(("surface-2", forktty_core::MovePosition::Before))
-    );
-    assert_eq!(
-        tab_drop_target_at_x(&targets, 60.0),
-        Some(("surface-3", forktty_core::MovePosition::After))
-    );
-    assert_eq!(tab_drop_target_at_x(&[], 20.0), None);
-}
-
-#[test]
-fn dnd_payload_types_keep_drag_kinds_distinct() {
-    assert_ne!(tab_dnd_type(), workspace_dnd_type());
-    assert_ne!(tab_dnd_type(), pane_dnd_type());
-    assert_ne!(workspace_dnd_type(), pane_dnd_type());
-
-    let tab = tab_dnd_value("surface-7");
-    assert_eq!(tab_dnd_id_from_value(&tab).as_deref(), Some("surface-7"));
-    assert!(tab.get::<String>().is_err());
-}
-
-#[test]
-fn drop_position_splits_on_midpoint() {
-    assert_eq!(drop_position(0.0, 40), forktty_core::MovePosition::Before);
-    assert_eq!(drop_position(19.0, 40), forktty_core::MovePosition::Before);
-    assert_eq!(drop_position(20.0, 40), forktty_core::MovePosition::After);
-    // A zero/degenerate span must not divide by zero; the clamped half still splits.
-    assert_eq!(drop_position(0.0, 0), forktty_core::MovePosition::Before);
-    assert_eq!(drop_position(1.0, 0), forktty_core::MovePosition::After);
-}
-
-#[test]
-fn workspace_drop_position_matches_model_reorder_direction() {
-    let mut model = WorkspaceModel::new();
-    let first = model.create_workspace("first", "/tmp/first").id;
-    let second = model.create_workspace("second", "/tmp/second").id;
-    let third = model.create_workspace("third", "/tmp/third").id;
-
-    assert!(model.move_workspace(&first, &third, drop_position(39.0, 40)));
-    assert_eq!(
-        model
-            .list_workspaces()
-            .into_iter()
-            .map(|workspace| workspace.id)
-            .collect::<Vec<_>>(),
-        vec![second.clone(), third.clone(), first.clone()]
-    );
-
-    assert!(model.move_workspace(&first, &second, drop_position(0.0, 40)));
-    assert_eq!(
-        model
-            .list_workspaces()
-            .into_iter()
-            .map(|workspace| workspace.id)
-            .collect::<Vec<_>>(),
-        vec![first, second, third]
-    );
-}
-
-#[test]
-fn tab_drop_target_at_x_handles_edge_insertions() {
-    let targets = vec![
-        ("surface-1".to_string(), 10.0),
-        ("surface-2".to_string(), 30.0),
-    ];
-    // Dropping far left of every midpoint inserts before the first tab.
-    assert_eq!(
-        tab_drop_target_at_x(&targets, -50.0),
-        Some(("surface-1", forktty_core::MovePosition::Before))
-    );
-    // Dropping past the last midpoint appends after the last tab.
-    assert_eq!(
-        tab_drop_target_at_x(&targets, 9_999.0),
-        Some(("surface-2", forktty_core::MovePosition::After))
-    );
-}
-
-#[test]
-fn tab_move_target_uses_adjacent_tabs_without_wrapping() {
-    let tree = PaneNode::Leaf {
-        tabs: vec![
-            "surface-1".to_string(),
-            "surface-2".to_string(),
-            "surface-3".to_string(),
-        ],
-        active: 1,
-    };
-
-    assert_eq!(
-        tab_move_target(&tree, "surface-2", TabMoveDirection::Left),
-        Some(("surface-1".to_string(), forktty_core::MovePosition::Before))
-    );
-    assert_eq!(
-        tab_move_target(&tree, "surface-2", TabMoveDirection::Right),
-        Some(("surface-3".to_string(), forktty_core::MovePosition::After))
-    );
-    assert_eq!(
-        tab_move_target(&tree, "surface-1", TabMoveDirection::Left),
-        None
-    );
-    assert_eq!(
-        tab_move_target(&tree, "surface-3", TabMoveDirection::Right),
-        None
-    );
-    assert_eq!(
-        tab_move_target(&tree, "missing-surface", TabMoveDirection::Right),
-        None
-    );
-}
-
-#[test]
-fn tab_move_would_keep_order_detects_adjacent_noops() {
-    let order = vec![
-        "surface-1".to_string(),
-        "surface-2".to_string(),
-        "surface-3".to_string(),
-    ];
-
-    assert!(tab_move_would_keep_order(
-        &order,
-        "surface-1",
-        "surface-1",
-        forktty_core::MovePosition::Before
-    ));
-    assert!(tab_move_would_keep_order(
-        &order,
-        "surface-1",
-        "surface-2",
-        forktty_core::MovePosition::Before
-    ));
-    assert!(tab_move_would_keep_order(
-        &order,
-        "surface-2",
-        "surface-1",
-        forktty_core::MovePosition::After
-    ));
-    assert!(!tab_move_would_keep_order(
-        &order,
-        "surface-1",
-        "surface-3",
-        forktty_core::MovePosition::Before
-    ));
-    assert!(!tab_move_would_keep_order(
-        &order,
-        "surface-3",
-        "surface-1",
-        forktty_core::MovePosition::After
-    ));
-}
-
-#[test]
-fn workspace_move_would_keep_order_detects_adjacent_noops() {
-    let order = vec![
-        "workspace-1".to_string(),
-        "workspace-2".to_string(),
-        "workspace-3".to_string(),
-    ];
-
-    assert!(workspace_move_would_keep_order(
-        &order,
-        "workspace-1",
-        "workspace-2",
-        forktty_core::MovePosition::Before
-    ));
-    assert!(workspace_move_would_keep_order(
-        &order,
-        "workspace-2",
-        "workspace-1",
-        forktty_core::MovePosition::After
-    ));
-    assert!(workspace_move_would_keep_order(
-        &order,
-        "workspace-2",
-        "workspace-2",
-        forktty_core::MovePosition::After
-    ));
-    assert!(!workspace_move_would_keep_order(
-        &order,
-        "workspace-1",
-        "workspace-3",
-        forktty_core::MovePosition::After
-    ));
-}
-
-#[test]
-fn restart_surface_does_not_spawn_terminal_for_browser_pane() {
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let (workspace_id, browser_id) = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("project", "/tmp/project");
-        let browser = model
-            .open_browser(
-                &workspace.id,
-                "https://example.com",
-                forktty_core::ProfileId::default(),
-                SplitAxis::Horizontal,
-            )
-            .unwrap();
-        (workspace.id, browser.id)
-    };
-
-    assert!(!restart_surface(&state, &browser_id));
-
-    assert!(terminal.surfaces().unwrap().is_empty());
-    let model = model.lock().unwrap();
-    assert!(matches!(
-        model.surface(&browser_id).unwrap().kind,
-        forktty_core::SurfaceKind::Browser { .. }
-    ));
-    assert!(model.list_status(&workspace_id).is_empty());
-}
-
-#[test]
-fn restart_surface_respawns_agent_terminal_with_resume_command() {
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    let surface_id = {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("main", "/tmp");
-        let surface_id = workspace.focused_surface_id;
-        assert!(model.set_surface_agent_session(
-            &surface_id,
-            forktty_core::AgentKind::Codex,
-            "codex-session-1",
-        ));
-        surface_id
-    };
-
-    assert!(restart_surface(&state, &surface_id));
-
-    // Restart must resume the agent, not relaunch a plain shell.
-    assert_eq!(terminal.spawn_shell(&surface_id).unwrap(), "codex");
-    assert_eq!(
-        terminal.spawn_args(&surface_id).unwrap(),
-        vec!["resume".to_string(), "codex-session-1".to_string()]
-    );
-}
-
-#[test]
-fn restored_missing_workspace_dirs_fall_back_to_valid_startup_dir() {
-    let fallback = tempfile::tempdir().unwrap();
-    let missing = fallback.path().join("deleted-workspace");
-    let mut source = WorkspaceModel::new();
-    let workspace = source.create_workspace("missing", &missing);
-    let mut data = source.to_session_data();
-
-    let repaired = repair_restored_workspace_paths(&mut data, fallback.path());
-
-    assert_eq!(repaired, 1);
-    assert_eq!(data.workspaces[0].working_dir, fallback.path());
-
-    let mut restored = WorkspaceModel::new();
-    restored.restore_session(data);
-
-    let restored_workspace = restored.list_workspaces()[0].clone();
-    assert_eq!(restored_workspace.id, workspace.id);
-    assert_eq!(restored_workspace.working_dir, fallback.path());
-    assert_eq!(
-        restored
-            .surface(&restored_workspace.focused_surface_id)
-            .unwrap()
-            .cwd,
-        fallback.path()
-    );
-}
-
-#[test]
-fn restored_surface_path_repair_uses_pane_tree_owner_for_stale_workspace_id() {
-    let alpha_dir = tempfile::tempdir().unwrap();
-    let beta_dir = tempfile::tempdir().unwrap();
-    let fallback = tempfile::tempdir().unwrap();
-    let missing_surface_cwd = fallback.path().join("deleted-surface-cwd");
-
-    let mut source = WorkspaceModel::new();
-    let alpha = source.create_workspace("alpha", alpha_dir.path());
-    let browser = source
-        .open_browser(
-            &alpha.id,
-            "https://example.com",
-            forktty_core::ProfileId::default(),
-            SplitAxis::Horizontal,
-        )
-        .unwrap();
-    let beta = source.create_workspace("beta", beta_dir.path());
-    let mut data = source.to_session_data();
-
-    let surface = data
-        .surfaces
-        .iter_mut()
-        .find(|surface| surface.id == browser.id)
-        .unwrap();
-    surface.workspace_id = beta.id.clone();
-    surface.cwd = missing_surface_cwd;
-    forktty_core::session::validate_session_data(&data).unwrap();
-
-    let repaired = repair_restored_workspace_paths(&mut data, fallback.path());
-
-    assert_eq!(repaired, 1);
-    let surface = data
-        .surfaces
-        .iter()
-        .find(|surface| surface.id == browser.id)
-        .unwrap();
-    assert_eq!(surface.cwd, alpha_dir.path());
-
-    let mut restored = WorkspaceModel::new();
-    restored.restore_session(data);
-    let restored_surface = restored.surface(&browser.id).unwrap();
-    assert_eq!(restored_surface.workspace_id, alpha.id);
-    assert_eq!(restored_surface.cwd, alpha_dir.path());
 }
 
 #[test]
@@ -2818,12 +704,95 @@ fn settings_agents_nav_uses_agent_semantic_icon() {
 }
 
 #[test]
-fn window_close_shuts_down_socket_server_handle() {
-    let source = include_str!("app.rs");
+fn close_phase_keeps_ui_alive_until_socket_drain_completes() {
+    let first = close_request_transition(ClosePhase::Running, true);
+    assert_eq!(first.phase, ClosePhase::Draining);
+    assert!(first.ui_alive);
+    assert_eq!(first.action, CloseRequestAction::StartDrain);
 
-    assert!(source.contains("socket_server_for_close.borrow_mut().take()"));
-    assert!(source.contains("server.shutdown();"));
-    assert!(source.contains("start_socket_server(state_for_bootstrap.clone())"));
+    let repeated = close_request_transition(first.phase, first.ui_alive);
+    assert_eq!(repeated.phase, ClosePhase::Draining);
+    assert!(repeated.ui_alive);
+    assert_eq!(repeated.action, CloseRequestAction::Stop);
+}
+
+#[test]
+fn close_phase_finalizes_exactly_once_and_then_proceeds() {
+    let finalized = close_drain_completed_transition(ClosePhase::Draining, true)
+        .expect("draining close should finalize");
+    assert_eq!(finalized.phase, ClosePhase::Finalizing);
+    assert!(!finalized.ui_alive);
+    assert!(close_drain_completed_transition(finalized.phase, finalized.ui_alive).is_none());
+
+    let final_request = close_request_transition(finalized.phase, finalized.ui_alive);
+    assert_eq!(final_request.action, CloseRequestAction::Proceed);
+    assert_eq!(final_request.phase, ClosePhase::Finalizing);
+    assert!(!final_request.ui_alive);
+}
+
+#[test]
+fn close_persistence_snapshots_scrollback_before_session_serialization() {
+    let order = RefCell::new(Vec::new());
+    run_close_persistence_steps(
+        || order.borrow_mut().push("scrollback"),
+        || order.borrow_mut().push("cwd"),
+        || order.borrow_mut().push("session"),
+        || order.borrow_mut().push("pty"),
+    );
+
+    assert_eq!(order.into_inner(), ["scrollback", "cwd", "session", "pty"]);
+}
+
+#[test]
+fn socket_server_shutdown_waits_for_full_thread_completion() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let (completion_tx, completion_rx) = tokio::sync::oneshot::channel();
+        let handle = SocketServerHandle::new(shutdown_tx, completion_rx);
+
+        let mut waiting = tokio::spawn(handle.shutdown_and_wait());
+        shutdown_rx.await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut waiting)
+                .await
+                .is_err(),
+            "shutdown completion must not resolve before the server thread reports full drain"
+        );
+
+        completion_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+            .unwrap();
+    });
+}
+
+#[test]
+fn socket_server_completion_follows_runtime_drop() {
+    struct DropProbe<'a>(&'a Cell<bool>);
+
+    impl Drop for DropProbe<'_> {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    let runtime_dropped = Cell::new(false);
+    let (completion_tx, mut completion_rx) = tokio::sync::oneshot::channel();
+    run_socket_server_thread(completion_tx, || {
+        let _runtime = DropProbe(&runtime_dropped);
+        assert_eq!(
+            completion_rx.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        );
+    });
+
+    assert!(runtime_dropped.get());
+    assert_eq!(completion_rx.try_recv(), Ok(()));
 }
 
 #[test]
@@ -2832,7 +801,8 @@ fn window_close_cleans_pty_persistence_when_disabled() {
 
     assert!(source.contains("config::load_config()"));
     assert!(source.contains("!config.general.persist_terminal_processes"));
-    assert!(source.contains("cleanup_pty_persistence_sessions(&state_for_close, false)"));
+    assert!(source.contains("if cleanup_pty_persistence"));
+    assert!(source.contains("cleanup_pty_persistence_sessions(&state, false)"));
 }
 
 #[test]
@@ -2988,7 +958,7 @@ fn chrome_micro_polish_keyboard_focus_matches_hover() {
     };
 
     assert!(block(".pane-tab-close:focus-visible {").contains("opacity: 1;"));
-    // Focus background matches hover; both resolve to the @ft_bg_1 (#202020) tier.
+    // Focus background matches hover through the shared @ft_bg_1 tier.
     assert!(
         block("button.flat.terminal-pane-action:focus-visible {").contains("background: @ft_bg_1;")
     );
@@ -3007,9 +977,9 @@ fn chrome_micro_polish_unifies_pane_hover_and_hairline_tone() {
             .unwrap_or_else(|| panic!("missing CSS block {selector}"))
     };
 
-    // Hover surface is the @ft_bg_1 (#202020) tier; the hairline is @ft_line (#242424).
+    // Hover and hairline colors stay on the shared surface tokens.
     assert!(block("button.flat.terminal-pane-action:hover {").contains("background: @ft_bg_1;"));
-    assert!(block("button.flat.pane-close-action:hover {").contains("background: #2f1f1f;"));
+    assert!(block("button.flat.pane-close-action:hover {").contains("background: @ft_danger_bg;"));
     assert!(block(".pane-action-separator {").contains("background: @ft_line;"));
     assert!(block(".terminal-stage paned > separator {").contains("min-width: 3px;"));
     assert!(block(".terminal-pane.active .terminal-pane-header {")
@@ -3046,7 +1016,7 @@ fn command_palette_microtext_uses_readable_muted_contrast() {
             .unwrap_or_else(|| panic!("missing CSS block {selector}"))
     };
 
-    // Muted microtext resolves to @ft_text_3 (#929292); disabled drops to @ft_text_4 (#6c6c6c).
+    // Muted microtext and disabled text stay on their readable shared tiers.
     assert!(block(".ft-menu-shortcut {").contains("color: @ft_text_3;"));
     assert!(block(".command-item .keycap {").contains("color: @ft_text_3;"));
     assert!(
@@ -3070,6 +1040,52 @@ fn maximized_layout_signature_tracks_focused_pane() {
         effective_layout_signature("ws-1:L(s1|s2)", true, "s1"),
         effective_layout_signature("ws-1:L(s1|s2)", true, "s2")
     );
+}
+
+#[test]
+fn single_pane_maximize_is_noop_and_later_split_is_visible() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let single = model.active_workspace().unwrap().pane_tree;
+
+    assert!(!toggle_maximized_pane_state(false, Some(&single)));
+
+    model
+        .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+        .unwrap();
+    let split = model.active_workspace().unwrap().pane_tree;
+    assert!(toggle_maximized_pane_state(false, Some(&split)));
+}
+
+#[test]
+fn maximize_counts_panes_not_tabs() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    model.add_tab(&workspace.focused_surface_id).unwrap();
+    let tabbed_leaf = model.active_workspace().unwrap().pane_tree;
+
+    assert_eq!(collect_panes(&tabbed_leaf).len(), 1);
+    assert!(!toggle_maximized_pane_state(false, Some(&tabbed_leaf)));
+}
+
+#[test]
+fn collapse_to_one_pane_clears_maximize() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let split = model
+        .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
+        .unwrap();
+    let split_tree = model.active_workspace().unwrap().pane_tree;
+    assert!(toggle_maximized_pane_state(false, Some(&split_tree)));
+
+    model.close_surface(&split.id).unwrap();
+    let collapsed = model.active_workspace().unwrap().pane_tree;
+    assert!(!normalize_maximized_pane_state(true, Some(&collapsed)));
+}
+
+#[test]
+fn empty_layout_clears_maximize() {
+    assert!(!normalize_maximized_pane_state(true, None));
 }
 
 #[test]

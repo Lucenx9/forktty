@@ -26,7 +26,11 @@ mapping) are pinned by host-runnable Rust unit tests.
 - **auto (smoke)** — `scripts/gtk-ghostty-smoke.sh` run in the Ghostty GTK
   Probe workflow. Drives the app through the socket API (send-text,
   read-screen, surfaces, tab create/select/close, split, focus, live pane close,
-  zoom, restart, notifications) against live embedded panes.
+  zoom, restart, notifications) against live embedded panes and forces Bash to
+  assert `TERM=xterm-ghostty` plus the `__ghostty_precmd` integration function.
+- **auto (package)** — `scripts/check-appimage-bundled-container.sh` extracts an
+  AppImage, masks usable host GTK/libadwaita with bubblewrap, forces bundled
+  mode, and exercises the GTK-linked child helper plus packaged Bash resources.
 - **auto (unit)** — host-runnable `cargo test` that pins the ForkTTY↔ABI
   contract (no `.so` needed).
 - **probe** — covered by the `forktty ghostty-gtk-probe` widget smoke (launch /
@@ -49,7 +53,7 @@ blocker) · `fail` (file a blocker) · `pending` (not yet exercised) · `n/a`.
 | 3 | Split / focus | Split panes can be created by GTK action and socket API; focus moves between embedded panes | auto (smoke): action split, socket split, `focus-next-pane`, `focus-previous-pane`, focused-surface readback | pass |
 | 4 | Resize | Cols/rows track pane size and zoom; reflow matches classic | auto (smoke): zoom-in/out/reset asserts `cols`/`rows` change and restore | pass |
 | 5 | Input | Keystrokes and socket `send_text` reach the child PTY | auto (smoke): `send-text` then `read-screen` readback of echoed markers | pass |
-| 6 | Close | Closing a live embedded surface removes it without stale model/widget state; child exit marks closed | auto (smoke): live split `close-surface` removes the pane; child `exit` marks the pane non-writable with `Closed` | pass |
+| 6 | Close | A Ghostty widget close request uses ForkTTY confirmation; explicit socket/API close stays noninteractive; child exit marks closed | auto (unit): widget close-request opens confirmation and cancel preserves the pane; auto (smoke): live split `close-surface` removes the pane without interaction, and child `exit` marks it non-writable with `Closed` | pass |
 | 7 | Restart / bounded-tail restore | Restart re-spawns the embedded pane; the opt-in persisted full-scrollback tail restores on respawn | auto (unit): bounded full-history tail scope, snapshot + restore decision logic; auto (smoke): push a marker beyond the visible rows, restart, then confirm it through `capture-tail` | pass |
 | 8 | Session restore | Saved workspace/pane layout reopens embedded panes on app restart | manual: local manual 2026-06-18 confirmed session restore after GUI relaunch | pass |
 | 9 | OSC 8 hyperlinks | Hyperlinks render and are clickable | manual (visual; Ghostty renders natively); rendering confirmed 2026-06-18, click deferred | deferred |
@@ -60,6 +64,8 @@ blocker) · `fail` (file a blocker) · `pending` (not yet exercised) · `n/a`.
 | 14 | Search | `Ctrl+Shift+F` opens Ghostty's native search overlay | auto (unit): `start_search` grammar pinned; **manual**: overlay + navigate | deferred |
 | 15 | Socket API | `read_text`, `capture_tail`, `send_text`, and `surfaces` listing/focus behavior work on embedded panes | auto (smoke): surfaces/read-screen/capture-tail/send-text plus tab, action split, socket split, close, and focus checks | pass |
 | 16 | Port discovery / child PID | Embedded panes populate child PID in socket `surfaces` so listening-port discovery reaches classic-pane parity | auto (unit): child-pid symbol; auto (smoke): Probe requires a positive `surfaces` PID for the initial embedded pane | pass |
+| 17 | Shell identity / integration | Embedded Bash, Zsh, fish, Elvish, and Nushell preserve Ghostty startup integration and advertise `TERM=xterm-ghostty` when packaged resources are available | auto (unit): shell-specific argv/environment construction; auto (smoke): forced Bash asserts `TERM` and `__ghostty_precmd`; auto (package): extracted AppImage repeats both assertions | pass |
+| 18 | AppImage bundled child path | Bundled mode starts the GTK-linked helper without usable host GTK, then sanitizes AppImage loader state before executing the real child | auto (package): bubblewrap masks host GTK/libadwaita, AppRun forces bundled mode, and `/usr/bin/env` proves the helper replaced `LD_LIBRARY_PATH` before the Bash integration check | pass |
 
 ## Local manual validation — 2026-06-18
 
@@ -138,9 +144,11 @@ maintainer at a real pointer/keyboard, a working input-injection daemon, or a
 
 ## Wiring already in place (so the rows above can pass)
 
-- **Lifecycle** — title, child-exit readiness/status, abnormal-exit
-  notification, and close-request teardown via the embedded `Surface` GObject
-  signals; real exit code via `ghostty_gtk_surface_exit_code`.
+- **Lifecycle** — title, child-exit readiness/status, and abnormal-exit
+  notification via the embedded `Surface` GObject signals; real exit code via
+  `ghostty_gtk_surface_exit_code`. A Ghostty widget `close-request` is deferred
+  into ForkTTY's Close Pane confirmation, while explicit socket/API close stays
+  noninteractive.
 - **Copy/paste/select-all/find** — `ghostty_gtk_surface_perform_action`
   (keybinding action by name); ForkTTY routes the `Ctrl+Shift+C/V/A/F`
   accelerators, clear-screen command, and command palette to the focused
@@ -150,11 +158,24 @@ maintainer at a real pointer/keyboard, a working input-injection daemon, or a
   surface mailbox message; ForkTTY records it for listening-port discovery and
   the socket `surfaces` PID field, and the Probe requires the initial embedded
   pane to expose a positive PID.
+- **Shell identity and integration** — ForkTTY applies Ghostty's packaged Bash,
+  Zsh, fish, Elvish, and Nushell startup integration before direct embedded
+  command spawn and sets `TERM=xterm-ghostty` when packaged terminfo is present.
+  The smoke forces Bash and observes `__ghostty_precmd` in the live pane.
+- **AppImage loader boundary** — `auto` mode uses an eager loader compatibility
+  probe with the effective environment and chooses host GTK only when the
+  ForkTTY binary plus `ghostty-gtk-embed.so` load. Terminal commands enter the
+  GTK-linked `appimage-child-exec` helper before AppImage `LD_LIBRARY_PATH`
+  entries are removed; the extracted-package smoke masks host GTK and proves
+  bundled helper execution, environment cleanup, and Bash integration.
 - **Socket and agent text** — `send_text` / bounded `read_text` (visible + full)
   ABIs back the socket `send_text`, `read_text`, `capture_tail`, and inline
-  agent replies. The current embedding library exports
-  `ghostty_gtk_surface_read_text_limited`, so Ghostty streams the requested text
-  into a bounded buffer before ForkTTY copies the FFI payload. Explicit
+  agent replies. The required `ghostty_gtk_surface_read_text_limited` ABI makes
+  Ghostty stream the requested text into a bounded buffer before ForkTTY copies
+  the FFI payload. When the library also exports the optional
+  `ghostty_gtk_surface_read_text_limited_with_total_lines` extension, ForkTTY
+  reports the complete selected source line count instead of only the returned
+  fragment's count. Explicit
   `read_text(all)` may still scan scrollback, but it no longer materializes
   more than the requested byte budget plus one truncation-detection byte in
   either process. `capture_tail` requests the bounded end of full scrollback
@@ -202,8 +223,9 @@ restarts do not depend on the throttled snapshot poll.
 Embedded Ghostty is accepted with rows 9/10/12/13/14 deferred. The remaining release
 guard is:
 
-1. The embedding `.so` ships in the deb/AppImage and its release-CI build is
-   required.
+1. The embedding `.so` ships in the deb/AppImage, its release-CI build is
+   required, and the extracted AppImage bundled/helper check passes with host
+   GTK masked.
 2. Missing or failed embedded startup records an explicit terminal spawn
    failure; it must not silently open a classic-renderer pane.
 3. Deferred rows 9/10/12/13/14 stay tracked here until a maintainer validates them

@@ -7,10 +7,114 @@ use forktty_core::events::{self, Snapshot};
 use forktty_core::{JsonRpcRequest, JsonRpcResponse};
 use serde_json::{json, Value};
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{broadcast, Semaphore};
+use tokio::sync::{broadcast, watch, Semaphore};
+
+/// Per-connection view of cooperative server shutdown.
+///
+/// The sequentially-consistent admission load linearizes with the server's
+/// shutdown store. Once a request observes admission, its dispatch is allowed
+/// to finish; work that has not observed admission is cancelled instead.
+#[derive(Clone)]
+pub(crate) struct ConnectionControl {
+    shutdown: watch::Receiver<bool>,
+    dispatch_admission: Arc<AtomicBool>,
+    #[cfg(test)]
+    dispatch_pause: Option<Arc<crate::DispatchAdmissionTestPause>>,
+    #[cfg(test)]
+    pre_admission_error_pause: Option<Arc<crate::PreAdmissionErrorTestPause>>,
+    #[cfg(test)]
+    partial_bytes_consumed: Option<tokio::sync::mpsc::UnboundedSender<()>>,
+    #[cfg(test)]
+    buffered_followup: Option<tokio::sync::mpsc::UnboundedSender<bool>>,
+}
+
+impl ConnectionControl {
+    pub(crate) fn new(
+        shutdown: watch::Receiver<bool>,
+        dispatch_admission: Arc<AtomicBool>,
+        #[cfg(test)] dispatch_pause: Option<Arc<crate::DispatchAdmissionTestPause>>,
+        #[cfg(test)] pre_admission_error_pause: Option<Arc<crate::PreAdmissionErrorTestPause>>,
+        #[cfg(test)] partial_bytes_consumed: Option<tokio::sync::mpsc::UnboundedSender<()>>,
+        #[cfg(test)] buffered_followup: Option<tokio::sync::mpsc::UnboundedSender<bool>>,
+    ) -> Self {
+        Self {
+            shutdown,
+            dispatch_admission,
+            #[cfg(test)]
+            dispatch_pause,
+            #[cfg(test)]
+            pre_admission_error_pause,
+            #[cfg(test)]
+            partial_bytes_consumed,
+            #[cfg(test)]
+            buffered_followup,
+        }
+    }
+
+    #[cfg(test)]
+    fn never_shutdown() -> Self {
+        let (_shutdown, receiver) = watch::channel(false);
+        Self::new(
+            receiver,
+            Arc::new(AtomicBool::new(true)),
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    fn dispatch_is_admitted(&self) -> bool {
+        self.dispatch_admission.load(Ordering::SeqCst)
+    }
+
+    async fn shutdown_requested(&mut self) {
+        loop {
+            if *self.shutdown.borrow_and_update() {
+                return;
+            }
+            if self.shutdown.changed().await.is_err() {
+                // Test-only standalone connection handlers intentionally have
+                // no shutdown sender. They retain the legacy endless lifetime.
+                std::future::pending::<()>().await;
+            }
+        }
+    }
+
+    #[cfg(test)]
+    async fn pause_after_admission_if_requested(&self) {
+        if let Some(pause) = &self.dispatch_pause {
+            pause.pause_after_admission().await;
+        }
+    }
+
+    #[cfg(not(test))]
+    async fn pause_after_admission_if_requested(&self) {}
+
+    #[cfg(test)]
+    async fn pause_after_pre_admission_error_if_requested(&self) {
+        if let Some(pause) = &self.pre_admission_error_pause {
+            pause.pause_after_classification().await;
+        }
+    }
+
+    #[cfg(not(test))]
+    async fn pause_after_pre_admission_error_if_requested(&self) {}
+
+    #[cfg(test)]
+    fn report_buffered_followup(&self, buffered: bool) {
+        if let Some(sender) = &self.buffered_followup {
+            let _ = sender.send(buffered);
+        }
+    }
+
+    #[cfg(not(test))]
+    fn report_buffered_followup(&self, _buffered: bool) {}
+}
 
 pub(crate) async fn reject_over_capacity_connection(stream: tokio::net::UnixStream) {
     let (_, mut writer) = stream.into_split();
@@ -21,6 +125,17 @@ pub(crate) async fn reject_over_capacity_connection(stream: tokio::net::UnixStre
     );
     if let Err(err) = write_response(&mut writer, &response, RESPONSE_WRITE_TIMEOUT).await {
         eprintln!("forktty socket busy response failed: {err}");
+    }
+}
+
+pub(crate) async fn reject_over_capacity_connection_until_shutdown(
+    stream: tokio::net::UnixStream,
+    mut control: ConnectionControl,
+) {
+    tokio::select! {
+        biased;
+        _ = control.shutdown_requested() => {}
+        _ = reject_over_capacity_connection(stream) => {}
     }
 }
 
@@ -36,12 +151,14 @@ pub(crate) async fn handle_connection_with_event_limit(
     stream: tokio::net::UnixStream,
     state: SocketAppState,
     event_subscription_limit: Arc<Semaphore>,
+    control: ConnectionControl,
 ) -> Result<(), SocketError> {
-    handle_connection_with_limits(
+    handle_connection_with_limits_and_control(
         stream,
         state,
         RESPONSE_WRITE_TIMEOUT,
         event_subscription_limit,
+        control,
     )
     .await
 }
@@ -64,20 +181,54 @@ pub(crate) async fn handle_connection_with_write_timeout(
     .await
 }
 
+#[cfg(test)]
 pub(crate) async fn handle_connection_with_limits(
     stream: tokio::net::UnixStream,
     state: SocketAppState,
     write_timeout: Duration,
     event_subscription_limit: Arc<Semaphore>,
 ) -> Result<(), SocketError> {
+    handle_connection_with_limits_and_control(
+        stream,
+        state,
+        write_timeout,
+        event_subscription_limit,
+        ConnectionControl::never_shutdown(),
+    )
+    .await
+}
+
+async fn handle_connection_with_limits_and_control(
+    stream: tokio::net::UnixStream,
+    state: SocketAppState,
+    write_timeout: Duration,
+    event_subscription_limit: Arc<Semaphore>,
+    mut control: ConnectionControl,
+) -> Result<(), SocketError> {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     loop {
-        let read = tokio::time::timeout(
-            REQUEST_READ_TIMEOUT,
-            read_limited_line(&mut reader, MAX_REQUEST_SIZE),
-        )
-        .await;
+        #[cfg(test)]
+        let partial_bytes_consumed = control.partial_bytes_consumed.clone();
+        let read = tokio::select! {
+            biased;
+            _ = control.shutdown_requested() => break,
+            read = tokio::time::timeout(
+                REQUEST_READ_TIMEOUT,
+                read_limited_line_with_progress(
+                    &mut reader,
+                    MAX_REQUEST_SIZE,
+                    #[cfg(test)]
+                    partial_bytes_consumed.as_ref(),
+                ),
+            ) => read,
+        };
+        // A completed read is not dispatch admission. Shutdown may have won
+        // immediately after it, including when another request was already
+        // buffered in `BufReader`.
+        if !control.dispatch_is_admitted() {
+            break;
+        }
         let line = match read {
             // Idle or slow-loris client never finished a request line; drop the
             // connection so its permit is returned to the pool.
@@ -89,7 +240,16 @@ pub(crate) async fn handle_connection_with_limits(
                     "payload_too_large",
                     "Request exceeds 1 MiB",
                 );
-                write_response(&mut writer, &response, write_timeout).await?;
+                if !write_pre_admission_response_or_shutdown(
+                    &mut writer,
+                    &response,
+                    write_timeout,
+                    &mut control,
+                )
+                .await?
+                {
+                    break;
+                }
                 break;
             }
             Ok(Some(Err(ReadLineError::InvalidUtf8))) => {
@@ -98,20 +258,45 @@ pub(crate) async fn handle_connection_with_limits(
                     "parse_error",
                     "Request must be valid UTF-8 JSON",
                 );
-                write_response(&mut writer, &response, write_timeout).await?;
+                if !write_pre_admission_response_or_shutdown(
+                    &mut writer,
+                    &response,
+                    write_timeout,
+                    &mut control,
+                )
+                .await?
+                {
+                    break;
+                }
                 break;
             }
             Ok(Some(Err(ReadLineError::Io(err)))) => return Err(err.into()),
             Ok(Some(Ok(line))) => line,
         };
+        control.report_buffered_followup(reader.buffer().contains(&b'\n'));
         let request = match serde_json::from_str::<JsonRpcRequest>(&line) {
             Ok(request) => request,
             Err(err) => {
                 let response = JsonRpcResponse::error(Value::Null, "parse_error", err.to_string());
-                write_response(&mut writer, &response, write_timeout).await?;
+                if !write_pre_admission_response_or_shutdown(
+                    &mut writer,
+                    &response,
+                    write_timeout,
+                    &mut control,
+                )
+                .await?
+                {
+                    break;
+                }
                 continue;
             }
         };
+        // This SeqCst load is the request's dispatch-admission linearization
+        // point. Shutdown never cancels below this point.
+        if !control.dispatch_is_admitted() {
+            break;
+        }
+        control.pause_after_admission_if_requested().await;
         if request.method == "events.subscribe" {
             let replay = match events_subscribe_replay_param(&request.params) {
                 Ok(replay) => replay,
@@ -132,12 +317,13 @@ pub(crate) async fn handle_connection_with_limits(
             };
             let _event_permit = event_permit;
             // Takes over the connection: stream events until the peer drops.
-            return stream_events(
+            return stream_events_with_control(
                 &state,
                 replay,
                 &mut reader,
                 &mut writer,
                 EVENTS_WRITE_TIMEOUT,
+                &mut control,
             )
             .await;
         }
@@ -159,6 +345,25 @@ pub(crate) async fn handle_connection_with_limits(
     Ok(())
 }
 
+async fn write_pre_admission_response_or_shutdown(
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    response: &JsonRpcResponse,
+    write_timeout: Duration,
+    control: &mut ConnectionControl,
+) -> Result<bool, SocketError> {
+    control.pause_after_pre_admission_error_if_requested().await;
+    if !control.dispatch_is_admitted() {
+        return Ok(false);
+    }
+    tokio::select! {
+        biased;
+        _ = control.shutdown_requested() => Ok(false),
+        result = write_response(writer, response, write_timeout) => {
+            result.map(|()| true).map_err(SocketError::from)
+        },
+    }
+}
+
 fn events_subscribe_replay_param(params: &Value) -> Result<bool, DispatchError> {
     optional_bool_param(params, "replay").map(|replay| replay.unwrap_or(true))
 }
@@ -170,6 +375,7 @@ fn events_subscribe_replay_param(params: &Value) -> Result<bool, DispatchError> 
 /// buffered rather than lost; this can duplicate an event across the
 /// replay/live boundary, which clients tolerate because events are state
 /// assertions, not deltas.
+#[cfg(test)]
 pub(crate) async fn stream_events(
     state: &SocketAppState,
     replay: bool,
@@ -177,16 +383,41 @@ pub(crate) async fn stream_events(
     writer: &mut tokio::net::unix::OwnedWriteHalf,
     write_timeout: Duration,
 ) -> Result<(), SocketError> {
+    let mut control = ConnectionControl::never_shutdown();
+    stream_events_with_control(state, replay, reader, writer, write_timeout, &mut control).await
+}
+
+async fn stream_events_with_control(
+    state: &SocketAppState,
+    replay: bool,
+    reader: &mut BufReader<tokio::net::unix::OwnedReadHalf>,
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    write_timeout: Duration,
+    control: &mut ConnectionControl,
+) -> Result<(), SocketError> {
     let mut receiver = state.events.subscribe();
-    write_ndjson_bounded(writer, &json!({"event": "subscribed"}), write_timeout).await?;
+    if !write_event_or_shutdown(
+        writer,
+        &json!({"event": "subscribed"}),
+        write_timeout,
+        control,
+    )
+    .await?
+    {
+        return Ok(());
+    }
     if replay {
         let snapshot = current_snapshot(&state.model);
         for event in events::diff(&Snapshot::default(), &snapshot) {
-            write_ndjson_bounded(writer, &json!(event), write_timeout).await?;
+            if !write_event_or_shutdown(writer, &json!(event), write_timeout, control).await? {
+                return Ok(());
+            }
         }
     }
     loop {
         tokio::select! {
+            biased;
+            _ = control.shutdown_requested() => break,
             // Watch the read half so an idle client's disconnect is noticed
             // immediately, releasing the connection permit instead of blocking
             // on recv() until the next broadcast.
@@ -195,15 +426,34 @@ pub(crate) async fn stream_events(
                 break;
             }
             received = receiver.recv() => match received {
-                Ok(event) => write_ndjson_bounded(writer, &json!(event), write_timeout).await?,
+                Ok(event) => {
+                    if !write_event_or_shutdown(writer, &json!(event), write_timeout, control).await? {
+                        break;
+                    }
+                },
                 Err(broadcast::error::RecvError::Lagged(dropped)) => {
-                    write_ndjson_bounded(writer, &lagged_notice(dropped), write_timeout).await?;
+                    if !write_event_or_shutdown(writer, &lagged_notice(dropped), write_timeout, control).await? {
+                        break;
+                    }
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             },
         }
     }
     Ok(())
+}
+
+async fn write_event_or_shutdown(
+    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    value: &Value,
+    timeout: Duration,
+    control: &mut ConnectionControl,
+) -> Result<bool, SocketError> {
+    tokio::select! {
+        biased;
+        _ = control.shutdown_requested() => Ok(false),
+        result = write_ndjson_bounded(writer, value, timeout) => result.map(|()| true),
+    }
 }
 
 /// [`write_ndjson`] bounded by `timeout`: a subscriber that stopped reading
@@ -289,9 +539,24 @@ pub(crate) enum ReadLineError {
     Io(io::Error),
 }
 
+#[cfg(test)]
 pub(crate) async fn read_limited_line(
     reader: &mut (impl AsyncBufRead + Unpin),
     max_size: usize,
+) -> Option<Result<String, ReadLineError>> {
+    read_limited_line_with_progress(
+        reader,
+        max_size,
+        #[cfg(test)]
+        None,
+    )
+    .await
+}
+
+async fn read_limited_line_with_progress(
+    reader: &mut (impl AsyncBufRead + Unpin),
+    max_size: usize,
+    #[cfg(test)] partial_bytes_consumed: Option<&tokio::sync::mpsc::UnboundedSender<()>>,
 ) -> Option<Result<String, ReadLineError>> {
     let mut buf = Vec::with_capacity(4096);
     loop {
@@ -317,6 +582,10 @@ pub(crate) async fn read_limited_line(
         }
         buf.extend_from_slice(available);
         reader.consume(len);
+        #[cfg(test)]
+        if let Some(sender) = partial_bytes_consumed {
+            let _ = sender.send(());
+        }
     }
     if buf.len() > max_size {
         return Some(Err(ReadLineError::TooLarge));

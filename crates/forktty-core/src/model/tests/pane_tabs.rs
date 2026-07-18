@@ -65,7 +65,7 @@ fn restore_session_aligns_active_tab_with_focused_surface() {
     crate::session::validate_session_data(&session).unwrap();
 
     let mut restored = WorkspaceModel::new();
-    restored.restore_session(session);
+    restore_model_session(&mut restored, session);
 
     let workspace = restored.list_workspaces().remove(0);
     assert_eq!(workspace.focused_surface_id, tab2.id);
@@ -424,7 +424,7 @@ fn repair_session_invariants_clamps_out_of_range_active_index() {
         };
     }
 
-    assert!(model.repair_session_invariants());
+    assert!(repair_model_session_invariants(&mut model));
 
     let ws = model.workspaces.get(&workspace.id).unwrap();
     let PaneNode::Leaf { active, .. } = ws.pane_tree else {
@@ -527,6 +527,6 @@ fn invariants_hold_after_split_focus_close_and_restore() {
 
     let session = model.to_session_data();
     let mut restored = WorkspaceModel::new();
-    restored.restore_session(session);
+    restore_model_session(&mut restored, session);
     assert_workspace_model_invariants(&restored);
 }

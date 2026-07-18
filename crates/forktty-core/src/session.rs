@@ -2194,7 +2194,7 @@ mod tests {
         assert_eq!(loaded, data);
 
         let mut restored = WorkspaceModel::new();
-        restored.restore_session(loaded);
+        restored.restore_session(loaded, &[]);
         let restored_data = restored.to_session_data();
         assert_eq!(restored_data, data);
 

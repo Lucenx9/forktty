@@ -19,27 +19,50 @@ pub(super) fn spawn_surface_gtk(
     surface: &Surface,
 ) -> Result<(), TerminalError> {
     let base = SpawnRequest::for_surface(surface, state.shell.clone(), state.socket_path.clone());
-    let Some(request) = forktty_socket::spawn_request_for_surface(base, surface) else {
-        return Ok(());
+    let request = match forktty_socket::spawn_request_for_surface(base, surface) {
+        Ok(Some(request)) => request,
+        Ok(None) => return Ok(()),
+        Err(error) => {
+            record_terminal_spawn_failure(
+                &state.model,
+                &surface.workspace_id,
+                &surface.id,
+                &error.to_string(),
+                state.notification_dispatch,
+            );
+            return Err(TerminalError::Backend(error.to_string()));
+        }
     };
     state.terminal.spawn(request)
 }
 
 pub(super) fn add_new_tab_surface(state: &SocketAppState, near_surface_id: &str) {
+    let state = state.clone();
+    let near_surface_id = near_surface_id.to_string();
+    glib::MainContext::default().spawn_local(async move {
+        let _ = add_new_tab_surface_transaction(&state, &near_surface_id).await;
+    });
+}
+
+pub(super) async fn add_new_tab_surface_transaction(
+    state: &SocketAppState,
+    near_surface_id: &str,
+) -> bool {
+    let _surface_set_guard = state.surface_set_guard().await;
     let _ = forktty_socket::sync_live_surface_cwds(state);
     let surface = {
         let mut model = match state.model.lock() {
             Ok(model) => model,
             Err(_) => {
                 eprintln!("Failed to add tab: workspace model lock poisoned");
-                return;
+                return false;
             }
         };
         model.add_tab(near_surface_id)
     };
 
     let Some(surface) = surface else {
-        return;
+        return false;
     };
     if let Err(err) = spawn_surface_gtk(state, &surface) {
         if let Ok(mut model) = state.model.lock() {
@@ -52,15 +75,16 @@ pub(super) fn add_new_tab_surface(state: &SocketAppState, near_surface_id: &str)
             &err.to_string(),
             NotificationKind::Error,
         );
+        false
     } else {
         save_session_from_state(state);
+        true
     }
 }
 
 pub(super) fn split_active_surface(state: &SocketAppState, axis: SplitAxis) {
-    let _ = forktty_socket::sync_live_surface_cwds(state);
-    let surface = {
-        let mut model = match state.model.lock() {
+    let source_id = {
+        let model = match state.model.lock() {
             Ok(model) => model,
             Err(_) => {
                 eprintln!("Failed to split pane: workspace model lock poisoned");
@@ -70,15 +94,82 @@ pub(super) fn split_active_surface(state: &SocketAppState, axis: SplitAxis) {
         let Some(workspace) = model.active_workspace() else {
             return;
         };
-        model.split_surface(&workspace.focused_surface_id, axis)
+        workspace.focused_surface_id
     };
 
-    let Some(surface) = surface else {
-        return;
+    request_split_surface_by_id(state, &source_id, axis);
+}
+
+pub(super) fn request_split_surface_by_id(
+    state: &SocketAppState,
+    surface_id: &str,
+    axis: SplitAxis,
+) {
+    let state = state.clone();
+    let surface_id = surface_id.to_string();
+    glib::MainContext::default().spawn_local(async move {
+        let _ = split_surface_by_id(&state, &surface_id, axis).await;
+    });
+}
+
+pub(super) async fn split_surface_by_id(
+    state: &SocketAppState,
+    surface_id: &str,
+    axis: SplitAxis,
+) -> bool {
+    let _surface_set_guard = state.surface_set_guard().await;
+    let target_exists = state
+        .model
+        .lock()
+        .ok()
+        .is_some_and(|model| model.surface(surface_id).is_some());
+    if !target_exists {
+        return false;
+    }
+    let _ = forktty_socket::sync_live_surface_cwds(state);
+    let split = match state.model.lock() {
+        Ok(mut model) => {
+            let Some(source) = model.surface(surface_id) else {
+                return false;
+            };
+            let workspace_id = source.workspace_id.clone();
+            let Some(workspace) = model
+                .list_workspaces()
+                .into_iter()
+                .find(|workspace| workspace.id == workspace_id)
+            else {
+                return false;
+            };
+            model.split_surface(surface_id, axis).map(|surface| {
+                (
+                    surface,
+                    workspace_id,
+                    workspace.pane_tree,
+                    workspace.focused_surface_id,
+                )
+            })
+        }
+        Err(_) => {
+            eprintln!("Failed to split pane: workspace model lock poisoned");
+            return false;
+        }
+    };
+
+    let Some((surface, workspace_id, pane_tree, focused_surface_id)) = split else {
+        return false;
     };
     if let Err(err) = spawn_surface_gtk(state, &surface) {
         if let Ok(mut model) = state.model.lock() {
-            let _ = model.close_surface(&surface.id);
+            let removed = model.close_surface(&surface.id).is_some();
+            let restored = removed
+                && model.restore_workspace_pane_layout(
+                    &workspace_id,
+                    pane_tree,
+                    focused_surface_id,
+                );
+            if !restored {
+                eprintln!("Failed to restore pane layout after split spawn failure");
+            }
         }
         eprintln!("Failed to spawn split terminal: {err}");
         create_global_notification(
@@ -87,8 +178,10 @@ pub(super) fn split_active_surface(state: &SocketAppState, axis: SplitAxis) {
             &err.to_string(),
             NotificationKind::Error,
         );
+        false
     } else {
         save_session_from_state(state);
+        true
     }
 }
 
@@ -205,28 +298,42 @@ pub(super) fn tab_move_target(
 }
 
 #[cfg(feature = "browser")]
-pub(super) fn open_browser_active(state: &SocketAppState, axis: SplitAxis) {
-    let opened = {
-        let mut model = match state.model.lock() {
-            Ok(model) => model,
-            Err(_) => {
-                eprintln!("Failed to open browser pane: workspace model lock poisoned");
-                return;
-            }
-        };
-        let Some(workspace) = model.active_workspace() else {
-            return;
-        };
-        let workspace_id = workspace.id.clone();
-        model.open_browser(
-            &workspace_id,
+pub(super) fn open_browser_by_surface_id(
+    state: &SocketAppState,
+    surface_id: &str,
+    axis: SplitAxis,
+) {
+    let state = state.clone();
+    let surface_id = surface_id.to_string();
+    glib::MainContext::default().spawn_local(async move {
+        let _ = open_browser_by_surface_id_transaction(&state, &surface_id, axis).await;
+    });
+}
+
+#[cfg(feature = "browser")]
+pub(super) async fn open_browser_by_surface_id_transaction(
+    state: &SocketAppState,
+    surface_id: &str,
+    axis: SplitAxis,
+) -> bool {
+    let _surface_set_guard = state.surface_set_guard().await;
+    let opened = match state.model.lock() {
+        Ok(mut model) => model.open_browser_near(
+            surface_id,
             "about:blank",
             forktty_core::ProfileId::default(),
             axis,
-        )
+        ),
+        Err(_) => {
+            eprintln!("Failed to open browser pane: workspace model lock poisoned");
+            return false;
+        }
     };
     if opened.is_some() {
         save_session_from_state(state);
+        true
+    } else {
+        false
     }
 }
 
@@ -246,7 +353,16 @@ pub(super) fn restart_active_surface(state: &SocketAppState) {
     restart_surface(state, &focused);
 }
 
-pub(super) fn restart_surface(state: &SocketAppState, surface_id: &str) -> bool {
+pub(super) fn restart_surface(state: &SocketAppState, surface_id: &str) {
+    let state = state.clone();
+    let surface_id = surface_id.to_string();
+    glib::MainContext::default().spawn_local(async move {
+        let _ = restart_surface_transaction(&state, &surface_id).await;
+    });
+}
+
+pub(super) async fn restart_surface_transaction(state: &SocketAppState, surface_id: &str) -> bool {
+    let _surface_set_guard = state.surface_set_guard().await;
     let _ = forktty_socket::sync_live_surface_cwds(state);
     let surface = {
         let model = match state.model.lock() {
@@ -258,9 +374,31 @@ pub(super) fn restart_surface(state: &SocketAppState, surface_id: &str) -> bool 
     let Some(surface) = surface else {
         return false;
     };
-    if !matches!(surface.kind, forktty_core::SurfaceKind::Terminal) {
+    if !matches!(
+        surface.kind,
+        forktty_core::SurfaceKind::Terminal | forktty_core::SurfaceKind::Ssh { .. }
+    ) {
         return false;
     }
+
+    // Preflight the complete replacement request before destroying the current
+    // runtime generation or publishing a transient Restarting status. Invalid
+    // persisted SSH or agent-resume metadata must leave the live pane intact.
+    let base = SpawnRequest::for_surface(&surface, state.shell.clone(), state.socket_path.clone());
+    let request = match forktty_socket::spawn_request_for_surface(base, &surface) {
+        Ok(Some(request)) => request,
+        Ok(None) => return false,
+        Err(error) => {
+            record_terminal_spawn_failure(
+                &state.model,
+                &surface.workspace_id,
+                &surface.id,
+                &error.to_string(),
+                state.notification_dispatch,
+            );
+            return false;
+        }
+    };
 
     match state.terminal.close(surface_id) {
         Ok(()) | Err(TerminalError::NotFound(_)) => {}
@@ -304,15 +442,6 @@ pub(super) fn restart_surface(state: &SocketAppState, surface_id: &str) -> bool 
         let _ = model.focus_surface(surface_id);
         let _ = model.mark_surface_unread(surface_id, false);
     }
-
-    // Route through spawn_request_for_surface so an agent terminal (a Terminal
-    // surface carrying an agent_session) is rewritten to the provider resume
-    // argv + resume cwd instead of relaunching a plain shell, matching every
-    // other (re)spawn path (controller.rs, worktree_dialog.rs).
-    let base = SpawnRequest::for_surface(&surface, state.shell.clone(), state.socket_path.clone());
-    let Some(request) = forktty_socket::spawn_request_for_surface(base, &surface) else {
-        return false;
-    };
     if let Err(err) = state.terminal.spawn(request) {
         record_terminal_spawn_failure(
             &state.model,
@@ -326,9 +455,21 @@ pub(super) fn restart_surface(state: &SocketAppState, surface_id: &str) -> bool 
     true
 }
 
-pub(super) fn close_tab_surface(state: &SocketAppState, surface_id: &str) -> bool {
-    {
-        let mut model = match state.model.lock() {
+pub(super) fn close_tab_surface(state: &SocketAppState, surface_id: &str) {
+    let state = state.clone();
+    let surface_id = surface_id.to_string();
+    glib::MainContext::default().spawn_local(async move {
+        let _ = close_tab_surface_transaction(&state, &surface_id).await;
+    });
+}
+
+pub(super) async fn close_tab_surface_transaction(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> bool {
+    let _surface_set_guard = state.surface_set_guard().await;
+    let workspace = {
+        let model = match state.model.lock() {
             Ok(model) => model,
             Err(_) => return false,
         };
@@ -348,21 +489,30 @@ pub(super) fn close_tab_surface(state: &SocketAppState, surface_id: &str) -> boo
         if !surface_is_in_multi_tab_leaf(&workspace.pane_tree, surface_id) {
             return false;
         }
+        workspace
+    };
 
-        match state.terminal.close(surface_id) {
-            Ok(()) | Err(TerminalError::NotFound(_)) => {}
-            Err(err) => {
-                let message = err.to_string();
-                drop(model);
-                eprintln!("Failed to close tab terminal: {message}");
-                create_global_notification(
-                    state,
-                    "Close Tab Failed",
-                    &message,
-                    NotificationKind::Error,
-                );
-                return false;
-            }
+    match state.terminal.close(surface_id) {
+        Ok(()) | Err(TerminalError::NotFound(_)) => {}
+        Err(err) => {
+            let message = err.to_string();
+            eprintln!("Failed to close tab terminal: {message}");
+            create_global_notification(
+                state,
+                "Close Tab Failed",
+                &message,
+                NotificationKind::Error,
+            );
+            return false;
+        }
+    }
+    {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => return false,
+        };
+        if !surface_is_in_multi_tab_leaf(&workspace.pane_tree, surface_id) {
+            return false;
         }
         if model.close_surface(surface_id).is_none() {
             return false;
@@ -381,34 +531,199 @@ pub(super) fn surface_is_in_multi_tab_leaf(node: &PaneNode, surface_id: &str) ->
     }
 }
 
-// Production close paths resolve a concrete surface id before closing (the
-// active workspace can change while a confirmation dialog is open); this
-// focused-surface wrapper remains for tests pinning its semantics.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(super) fn close_active_surface(state: &SocketAppState) {
-    let focused = {
-        let model = match state.model.lock() {
-            Ok(model) => model,
-            Err(_) => return,
-        };
-        model
-            .active_workspace()
-            .map(|workspace| workspace.focused_surface_id)
-    };
-    let Some(focused) = focused else {
-        return;
-    };
-    close_surface_by_id(state, &focused);
+pub(super) fn close_surface_by_id(state: &SocketAppState, surface_id: &str) {
+    let state = state.clone();
+    let surface_id = surface_id.to_string();
+    glib::MainContext::default().spawn_local(async move {
+        let _ = close_surface_by_id_transaction(&state, &surface_id).await;
+    });
 }
 
-pub(super) fn close_surface_by_id(state: &SocketAppState, surface_id: &str) {
+pub(super) async fn close_surface_by_id_transaction(
+    state: &SocketAppState,
+    surface_id: &str,
+) -> bool {
+    let _surface_set_guard = state.surface_set_guard().await;
+    close_surface_by_id_with(
+        state,
+        surface_id,
+        &|surface_id| match state.terminal.close(surface_id) {
+            Ok(()) | Err(TerminalError::NotFound(_)) => Ok(()),
+            Err(err) => Err(err),
+        },
+    )
+}
+
+pub(super) fn close_surface_by_id_for_generation(
+    state: &SocketAppState,
+    backend: &Arc<GtkTerminalBackend>,
+    surface_id: &str,
+    generation: u64,
+    on_complete: impl FnOnce(GenerationCloseOutcome) + 'static,
+) {
+    let state = state.clone();
+    let backend = backend.clone();
+    let surface_id = surface_id.to_string();
+    glib::MainContext::default().spawn_local(async move {
+        let outcome = close_surface_by_id_for_generation_transaction(
+            &state,
+            &backend,
+            &surface_id,
+            generation,
+        )
+        .await;
+        on_complete(outcome);
+    });
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum GenerationCloseOutcome {
+    Closed,
+    Stale,
+    Failed,
+}
+
+type GenerationClosePreparation = Option<(Surface, Option<Surface>)>;
+type GenerationClosePreparationResult = Result<GenerationClosePreparation, String>;
+
+/// Close one embedded terminal incarnation as a single coordinated topology
+/// transaction. The process-local surface guard excludes socket/worktree
+/// topology changes from validation through runtime/model commit or rollback.
+pub(super) async fn close_surface_by_id_for_generation_transaction(
+    state: &SocketAppState,
+    backend: &GtkTerminalBackend,
+    surface_id: &str,
+    generation: u64,
+) -> GenerationCloseOutcome {
+    let surface_guard = state.surface_set_guard().await;
+    let prepared: Result<GenerationClosePreparationResult, TerminalError> = backend
+        .with_surface_generation(surface_id, generation, || {
+            let (surface, root_replacement) = {
+                let mut model = state
+                    .model
+                    .lock()
+                    .map_err(|_| "workspace model lock poisoned".to_string())?;
+                let Some(surface) = model.surface(surface_id).cloned() else {
+                    return Ok(None);
+                };
+                let _ = model.focus_surface(surface_id);
+                let root_replacement = model.prepare_root_surface_replacement(surface_id);
+                (surface, root_replacement)
+            };
+            if let Some(replacement) = root_replacement.as_ref() {
+                spawn_surface_gtk(state, replacement).map_err(|err| err.to_string())?;
+            }
+            Ok(Some((surface, root_replacement)))
+        });
+    let (surface, root_replacement) = match prepared {
+        Err(TerminalError::NotFound(_) | TerminalError::NotReady(_)) | Ok(Ok(None)) => {
+            return GenerationCloseOutcome::Stale;
+        }
+        Err(err) => {
+            report_generation_close_failure(state, &err.to_string());
+            return GenerationCloseOutcome::Failed;
+        }
+        Ok(Err(err)) => {
+            report_generation_close_failure(state, &err);
+            return GenerationCloseOutcome::Failed;
+        }
+        Ok(Ok(Some(prepared))) => prepared,
+    };
+
+    match backend.close_for_generation(surface_id, generation) {
+        Ok(()) => {}
+        Err(TerminalError::NotFound(_) | TerminalError::NotReady(_)) => {
+            if let Some(replacement) = root_replacement.as_ref() {
+                let _ = forget_terminal_surface_gtk(state, &replacement.id);
+            }
+            return GenerationCloseOutcome::Stale;
+        }
+        Err(err) => {
+            let mut message = err.to_string();
+            if let Some(replacement) = root_replacement.as_ref() {
+                if let Err(cleanup_err) = forget_terminal_surface_gtk(state, &replacement.id) {
+                    message = format!("{message}; replacement cleanup failed: {cleanup_err}");
+                }
+            }
+            report_generation_close_failure(state, &message);
+            return GenerationCloseOutcome::Failed;
+        }
+    }
+
+    let committed = {
+        let mut model = match state.model.lock() {
+            Ok(model) => model,
+            Err(_) => {
+                rollback_generation_close_runtime(state, &surface, root_replacement.as_ref());
+                report_generation_close_failure(state, "workspace model lock poisoned");
+                return GenerationCloseOutcome::Failed;
+            }
+        };
+        match root_replacement.clone() {
+            Some(replacement) => {
+                model
+                    .close_surface_with_replacement(surface_id, Some(replacement.clone()))
+                    .is_some()
+                    && model.surface(&replacement.id).is_some()
+            }
+            None => model.close_surface(surface_id).is_some(),
+        }
+    };
+    if !committed {
+        rollback_generation_close_runtime(state, &surface, root_replacement.as_ref());
+        report_generation_close_failure(state, "workspace model rejected terminal close commit");
+        return GenerationCloseOutcome::Failed;
+    }
+
+    if let Err(err) = forktty_socket::evict_hook_session_targets_for_surfaces(
+        state,
+        std::slice::from_ref(&surface.id),
+    ) {
+        eprintln!("Failed to clean up closed surface hook state: {err}");
+    }
+
+    if root_replacement.is_none() {
+        if let Err(err) = spawn_focused_surface_if_needed(state) {
+            eprintln!("Failed to keep focused terminal alive: {err}");
+        }
+    }
+    drop(surface_guard);
+    save_session_from_state(state);
+    GenerationCloseOutcome::Closed
+}
+
+fn rollback_generation_close_runtime(
+    state: &SocketAppState,
+    surface: &Surface,
+    root_replacement: Option<&Surface>,
+) {
+    if let Some(replacement) = root_replacement {
+        if let Err(err) = forget_terminal_surface_gtk(state, &replacement.id) {
+            eprintln!("Failed to clean up replacement terminal after close rollback: {err}");
+        }
+    }
+    if let Err(err) = spawn_surface_gtk(state, surface) {
+        eprintln!("Failed to restore terminal after close rollback: {err}");
+    }
+}
+
+fn report_generation_close_failure(state: &SocketAppState, message: &str) {
+    eprintln!("Failed to close terminal surface: {message}");
+    create_global_notification(state, "Close Pane Failed", message, NotificationKind::Error);
+}
+
+fn close_surface_by_id_with(
+    state: &SocketAppState,
+    surface_id: &str,
+    close_terminal: &impl Fn(&str) -> Result<(), TerminalError>,
+) -> bool {
     let (focused, root_replacement) = {
         let mut model = match state.model.lock() {
             Ok(model) => model,
-            Err(_) => return,
+            Err(_) => return false,
         };
         if model.surface(surface_id).is_none() {
-            return;
+            return false;
         }
         let root_replacement = model.prepare_root_surface_replacement(surface_id);
         (surface_id.to_string(), root_replacement)
@@ -423,10 +738,10 @@ pub(super) fn close_surface_by_id(state: &SocketAppState, surface_id: &str) {
                 &err.to_string(),
                 NotificationKind::Error,
             );
-            return;
+            return false;
         }
-        match state.terminal.close(&focused) {
-            Ok(()) | Err(TerminalError::NotFound(_)) => {}
+        match close_terminal(&focused) {
+            Ok(()) => {}
             Err(err) => {
                 let mut message = err.to_string();
                 if let Err(cleanup_err) = forget_terminal_surface_gtk(state, &replacement.id) {
@@ -439,22 +754,28 @@ pub(super) fn close_surface_by_id(state: &SocketAppState, surface_id: &str) {
                     &message,
                     NotificationKind::Error,
                 );
-                return;
+                return false;
             }
         }
         {
             let mut model = match state.model.lock() {
                 Ok(model) => model,
-                Err(_) => return,
+                Err(_) => return false,
             };
             let _ = model.close_surface_with_replacement(&focused, Some(replacement));
         }
+        if let Err(err) = forktty_socket::evict_hook_session_targets_for_surfaces(
+            state,
+            std::slice::from_ref(&focused),
+        ) {
+            eprintln!("Failed to clean up closed surface hook state: {err}");
+        }
         save_session_from_state(state);
-        return;
+        return true;
     }
 
-    match state.terminal.close(&focused) {
-        Ok(()) | Err(TerminalError::NotFound(_)) => {}
+    match close_terminal(&focused) {
+        Ok(()) => {}
         Err(err) => {
             eprintln!("Failed to close terminal surface: {err}");
             create_global_notification(
@@ -463,20 +784,27 @@ pub(super) fn close_surface_by_id(state: &SocketAppState, surface_id: &str) {
                 &err.to_string(),
                 NotificationKind::Error,
             );
-            return;
+            return false;
         }
     }
     {
         let mut model = match state.model.lock() {
             Ok(model) => model,
-            Err(_) => return,
+            Err(_) => return false,
         };
         let _ = model.close_surface(&focused);
+    }
+    if let Err(err) = forktty_socket::evict_hook_session_targets_for_surfaces(
+        state,
+        std::slice::from_ref(&focused),
+    ) {
+        eprintln!("Failed to clean up closed surface hook state: {err}");
     }
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to keep focused terminal alive: {err}");
     }
     save_session_from_state(state);
+    true
 }
 
 pub(super) fn spawn_focused_surface_if_needed(state: &SocketAppState) -> Result<(), TerminalError> {
@@ -504,8 +832,19 @@ pub(super) fn spawn_focused_surface_if_needed(state: &SocketAppState) -> Result<
     // Browser surfaces return None (no PTY backend); Ssh surfaces are rewritten
     // to launch ssh <host>, and agent terminals resume with their provider argv.
     let base = SpawnRequest::for_surface(&surface, state.shell.clone(), state.socket_path.clone());
-    let Some(request) = forktty_socket::spawn_request_for_surface(base, &surface) else {
-        return Ok(());
+    let request = match forktty_socket::spawn_request_for_surface(base, &surface) {
+        Ok(Some(request)) => request,
+        Ok(None) => return Ok(()),
+        Err(error) => {
+            record_terminal_spawn_failure(
+                &state.model,
+                &surface.workspace_id,
+                &surface.id,
+                &error.to_string(),
+                state.notification_dispatch,
+            );
+            return Err(TerminalError::Backend(error.to_string()));
+        }
     };
     state.terminal.spawn(request)
 }

@@ -1,7 +1,7 @@
 use super::*;
 
-pub(super) fn focus_workspace(state: &SocketAppState, workspace_id: &str) -> bool {
-    match select_workspace_with_terminal(state, workspace_id) {
+pub(super) async fn focus_workspace(state: &SocketAppState, workspace_id: &str) -> bool {
+    match select_workspace_with_terminal(state, workspace_id).await {
         Ok(selected) => selected,
         Err(err) => {
             eprintln!("Failed to spawn workspace terminal: {err}");
@@ -16,10 +16,11 @@ pub(super) fn focus_workspace(state: &SocketAppState, workspace_id: &str) -> boo
     }
 }
 
-pub(super) fn select_workspace_with_terminal(
+pub(super) async fn select_workspace_with_terminal(
     state: &SocketAppState,
     workspace_id: &str,
 ) -> Result<bool, TerminalError> {
+    let _surface_set_guard = state.surface_set_guard().await;
     let (selected_id, previous_active_id) = {
         let mut model = state
             .model
@@ -100,9 +101,14 @@ pub(super) fn build_workspace_context_menu(
             "Focus Workspace",
             false,
             move || {
-                if focus_workspace(&state_, &ws_id) {
-                    controller_.borrow_mut().rebuild_layout();
-                }
+                let state = state_.clone();
+                let workspace_id = ws_id.clone();
+                let controller = controller_.clone();
+                glib::spawn_future_local(async move {
+                    if focus_workspace(&state, &workspace_id).await {
+                        controller.borrow_mut().rebuild_layout();
+                    }
+                });
             },
         );
         add_context_menu_separator(&menu);
@@ -133,9 +139,13 @@ pub(super) fn build_workspace_context_menu(
         Some("Ctrl+Shift+H"),
         false,
         move || {
-            if focus_workspace(&state_, &ws_id) {
-                split_active_surface(&state_, SplitAxis::Horizontal);
-            }
+            let state = state_.clone();
+            let workspace_id = ws_id.clone();
+            glib::spawn_future_local(async move {
+                if focus_workspace(&state, &workspace_id).await {
+                    split_active_surface(&state, SplitAxis::Horizontal);
+                }
+            });
         },
     );
 
@@ -149,9 +159,13 @@ pub(super) fn build_workspace_context_menu(
         Some(SPLIT_VERTICAL_SHORTCUT),
         false,
         move || {
-            if focus_workspace(&state_, &ws_id) {
-                split_active_surface(&state_, SplitAxis::Vertical);
-            }
+            let state = state_.clone();
+            let workspace_id = ws_id.clone();
+            glib::spawn_future_local(async move {
+                if focus_workspace(&state, &workspace_id).await {
+                    split_active_surface(&state, SplitAxis::Vertical);
+                }
+            });
         },
     );
 
@@ -167,9 +181,14 @@ pub(super) fn build_workspace_context_menu(
         "New Worktree from Here...",
         false,
         move || {
-            if focus_workspace(&state_, &ws_id) {
-                show_worktree_dialog(&parent_, &state_);
-            }
+            let state = state_.clone();
+            let parent = parent_.clone();
+            let workspace_id = ws_id.clone();
+            glib::spawn_future_local(async move {
+                if focus_workspace(&state, &workspace_id).await {
+                    show_worktree_dialog(&parent, &state);
+                }
+            });
         },
     );
 
@@ -198,12 +217,13 @@ pub(super) fn build_workspace_context_menu(
             "Merge Worktree",
             false,
             move || {
-                if !focus_workspace(&state_, &ws_id) {
-                    return;
-                }
                 let state = state_.clone();
                 let name = name_.clone();
+                let workspace_id = ws_id.clone();
                 glib::spawn_future_local(async move {
+                    if !focus_workspace(&state, &workspace_id).await {
+                        return;
+                    }
                     match merge_worktree_from_gtk_async(&state, &name).await {
                         Ok(msg) => create_local_notification(&state, "Worktree Merged", &msg),
                         Err(err) => create_local_notification_with_kind(
@@ -239,12 +259,13 @@ pub(super) fn build_workspace_context_menu(
                     ),
                     "Remove Worktree",
                     move || {
-                        if !focus_workspace(&state_confirm, &ws_id_confirm) {
-                            return;
-                        }
                         let state = state_confirm.clone();
                         let name = name_confirm.clone();
+                        let workspace_id = ws_id_confirm.clone();
                         glib::spawn_future_local(async move {
+                            if !focus_workspace(&state, &workspace_id).await {
+                                return;
+                            }
                             if let Err(err) = remove_worktree_from_gtk_async(&state, &name).await {
                                 create_local_notification_with_kind(
                                     &state,
@@ -425,9 +446,7 @@ pub(super) fn build_terminal_context_menu(
         Some("Ctrl+Shift+H"),
         false,
         move || {
-            focus_surface_and(&state_, &sid, |state| {
-                split_active_surface(state, SplitAxis::Horizontal)
-            });
+            request_split_surface_by_id(&state_, &sid, SplitAxis::Horizontal);
         },
     );
 
@@ -441,9 +460,7 @@ pub(super) fn build_terminal_context_menu(
         Some(SPLIT_VERTICAL_SHORTCUT),
         false,
         move || {
-            focus_surface_and(&state_, &sid, |state| {
-                split_active_surface(state, SplitAxis::Vertical)
-            });
+            request_split_surface_by_id(&state_, &sid, SplitAxis::Vertical);
         },
     );
 

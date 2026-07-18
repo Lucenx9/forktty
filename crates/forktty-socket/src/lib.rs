@@ -19,6 +19,7 @@ mod metadata_params;
 mod metadata_runtime;
 mod methods;
 mod notification_dispatch;
+mod notification_view;
 mod param_helpers;
 mod path_resolver;
 mod project_action_params;
@@ -34,6 +35,7 @@ mod terminal_text_params;
 mod topology_params;
 mod topology_runtime;
 mod topology_view;
+mod unix_connect;
 mod workspace_runtime;
 mod worktree_params;
 mod worktree_runtime;
@@ -50,11 +52,17 @@ pub(crate) use agent_runtime::{
 use browser_import::browser_import_spool_data;
 #[cfg(all(test, feature = "browser"))]
 use browser_import_params::browser_import_source_id;
-use connection::{handle_connection_with_event_limit, reject_over_capacity_connection};
+use connection::{
+    handle_connection_with_event_limit, reject_over_capacity_connection_until_shutdown,
+    ConnectionControl,
+};
 pub(crate) use context_runtime::workspace_effective_project_cwd;
 #[cfg(test)]
 pub(crate) use context_runtime::{context_snapshot_risk_flags, ContextSnapshotRiskInputs};
 use coordinator::SocketCoordinator;
+pub use coordinator::{
+    AutoSpawnSuppressionGuard, SurfaceSetGuard, WorktreeReadGuard, WorktreeWriteGuard,
+};
 use forktty_core::events::{self, ModelEvent, Snapshot};
 use forktty_core::protocol_limits;
 #[cfg(test)]
@@ -88,7 +96,8 @@ use std::os::unix::net::UnixStream as StdUnixStream;
 use std::path::Path;
 use std::path::PathBuf;
 #[cfg(test)]
-use std::sync::atomic::Ordering;
+use std::sync::atomic::AtomicU8;
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(test)]
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -96,7 +105,59 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(test)]
 use tokio::io::AsyncBufRead;
 use tokio::net::UnixListener;
-use tokio::sync::{broadcast, Semaphore};
+use tokio::sync::{broadcast, watch, Semaphore};
+use tokio::task::JoinSet;
+
+#[cfg(test)]
+#[derive(Clone, Default)]
+pub(crate) struct ServerShutdownTestHooks {
+    connection_accepted: Option<tokio::sync::mpsc::UnboundedSender<()>>,
+    shutdown_started: Option<tokio::sync::mpsc::UnboundedSender<()>>,
+    dispatch_pause: Option<Arc<DispatchAdmissionTestPause>>,
+    pre_admission_error_pause: Option<Arc<PreAdmissionErrorTestPause>>,
+    partial_bytes_consumed: Option<tokio::sync::mpsc::UnboundedSender<()>>,
+    buffered_followup: Option<tokio::sync::mpsc::UnboundedSender<bool>>,
+}
+
+#[cfg(not(test))]
+#[derive(Clone, Default)]
+struct ServerShutdownTestHooks {
+    _private: (),
+}
+
+#[cfg(test)]
+pub(crate) struct DispatchAdmissionTestPause {
+    pause_next: AtomicBool,
+    admitted: Arc<tokio::sync::Barrier>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+#[cfg(test)]
+impl DispatchAdmissionTestPause {
+    async fn pause_after_admission(&self) {
+        if self.pause_next.swap(false, Ordering::SeqCst) {
+            self.admitted.wait().await;
+            self.release.notified().await;
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct PreAdmissionErrorTestPause {
+    pause_next: AtomicBool,
+    classified: Arc<tokio::sync::Barrier>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+#[cfg(test)]
+impl PreAdmissionErrorTestPause {
+    async fn pause_after_classification(&self) {
+        if self.pause_next.swap(false, Ordering::SeqCst) {
+            self.classified.wait().await;
+            self.release.notified().await;
+        }
+    }
+}
 
 #[cfg(test)]
 mod env_access;
@@ -137,8 +198,9 @@ pub(crate) use param_helpers::{
     optional_non_blank_string_param, optional_surface_id_param, optional_u64_param,
     optional_workspace_create_name_from_params, required_f64, required_string,
     required_string_param, required_surface_id, required_trimmed_string, split_axis_from_params,
-    workspace_selector_from_params, workspace_selector_params, WorkspaceSelectorKind,
+    workspace_selector_from_params, workspace_selector_params,
 };
+pub use remote::ready_surface_ids;
 pub use socket_bind::{bind_socket_listener, default_socket_path, socket_path_from_env};
 #[cfg(test)]
 pub(crate) use socket_bind::{
@@ -146,21 +208,34 @@ pub(crate) use socket_bind::{
     PROBE_RESPONSE_MAX_BYTES,
 };
 pub use surface_lifecycle::{
-    bootstrap_default_workspace, resolve_ssh_binary, spawn_request_for_surface,
-    spawn_request_for_surface_kind, sync_live_surface_cwds,
+    bootstrap_default_workspace, evict_hook_session_targets_for_surfaces, resolve_ssh_binary,
+    spawn_request_for_surface, spawn_request_for_surface_kind, sync_live_surface_cwds,
+    PersistedSurfaceSpawnError,
 };
 pub(crate) use surface_lifecycle::{
     close_replacement_terminal_surface_if_present, close_surface_request,
-    close_terminal_surface_if_present, close_terminal_surfaces_or_restore,
+    close_terminal_surface_if_present, close_terminal_surfaces_or_restore, current_model_surfaces,
     ensure_model_surface_exists, ensure_terminal_for_active_workspace,
-    evict_hook_session_targets_for_surfaces, required_ssh_host_param,
+    ensure_terminal_for_active_workspace_now, record_terminal_spawn_failure_for_completion,
+    required_ssh_host_param, restore_terminal_surfaces_after_failure,
     rollback_replacement_if_redundant, rollback_surface_creation, rollback_workspace_creation,
-    spawn_surface_terminal, spawn_terminal_surfaces, spawn_workspace_terminal,
-    surface_effective_project_cwd,
+    spawn_surface_terminal, spawn_workspace_terminal, surface_effective_project_cwd,
+};
+#[cfg(test)]
+pub(crate) use surface_lifecycle::{
+    restore_current_terminal_surfaces_after_failure, spawn_terminal_surfaces,
 };
 pub(crate) use terminal_text_params::{
     terminal_tail_lines_from_params, terminal_text_capture_from_params,
     terminal_text_max_bytes_from_params, MAX_CAPTURE_TAIL_LINES, MAX_TERMINAL_TEXT_BYTES,
+};
+pub use unix_connect::connect_unix_stream_with_timeout;
+#[cfg(test)]
+pub(crate) use unix_connect::unix_socket_address;
+pub use worktree_runtime::{
+    finish_prepared_worktree_removal, open_worktree_transaction, open_worktree_workspace,
+    remove_worktree_transaction, rollback_created_worktree_after_runtime_failure,
+    run_guarded_worktree_read, run_guarded_worktree_write,
 };
 
 const MAX_REQUEST_SIZE: usize = protocol_limits::SOCKET_REQUEST_MAX_BYTES;
@@ -198,6 +273,26 @@ const RESPONSE_WRITE_TIMEOUT: Duration = protocol_limits::SOCKET_RESPONSE_WRITE_
 const HOOK_SESSION_TARGET_CAPACITY: usize = 256;
 const DEFAULT_AGENT_RECLAIM_MIN_IDLE_MS: u64 = 10 * 60 * 1_000;
 
+/// Opaque capability for a worktree transaction that may change terminal
+/// topology.
+///
+/// This capability owns both the worktree write guard and the subsequently
+/// acquired surface-set guard. Passing it to worktree runtime helpers therefore
+/// makes their mandatory lock ordering a type-level caller requirement and
+/// allows destructive work to retain both guards after a caller is cancelled.
+#[must_use = "dropping the transaction ends surface-set coordination"]
+pub struct WorktreeSurfaceTransaction {
+    state: SocketAppState,
+    _worktree_guard: WorktreeWriteGuard,
+    _surface_set_guard: SurfaceSetGuard,
+}
+
+impl WorktreeSurfaceTransaction {
+    pub(crate) fn state(&self) -> &SocketAppState {
+        &self.state
+    }
+}
+
 #[derive(Clone)]
 pub struct SocketAppState {
     pub model: Arc<Mutex<WorkspaceModel>>,
@@ -206,6 +301,7 @@ pub struct SocketAppState {
     pub shell: String,
     pub socket_path: PathBuf,
     pub notification_dispatch: bool,
+    desktop_notification_closer: Arc<dyn Fn(&str) + Send + Sync>,
     /// Broadcast channel feeding `events.subscribe` connections. The background
     /// tick task in [`serve`] is the sole producer.
     pub events: broadcast::Sender<ModelEvent>,
@@ -214,6 +310,9 @@ pub struct SocketAppState {
     /// browser scripting verbs report unavailable.
     pub browser_cmd: Option<async_channel::Sender<BrowserCommand>>,
     hook_session_targets: Arc<Mutex<hook_session::HookSessionTargets>>,
+    hook_target_gates: Arc<Mutex<hook_session::HookTargetGates>>,
+    #[cfg(test)]
+    panic_after_worktree_filesystem_finish: Arc<AtomicU8>,
     coordinator: Arc<SocketCoordinator>,
 }
 
@@ -232,9 +331,13 @@ impl SocketAppState {
             shell: shell.into(),
             socket_path: socket_path.into(),
             notification_dispatch: true,
+            desktop_notification_closer: Arc::new(forktty_core::close_desktop_notification),
             events,
             browser_cmd: None,
             hook_session_targets: Arc::new(Mutex::new(hook_session::HookSessionTargets::default())),
+            hook_target_gates: Arc::new(Mutex::new(hook_session::HookTargetGates::default())),
+            #[cfg(test)]
+            panic_after_worktree_filesystem_finish: Arc::new(AtomicU8::new(0)),
             coordinator: Arc::new(SocketCoordinator::default()),
         }
     }
@@ -244,9 +347,135 @@ impl SocketAppState {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_desktop_notification_closer<F>(mut self, closer: F) -> Self
+    where
+        F: Fn(&str) + Send + Sync + 'static,
+    {
+        self.desktop_notification_closer = Arc::new(closer);
+        self
+    }
+
+    pub(crate) fn close_desktop_notification(&self, notification_id: &str) {
+        (self.desktop_notification_closer)(notification_id);
+    }
+
     pub fn with_browser_cmd(mut self, sender: async_channel::Sender<BrowserCommand>) -> Self {
         self.browser_cmd = Some(sender);
         self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panic_after_worktree_filesystem_finish_and_poison_model_once(&self) {
+        self.panic_after_worktree_filesystem_finish
+            .store(2, Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    fn panic_after_worktree_filesystem_finish_if_requested(&self) {
+        if self
+            .panic_after_worktree_filesystem_finish
+            .swap(0, Ordering::SeqCst)
+            == 2
+        {
+            let _model = self.model.lock().unwrap();
+            panic!("injected panic after worktree filesystem finish with model poison");
+        }
+    }
+
+    #[cfg(not(test))]
+    fn panic_after_worktree_filesystem_finish_if_requested(&self) {}
+
+    /// Acquire shared process-local access to worktree discovery and reads.
+    ///
+    /// Acquire this before [`Self::surface_set_guard`] when both are needed.
+    pub async fn worktree_read_guard(&self) -> WorktreeReadGuard {
+        self.coordinator.worktree_read_guard().await
+    }
+
+    /// Acquire exclusive process-local access to a worktree transaction.
+    ///
+    /// Create, attach, remove, and merge operations retain this through either
+    /// commit or complete rollback. Acquire it before
+    /// [`Self::surface_set_guard`] when both are needed.
+    pub async fn worktree_write_guard(&self) -> WorktreeWriteGuard {
+        self.coordinator.worktree_write_guard().await
+    }
+
+    /// Serialize changes to the modeled and runtime terminal surface set.
+    pub async fn surface_set_guard(&self) -> SurfaceSetGuard {
+        self.coordinator.surface_set_guard().await
+    }
+
+    /// Try to serialize a synchronous surface reconciliation without waiting.
+    ///
+    /// Returns `None` while another model/runtime surface-set transaction is
+    /// active. GTK refresh paths use this to defer reconciliation instead of
+    /// blocking the main loop or deadlocking on a guard they already own.
+    pub fn try_surface_set_guard(&self) -> Option<SurfaceSetGuard> {
+        self.coordinator.try_surface_set_guard()
+    }
+
+    /// Enter the surface-changing phase of an exclusive worktree transaction.
+    ///
+    /// The returned capability takes ownership of `worktree_guard`, so the
+    /// write guard cannot be dropped before the surface-set guard. It is
+    /// accepted by the shared socket/GTK worktree runtime helpers that require
+    /// both guards.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `worktree_guard` came from an unrelated app-state
+    /// coordinator. Guards acquired from clones of this state are accepted.
+    pub async fn worktree_surface_transaction(
+        &self,
+        worktree_guard: WorktreeWriteGuard,
+    ) -> WorktreeSurfaceTransaction {
+        assert!(
+            worktree_guard.belongs_to(&self.coordinator),
+            "worktree write guard belongs to another SocketAppState coordinator"
+        );
+        let surface_set_guard = self.surface_set_guard().await;
+        WorktreeSurfaceTransaction {
+            state: self.clone(),
+            _worktree_guard: worktree_guard,
+            _surface_set_guard: surface_set_guard,
+        }
+    }
+
+    pub(crate) fn blocking_worktree_surface_transaction(
+        &self,
+        worktree_guard: WorktreeWriteGuard,
+    ) -> WorktreeSurfaceTransaction {
+        assert!(
+            worktree_guard.belongs_to(&self.coordinator),
+            "worktree write guard belongs to another SocketAppState coordinator"
+        );
+        let surface_set_guard = self.coordinator.blocking_surface_set_guard();
+        WorktreeSurfaceTransaction {
+            state: self.clone(),
+            _worktree_guard: worktree_guard,
+            _surface_set_guard: surface_set_guard,
+        }
+    }
+
+    /// Suppress controller auto-spawn for each unique surface ID until drop.
+    ///
+    /// Nested registrations are reference-counted across cloned app states.
+    pub fn suppress_surface_auto_spawn<I, S>(&self, surface_ids: I) -> AutoSpawnSuppressionGuard
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.coordinator.suppress_surface_auto_spawn(surface_ids)
+    }
+
+    /// Snapshot surface IDs whose controller auto-spawn is currently disabled.
+    ///
+    /// This synchronous snapshot is intended to be collected before locking
+    /// the workspace model during GTK reconciliation.
+    pub fn suppressed_auto_spawn_surface_ids(&self) -> std::collections::BTreeSet<String> {
+        self.coordinator.suppressed_auto_spawn_surface_ids()
     }
 }
 
@@ -264,17 +493,60 @@ pub async fn serve_until_shutdown(
     state: SocketAppState,
     shutdown: impl Future<Output = ()>,
 ) -> Result<(), SocketError> {
+    serve_until_shutdown_inner(
+        listener,
+        state,
+        shutdown,
+        ServerShutdownTestHooks::default(),
+    )
+    .await
+}
+
+#[cfg(test)]
+pub(crate) async fn serve_until_shutdown_with_hooks(
+    listener: StdUnixListener,
+    state: SocketAppState,
+    shutdown: impl Future<Output = ()>,
+    hooks: ServerShutdownTestHooks,
+) -> Result<(), SocketError> {
+    serve_until_shutdown_inner(listener, state, shutdown, hooks).await
+}
+
+async fn serve_until_shutdown_inner(
+    listener: StdUnixListener,
+    state: SocketAppState,
+    shutdown: impl Future<Output = ()>,
+    hooks: ServerShutdownTestHooks,
+) -> Result<(), SocketError> {
     let listener = UnixListener::from_std(listener)?;
     spawn_event_tick(state.clone());
     let connection_limit = Arc::new(Semaphore::new(MAX_SOCKET_CONNECTIONS));
     let event_subscription_limit = Arc::new(Semaphore::new(MAX_EVENT_SUBSCRIBERS));
+    let dispatch_admission = Arc::new(AtomicBool::new(true));
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let mut connections = JoinSet::new();
+    let mut server_result = Ok(());
     tokio::pin!(shutdown);
-    loop {
+    'accept: loop {
         let stream = tokio::select! {
-            _ = &mut shutdown => return Ok(()),
+            biased;
+            _ = &mut shutdown => {
+                begin_cooperative_shutdown(&dispatch_admission, &shutdown_tx, &hooks);
+                break 'accept;
+            }
+            joined = connections.join_next(), if !connections.is_empty() => {
+                report_connection_join(joined);
+                continue;
+            }
             accepted = listener.accept() => {
                 match accepted {
-                    Ok((stream, _)) => stream,
+                    Ok((stream, _)) => {
+                        #[cfg(test)]
+                        if let Some(accepted) = &hooks.connection_accepted {
+                            let _ = accepted.send(());
+                        }
+                        stream
+                    },
                     // A client aborting mid-handshake (or a transient kernel hiccup)
                     // must not take the whole IPC server down for the rest of the
                     // process lifetime; only give up on genuinely fatal errors.
@@ -282,27 +554,52 @@ pub async fn serve_until_shutdown(
                         // Brief pause so accept() does not hot-spin while fds are
                         // exhausted (EMFILE/ENFILE persists until something closes).
                         tokio::select! {
-                            _ = &mut shutdown => return Ok(()),
+                            biased;
+                            _ = &mut shutdown => {
+                                begin_cooperative_shutdown(
+                                    &dispatch_admission,
+                                    &shutdown_tx,
+                                    &hooks,
+                                );
+                                break 'accept;
+                            },
                             _ = tokio::time::sleep(Duration::from_millis(100)) => {}
                         }
                         continue;
                     }
-                    Err(err) => return Err(err.into()),
+                    Err(err) => {
+                        begin_cooperative_shutdown(&dispatch_admission, &shutdown_tx, &hooks);
+                        server_result = Err(err.into());
+                        break 'accept;
+                    },
                 }
             }
         };
         let state = state.clone();
         let event_subscription_limit = event_subscription_limit.clone();
+        let control = ConnectionControl::new(
+            shutdown_rx.clone(),
+            dispatch_admission.clone(),
+            #[cfg(test)]
+            hooks.dispatch_pause.clone(),
+            #[cfg(test)]
+            hooks.pre_admission_error_pause.clone(),
+            #[cfg(test)]
+            hooks.partial_bytes_consumed.clone(),
+            #[cfg(test)]
+            hooks.buffered_followup.clone(),
+        );
         let Ok(permit) = connection_limit.clone().try_acquire_owned() else {
-            tokio::spawn(async move {
-                reject_over_capacity_connection(stream).await;
+            connections.spawn(async move {
+                reject_over_capacity_connection_until_shutdown(stream, control).await;
             });
             continue;
         };
-        tokio::spawn(async move {
+        connections.spawn(async move {
             let _permit = permit;
             if let Err(err) =
-                handle_connection_with_event_limit(stream, state, event_subscription_limit).await
+                handle_connection_with_event_limit(stream, state, event_subscription_limit, control)
+                    .await
             {
                 // We can't return errors to a client whose connection has
                 // already dropped, but the operator should still see the
@@ -310,6 +607,35 @@ pub async fn serve_until_shutdown(
                 eprintln!("forktty socket connection ended with error: {err}");
             }
         });
+    }
+
+    // `JoinSet` aborts all remaining tasks when dropped. Cooperative shutdown
+    // must instead let admitted dispatches finish, so every exit path drains
+    // the owned set explicitly.
+    while let Some(joined) = connections.join_next().await {
+        report_connection_join(Some(joined));
+    }
+    server_result
+}
+
+fn begin_cooperative_shutdown(
+    dispatch_admission: &AtomicBool,
+    shutdown: &watch::Sender<bool>,
+    hooks: &ServerShutdownTestHooks,
+) {
+    dispatch_admission.store(false, Ordering::SeqCst);
+    shutdown.send_replace(true);
+    #[cfg(not(test))]
+    let _ = hooks;
+    #[cfg(test)]
+    if let Some(started) = &hooks.shutdown_started {
+        let _ = started.send(());
+    }
+}
+
+fn report_connection_join(joined: Option<Result<(), tokio::task::JoinError>>) {
+    if let Some(Err(err)) = joined {
+        eprintln!("forktty socket connection task failed: {err}");
     }
 }
 
@@ -399,17 +725,21 @@ mod tests {
     mod browser;
     mod context_snapshot;
     mod event_stream;
+    mod hook_ingress;
     mod metadata;
     mod metadata_hooks;
     mod notification_feed;
     mod protocol_dispatch;
     mod remote;
+    mod server_shutdown;
     mod socket_bind;
     mod spawn_request;
     mod surface_pane;
     mod system;
+    mod test_runtime;
     mod workspace_surface;
     mod worktree_project;
+    mod worktree_removal;
 
     #[test]
     fn optional_non_blank_string_param_treats_null_as_absent() {

@@ -1,15 +1,16 @@
 use adw::prelude::*;
 use forktty_core::{
     close_desktop_notification, command_safety::is_executable_file, config, dispatch_notification,
-    session, validate_worktree_name, worktree, LogLevel, NotificationItem, NotificationKind,
-    PaneNode, ProgressEntry, SplitAxis, StatusEntry, Surface, TerminalNotificationMetadata,
-    WorkspaceModel, WorkspaceSelector, WorktreeNameError,
+    resolve_worktree_identity_snapshots, session, validate_worktree_name, worktree, LogLevel,
+    NotificationCreation, NotificationItem, NotificationKind, PaneNode, ProgressEntry, SplitAxis,
+    StatusEntry, Surface, TerminalNotificationMetadata, WorkspaceModel, WorkspaceSelector,
+    WorktreeIdentitySnapshot, WorktreeNameError,
 };
 #[cfg(test)]
 use forktty_socket::default_socket_path;
 use forktty_socket::{
-    bind_socket_listener, bootstrap_default_workspace, serve_until_shutdown, socket_path_from_env,
-    SocketAppState,
+    bind_socket_listener, bootstrap_default_workspace, ready_surface_ids, serve_until_shutdown,
+    socket_path_from_env, SocketAppState,
 };
 use forktty_terminal::{
     SharedTerminalBackend, SpawnRequest, TerminalBackend, TerminalError, TerminalSurfaceState,
@@ -44,6 +45,7 @@ const NOTIFICATION_DEDUPE_WINDOW: Duration = Duration::from_secs(12);
 const TERMINAL_METADATA_NOTIFICATION_INTERVAL: Duration = Duration::from_secs(10);
 const PANED_RATIO_APPLY_FRAMES: u8 = 8;
 const PANED_RATIO_MAX_FRAMES: u8 = 30;
+const EMBEDDED_GHOSTTY_INITIAL_LAYOUT_MAX_FRAMES: u8 = 120;
 const SESSION_RESIZE_SAVE_DEBOUNCE: Duration = Duration::from_millis(250);
 const SPLIT_VERTICAL_SHORTCUT: &str = "Ctrl+Shift+E";
 const SPLIT_VERTICAL_ACCEL: &str = "<Control><Shift>E";

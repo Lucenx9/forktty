@@ -64,14 +64,17 @@ environment, forward socket `send_text`, and answer socket
 `ghostty_gtk_surface_new_with_working_directory_and_command` is the native
 command-spawn path; older libraries start Ghostty's default shell in the pane
 cwd without ForkTTY's per-surface environment instead of typing bootstrap text
-into the terminal.
+into the terminal. ForkTTY preserves Ghostty's packaged Bash, Zsh, fish,
+Elvish, and Nushell startup integration and sets `TERM=xterm-ghostty` when the
+packaged terminfo is available.
 Surface lifecycle is wired through the Ghostty surface's `notify::title`,
-`notify::child-exited`, and `close-request` GObject signals so title changes,
-child-exit readiness/status, and clean pane teardown match the classic panes.
-The embedding ABI adds `ghostty_gtk_surface_exit_code` so the child-exit handler
-can report the real exit status (`Closed` / `Exited (n)` plus an abnormal-exit
-notification); a library built before that symbol degrades gracefully to a
-neutral "Closed".
+`notify::child-exited`, and `close-request` GObject signals. Title and child-exit
+readiness/status update directly; a Ghostty widget close request is deferred to
+ForkTTY's Close Pane confirmation, while explicit socket/API close remains
+noninteractive. The embedding ABI adds `ghostty_gtk_surface_exit_code` so the
+child-exit handler can report the real exit status (`Closed` / `Exited (n)` plus
+an abnormal-exit notification); a library built before that symbol degrades
+gracefully to a neutral "Closed".
 
 The child PID (needed for ForkTTY's listening-port discovery and the socket
 `surfaces` PID field) is exposed through `ghostty_gtk_surface_child_pid`. The pid
@@ -107,21 +110,40 @@ embedded restore round-trip is verified by the **Ghostty GTK Probe** workflow:
 the Ubuntu runner builds the `.so`, restarts an embedded pane, and confirms a
 pre-restart marker is present in `capture_tail` after restore. A library built
 before this symbol degrades to a safe no-op. The snapshot half reads the tail
-through `ghostty_gtk_surface_read_text_limited` into the session on child exit,
+through the bounded limited-read ABI into the session on child exit,
 programmatic close/restart, and a throttled poll, retaining at most the
-requested byte budget plus one truncation-detection byte.
+requested byte budget plus one truncation-detection byte. When the optional
+`ghostty_gtk_surface_read_text_limited_with_total_lines` extension is available,
+the snapshot also preserves the complete source line count.
 
 For installed builds, `FORKTTY_GHOSTTY_GTK_LIB` is only needed during local
 development. `scripts/build-deb.sh` and `scripts/build-appimage.sh` call
-`scripts/ghostty-gtk-lib-probe.sh --ensure --print-path` before packaging, which
-reuses or builds `ghostty-gtk-embed.so` and verifies the required ABI symbols,
-including the bounded `ghostty_gtk_surface_read_text_limited` export. The
-packagers install the verified library into `usr/lib`, and the binary loads it
-through its RUNPATH (`$ORIGIN/../lib`). The install step is required for release
-packages: `scripts/build-deb.sh`, `scripts/build-appimage.sh`, and release CI
-fail if the embedding library cannot be built, located, or verified.
-`forktty doctor` warns about a missing library because terminal panes cannot
-open without it.
+`scripts/ghostty-gtk-lib-probe.sh --ensure --print-path` before packaging.
+`--ensure` is a compatibility flag rather than a cache bypass: every invocation
+enters Zig's incremental build graph and then verifies every mandatory ABI
+symbol in the resulting `ghostty-gtk-embed.so`, including the unconditional
+context/surface constructors and the bounded
+`ghostty_gtk_surface_read_text_limited` export. The extended
+`ghostty_gtk_surface_read_text_limited_with_total_lines` symbol is an optional
+runtime capability, not a packaging prerequisite. The packagers install the
+verified library into `usr/lib`, and the binary loads it through its RUNPATH
+(`$ORIGIN/../lib`). The install step is required for release packages:
+`scripts/build-deb.sh`, `scripts/build-appimage.sh`, and release CI fail if the
+embedding library cannot be built, located, or verified. `forktty doctor` warns
+about a missing library because terminal panes cannot open without it.
+
+AppImage `auto` mode performs a real eager loader compatibility probe with the
+effective loader environment: it selects host GTK/libadwaita only when the
+GTK-linked ForkTTY binary and preloaded `ghostty-gtk-embed.so` both load with
+immediate binding, otherwise it adds the bundled GTK/libadwaita directory.
+Embedded terminal commands enter the same GTK-linked binary's
+`appimage-child-exec` helper before AppImage loader entries are removed, so
+sanitization occurs only after the helper has loaded and just before it executes
+`/usr/bin/env`, a shell, or another target. The packaged check
+`scripts/check-appimage-bundled-container.sh` masks host GTK/libadwaita in a
+bubblewrap sandbox and verifies that bundled mode still executes the helper,
+cleans `LD_LIBRARY_PATH`, and preserves `TERM=xterm-ghostty` plus Ghostty's Bash
+integration.
 
 `xtask check` fails if the submodule is missing, points at the wrong fork,
 or is checked out at a different revision.

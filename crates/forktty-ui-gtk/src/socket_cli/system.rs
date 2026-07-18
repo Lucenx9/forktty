@@ -11,7 +11,7 @@ use super::{
     write_stdout_line, write_stdout_text, CliContext, CliError, CliResult, FlagValue,
     AGENT_HELP_TEXT, EXAMPLES_TEXT, HOOKS_HELP_TEXT, STATUS_HELP_TEXT,
 };
-use super::{COMPLETION_COMMANDS, STATUS_SUBCOMMANDS};
+use super::{COMPLETION_COMMANDS, NOTIFICATION_OPTIONS, STATUS_SUBCOMMANDS};
 use super::{DEFAULT_AGENT_WAIT_INTERVAL_MS, DEFAULT_AGENT_WAIT_TIMEOUT_MS};
 use super::{MAX_AGENT_WAIT_INTERVAL_MS, MAX_AGENT_WAIT_TIMEOUT_MS};
 use serde_json::{json, Map, Value};
@@ -52,16 +52,41 @@ pub(super) fn handle_completions(_context: &CliContext, args: Vec<String>) -> Cl
 }
 
 fn completion_script(shell: &str) -> CliResult<String> {
+    completion_script_with_notification_options(shell, NOTIFICATION_OPTIONS)
+}
+
+fn completion_script_with_notification_options(
+    shell: &str,
+    notification_options: &[&str],
+) -> CliResult<String> {
     let commands = COMPLETION_COMMANDS.join(" ");
+    let notification_options_words = notification_options.join(" ");
+    let fish_notification_options = notification_options
+        .iter()
+        .map(|option| {
+            let long = option.strip_prefix("--").ok_or_else(|| {
+                CliError::new(format!("invalid notification completion option {option}"))
+            })?;
+            Ok(format!(
+                "complete -c forktty -n \"__fish_seen_subcommand_from notifications\" -f -l {long} -r"
+            ))
+        })
+        .collect::<CliResult<Vec<_>>>()?
+        .join("\n");
     let status_subcommands = STATUS_SUBCOMMANDS.join(" ");
     Ok(match shell {
         "bash" => format!(
             r#"_forktty()
 {{
-    local cur prev
+    local cur prev command
     COMPREPLY=()
     cur="${{COMP_WORDS[COMP_CWORD]}}"
     prev="${{COMP_WORDS[COMP_CWORD-1]}}"
+    command="${{COMP_WORDS[1]}}"
+    if [[ "$command" == notifications && $COMP_CWORD -ge 2 ]]; then
+        COMPREPLY=( $(compgen -W "{notification_options_words}" -- "$cur") )
+        return 0
+    fi
     case "$prev" in
         status) COMPREPLY=( $(compgen -W "{status_subcommands}" -- "$cur") ); return 0 ;;
         completions) COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") ); return 0 ;;
@@ -76,13 +101,16 @@ complete -F _forktty forktty
             r#"#compdef forktty
 # Source this file directly, or install it as an fpath/autoloaded _forktty completion.
 _forktty() {{
-  local -a commands status_subcommands
+  local -a commands notification_options status_subcommands
   commands=({commands})
+  notification_options=({notification_options_words})
   status_subcommands=({status_subcommands})
   if [[ $CURRENT -eq 2 ]]; then
     _describe 'forktty command' commands
   elif [[ $words[2] == status ]]; then
     _describe 'status subcommand' status_subcommands
+  elif [[ $words[2] == notifications ]]; then
+    _describe 'notification option' notification_options
   fi
 }}
 _forktty "$@"
@@ -91,6 +119,7 @@ _forktty "$@"
         "fish" => format!(
             r#"complete -c forktty -f -a "{commands}"
 complete -c forktty -n "__fish_seen_subcommand_from status" -f -a "{status_subcommands}"
+{fish_notification_options}
 complete -c forktty -n "__fish_seen_subcommand_from completions" -f -a "bash zsh fish"
 "#
         ),
@@ -105,6 +134,14 @@ complete -c forktty -n "__fish_seen_subcommand_from completions" -f -a "bash zsh
 #[cfg(test)]
 pub(super) fn completion_script_for_test(shell: &str) -> CliResult<String> {
     completion_script(shell)
+}
+
+#[cfg(test)]
+pub(super) fn completion_script_with_notification_options_for_test(
+    shell: &str,
+    notification_options: &[&str],
+) -> CliResult<String> {
+    completion_script_with_notification_options(shell, notification_options)
 }
 
 pub(super) fn handle_ping(context: &CliContext, args: Vec<String>) -> CliResult<()> {

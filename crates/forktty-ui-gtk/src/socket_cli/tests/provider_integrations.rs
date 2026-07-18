@@ -102,6 +102,7 @@ fn antigravity_setup_preserves_foreign_groups_and_is_idempotent() {
         for (script_path, content) in &plan.scripts {
             fs::create_dir_all(script_path.parent().unwrap()).unwrap();
             fs::write(script_path, content).unwrap();
+            fs::set_permissions(script_path, fs::Permissions::from_mode(0o700)).unwrap();
         }
         let replanned = build_hook_setup_plan(spec, Path::new("/usr/bin/forktty")).unwrap();
         assert!(!replanned.changed);

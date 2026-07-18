@@ -70,7 +70,11 @@ impl TerminalController {
         }
     }
 
-    pub(super) fn spawn_embedded_ghostty(&mut self, request: SpawnRequest) -> Result<(), String> {
+    pub(super) fn spawn_embedded_ghostty(
+        &mut self,
+        request: SpawnRequest,
+        generation: u64,
+    ) -> Result<(), String> {
         let embedder = self.embedded_ghostty()?;
         let config = config::load_config().unwrap_or_default();
         let persistent_scrollback_lines = config.appearance.persistent_scrollback_lines;
@@ -99,6 +103,77 @@ impl TerminalController {
             );
             unsafe { embedder.create_widget_for_cwd(Some(&request.cwd))? }
         };
+        {
+            let embedder = Rc::clone(&embedder);
+            let backend = self.backend.clone();
+            let surface_id = request.surface_id.clone();
+            let terminal_zoom_level = Rc::clone(&self.terminal_zoom_level);
+            let weak_widget = widget.downgrade();
+            widget.connect_local("init", false, move |_| {
+                let widget = weak_widget.upgrade()?;
+                let embedder = Rc::clone(&embedder);
+                let backend = backend.clone();
+                let surface_id = surface_id.clone();
+                let terminal_zoom_level = Rc::clone(&terminal_zoom_level);
+                // Let every init handler finish before changing font size, but
+                // use default-priority timeout dispatch: Ghostty's continuous
+                // frame/wakeup sources can indefinitely starve an idle source.
+                // Reset first because zoom actions issued while this pane was
+                // still initializing may or may not have reached Ghostty.
+                glib::timeout_add_local_once(Duration::ZERO, move || {
+                    let _ = run_embedded_callback_for_generation(
+                        &backend,
+                        &surface_id,
+                        generation,
+                        || {
+                            match unsafe {
+                                embedder.perform_action(
+                                    &widget,
+                                    EmbeddedSurfaceAction::ResetFontSize,
+                                )
+                            } {
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    eprintln!(
+                                        "ForkTTY: embedded Ghostty rejected inherited zoom reset for {surface_id}"
+                                    );
+                                    return;
+                                }
+                                Err(err) => {
+                                    eprintln!(
+                                        "ForkTTY: cannot reset inherited zoom for {surface_id}: {err}"
+                                    );
+                                    return;
+                                }
+                            }
+                            let Some((action, steps)) =
+                                embedded_zoom_adjustment(terminal_zoom_level.get())
+                            else {
+                                return;
+                            };
+                            for _ in 0..steps {
+                                match unsafe { embedder.perform_action(&widget, action) } {
+                                    Ok(true) => {}
+                                    Ok(false) => {
+                                        eprintln!(
+                                            "ForkTTY: embedded Ghostty rejected inherited zoom for {surface_id}"
+                                        );
+                                        break;
+                                    }
+                                    Err(err) => {
+                                        eprintln!(
+                                            "ForkTTY: cannot apply inherited zoom to {surface_id}: {err}"
+                                        );
+                                        break;
+                                    }
+                                }
+                            }
+                        },
+                    );
+                });
+                None
+            });
+        }
         widget.set_hexpand(true);
         widget.set_vexpand(true);
         let view = build_embedded_ghostty_scroll_view(&widget, terminal_appearance.scrollbar);
@@ -115,36 +190,43 @@ impl TerminalController {
 
         let focus = gtk::EventControllerFocus::new();
         {
+            let backend = self.backend.clone();
             let model = self.model.clone();
             let surface_id = request.surface_id.clone();
             focus.connect_enter(move |_| {
-                if let Ok(mut model) = model.lock() {
-                    let _ = model.focus_surface(&surface_id);
-                    let _ = model.mark_surface_unread(&surface_id, false);
-                }
+                apply_embedded_focus_for_generation(&backend, &model, &surface_id, generation);
             });
         }
         widget.add_controller(focus);
 
         if embedder.supports_send_text() {
-            if let Some(state) = self.state.clone() {
-                let surface_id = request.surface_id.clone();
-                let embedder = Rc::clone(&embedder);
-                widget.connect_local("init", false, move |args| {
-                    if let Err(err) = state.terminal.mark_surface_ready(&surface_id) {
+            let backend = self.backend.clone();
+            let surface_id = request.surface_id.clone();
+            let embedder = Rc::clone(&embedder);
+            widget.connect_local("init", false, move |args| {
+                if let Err(err) = backend.mark_surface_ready_for_generation(&surface_id, generation)
+                {
+                    if !matches!(err, TerminalError::NotFound(_) | TerminalError::NotReady(_)) {
                         eprintln!(
                             "Failed to mark embedded Ghostty GTK surface ready {surface_id}: {err}"
                         );
                     }
-                    if let Some(widget) = args
-                        .first()
-                        .and_then(|value| value.get::<gtk::Widget>().ok())
-                    {
-                        sync_embedded_ghostty_surface_size(&state, &embedder, &widget, &surface_id);
-                    }
-                    None
-                });
-            }
+                    return None;
+                }
+                if let Some(widget) = args
+                    .first()
+                    .and_then(|value| value.get::<gtk::Widget>().ok())
+                {
+                    sync_embedded_ghostty_surface_size(
+                        &backend,
+                        &embedder,
+                        &widget,
+                        &surface_id,
+                        generation,
+                    );
+                }
+                None
+            });
         } else {
             eprintln!(
                 "Embedded Ghostty GTK pane {} is not socket-ready: \
@@ -159,56 +241,75 @@ impl TerminalController {
         // old output is not re-sent as shell input. A library built before the
         // restore symbol degrades to a no-op (see supports_restore_scrollback).
         if persistent_scrollback_lines > 0 && embedder.supports_restore_scrollback() {
+            let backend = self.backend.clone();
             let model = self.model.clone();
             let embedder = Rc::clone(&embedder);
             let surface_id = request.surface_id.clone();
             let weak_widget = widget.downgrade();
             widget.connect_local("init", false, move |_| {
                 let widget = weak_widget.upgrade()?;
-                let stored = model.lock().ok().and_then(|model| {
-                    model
-                        .surface(&surface_id)
-                        .and_then(|surface| surface.persisted_scrollback.clone())
-                });
-                if let Some(bytes) = embedded_scrollback_restore_bytes(
-                    persistent_scrollback_lines,
-                    embedder.supports_restore_scrollback(),
-                    stored.as_deref(),
-                ) {
-                    if let Err(err) = unsafe { embedder.restore_scrollback(&widget, &bytes) } {
-                        eprintln!(
-                            "Failed to restore embedded Ghostty scrollback {surface_id}: {err}"
-                        );
-                    }
-                }
+                let _ = run_embedded_callback_for_generation(
+                    &backend,
+                    &surface_id,
+                    generation,
+                    || {
+                        let stored = model.lock().ok().and_then(|model| {
+                            model
+                                .surface(&surface_id)
+                                .and_then(|surface| surface.persisted_scrollback.clone())
+                        });
+                        if let Some(bytes) = embedded_scrollback_restore_bytes(
+                            persistent_scrollback_lines,
+                            embedder.supports_restore_scrollback(),
+                            stored.as_deref(),
+                        ) {
+                            if let Err(err) =
+                                unsafe { embedder.restore_scrollback(&widget, &bytes) }
+                            {
+                                eprintln!(
+                                    "Failed to restore embedded Ghostty scrollback {surface_id}: {err}"
+                                );
+                            }
+                        }
+                    },
+                );
                 None
             });
         }
 
-        if let Some(state) = self.state.clone() {
+        {
+            let backend = self.backend.clone();
             let embedder = Rc::clone(&embedder);
             let surface_id = request.surface_id.clone();
             widget.connect_notify_local(Some("width"), move |widget, _| {
-                sync_embedded_ghostty_surface_size(&state, &embedder, widget, &surface_id);
+                sync_embedded_ghostty_surface_size(
+                    &backend,
+                    &embedder,
+                    widget,
+                    &surface_id,
+                    generation,
+                );
             });
         }
-        if let Some(state) = self.state.clone() {
+        {
+            let backend = self.backend.clone();
             let embedder = Rc::clone(&embedder);
             let surface_id = request.surface_id.clone();
             widget.connect_notify_local(Some("height"), move |widget, _| {
-                sync_embedded_ghostty_surface_size(&state, &embedder, widget, &surface_id);
+                sync_embedded_ghostty_surface_size(
+                    &backend,
+                    &embedder,
+                    widget,
+                    &surface_id,
+                    generation,
+                );
             });
         }
-
-        self.next_spawn_token = self.next_spawn_token.checked_add(1).unwrap_or(1);
-        let spawn_token = self.next_spawn_token;
-        self.embedded_spawn_tokens
-            .borrow_mut()
-            .insert(request.surface_id.clone(), spawn_token);
 
         // Title parity with classic panes: mirror the Ghostty surface title
         // into the model so the pane header / surface list stay accurate.
         {
+            let backend = self.backend.clone();
             let model = self.model.clone();
             let surface_id = request.surface_id.clone();
             widget.connect_notify_local(Some("title"), move |widget, _| {
@@ -218,9 +319,13 @@ impl TerminalController {
                 if embedded_title_is_launcher_wrapper(&title) {
                     return;
                 }
-                if let Ok(mut model) = model.lock() {
-                    let _ = model.set_surface_title(&surface_id, title);
-                }
+                apply_embedded_title_for_generation(
+                    &backend,
+                    &model,
+                    &surface_id,
+                    generation,
+                    title,
+                );
             });
         }
 
@@ -230,81 +335,82 @@ impl TerminalController {
         // the loaded library predates that getter it stays None and the status
         // is the neutral "Closed" (see embedded_child_exit_status).
         {
+            let backend = self.backend.clone();
             let model = self.model.clone();
-            let state = self.state.clone();
             let embedder = Rc::clone(&embedder);
             let surface_pids = self.surface_pids.clone();
-            let embedded_spawn_tokens = self.embedded_spawn_tokens.clone();
             let surface_id = request.surface_id.clone();
             let workspace_id = request.workspace_id.clone();
+            let child_exit_handled = Cell::new(false);
             widget.connect_notify_local(Some("child-exited"), move |widget, _| {
-                if !widget.property::<bool>("child-exited") {
-                    return;
-                }
-                if !matches!(
-                    embedded_spawn_tokens.borrow().get(&surface_id),
-                    Some(current) if *current == spawn_token
-                ) {
+                if child_exit_handled.get() || !widget.property::<bool>("child-exited") {
                     return;
                 }
                 // Capture the final scrollback before teardown so session save
                 // keeps the exited pane's output. Read first, then store under a
                 // brief lock; never hold the model lock across the ABI read.
-                snapshot_embedded_scrollback_tail_to_model(
+                snapshot_embedded_scrollback_tail_to_model_for_generation(
+                    &backend,
                     &model,
                     &embedder,
                     widget,
                     &surface_id,
+                    generation,
                     persistent_scrollback_lines,
                 );
-                remove_surface_pid_for_spawn(
-                    &mut surface_pids.borrow_mut(),
-                    &surface_id,
-                    spawn_token,
-                );
-                embedded_spawn_tokens.borrow_mut().remove(&surface_id);
-                if let Some(state) = &state {
-                    match state.terminal.mark_surface_not_ready(&surface_id) {
-                        Ok(()) | Err(TerminalError::NotFound(_)) => {}
-                        Err(err) => eprintln!(
-                            "Failed to mark embedded Ghostty GTK surface not ready {surface_id}: {err}"
-                        ),
-                    }
-                    match state.terminal.clear_surface_pid(&surface_id) {
-                        Ok(()) | Err(TerminalError::NotFound(_)) => {}
-                        Err(err) => eprintln!(
-                            "Failed to clear embedded Ghostty surface pid {surface_id}: {err}"
-                        ),
-                    }
-                }
                 let exit_code = unsafe { embedder.surface_exit_code(widget) };
-                let notification = match model.lock() {
-                    Ok(mut model) => apply_embedded_child_exit(
-                        &mut model,
-                        &workspace_id,
-                        &surface_id,
-                        exit_code,
-                    ),
-                    Err(_) => None,
+                let notification = match commit_embedded_child_exit_for_generation(
+                    &backend,
+                    &model,
+                    &workspace_id,
+                    &surface_id,
+                    generation,
+                    exit_code,
+                    || {
+                        remove_surface_pid_for_generation(
+                            &mut surface_pids.borrow_mut(),
+                            &surface_id,
+                            generation,
+                        );
+                    },
+                ) {
+                    Ok(notification) => {
+                        child_exit_handled.set(true);
+                        notification
+                    }
+                    Err(TerminalError::NotFound(_) | TerminalError::NotReady(_)) => return,
+                    Err(err) => {
+                        eprintln!(
+                            "Failed to commit embedded Ghostty child exit {surface_id}: {err}"
+                        );
+                        return;
+                    }
                 };
-                if let Some(notification) = notification {
-                    dispatch_notification_with_loaded_config(&notification);
+                if let Some(creation) = notification {
+                    for notification_id in creation.evicted_desktop_notification_ids {
+                        close_desktop_notification(&notification_id);
+                    }
+                    dispatch_notification_with_loaded_config(&creation.notification);
                 }
             });
         }
 
         // Clean close parity: when Ghostty requests closure (e.g. the user
-        // closes the surface), drive the same teardown as a classic pane so no
-        // stale pane is left behind. Defer to idle so we never destroy the
-        // Ghostty widget from inside its own close-request emission.
+        // closes the surface), use the same confirmation as a classic pane.
+        // Defer dialog creation so the signal emission never mutates GTK state.
         if let Some(state) = self.state.clone() {
+            let backend = self.backend.clone();
+            let parent_window = self.parent_window.downgrade();
             let surface_id = request.surface_id.clone();
             widget.connect_local("close-request", false, move |_| {
-                let state = state.clone();
-                let surface_id = surface_id.clone();
-                glib::idle_add_local_once(move || {
-                    close_surface_by_id(&state, &surface_id);
-                });
+                let parent_window = parent_window.upgrade()?;
+                defer_embedded_close_request_confirmation(
+                    parent_window,
+                    state.clone(),
+                    backend.clone(),
+                    surface_id.clone(),
+                    generation,
+                );
                 None
             });
         }
@@ -315,10 +421,9 @@ impl TerminalController {
         // embedded ABI returns it. Skipped when the loaded library predates the
         // child-pid getter so older libs don't spin a pointless timer.
         if embedder.supports_child_pid() {
+            let backend = self.backend.clone();
             let embedder = Rc::clone(&embedder);
             let surface_pids = self.surface_pids.clone();
-            let embedded_spawn_tokens = self.embedded_spawn_tokens.clone();
-            let state = self.state.clone();
             let surface_id = request.surface_id.clone();
             let weak_widget = widget.downgrade();
             let mut attempts: u32 = 0;
@@ -328,10 +433,13 @@ impl TerminalController {
                 };
                 attempts += 1;
                 if widget.property::<bool>("child-exited")
-                    || !matches!(
-                        embedded_spawn_tokens.borrow().get(&surface_id),
-                        Some(current) if *current == spawn_token
+                    || run_embedded_callback_for_generation(
+                        &backend,
+                        &surface_id,
+                        generation,
+                        || (),
                     )
+                    .is_none()
                 {
                     return glib::ControlFlow::Break;
                 }
@@ -341,17 +449,19 @@ impl TerminalController {
                     child_pid = new_process_child_pid_since(&child_pids_before_spawn);
                 }
                 if let Some(pid) = child_pid {
-                    surface_pids
-                        .borrow_mut()
-                        .insert(surface_id.clone(), SurfacePid { pid, spawn_token });
-                    if let Some(state) = &state {
-                        if let Ok(pid) = u32::try_from(pid) {
-                            if let Err(err) = state.terminal.mark_surface_pid(&surface_id, pid) {
-                                eprintln!(
-                                    "Failed to record embedded Ghostty surface pid {surface_id}: {err}"
-                                );
-                            }
-                        }
+                    match commit_embedded_surface_pid_for_generation(
+                        &backend,
+                        &surface_id,
+                        generation,
+                        pid,
+                        |entry| {
+                            surface_pids.borrow_mut().insert(surface_id.clone(), entry);
+                        },
+                    ) {
+                        Ok(_) | Err(TerminalError::NotFound(_) | TerminalError::NotReady(_)) => {}
+                        Err(err) => eprintln!(
+                            "Failed to record embedded Ghostty surface pid {surface_id}: {err}"
+                        ),
                     }
                     return glib::ControlFlow::Break;
                 }
@@ -371,6 +481,7 @@ impl TerminalController {
         // classic pump. The ABI read happens outside the model lock, and an
         // unchanged tail skips the model write to avoid churn.
         if embedder.supports_read_text() {
+            let backend = self.backend.clone();
             let embedder = Rc::clone(&embedder);
             let model = self.model.clone();
             let surface_id = request.surface_id.clone();
@@ -395,6 +506,11 @@ impl TerminalController {
                 let Some(widget) = weak_widget.upgrade() else {
                     return glib::ControlFlow::Break;
                 };
+                if run_embedded_callback_for_generation(&backend, &surface_id, generation, || ())
+                    .is_none()
+                {
+                    return glib::ControlFlow::Break;
+                }
                 let lines = config::load_config()
                     .map(|config| config.appearance.persistent_scrollback_lines)
                     .unwrap_or(0);
@@ -410,8 +526,14 @@ impl TerminalController {
                         return glib::ControlFlow::Continue;
                     }
                     if last_snapshot.as_deref() != Some(text.as_str()) {
-                        if let Ok(mut model) = model.lock() {
-                            model.set_surface_persisted_scrollback(&surface_id, Some(text.clone()));
+                        if !commit_embedded_scrollback_for_generation(
+                            &backend,
+                            &model,
+                            &surface_id,
+                            generation,
+                            text.clone(),
+                        ) {
+                            return glib::ControlFlow::Break;
                         }
                         last_snapshot = Some(text);
                     }
@@ -420,24 +542,55 @@ impl TerminalController {
             });
         }
 
-        if let Ok(mut model) = self.model.lock() {
-            let _ = model.clear_status(
-                &request.workspace_id,
-                Some(&surface_status_key(&request.surface_id)),
-            );
-        }
         let chrome = build_embedded_ghostty_pane_chrome(
             &request.surface_id,
             &view,
             self.state.as_ref(),
             &self.parent_window,
         );
-        self.chromes.insert(request.surface_id.clone(), chrome);
-        self.embedded_ghostty_panes.insert(
-            request.surface_id.clone(),
-            EmbeddedGhosttyPane { surface: widget },
-        );
-        self.rebuild_layout();
+        let backend = self.backend.clone();
+        let allocation_surface_id = request.surface_id.clone();
+        let allocation_widget = widget.downgrade();
+        // Ghostty creates its core surface on the GL area's first non-zero
+        // resize. After rapid stack rebuilds GTK can map the new child at 0x0
+        // and never renegotiate it, leaving the pane permanently uninitialized.
+        // Retry layout for a bounded number of frames: a single queued resize
+        // is not sufficient with the GTK 4.14 stack bundled in the AppImage.
+        let layout_attempts = Cell::new(0_u8);
+        self.container.add_tick_callback(move |container, _| {
+            let Some(widget) = allocation_widget.upgrade() else {
+                return glib::ControlFlow::Break;
+            };
+            run_embedded_initial_layout_tick(
+                &backend,
+                &allocation_surface_id,
+                generation,
+                container.upcast_ref(),
+                &widget,
+                &layout_attempts,
+            )
+        });
+        let commit_backend = self.backend.clone();
+        let surface_id = request.surface_id.clone();
+        let workspace_id = request.workspace_id.clone();
+        if run_embedded_callback_for_generation(&commit_backend, &surface_id, generation, || {
+            if let Ok(mut model) = self.model.lock() {
+                let _ = model.clear_status(&workspace_id, Some(&surface_status_key(&surface_id)));
+            }
+            self.chromes.insert(surface_id.clone(), chrome);
+            self.embedded_ghostty_panes.insert(
+                surface_id.clone(),
+                EmbeddedGhosttyPane {
+                    surface: widget,
+                    generation,
+                },
+            );
+            self.rebuild_layout_without_surface_reconciliation();
+        })
+        .is_none()
+        {
+            return Ok(());
+        }
         Ok(())
     }
 
@@ -472,5 +625,346 @@ impl TerminalController {
         }
         self.embedded_ghostty = Some(Rc::clone(&embedder));
         Ok(embedder)
+    }
+}
+
+fn defer_embedded_close_request_confirmation(
+    parent_window: adw::ApplicationWindow,
+    state: SocketAppState,
+    backend: Arc<GtkTerminalBackend>,
+    surface_id: String,
+    generation: u64,
+) {
+    defer_embedded_close_request_confirmation_with_completion(
+        parent_window,
+        state,
+        backend,
+        surface_id,
+        generation,
+        Rc::new(|_| {}),
+    );
+}
+
+fn defer_embedded_close_request_confirmation_with_completion(
+    parent_window: adw::ApplicationWindow,
+    state: SocketAppState,
+    backend: Arc<GtkTerminalBackend>,
+    surface_id: String,
+    generation: u64,
+    close_completed: Rc<dyn Fn(GenerationCloseOutcome)>,
+) {
+    glib::idle_add_local_once(move || {
+        let backend_for_confirmation = backend.clone();
+        let surface_id_for_confirmation = surface_id.clone();
+        let state_for_close = state.clone();
+        let backend_for_close = backend.clone();
+        let surface_id_for_close = surface_id.clone();
+        let close_completed_for_close = Rc::clone(&close_completed);
+        let _ = run_embedded_callback_for_generation(&backend, &surface_id, generation, || {
+            crate::gtk_app::pane_chrome::show_close_pane_confirmation_if(
+                &parent_window,
+                &state,
+                &surface_id,
+                Rc::new(move || {
+                    backend_for_confirmation
+                        .surface_generation_is_current(&surface_id_for_confirmation, generation)
+                        .unwrap_or(false)
+                }),
+                Rc::new(move || {
+                    let close_completed = Rc::clone(&close_completed_for_close);
+                    close_surface_by_id_for_generation(
+                        &state_for_close,
+                        &backend_for_close,
+                        &surface_id_for_close,
+                        generation,
+                        move |outcome| close_completed(outcome),
+                    );
+                }),
+            );
+        });
+    });
+}
+
+fn embedded_zoom_adjustment(zoom_level: i32) -> Option<(EmbeddedSurfaceAction, u32)> {
+    match zoom_level.cmp(&0) {
+        std::cmp::Ordering::Greater => Some((
+            EmbeddedSurfaceAction::IncreaseFontSize,
+            zoom_level.unsigned_abs(),
+        )),
+        std::cmp::Ordering::Less => Some((
+            EmbeddedSurfaceAction::DecreaseFontSize,
+            zoom_level.unsigned_abs(),
+        )),
+        std::cmp::Ordering::Equal => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn find_button(
+        widget: &gtk::Widget,
+        predicate: &impl Fn(&gtk::Button) -> bool,
+    ) -> Option<gtk::Button> {
+        if let Ok(button) = widget.clone().downcast::<gtk::Button>() {
+            if predicate(&button) {
+                return Some(button);
+            }
+        }
+        let mut child = widget.first_child();
+        while let Some(current) = child {
+            if let Some(button) = find_button(&current, predicate) {
+                return Some(button);
+            }
+            child = current.next_sibling();
+        }
+        None
+    }
+
+    fn embedded_close_confirmation_for(parent: &adw::ApplicationWindow) -> Option<gtk::Window> {
+        gtk::Window::list_toplevels()
+            .into_iter()
+            .filter_map(|widget| widget.downcast::<gtk::Window>().ok())
+            .find(|window| {
+                window.is_visible()
+                    && window.title().as_deref() == Some("Close Pane?")
+                    && window.transient_for().as_ref() == Some(parent.upcast_ref())
+            })
+    }
+
+    fn surface_exists_in_backend(terminal: &dyn TerminalBackend, surface_id: &str) -> bool {
+        terminal
+            .surfaces()
+            .unwrap()
+            .iter()
+            .any(|surface| surface.surface_id == surface_id)
+    }
+
+    #[test]
+    fn embedded_close_request_requires_confirmation_for_live_surface() {
+        let _ = crate::test_env::with_gtk_test(|| {
+            crate::test_env::with_isolated_user_dirs(|| {
+                let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+                let (terminal_tx, terminal_rx) = mpsc::channel();
+                let terminal = Arc::new(GtkTerminalBackend::new(terminal_tx));
+                let state = SocketAppState::new(
+                    model.clone(),
+                    terminal.clone(),
+                    "/bin/sh",
+                    PathBuf::from(std::env::var("XDG_RUNTIME_DIR").unwrap()).join("forktty.sock"),
+                )
+                .with_notification_dispatch(false);
+                let surface_id = model
+                    .lock()
+                    .unwrap()
+                    .create_workspace("main", Path::new("/tmp"))
+                    .focused_surface_id;
+                spawn_focused_surface_if_needed(&state).unwrap();
+                let generation = match terminal_rx.recv().unwrap() {
+                    GtkTerminalCommand::Spawn { generation, .. } => generation,
+                    _ => panic!("expected embedded spawn command"),
+                };
+                let parent = adw::ApplicationWindow::builder().build();
+
+                defer_embedded_close_request_confirmation(
+                    parent.clone(),
+                    state.clone(),
+                    terminal.clone(),
+                    surface_id.clone(),
+                    generation,
+                );
+
+                assert!(model.lock().unwrap().surface(&surface_id).is_some());
+                assert!(surface_exists_in_backend(terminal.as_ref(), &surface_id));
+                while glib::MainContext::default().iteration(false) {}
+                let dialog = embedded_close_confirmation_for(&parent)
+                    .expect("embedded close request should show a confirmation dialog");
+                assert!(model.lock().unwrap().surface(&surface_id).is_some());
+                assert!(surface_exists_in_backend(terminal.as_ref(), &surface_id));
+
+                let cancel = find_button(dialog.upcast_ref(), &|button| {
+                    button.label().as_deref() == Some("Cancel")
+                })
+                .expect("confirmation should have a cancel button");
+                cancel.emit_clicked();
+                assert!(!dialog.is_visible());
+                assert!(model.lock().unwrap().surface(&surface_id).is_some());
+                assert!(surface_exists_in_backend(terminal.as_ref(), &surface_id));
+
+                let (close_completed_tx, close_completed_rx) = tokio::sync::oneshot::channel();
+                let close_completed_tx = Rc::new(RefCell::new(Some(close_completed_tx)));
+                defer_embedded_close_request_confirmation_with_completion(
+                    parent.clone(),
+                    state.clone(),
+                    terminal.clone(),
+                    surface_id.clone(),
+                    generation,
+                    Rc::new(move |outcome| {
+                        if let Some(sender) = close_completed_tx.borrow_mut().take() {
+                            let _ = sender.send(outcome);
+                        }
+                    }),
+                );
+                while glib::MainContext::default().iteration(false) {}
+                let dialog = embedded_close_confirmation_for(&parent)
+                    .expect("second embedded close request should show a confirmation dialog");
+                let confirm = find_button(dialog.upcast_ref(), &|button| {
+                    button.has_css_class("destructive-action")
+                })
+                .expect("confirmation should have a destructive button");
+                confirm.emit_clicked();
+                let close_outcome = glib::MainContext::default()
+                    .block_on(close_completed_rx)
+                    .expect("generation-bound close should report completion");
+
+                assert!(!dialog.is_visible());
+                assert_eq!(close_outcome, GenerationCloseOutcome::Closed);
+                assert!(model.lock().unwrap().surface(&surface_id).is_none());
+                assert!(!surface_exists_in_backend(terminal.as_ref(), &surface_id));
+                parent.close();
+            });
+        });
+    }
+
+    #[test]
+    fn stale_embedded_close_request_does_not_show_confirmation() {
+        let _ = crate::test_env::with_gtk_test(|| {
+            crate::test_env::with_isolated_user_dirs(|| {
+                let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+                let (terminal_tx, terminal_rx) = mpsc::channel();
+                let terminal = Arc::new(GtkTerminalBackend::new(terminal_tx));
+                let state = SocketAppState::new(
+                    model.clone(),
+                    terminal.clone(),
+                    "/bin/sh",
+                    PathBuf::from(std::env::var("XDG_RUNTIME_DIR").unwrap()).join("forktty.sock"),
+                )
+                .with_notification_dispatch(false);
+                let surface_id = model
+                    .lock()
+                    .unwrap()
+                    .create_workspace("main", Path::new("/tmp"))
+                    .focused_surface_id;
+                spawn_focused_surface_if_needed(&state).unwrap();
+                let stale_generation = match terminal_rx.recv().unwrap() {
+                    GtkTerminalCommand::Spawn { generation, .. } => generation,
+                    _ => panic!("expected first embedded spawn command"),
+                };
+                terminal.close(&surface_id).unwrap();
+                assert!(matches!(
+                    terminal_rx.recv().unwrap(),
+                    GtkTerminalCommand::Close { .. }
+                ));
+                let replacement_request = {
+                    let model = model.lock().unwrap();
+                    SpawnRequest::for_surface(
+                        model.surface(&surface_id).unwrap(),
+                        state.shell.clone(),
+                        state.socket_path.clone(),
+                    )
+                };
+                terminal.spawn(replacement_request).unwrap();
+                assert!(matches!(
+                    terminal_rx.recv().unwrap(),
+                    GtkTerminalCommand::Spawn { .. }
+                ));
+                let parent = adw::ApplicationWindow::builder().build();
+
+                defer_embedded_close_request_confirmation(
+                    parent.clone(),
+                    state,
+                    terminal,
+                    surface_id.clone(),
+                    stale_generation,
+                );
+                while glib::MainContext::default().iteration(false) {}
+
+                assert!(embedded_close_confirmation_for(&parent).is_none());
+                assert!(model.lock().unwrap().surface(&surface_id).is_some());
+                parent.close();
+            });
+        });
+    }
+
+    #[test]
+    fn embedded_close_confirmation_does_not_close_replacement_generation() {
+        let _ = crate::test_env::with_gtk_test(|| {
+            crate::test_env::with_isolated_user_dirs(|| {
+                let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+                let (terminal_tx, terminal_rx) = mpsc::channel();
+                let terminal = Arc::new(GtkTerminalBackend::new(terminal_tx));
+                let state = SocketAppState::new(
+                    model.clone(),
+                    terminal.clone(),
+                    "/bin/sh",
+                    PathBuf::from(std::env::var("XDG_RUNTIME_DIR").unwrap()).join("forktty.sock"),
+                )
+                .with_notification_dispatch(false);
+                let surface_id = model
+                    .lock()
+                    .unwrap()
+                    .create_workspace("main", Path::new("/tmp"))
+                    .focused_surface_id;
+                spawn_focused_surface_if_needed(&state).unwrap();
+                let stale_generation = match terminal_rx.recv().unwrap() {
+                    GtkTerminalCommand::Spawn { generation, .. } => generation,
+                    _ => panic!("expected first embedded spawn command"),
+                };
+                let parent = adw::ApplicationWindow::builder().build();
+                defer_embedded_close_request_confirmation(
+                    parent.clone(),
+                    state.clone(),
+                    terminal.clone(),
+                    surface_id.clone(),
+                    stale_generation,
+                );
+                while glib::MainContext::default().iteration(false) {}
+                let dialog = embedded_close_confirmation_for(&parent)
+                    .expect("current embedded close request should show confirmation");
+
+                terminal.close(&surface_id).unwrap();
+                assert!(matches!(
+                    terminal_rx.recv().unwrap(),
+                    GtkTerminalCommand::Close { .. }
+                ));
+                let replacement_request = {
+                    let model = model.lock().unwrap();
+                    SpawnRequest::for_surface(
+                        model.surface(&surface_id).unwrap(),
+                        state.shell.clone(),
+                        state.socket_path.clone(),
+                    )
+                };
+                terminal.spawn(replacement_request).unwrap();
+                assert!(matches!(
+                    terminal_rx.recv().unwrap(),
+                    GtkTerminalCommand::Spawn { .. }
+                ));
+
+                let confirm = find_button(dialog.upcast_ref(), &|button| {
+                    button.has_css_class("destructive-action")
+                })
+                .expect("confirmation should have a destructive button");
+                confirm.emit_clicked();
+
+                assert!(model.lock().unwrap().surface(&surface_id).is_some());
+                assert!(surface_exists_in_backend(terminal.as_ref(), &surface_id));
+                parent.close();
+            });
+        });
+    }
+
+    #[test]
+    fn embedded_zoom_adjustment_replays_the_global_level() {
+        assert_eq!(embedded_zoom_adjustment(0), None);
+        assert_eq!(
+            embedded_zoom_adjustment(3),
+            Some((EmbeddedSurfaceAction::IncreaseFontSize, 3))
+        );
+        assert_eq!(
+            embedded_zoom_adjustment(-2),
+            Some((EmbeddedSurfaceAction::DecreaseFontSize, 2))
+        );
     }
 }

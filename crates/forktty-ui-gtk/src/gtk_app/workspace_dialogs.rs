@@ -13,15 +13,18 @@ pub(super) fn open_workspace_dialog(parent: &adw::ApplicationWindow, state: &Soc
         if response == gtk::ResponseType::Accept {
             match dialog.file().and_then(|file| file.path()) {
                 Some(path) => {
-                    if let Err(err) = open_workspace_from_path(&state, path) {
-                        eprintln!("Failed to open workspace: {err}");
-                        create_global_notification(
-                            &state,
-                            "Open Workspace Failed",
-                            &err,
-                            NotificationKind::Error,
-                        );
-                    }
+                    let state = state.clone();
+                    glib::MainContext::default().spawn_local(async move {
+                        if let Err(err) = open_workspace_from_path(&state, path).await {
+                            eprintln!("Failed to open workspace: {err}");
+                            create_global_notification(
+                                &state,
+                                "Open Workspace Failed",
+                                &err,
+                                NotificationKind::Error,
+                            );
+                        }
+                    });
                 }
                 None => create_global_notification(
                     &state,
@@ -36,7 +39,7 @@ pub(super) fn open_workspace_dialog(parent: &adw::ApplicationWindow, state: &Soc
     dialog.show();
 }
 
-pub(super) fn open_workspace_from_path(
+pub(super) async fn open_workspace_from_path(
     state: &SocketAppState,
     path: PathBuf,
 ) -> Result<(), String> {
@@ -49,6 +52,7 @@ pub(super) fn open_workspace_from_path(
         .filter(|name| !name.trim().is_empty())
         .unwrap_or("workspace")
         .to_string();
+    let _surface_set_guard = state.surface_set_guard().await;
     let (workspace, previous_active_id) = {
         let mut model = state
             .model
@@ -70,11 +74,19 @@ pub(super) fn open_workspace_from_path(
 }
 
 pub(super) fn create_plain_workspace(state: &SocketAppState) {
+    let state = state.clone();
+    glib::MainContext::default().spawn_local(async move {
+        let _ = create_plain_workspace_transaction(&state).await;
+    });
+}
+
+pub(super) async fn create_plain_workspace_transaction(state: &SocketAppState) -> bool {
+    let _surface_set_guard = state.surface_set_guard().await;
     let cwd = default_startup_workspace_dir();
     let (workspace, previous_active_id) = {
         let mut model = match state.model.lock() {
             Ok(model) => model,
-            Err(_) => return,
+            Err(_) => return false,
         };
         let previous_active_id = model.active_workspace_id();
         (model.create_auto_named_workspace(cwd), previous_active_id)
@@ -92,8 +104,10 @@ pub(super) fn create_plain_workspace(state: &SocketAppState) {
             &err.to_string(),
             NotificationKind::Error,
         );
+        false
     } else {
         save_session_from_state(state);
+        true
     }
 }
 
@@ -129,23 +143,17 @@ pub(super) fn rename_workspace_gtk(
     Ok(())
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(super) fn close_active_workspace(state: &SocketAppState) {
-    let workspace_id = {
-        let model = match state.model.lock() {
-            Ok(model) => model,
-            Err(_) => return,
-        };
-        let Some(workspace) = model.active_workspace() else {
-            return;
-        };
-        workspace.id
-    };
-    close_workspace_by_id(state, &workspace_id);
+pub(super) fn close_workspace_by_id(state: &SocketAppState, workspace_id: &str) {
+    let state = state.clone();
+    let workspace_id = workspace_id.to_string();
+    glib::MainContext::default().spawn_local(async move {
+        close_workspace_by_id_transaction(&state, &workspace_id).await;
+    });
 }
 
-pub(super) fn close_workspace_by_id(state: &SocketAppState, workspace_id: &str) {
-    let (workspace, surface_ids, is_last_workspace) = {
+pub(super) async fn close_workspace_by_id_transaction(state: &SocketAppState, workspace_id: &str) {
+    let _surface_set_guard = state.surface_set_guard().await;
+    let (workspace, surfaces, is_last_workspace) = {
         let model = match state.model.lock() {
             Ok(model) => model,
             Err(_) => return,
@@ -157,14 +165,14 @@ pub(super) fn close_workspace_by_id(state: &SocketAppState, workspace_id: &str) 
         else {
             return;
         };
-        let surface_ids = model
-            .list_surfaces(Some(&workspace.id))
-            .into_iter()
-            .map(|surface| surface.id)
-            .collect::<Vec<_>>();
+        let surfaces = model.list_surfaces(Some(&workspace.id));
         let is_last_workspace = model.list_workspaces().len() == 1;
-        (workspace, surface_ids, is_last_workspace)
+        (workspace, surfaces, is_last_workspace)
     };
+    let surface_ids = surfaces
+        .iter()
+        .map(|surface| surface.id.clone())
+        .collect::<Vec<_>>();
 
     if is_last_workspace {
         let (replacement, previous_active_id) = {
@@ -188,7 +196,7 @@ pub(super) fn close_workspace_by_id(state: &SocketAppState, workspace_id: &str) 
             notify_close_workspace_failed(state, &message);
             return;
         }
-        if let Err(err) = close_terminal_surfaces(state, &surface_ids) {
+        if let Err(err) = close_terminal_surfaces(state, &surfaces) {
             let mut message = err.to_string();
             if let Err(cleanup_err) =
                 forget_terminal_surface_gtk(state, &replacement.focused_surface_id)
@@ -210,11 +218,16 @@ pub(super) fn close_workspace_by_id(state: &SocketAppState, workspace_id: &str) 
             };
             let _ = model.close_workspace(WorkspaceSelector::Id(&workspace.id));
         }
+        if let Err(err) =
+            forktty_socket::evict_hook_session_targets_for_surfaces(state, &surface_ids)
+        {
+            eprintln!("Failed to clean up closed workspace hook state: {err}");
+        }
         save_session_from_state(state);
         return;
     }
 
-    if let Err(err) = close_terminal_surfaces(state, &surface_ids) {
+    if let Err(err) = close_terminal_surfaces(state, &surfaces) {
         notify_close_workspace_failed(state, &err.to_string());
         return;
     }
@@ -225,6 +238,9 @@ pub(super) fn close_workspace_by_id(state: &SocketAppState, workspace_id: &str) 
             Err(_) => return,
         };
         let _ = model.close_workspace(WorkspaceSelector::Id(&workspace.id));
+    }
+    if let Err(err) = forktty_socket::evict_hook_session_targets_for_surfaces(state, &surface_ids) {
+        eprintln!("Failed to clean up closed workspace hook state: {err}");
     }
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to keep a workspace terminal alive: {err}");
@@ -245,12 +261,30 @@ pub(super) fn spawn_workspace_terminal_gtk(
 
 pub(super) fn close_terminal_surfaces(
     state: &SocketAppState,
-    surface_ids: &[String],
+    surfaces: &[Surface],
 ) -> Result<(), TerminalError> {
-    for surface_id in surface_ids {
-        match state.terminal.close(surface_id) {
-            Ok(()) | Err(TerminalError::NotFound(_)) => {}
-            Err(err) => return Err(err),
+    let mut closed = Vec::new();
+    for surface in surfaces {
+        match state.terminal.close(&surface.id) {
+            Ok(()) => closed.push(surface.clone()),
+            Err(TerminalError::NotFound(_)) => {}
+            Err(err) => {
+                let restore_failures = closed
+                    .iter()
+                    .filter_map(|closed_surface| {
+                        spawn_surface_gtk(state, closed_surface)
+                            .err()
+                            .map(|restore_err| format!("{}: {restore_err}", closed_surface.id))
+                    })
+                    .collect::<Vec<_>>();
+                if restore_failures.is_empty() {
+                    return Err(err);
+                }
+                return Err(TerminalError::Backend(format!(
+                    "{err}; terminal restore failed: {}",
+                    restore_failures.join("; ")
+                )));
+            }
         }
     }
     Ok(())
@@ -282,11 +316,17 @@ pub(super) fn create_global_notification(
     body: &str,
     kind: NotificationKind,
 ) {
-    if let Ok(mut model) = state.model.lock() {
-        let notification = model.create_notification(title, body, kind, None, None);
-        if state.notification_dispatch {
-            dispatch_notification_with_loaded_config(&notification);
-        }
+    let creation = {
+        let Ok(mut model) = state.model.lock() else {
+            return;
+        };
+        model.create_notification_with_evictions(title, body, kind, None, None)
+    };
+    for notification_id in creation.evicted_desktop_notification_ids {
+        forktty_core::close_desktop_notification(&notification_id);
+    }
+    if state.notification_dispatch {
+        dispatch_notification_with_loaded_config(&creation.notification);
     }
 }
 
@@ -312,9 +352,18 @@ pub(super) fn create_local_notification_with_kind(
     else {
         return;
     };
-    let notification =
-        model.create_notification(title, body, kind, Some(workspace_id), Some(surface_id));
+    let creation = model.create_notification_with_evictions(
+        title,
+        body,
+        kind,
+        Some(workspace_id),
+        Some(surface_id),
+    );
+    drop(model);
+    for notification_id in creation.evicted_desktop_notification_ids {
+        forktty_core::close_desktop_notification(&notification_id);
+    }
     if state.notification_dispatch {
-        dispatch_notification_with_loaded_config(&notification);
+        dispatch_notification_with_loaded_config(&creation.notification);
     }
 }

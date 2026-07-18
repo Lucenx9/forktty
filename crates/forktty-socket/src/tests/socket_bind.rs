@@ -1,6 +1,125 @@
 //! Socket bind, capacity, and existing-socket probe regression tests.
 
 use super::*;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::fs::MetadataExt as _;
+
+fn runtime_socket_tempdir() -> super::test_runtime::PrivateRuntimeTempDir {
+    super::test_runtime::private_runtime_tempdir("forktty-socket-bind-")
+}
+
+fn bind_zero_backlog_listener(socket_path: &Path) -> OwnedFd {
+    let (addr, addr_len) = unix_socket_address(socket_path).unwrap();
+    // SAFETY: plain socket(2); the result is checked before use.
+    let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
+    assert!(fd >= 0, "{}", io::Error::last_os_error());
+    // SAFETY: freshly created descriptor owned by no one else.
+    let listener = unsafe { OwnedFd::from_raw_fd(fd) };
+    // SAFETY: `addr` is a valid sockaddr_un of `addr_len` bytes.
+    let bound = unsafe {
+        libc::bind(
+            listener.as_raw_fd(),
+            &addr as *const libc::sockaddr_un as *const libc::sockaddr,
+            addr_len,
+        )
+    };
+    assert_eq!(bound, 0, "{}", io::Error::last_os_error());
+    // SAFETY: listen(2) on the bound descriptor.
+    assert_eq!(unsafe { libc::listen(listener.as_raw_fd(), 0) }, 0);
+    listener
+}
+
+fn saturate_accept_backlog(socket_path: &Path) -> Vec<StdUnixStream> {
+    let mut held = Vec::new();
+    for _ in 0..16 {
+        match connect_unix_stream_with_timeout(socket_path, Duration::from_millis(100)) {
+            Ok(stream) => held.push(stream),
+            Err(err) if err.kind() == io::ErrorKind::TimedOut => return held,
+            Err(err) => panic!("unexpected backlog connect error: {err}"),
+        }
+    }
+    panic!("accept backlog never filled");
+}
+
+#[test]
+fn bounded_connect_reaches_accepting_listener_and_restores_blocking_mode() {
+    use std::io::{BufRead as _, Write as _};
+
+    let dir = runtime_socket_tempdir();
+    let socket_path = dir.path().join("accepting.sock");
+    let listener = StdUnixListener::bind(&socket_path).unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = String::new();
+        std::io::BufReader::new(stream.try_clone().unwrap())
+            .read_line(&mut request)
+            .unwrap();
+        stream.write_all(b"pong\n").unwrap();
+        request
+    });
+
+    let mut stream =
+        connect_unix_stream_with_timeout(&socket_path, Duration::from_secs(5)).unwrap();
+    // SAFETY: fcntl(2) reads flags from a live descriptor owned by `stream`.
+    let flags = unsafe { libc::fcntl(stream.as_raw_fd(), libc::F_GETFL) };
+    assert!(flags >= 0, "{}", io::Error::last_os_error());
+    assert_eq!(flags & libc::O_NONBLOCK, 0);
+
+    stream.write_all(b"ping\n").unwrap();
+    let mut reply = String::new();
+    std::io::BufReader::new(stream.try_clone().unwrap())
+        .read_line(&mut reply)
+        .unwrap();
+    assert_eq!(reply, "pong\n");
+    assert_eq!(server.join().unwrap(), "ping\n");
+}
+
+#[test]
+fn bounded_connect_does_not_attempt_after_deadline() {
+    let dir = runtime_socket_tempdir();
+    let socket_path = dir.path().join("accepting-but-expired.sock");
+    let listener = StdUnixListener::bind(&socket_path).unwrap();
+    listener.set_nonblocking(true).unwrap();
+
+    let error = connect_unix_stream_with_timeout(&socket_path, Duration::ZERO).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        io::ErrorKind::WouldBlock
+    );
+}
+
+#[test]
+fn bounded_connect_hits_deadline_when_accept_backlog_is_full() {
+    let dir = runtime_socket_tempdir();
+    let socket_path = dir.path().join("busy.sock");
+    let _listener = bind_zero_backlog_listener(&socket_path);
+    let _held = saturate_accept_backlog(&socket_path);
+
+    let started = std::time::Instant::now();
+    let error =
+        connect_unix_stream_with_timeout(&socket_path, Duration::from_millis(150)).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    assert!(error.to_string().contains("accept backlog"));
+    assert!(started.elapsed() < Duration::from_secs(2));
+}
+
+#[test]
+fn bind_treats_backlogged_socket_as_occupied_and_preserves_inode() {
+    let dir = runtime_socket_tempdir();
+    let socket_path = dir.path().join("occupied.sock");
+    let _listener = bind_zero_backlog_listener(&socket_path);
+    let _held = saturate_accept_backlog(&socket_path);
+    let inode = fs::symlink_metadata(&socket_path).unwrap().ino();
+
+    let error = bind_socket_listener(&socket_path, false).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+    assert!(error.to_string().contains("already in use"));
+    assert_eq!(fs::symlink_metadata(&socket_path).unwrap().ino(), inode);
+}
 
 fn probe_socket_with_response(response: &'static str) -> bool {
     use std::io::{BufRead as _, Write as _};
@@ -117,7 +236,7 @@ fn transient_accept_errors_cover_fd_exhaustion() {
 
 #[tokio::test]
 async fn serve_exits_when_shutdown_fires_without_client_activity() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = runtime_socket_tempdir();
     let socket_path = dir.path().join("forktty.sock");
     let listener = bind_socket_listener(&socket_path, false).unwrap();
     let (state, _backend) = test_state();
@@ -143,7 +262,7 @@ async fn serve_exits_when_shutdown_fires_without_client_activity() {
 fn bind_socket_listener_rejects_broken_socket_symlink() {
     use std::os::unix::fs::symlink;
 
-    let dir = tempfile::tempdir().unwrap();
+    let dir = runtime_socket_tempdir();
     let socket_path = dir.path().join("forktty.sock");
     symlink(dir.path().join("missing.sock"), &socket_path).unwrap();
 
@@ -161,7 +280,7 @@ fn bind_socket_listener_rejects_broken_socket_symlink() {
 
 #[test]
 fn bind_socket_listener_creates_owner_only_socket() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = runtime_socket_tempdir();
     let socket_path = dir.path().join("forktty.sock");
 
     let listener = bind_socket_listener(&socket_path, false).unwrap();
@@ -179,7 +298,7 @@ fn bind_socket_listener_creates_owner_only_socket() {
 
 #[test]
 fn bind_socket_listener_cleans_up_staging_and_stays_connectable() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = runtime_socket_tempdir();
     let socket_path = dir.path().join("forktty.sock");
 
     let listener = bind_socket_listener(&socket_path, false).unwrap();

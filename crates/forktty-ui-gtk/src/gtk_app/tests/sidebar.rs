@@ -80,6 +80,19 @@ fn closed_terminal_status_blocks_auto_spawn() {
 }
 
 #[test]
+fn rollback_spawn_failure_status_blocks_auto_spawn() {
+    let status = StatusEntry {
+        key: surface_status_key("surface-1"),
+        label: "Terminal".to_string(),
+        value: "Spawn failed: backend unavailable".to_string(),
+        color: Some("red".to_string()),
+    };
+
+    assert!(status_entry_suggests_error(&status));
+    assert!(surface_status_blocks_auto_spawn(&[status], "surface-1"));
+}
+
+#[test]
 fn sidebar_badge_ignores_stale_surface_exit_status() {
     let mut model = WorkspaceModel::new();
     model.create_workspace("main", "/tmp");
@@ -142,6 +155,144 @@ fn workspace_meta_line_keeps_workspace_root_without_agent_resume_cwd() {
 
     assert!(meta.ends_with("/tmp/project"), "{meta}");
     assert!(!meta.contains("subdir"), "{meta}");
+}
+
+#[test]
+fn workspace_meta_line_formats_ssh_readiness() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_ssh_workspace("remote", "/tmp", "user@example.com".to_string());
+
+    assert_eq!(
+        workspace_meta_line(&workspace, Some(("user@example.com", true)), None,),
+        "ssh:user@example.com · connected · /tmp"
+    );
+    assert_eq!(
+        workspace_meta_line(&workspace, Some(("user@example.com", false)), None,),
+        "ssh:user@example.com · disconnected · /tmp"
+    );
+}
+
+#[test]
+fn sidebar_snapshot_tracks_ssh_child_exit_and_restart_lifecycle() {
+    crate::test_env::with_isolated_user_dirs(|| {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (tx, rx) = mpsc::channel();
+        let terminal = Arc::new(GtkTerminalBackend::new(tx));
+        let socket_path =
+            PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap()).join("forktty.sock");
+        let state = SocketAppState::new(model.clone(), terminal.clone(), "/bin/sh", socket_path)
+            .with_notification_dispatch(false);
+        let (workspace_id, surface) = {
+            let mut model = model.lock().unwrap();
+            let workspace =
+                model.create_ssh_workspace("remote", "/tmp", "user@example.com".to_string());
+            let surface = model
+                .surface(&workspace.focused_surface_id)
+                .unwrap()
+                .clone();
+            (workspace.id, surface)
+        };
+
+        spawn_surface_gtk(&state, &surface).unwrap();
+        let first_generation = match rx.recv().unwrap() {
+            GtkTerminalCommand::Spawn {
+                request,
+                generation,
+            } => {
+                assert_eq!(request.surface_id, surface.id);
+                assert_eq!(
+                    Path::new(&request.shell)
+                        .file_name()
+                        .and_then(|name| name.to_str()),
+                    Some("ssh")
+                );
+                assert_eq!(request.args, ["user@example.com"]);
+                generation
+            }
+            _ => panic!("expected initial SSH spawn command"),
+        };
+        assert_eq!(first_generation, 1);
+        terminal
+            .mark_surface_ready_for_generation(&surface.id, first_generation)
+            .unwrap();
+
+        let connected = sidebar_snapshot(&state);
+        assert_eq!(
+            connected.rows[0].meta,
+            "ssh:user@example.com · connected · /tmp"
+        );
+
+        let pid_removal_called = Cell::new(false);
+        assert!(commit_embedded_child_exit_for_generation(
+            &terminal,
+            &model,
+            &workspace_id,
+            &surface.id,
+            first_generation,
+            Some(0),
+            || pid_removal_called.set(true),
+        )
+        .unwrap()
+        .is_none());
+        assert!(pid_removal_called.get());
+        let (_, _, ready_after_exit) = terminal.runtime_entry_for_test(&surface.id).unwrap();
+        assert!(!ready_after_exit);
+        let exited = sidebar_snapshot(&state);
+        assert_eq!(
+            exited.rows[0].meta,
+            "ssh:user@example.com · disconnected · /tmp"
+        );
+        assert_ne!(exited.signature, connected.signature);
+
+        assert!(glib::MainContext::new().block_on(restart_surface_transaction(&state, &surface.id)));
+        match rx.recv().unwrap() {
+            GtkTerminalCommand::Close {
+                surface_id,
+                generation,
+            } => {
+                assert_eq!(surface_id, surface.id);
+                assert_eq!(generation, first_generation);
+            }
+            _ => panic!("expected SSH close command before restart"),
+        }
+        let restarted_generation = match rx.recv().unwrap() {
+            GtkTerminalCommand::Spawn {
+                request,
+                generation,
+            } => {
+                assert_eq!(request.surface_id, surface.id);
+                assert_eq!(
+                    Path::new(&request.shell)
+                        .file_name()
+                        .and_then(|name| name.to_str()),
+                    Some("ssh")
+                );
+                assert_eq!(request.args, ["user@example.com"]);
+                generation
+            }
+            _ => panic!("expected replacement SSH spawn command"),
+        };
+        assert!(restarted_generation > first_generation);
+        assert!(matches!(
+            terminal.mark_surface_ready_for_generation(&surface.id, first_generation),
+            Err(TerminalError::NotReady(_))
+        ));
+        let restarting = sidebar_snapshot(&state);
+        assert_eq!(
+            restarting.rows[0].meta,
+            "ssh:user@example.com · disconnected · /tmp"
+        );
+
+        terminal
+            .mark_surface_ready_for_generation(&surface.id, restarted_generation)
+            .unwrap();
+        let reconnected = sidebar_snapshot(&state);
+        assert_eq!(
+            reconnected.rows[0].meta,
+            "ssh:user@example.com · connected · /tmp"
+        );
+        assert_ne!(reconnected.signature, restarting.signature);
+    });
 }
 
 #[test]

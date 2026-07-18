@@ -45,6 +45,59 @@ These are public, tested, and user-facing, but still evolving:
 | Events | `events.subscribe` |
 | Agent lifecycle maintenance | `agent.hibernate`, `agent.reclaim.plan`, `agent.reclaim` |
 
+Worktree Create and Attach are idempotent for an exact
+`(worktree_name, canonical_worktree_path)` identity: a retry selects the
+existing workspace, returns the same workspace ID, and allocates no new modeled
+surface.
+Same-named worktrees at different canonical paths are different identities.
+Within one running ForkTTY process, these mutations share the same exclusive
+transaction with GTK worktree actions and retain it through commit or complete
+rollback; this is process-local coordination, not a cross-process or
+distributed Git lock. Remove quiesces the exact target by suppressing
+controller auto-spawn while its terminals close, and keeps that suppression
+through model commit or the complete rollback restoration attempt. Terminal
+respawn during rollback can itself fail; ForkTTY then records a blocking
+terminal error status before releasing suppression.
+
+## Response and Projection Contracts
+
+- Normal JSON-RPC response lines are compact-encoded and capped at 64 MiB,
+  including the newline. If a result would exceed the cap, ForkTTY returns a
+  compact `response_too_large` error with the original request id.
+- `notification.list` returns one oldest-to-newest page. `limit` defaults to
+  200 and accepts 1–200; optional `before_id` is an exclusive retained-item
+  cursor. With no cursor, the newest page is returned. Updated notifications
+  move to the newest page while preserving their id.
+- Notification create/list responses and `context.snapshot` share the same
+  projection. Terminal metadata is retained except for binary
+  `terminal_metadata.icon_data`; context snapshots independently cap their
+  notification projection to the newest 100 matching items while risk checks
+  still inspect the full matching set. Hook prompt correlation remains private
+  runtime state and does not add fields to this projection. Accepted
+  permission/elicitation results mark only the matching in-app history read and
+  close its desktop notification; providers without a result correlation id
+  resolve only the newest compatible older prompt. Stale events are inert, and session cleanup or
+  target removal clears affected correlations while preserving unrelated unread
+  attention.
+- Remote rows set `connected` from backend readiness, not runtime inventory
+  presence. Diagnostic runtime fields such as `pid`, dimensions, and `shell`
+  may remain populated while `connected` is false. This is local terminal-I/O
+  readiness, not an independent SSH heartbeat, network probe, or authentication
+  check.
+
+## Socket Connection and Shutdown
+
+- Official clients and startup collision checks use one deadline-bounded
+  nonblocking AF_UNIX connector. A full Linux accept backlog (`EAGAIN`) retries
+  with a fresh descriptor until the deadline; timeout means occupied/foreign,
+  never stale, and does not replace or unlink the existing socket inode.
+- A successful bounded connection is returned in blocking mode before normal
+  JSON-RPC or probe reads and writes begin.
+- GTK close first stops new dispatch while keeping the UI alive, then drains
+  admitted requests and waits for the socket runtime to drop. Only afterward
+  does ForkTTY snapshot scrollback, synchronize live cwd values, save the
+  session, clean PTY persistence when configured, and perform the final close.
+
 ## Source-only / Experimental
 
 Browser methods are source-only behind the `browser` feature and are not shipped

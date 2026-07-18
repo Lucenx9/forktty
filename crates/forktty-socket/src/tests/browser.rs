@@ -3,6 +3,34 @@
 use super::*;
 
 #[tokio::test]
+async fn browser_open_waits_for_surface_set_guard_before_model_commit() {
+    let (state, _backend) = test_state();
+    let workspace_id = state.model.lock().unwrap().active_workspace().unwrap().id;
+    let guard = state.surface_set_guard().await;
+    let open_state = state.clone();
+    let mut open = tokio::spawn(async move {
+        dispatch(
+            &open_state,
+            "browser.open",
+            json!({"workspace_id": workspace_id, "url": "https://example.com"}),
+        )
+        .await
+    });
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut open)
+            .await
+            .is_err(),
+        "browser topology creation must wait for the surface transaction"
+    );
+    assert_eq!(state.model.lock().unwrap().list_surfaces(None).len(), 1);
+
+    drop(guard);
+    open.await.unwrap().unwrap();
+    assert_eq!(state.model.lock().unwrap().list_surfaces(None).len(), 2);
+}
+
+#[tokio::test]
 async fn browser_open_creates_browser_surface_and_navigate_updates_url() {
     let (state, _backend) = test_state();
     let created = dispatch(&state, "workspace.create", json!({"name": "w"}))

@@ -24,6 +24,9 @@ pub(super) struct TerminalController {
     container: gtk::Box,
     parent_window: adw::ApplicationWindow,
     pub(super) model: Arc<Mutex<WorkspaceModel>>,
+    /// Concrete twin of `SocketAppState::terminal`, retained for private
+    /// generation checks that are intentionally absent from the public trait.
+    backend: Arc<GtkTerminalBackend>,
     state: Option<SocketAppState>,
     toast_handle: Option<ToastHandle>,
     pub(super) widgets: BTreeMap<String, GhosttyTerminalWidget>,
@@ -36,13 +39,8 @@ pub(super) struct TerminalController {
     maximized_pane: bool,
     /// Spawned child PID per surface, used to discover listening ports.
     pub(super) surface_pids: Rc<RefCell<BTreeMap<String, SurfacePid>>>,
-    /// Current embedded Ghostty spawn token per surface. Timers and exit
-    /// handlers use this to avoid applying stale state after a newer spawn or
-    /// close for the same surface id.
-    embedded_spawn_tokens: Rc<RefCell<BTreeMap<String, u64>>>,
-    next_spawn_token: u64,
     pane_tab_strips: Rc<RefCell<Vec<PaneTabStrip>>>,
-    terminal_zoom_level: Cell<i32>,
+    terminal_zoom_level: Rc<Cell<i32>>,
     #[cfg(feature = "browser")]
     browser_panes: Rc<RefCell<BTreeMap<String, Rc<crate::browser_pane::BrowserPaneWidget>>>>,
 }
@@ -56,6 +54,25 @@ pub(super) struct PaneTabStrip {
     tab_widgets: Vec<gtk::Box>,
     labels: Vec<gtk::Label>,
     select_areas: Vec<gtk::Button>,
+}
+
+fn real_pane_count(pane_tree: Option<&PaneNode>) -> usize {
+    pane_tree.map(collect_panes).map_or(0, |panes| panes.len())
+}
+
+pub(super) fn normalize_maximized_pane_state(
+    maximized: bool,
+    pane_tree: Option<&PaneNode>,
+) -> bool {
+    maximized && real_pane_count(pane_tree) > 1
+}
+
+pub(super) fn toggle_maximized_pane_state(maximized: bool, pane_tree: Option<&PaneNode>) -> bool {
+    if maximized {
+        false
+    } else {
+        real_pane_count(pane_tree) > 1
+    }
 }
 
 fn surface_has_agent_session(surface: &forktty_core::Surface) -> bool {
@@ -142,16 +159,39 @@ fn queue_tab_focus_after_selection(
     );
 }
 
+pub(super) fn surface_is_eligible_for_auto_spawn(
+    statuses: &[StatusEntry],
+    suppressed_surface_ids: &BTreeSet<String>,
+    surface_id: &str,
+) -> bool {
+    !suppressed_surface_ids.contains(surface_id)
+        && !surface_status_blocks_auto_spawn(statuses, surface_id)
+}
+
+pub(super) fn execute_terminal_command<T>(
+    execution: &CommandExecution,
+    surface_id: &str,
+    generation: u64,
+    operation: impl FnOnce() -> Result<T, TerminalError>,
+) -> Option<Result<T, TerminalError>> {
+    if !execution.claim() {
+        return None;
+    }
+    Some(execution.run_if_current_generation(surface_id, generation, operation))
+}
+
 impl TerminalController {
     pub(super) fn new(
         container: gtk::Box,
         parent_window: adw::ApplicationWindow,
         model: Arc<Mutex<WorkspaceModel>>,
+        backend: Arc<GtkTerminalBackend>,
     ) -> Self {
         Self {
             container,
             parent_window,
             model,
+            backend,
             state: None,
             toast_handle: None,
             widgets: BTreeMap::new(),
@@ -163,10 +203,8 @@ impl TerminalController {
             last_chrome_signature: None,
             maximized_pane: false,
             surface_pids: Rc::new(RefCell::new(BTreeMap::new())),
-            embedded_spawn_tokens: Rc::new(RefCell::new(BTreeMap::new())),
-            next_spawn_token: 0,
             pane_tab_strips: Rc::new(RefCell::new(Vec::new())),
-            terminal_zoom_level: Cell::new(0),
+            terminal_zoom_level: Rc::new(Cell::new(0)),
             #[cfg(feature = "browser")]
             browser_panes: Rc::new(RefCell::new(BTreeMap::new())),
         }
@@ -186,77 +224,177 @@ impl TerminalController {
         }
     }
 
+    pub(super) fn backend_for_generation_checks(&self) -> Arc<GtkTerminalBackend> {
+        self.backend.clone()
+    }
+
+    /// Capture every live embedded pane's final scrollback tail. Ghostty reads
+    /// run without the model mutex; successful current-generation results are
+    /// committed together under one brief lock.
+    #[allow(dead_code)] // Used by the two-phase close finalizer introduced in Task 3.6.
+    pub(super) fn snapshot_live_embedded_scrollback(&self, lines: u32) {
+        let Some(embedder) = self.embedded_ghostty.as_ref() else {
+            return;
+        };
+        if lines == 0 || !embedder.supports_read_text() {
+            return;
+        }
+        let targets = self
+            .embedded_ghostty_panes
+            .iter()
+            .map(|(surface_id, pane)| (surface_id.clone(), pane.generation, pane.surface.clone()))
+            .collect::<Vec<_>>();
+        snapshot_current_generation_scrollback_with(
+            &self.backend,
+            &self.model,
+            targets,
+            |surface_id, widget| read_embedded_scrollback_tail(embedder, widget, surface_id, lines),
+        );
+    }
+
     pub(super) fn handle(&mut self, command: GtkTerminalCommand) {
         match command {
-            GtkTerminalCommand::Spawn(request) => self.spawn(request),
-            GtkTerminalCommand::ShowSurface { surface_id } => {
-                if let Ok(mut model) = self.model.lock() {
-                    let _ = model.focus_surface_and_select_workspace(&surface_id);
+            GtkTerminalCommand::Spawn {
+                request,
+                generation,
+            } => self.spawn(request, generation),
+            GtkTerminalCommand::ShowSurface {
+                surface_id,
+                generation,
+            } => {
+                let backend = self.backend.clone();
+                let focused =
+                    run_embedded_callback_for_generation(&backend, &surface_id, generation, || {
+                        if let Ok(mut model) = self.model.lock() {
+                            let _ = model.focus_surface_and_select_workspace(&surface_id);
+                        }
+                    });
+                if focused.is_some() {
+                    self.sync_model_focus_to_ui();
                 }
-                self.sync_model_focus_to_ui();
             }
             GtkTerminalCommand::SendText {
                 surface_id,
+                generation,
                 text,
+                execution,
                 reply,
             } => {
-                let result = if let Some(widget) = self.widgets.get(&surface_id) {
-                    widget.send_text(&text);
-                    Ok(())
-                } else if let Some(pane) = self.embedded_ghostty_panes.get(&surface_id) {
-                    match &self.embedded_ghostty {
-                        Some(embedder) => unsafe { embedder.send_text(&pane.surface, &text) }
-                            .map_err(TerminalError::Backend),
-                        None => Err(TerminalError::Backend(
-                            "embedded Ghostty GTK surface has no embedder".to_string(),
-                        )),
+                let result = execute_terminal_command(&execution, &surface_id, generation, || {
+                    if let Some(widget) = self.widgets.get(&surface_id) {
+                        widget.send_text(&text);
+                        Ok(())
+                    } else if let Some(pane) = self.embedded_ghostty_panes.get(&surface_id) {
+                        if run_embedded_pane_command_for_generation(
+                            pane.generation,
+                            generation,
+                            || (),
+                        )
+                        .is_none()
+                        {
+                            return Err(TerminalError::NotReady(surface_id.clone()));
+                        }
+                        match &self.embedded_ghostty {
+                            Some(embedder) => unsafe { embedder.send_text(&pane.surface, &text) }
+                                .map_err(TerminalError::Backend),
+                            None => Err(TerminalError::Backend(
+                                "embedded Ghostty GTK surface has no embedder".to_string(),
+                            )),
+                        }
+                    } else {
+                        Err(TerminalError::NotReady(surface_id.clone()))
                     }
-                } else {
-                    Err(TerminalError::NotReady(surface_id.clone()))
-                };
-                let _ = reply.send(result);
+                });
+                if let Some(result) = result {
+                    let _ = reply.send(result);
+                }
             }
             GtkTerminalCommand::ReadText {
                 surface_id,
+                generation,
                 capture,
                 max_bytes,
+                execution,
                 reply,
             } => {
-                let result = if let Some(widget) = self.widgets.get(&surface_id) {
-                    widget.read_text(&surface_id, capture, max_bytes)
-                } else if let Some(pane) = self.embedded_ghostty_panes.get(&surface_id) {
-                    match &self.embedded_ghostty {
-                        Some(embedder) if embedder.supports_read_text() => unsafe {
-                            embedder.read_text_snapshot(
-                                &pane.surface,
-                                &surface_id,
-                                capture,
-                                max_bytes,
-                            )
-                        },
-                        Some(_) => Err(TerminalError::Backend(
-                            "embedded Ghostty GTK library does not export read-text support"
-                                .to_string(),
-                        )),
-                        None => Err(TerminalError::Backend(
-                            "embedded Ghostty GTK surface has no embedder".to_string(),
-                        )),
+                let result = execute_terminal_command(&execution, &surface_id, generation, || {
+                    if let Some(widget) = self.widgets.get(&surface_id) {
+                        widget.read_text(&surface_id, capture, max_bytes)
+                    } else if let Some(pane) = self.embedded_ghostty_panes.get(&surface_id) {
+                        if run_embedded_pane_command_for_generation(
+                            pane.generation,
+                            generation,
+                            || (),
+                        )
+                        .is_none()
+                        {
+                            return Err(TerminalError::NotReady(surface_id.clone()));
+                        }
+                        match &self.embedded_ghostty {
+                            Some(embedder) if embedder.supports_read_text() => unsafe {
+                                embedder.read_text_snapshot(
+                                    &pane.surface,
+                                    &surface_id,
+                                    capture,
+                                    max_bytes,
+                                )
+                            },
+                            Some(_) => Err(TerminalError::Backend(
+                                "embedded Ghostty GTK library does not export read-text support"
+                                    .to_string(),
+                            )),
+                            None => Err(TerminalError::Backend(
+                                "embedded Ghostty GTK surface has no embedder".to_string(),
+                            )),
+                        }
+                    } else {
+                        Err(TerminalError::NotReady(surface_id.clone()))
                     }
-                } else {
-                    Err(TerminalError::NotReady(surface_id.clone()))
-                };
-                let _ = reply.send(result);
+                });
+                if let Some(result) = result {
+                    let _ = reply.send(result);
+                }
             }
             GtkTerminalCommand::Resize {
                 surface_id,
+                generation,
                 cols,
                 rows,
             } => {
-                if let Some(widget) = self.widgets.get(&surface_id) {
-                    widget.resize_cells(cols, rows);
+                if let Some(pane) = self.embedded_ghostty_panes.get(&surface_id) {
+                    let _ = run_embedded_pane_command_for_generation(
+                        pane.generation,
+                        generation,
+                        || (),
+                    );
+                    return;
                 }
+                let _ = run_embedded_callback_for_generation(
+                    &self.backend,
+                    &surface_id,
+                    generation,
+                    || {
+                        if let Some(widget) = self.widgets.get(&surface_id) {
+                            widget.resize_cells(cols, rows);
+                        }
+                    },
+                );
             }
-            GtkTerminalCommand::Close { surface_id } => {
+            GtkTerminalCommand::Close {
+                surface_id,
+                generation,
+            } => {
+                if let Some(pane) = self.embedded_ghostty_panes.get(&surface_id) {
+                    if run_embedded_pane_command_for_generation(pane.generation, generation, || ())
+                        .is_none()
+                    {
+                        return;
+                    }
+                } else if !self.widgets.contains_key(&surface_id) {
+                    // A close for an incarnation whose queued Spawn was already
+                    // rejected must not tear down a newer pending incarnation.
+                    return;
+                }
                 self.pending_spawns.remove(&surface_id);
                 if let (Some(embedder), Some(pane)) = (
                     self.embedded_ghostty.as_ref(),
@@ -280,7 +418,6 @@ impl TerminalController {
                 self.embedded_ghostty_panes.remove(&surface_id);
                 self.widgets.remove(&surface_id);
                 self.surface_pids.borrow_mut().remove(&surface_id);
-                self.embedded_spawn_tokens.borrow_mut().remove(&surface_id);
                 #[cfg(feature = "browser")]
                 if let Some(pane) = self.browser_panes.borrow_mut().remove(&surface_id) {
                     pane.prepare_close();
@@ -317,7 +454,14 @@ impl TerminalController {
         }
     }
 
-    fn spawn(&mut self, request: SpawnRequest) {
+    fn spawn(&mut self, request: SpawnRequest, generation: u64) {
+        if !self
+            .backend
+            .surface_generation_is_current(&request.surface_id, generation)
+            .unwrap_or(false)
+        {
+            return;
+        }
         if self.widgets.contains_key(&request.surface_id)
             || self
                 .embedded_ghostty_panes
@@ -326,7 +470,7 @@ impl TerminalController {
             return;
         }
         mark_spawn_command_pending(&mut self.pending_spawns, &request.surface_id);
-        match self.spawn_embedded_ghostty(request.clone()) {
+        match self.spawn_embedded_ghostty(request.clone(), generation) {
             Ok(()) => {}
             Err(err) => {
                 self.pending_spawns.remove(&request.surface_id);
@@ -339,9 +483,9 @@ impl TerminalController {
                         .as_ref()
                         .is_none_or(|state| state.notification_dispatch),
                 );
-                if let Some(state) = &self.state {
-                    let _ = state.terminal.close(&request.surface_id);
-                }
+                let _ = self
+                    .backend
+                    .close_for_generation(&request.surface_id, generation);
                 self.last_layout_signature = None;
                 self.rebuild_layout();
             }
@@ -350,6 +494,10 @@ impl TerminalController {
 
     pub(super) fn rebuild_layout(&mut self) {
         self.spawn_active_surfaces_if_needed();
+        self.rebuild_layout_without_surface_reconciliation();
+    }
+
+    fn rebuild_layout_without_surface_reconciliation(&mut self) {
         self.last_chrome_signature = None;
         // Drop browser panes whose surfaces were removed from the model so the
         // webviews don't linger after a model-driven (e.g. socket) close.
@@ -397,6 +545,7 @@ impl TerminalController {
         let Some((signature, pane_tree, focused_surface_id, workspace_id)) =
             active_layout_snapshot(&self.model)
         else {
+            self.maximized_pane = normalize_maximized_pane_state(self.maximized_pane, None);
             self.set_terminal_sibling_flags(&BTreeSet::new(), false);
             self.last_layout_signature = Some(EMPTY_LAYOUT_SIGNATURE.to_string());
             self.container.append(&empty_terminal_stage(
@@ -405,6 +554,7 @@ impl TerminalController {
             ));
             return;
         };
+        self.maximized_pane = normalize_maximized_pane_state(self.maximized_pane, Some(&pane_tree));
         let visible_tree = if self.maximized_pane {
             PaneNode::single_leaf(focused_surface_id.clone())
         } else {
@@ -430,7 +580,12 @@ impl TerminalController {
     }
 
     pub(super) fn toggle_maximized_pane(&mut self) {
-        self.maximized_pane = !self.maximized_pane;
+        let pane_tree = active_layout_snapshot(&self.model).map(|(_, tree, _, _)| tree);
+        let next = toggle_maximized_pane_state(self.maximized_pane, pane_tree.as_ref());
+        if next == self.maximized_pane {
+            return;
+        }
+        self.maximized_pane = next;
         self.last_layout_signature = None;
         self.rebuild_layout();
     }
@@ -473,6 +628,13 @@ impl TerminalController {
         let Some(state) = self.state.clone() else {
             return;
         };
+        // Rebuilds run from synchronous GTK callbacks and backend events. Do
+        // not block the main loop (or self-deadlock if an owning transaction
+        // triggered the event): the periodic layout refresh retries after the
+        // current topology transaction releases the shared guard.
+        let Some(_surface_set_guard) = state.try_surface_set_guard() else {
+            return;
+        };
         let backend_surface_ids = state
             .terminal
             .surfaces()
@@ -483,6 +645,7 @@ impl TerminalController {
                     .collect::<BTreeSet<_>>()
             })
             .unwrap_or_default();
+        let suppressed_surface_ids = state.suppressed_auto_spawn_surface_ids();
         let (surfaces, model_surface_ids) = {
             let Ok(model) = self.model.lock() else {
                 return;
@@ -495,8 +658,12 @@ impl TerminalController {
                 .list_surfaces(Some(&workspace.id))
                 .into_iter()
                 .map(|surface| {
-                    let blocked = surface_status_blocks_auto_spawn(&statuses, &surface.id);
-                    (surface, blocked)
+                    let eligible = surface_is_eligible_for_auto_spawn(
+                        &statuses,
+                        &suppressed_surface_ids,
+                        &surface.id,
+                    );
+                    (surface, eligible)
                 })
                 .collect::<Vec<_>>();
             // Reconcile against every workspace's surfaces, not just the active
@@ -530,8 +697,8 @@ impl TerminalController {
                 }
             }
         }
-        for (surface, auto_spawn_blocked) in surfaces {
-            if auto_spawn_blocked {
+        for (surface, auto_spawn_eligible) in surfaces {
+            if !auto_spawn_eligible {
                 continue;
             }
             if self.widgets.contains_key(&surface.id)
@@ -549,11 +716,22 @@ impl TerminalController {
             // Agent terminal surfaces rewrite to the provider resume argv.
             let base =
                 SpawnRequest::for_surface(&surface, state.shell.clone(), state.socket_path.clone());
-            let Some(request) = forktty_socket::spawn_request_for_surface(base, &surface) else {
-                continue;
-            };
             let surface_id = surface.id.clone();
             let workspace_id = surface.workspace_id.clone();
+            let request = match forktty_socket::spawn_request_for_surface(base, &surface) {
+                Ok(Some(request)) => request,
+                Ok(None) => continue,
+                Err(error) => {
+                    record_terminal_spawn_failure(
+                        &self.model,
+                        &workspace_id,
+                        &surface_id,
+                        &error.to_string(),
+                        state.notification_dispatch,
+                    );
+                    continue;
+                }
+            };
             mark_spawn_command_pending(&mut self.pending_spawns, &surface_id);
             if let Err(err) = state.terminal.spawn(request) {
                 self.pending_spawns.remove(&surface_id);
@@ -1271,9 +1449,7 @@ fn build_tab_context_menu(state: &SocketAppState, surface_id: &str) -> gtk::Popo
         Some("Ctrl+Shift+H"),
         false,
         move || {
-            focus_surface_and(&state_for_split, &split_id, |state| {
-                split_active_surface(state, SplitAxis::Horizontal)
-            });
+            request_split_surface_by_id(&state_for_split, &split_id, SplitAxis::Horizontal);
         },
     );
 
@@ -1287,9 +1463,7 @@ fn build_tab_context_menu(state: &SocketAppState, surface_id: &str) -> gtk::Popo
         Some(SPLIT_VERTICAL_SHORTCUT),
         false,
         move || {
-            focus_surface_and(&state_for_split, &split_id, |state| {
-                split_active_surface(state, SplitAxis::Vertical)
-            });
+            request_split_surface_by_id(&state_for_split, &split_id, SplitAxis::Vertical);
         },
     );
 
@@ -1341,6 +1515,77 @@ mod tests {
             tab_scroll_target(100.0, 100.0, 0.0, 220.0, 200.0, 40.0),
             Some(120.0)
         );
+    }
+
+    #[test]
+    fn controller_surface_reconciliation_defers_while_shared_surface_guard_is_held() {
+        let _ = crate::test_env::with_gtk_test(|| {
+            let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+            let workspace = model
+                .lock()
+                .unwrap()
+                .create_workspace("main", Path::new("/tmp"));
+            let (tx, rx) = mpsc::channel();
+            let backend = Arc::new(GtkTerminalBackend::new(tx));
+            let state = SocketAppState::new(
+                model.clone(),
+                backend.clone(),
+                "/bin/sh",
+                PathBuf::from("/tmp/forktty.sock"),
+            )
+            .with_notification_dispatch(false);
+            let container = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            let parent = adw::ApplicationWindow::builder().build();
+            let mut controller =
+                TerminalController::new(container, parent.clone(), model, backend.clone());
+            controller.attach_state(state.clone());
+
+            let surface_guard = glib::MainContext::new().block_on(state.surface_set_guard());
+            controller.spawn_active_surfaces_if_needed();
+            assert!(
+                matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)),
+                "controller reconciliation must not spawn while another topology transaction holds the surface guard"
+            );
+
+            drop(surface_guard);
+            controller.spawn_active_surfaces_if_needed();
+            assert!(matches!(
+                rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+                GtkTerminalCommand::Spawn { .. }
+            ));
+
+            backend
+                .spawn(SpawnRequest {
+                    surface_id: "orphan-surface".to_string(),
+                    workspace_id: workspace.id,
+                    shell: "/bin/sh".to_string(),
+                    args: Vec::new(),
+                    cwd: PathBuf::from("/tmp"),
+                    socket_path: PathBuf::from("/tmp/forktty.sock"),
+                    extra_env: Vec::new(),
+                    eligible_for_pty_persistence: false,
+                })
+                .unwrap();
+            assert!(matches!(
+                rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+                GtkTerminalCommand::Spawn { .. }
+            ));
+
+            let surface_guard = glib::MainContext::new().block_on(state.surface_set_guard());
+            controller.spawn_active_surfaces_if_needed();
+            assert!(
+                matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)),
+                "controller reconciliation must not reap while another topology transaction holds the surface guard"
+            );
+
+            drop(surface_guard);
+            controller.spawn_active_surfaces_if_needed();
+            assert!(matches!(
+                rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+                GtkTerminalCommand::Close { surface_id, .. } if surface_id == "orphan-surface"
+            ));
+            parent.close();
+        });
     }
 
     #[test]

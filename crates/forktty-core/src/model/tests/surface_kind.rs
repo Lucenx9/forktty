@@ -266,7 +266,7 @@ fn ssh_workspace_survives_session_round_trip() {
 
     let data = model.to_session_data();
     let mut restored = WorkspaceModel::new();
-    restored.restore_session(data);
+    restore_model_session(&mut restored, data);
 
     let surface = restored.surface(&ssh_id).expect("ssh surface restored");
     assert_eq!(
@@ -296,7 +296,7 @@ fn restore_session_preserves_browser_surface_kind() {
 
     let data = model.to_session_data();
     let mut restored = WorkspaceModel::new();
-    restored.restore_session(data);
+    restore_model_session(&mut restored, data);
 
     let surface = restored.surface(&browser_id).expect("surface restored");
     assert_eq!(

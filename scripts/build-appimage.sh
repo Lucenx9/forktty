@@ -12,9 +12,9 @@ APPIMAGE_DESKTOP_ID="dev.forktty.forktty"
 DESKTOP_FILE="$ROOT_DIR/packaging/linux/$APPIMAGE_DESKTOP_ID.desktop"
 ICON_FILE="$ROOT_DIR/packaging/linux/icons/forktty.png"
 APPSTREAM_FILE="$ROOT_DIR/packaging/linux/$APPIMAGE_DESKTOP_ID.metainfo.xml"
-# GUI-stack libraries bundled for portability. AppRun always adds
-# usr/lib/bundled to the search path, while display/font/GL/driver libraries
-# stay host-side through should_skip_appimage_lib().
+# GUI-stack fallback libraries bundled for portability. AppRun adds
+# usr/lib/bundled only when bundled mode is forced or the auto-mode host probe
+# fails, while display/font/GL/driver libraries stay host-side.
 BUNDLED_RUNTIME_LIBS=(
   "libgtk-4.so"
   "libadwaita-1.so"
@@ -94,9 +94,9 @@ should_skip_appimage_lib() {
 
 copy_appimage_runtime_libs() {
   local binary="$1"
-  # Bundled GUI-stack directory: AppRun always adds it to the search path so
-  # GTK/libadwaita availability does not depend on host packages. We still keep
-  # host display/font/GL/driver libraries via should_skip_appimage_lib().
+  # Bundled GUI-stack fallback directory: AppRun uses it in bundled mode or
+  # after an auto-mode host probe failure. We still keep host display/font/GL/
+  # driver libraries via should_skip_appimage_lib().
   local private_lib_dir="$APPDIR/usr/lib"
   local lib_dir="$APPDIR/usr/lib/bundled"
   local copied=0
@@ -564,23 +564,18 @@ export GDK_DISABLE
 # GTK/libadwaita fallback, but modern hosts should use their own GTK stack so it
 # can match the host fontconfig/display/GL driver stack. Force a choice with
 # FORKTTY_APPIMAGE_GTK_RUNTIME=bundled|host|auto when debugging packaging.
-host_gtk_stack_available() {
-  if command -v ldconfig >/dev/null 2>&1; then
-    cache="$(ldconfig -p 2>/dev/null || true)"
-  elif [ -x /sbin/ldconfig ]; then
-    cache="$(/sbin/ldconfig -p 2>/dev/null || true)"
-  else
-    return 1
-  fi
-  [ -n "$cache" ] || return 1
-  printf '%s\n' "$cache" | grep -q 'libgtk-4\.so\.1' || return 1
-  printf '%s\n' "$cache" | grep -q 'libadwaita-1\.so\.0' || return 1
+host_ld_library_path="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+host_gtk_stack_compatible() {
+  LD_LIBRARY_PATH="$host_ld_library_path" \
+  LD_PRELOAD="$HERE/usr/lib/ghostty-gtk-embed.so${LD_PRELOAD:+:$LD_PRELOAD}" \
+  LD_BIND_NOW=1 \
+  "$HERE/usr/bin/forktty" --version >/dev/null 2>&1
 }
 
 gtk_runtime="${FORKTTY_APPIMAGE_GTK_RUNTIME:-auto}"
 case "$gtk_runtime" in
   auto | "")
-    if host_gtk_stack_available; then
+    if host_gtk_stack_compatible; then
       use_bundled_gtk=0
     else
       use_bundled_gtk=1
@@ -601,7 +596,7 @@ esac
 if [ "$use_bundled_gtk" = 1 ]; then
   export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/bundled${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 else
-  export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  export LD_LIBRARY_PATH="$host_ld_library_path"
 fi
 if [ -n "${XDG_DATA_DIRS:-}" ]; then
   export XDG_DATA_DIRS="$HERE/usr/share:$XDG_DATA_DIRS"
