@@ -46,6 +46,10 @@ no socket I/O. The managed event counts are Codex 10, Claude 26 lifecycle / 29
 full, Antigravity 3, and OpenCode 11. Claude lifecycle excludes only
 `PreToolUse`, `PostToolUse`, and `PostToolUseFailure`; `PostToolBatch` remains.
 
+Non-attention hook notifications are logged without replacing the current
+lifecycle. In particular, an informational notification after `Stop` cannot
+change an idle session back to running.
+
 `Suspended` is a durable tombstone. Late hooks after hibernate cannot revive the
 session, publish side effects, or advance its event-order watermark; only an
 explicit resume may replace that lifecycle. Prompt request/result correlation is

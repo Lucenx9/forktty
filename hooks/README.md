@@ -142,7 +142,7 @@ They render in the ForkTTY UI status row and can be inspected from the CLI:
 
 | Key | Set on | Cleared on | Color semantics |
 |---|---|---|---|
-| `agent:<key>` | lifecycle, prompt, permission, tool, compact, stop, notification events | session-end | `green` ready, `blue` running, `yellow` needs input / compacting / permission, `red` error |
+| `agent:<key>` | lifecycle, prompt, permission, tool, compact, stop, and attention notification events | session-end | `green` ready, `blue` running, `yellow` needs input / compacting / permission, `red` error |
 | `agent:<key>:permission` | events that include `permission_mode` | session-end | `muted` for documented-safe or unknown modes, `yellow` for `acceptEdits`/`auto`/`dontAsk`, `red` for `bypassPermissions` |
 | `agent:claude:tokens` | prompt-submit (Claude only, when a transcript is available) | last Claude session ended, closed, forgotten, or hibernated | progress against `FORKTTY_HOOK_TOKEN_CEILING` (default 200,000) |
 
@@ -151,6 +151,9 @@ that are documented by the provider.
 Tool-use events keep `agent:<key>` as the compact `Running` lifecycle status;
 the exact tool name is recorded in hook log metadata instead of the primary
 status value so snapshots stay stable for automation.
+Non-attention notifications are logged without replacing the current lifecycle,
+so informational notifications arriving after `Stop` do not revive an idle
+workspace badge.
 For Codex and Claude Code, `SubagentStop` leaves the parent session `Running`
 because the event only reports a nested subagent completion. Claude Code
 `TeammateIdle` publishes `Ready` and persists the teammate lifecycle as idle.

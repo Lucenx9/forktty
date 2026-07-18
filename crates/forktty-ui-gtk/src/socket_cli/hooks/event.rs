@@ -566,17 +566,14 @@ impl<'a> HookActionBuilder<'a> {
 
     fn handle_notification(&self) -> Vec<(String, Value)> {
         if !hook_notification_needs_attention(self.payload, &self.message) {
-            return vec![
-                self.log(
-                    "info",
-                    if self.message.is_empty() {
-                        format!("{} notification", self.spec.label)
-                    } else {
-                        self.message.clone()
-                    },
-                ),
-                self.status("Running", "blue", self.event),
-            ];
+            return vec![self.log(
+                "info",
+                if self.message.is_empty() {
+                    format!("{} notification", self.spec.label)
+                } else {
+                    self.message.clone()
+                },
+            )];
         }
         let mut note = self.target.clone();
         note.insert(
