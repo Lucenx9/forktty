@@ -96,6 +96,16 @@ All notable changes to ForkTTY are documented here.
   current directory.
 - Newly created and restarted embedded Ghostty panes now reliably receive an
   initial non-zero layout and inherit the current global terminal zoom.
+- The GTK launcher now selects the new OpenGL renderer by the name supported by
+  the loaded GTK version (`ngl` through 4.18, `gl` from 4.20), avoiding the
+  renderer-rename warning while keeping the GTK 4.14 AppImage fallback working.
+- Closing or forgetting an embedded terminal now stops after a bounded wait if
+  a generation lease is stuck, reports the error, and leaves the surface state
+  registered for a safe retry instead of hanging removal or shutdown forever.
+- The packaged GTK/Ghostty smoke now accepts the documented bounded-fragment
+  `total_lines` fallback when the optional extended line-count ABI is absent,
+  so clean release builds validate the pinned vendor instead of only a locally
+  patched Ghostty checkout.
 - When the loaded Ghostty library provides the optional
   `ghostty_gtk_surface_read_text_limited_with_total_lines` extension, bounded
   reads report `total_lines` for the complete selected source rather than only

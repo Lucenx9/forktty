@@ -650,11 +650,24 @@ mod tests {
 
     fn with_env<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
         let _guard = ENV_LOCK.lock().unwrap();
-        let saved = vars
-            .iter()
-            .map(|(key, _)| ((*key).to_string(), std::env::var_os(key)))
+        // Tests may themselves run inside a ForkTTY AppImage pane. Clear its
+        // runtime and request-scoped values by default so environment-delta
+        // assertions do not depend on the parent terminal.
+        let mut updates = BTreeMap::from([
+            ("APPDIR", None),
+            ("APPIMAGE", None),
+            ("FORKTTY_APPIMAGE", None),
+            ("FORKTTY_APPIMAGE_DIR", None),
+            ("FORKTTY_SOCKET_PATH", None),
+            ("FORKTTY_SURFACE_ID", None),
+            ("FORKTTY_WORKSPACE_ID", None),
+        ]);
+        updates.extend(vars.iter().copied());
+        let saved = updates
+            .keys()
+            .map(|key| ((*key).to_string(), std::env::var_os(key)))
             .collect::<Vec<_>>();
-        for (key, value) in vars {
+        for (key, value) in updates {
             match value {
                 Some(value) => std::env::set_var(key, value),
                 None => std::env::remove_var(key),
@@ -667,6 +680,7 @@ mod tests {
                 None => std::env::remove_var(key),
             }
         }
+        drop(_guard);
         match result {
             Ok(value) => value,
             Err(payload) => resume_unwind(payload),

@@ -86,6 +86,96 @@ fn gtk_backend_runtime_entry_combines_generation_state_and_readiness() {
 }
 
 #[test]
+fn gtk_backend_close_deadline_keeps_leased_surface_registered() {
+    let (tx, rx) = mpsc::channel();
+    let backend = Arc::new(
+        GtkTerminalBackend::new_with_generation_lease_timeout_for_test(tx, Duration::ZERO),
+    );
+    backend.spawn(test_spawn_request()).unwrap();
+    let generation = match rx.recv().unwrap() {
+        GtkTerminalCommand::Spawn { generation, .. } => generation,
+        _ => panic!("expected spawn command"),
+    };
+
+    let (lease_acquired_tx, lease_acquired_rx) = mpsc::channel();
+    let (release_lease_tx, release_lease_rx) = mpsc::channel();
+    let lease_backend = backend.clone();
+    let lease = std::thread::spawn(move || {
+        lease_backend
+            .with_surface_generation("surface-1", generation, || {
+                lease_acquired_tx.send(()).unwrap();
+                release_lease_rx.recv().unwrap();
+            })
+            .unwrap();
+    });
+    lease_acquired_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("generation lease should be acquired");
+
+    let error = backend
+        .close_for_generation("surface-1", generation)
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("timed out waiting for generation leases"));
+    assert!(backend.runtime_entry_for_test("surface-1").is_ok());
+    assert!(rx.try_recv().is_err(), "timed-out close must not enqueue");
+
+    release_lease_tx.send(()).unwrap();
+    lease.join().unwrap();
+    backend
+        .close_for_generation("surface-1", generation)
+        .unwrap();
+    assert!(matches!(
+        rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+        GtkTerminalCommand::Close { .. }
+    ));
+}
+
+#[test]
+fn gtk_backend_forget_deadline_keeps_leased_surface_registered() {
+    let (tx, rx) = mpsc::channel();
+    let backend = Arc::new(
+        GtkTerminalBackend::new_with_generation_lease_timeout_for_test(tx, Duration::ZERO),
+    );
+    backend.spawn(test_spawn_request()).unwrap();
+    let generation = match rx.recv().unwrap() {
+        GtkTerminalCommand::Spawn { generation, .. } => generation,
+        _ => panic!("expected spawn command"),
+    };
+
+    let (lease_acquired_tx, lease_acquired_rx) = mpsc::channel();
+    let (release_lease_tx, release_lease_rx) = mpsc::channel();
+    let lease_backend = backend.clone();
+    let lease = std::thread::spawn(move || {
+        lease_backend
+            .with_surface_generation("surface-1", generation, || {
+                lease_acquired_tx.send(()).unwrap();
+                release_lease_rx.recv().unwrap();
+            })
+            .unwrap();
+    });
+    lease_acquired_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("generation lease should be acquired");
+
+    let error = backend.forget_surface("surface-1").unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("timed out waiting for generation leases"));
+    assert!(backend.runtime_entry_for_test("surface-1").is_ok());
+    assert!(rx.try_recv().is_err(), "timed-out forget must not enqueue");
+
+    release_lease_tx.send(()).unwrap();
+    lease.join().unwrap();
+    backend.forget_surface("surface-1").unwrap();
+    assert!(matches!(
+        backend.runtime_entry_for_test("surface-1"),
+        Err(TerminalError::NotFound(surface_id)) if surface_id == "surface-1"
+    ));
+}
+
+#[test]
 fn gtk_backend_stale_ready_callback_cannot_mark_replacement_ready() {
     let (tx, rx) = mpsc::channel();
     let backend = GtkTerminalBackend::new(tx);

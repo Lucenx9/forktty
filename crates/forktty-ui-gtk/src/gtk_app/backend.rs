@@ -246,6 +246,7 @@ pub(super) struct GtkTerminalBackend {
     sender: mpsc::Sender<GtkTerminalCommand>,
     runtime: Arc<Mutex<GtkTerminalRuntime>>,
     generation_leases_released: Arc<std::sync::Condvar>,
+    generation_lease_timeout: Duration,
     command_reply_timeout: Duration,
     #[cfg(test)]
     after_enqueue_hook: OneShotHook,
@@ -261,6 +262,7 @@ impl GtkTerminalBackend {
             sender,
             runtime: Arc::new(Mutex::new(GtkTerminalRuntime::default())),
             generation_leases_released: Arc::new(std::sync::Condvar::new()),
+            generation_lease_timeout: Duration::from_secs(2),
             command_reply_timeout: Duration::from_secs(2),
             #[cfg(test)]
             after_enqueue_hook: OneShotHook::default(),
@@ -281,10 +283,58 @@ impl GtkTerminalBackend {
         backend
     }
 
+    #[cfg(test)]
+    pub(super) fn new_with_generation_lease_timeout_for_test(
+        sender: mpsc::Sender<GtkTerminalCommand>,
+        generation_lease_timeout: Duration,
+    ) -> Self {
+        let mut backend = Self::new(sender);
+        backend.generation_lease_timeout = generation_lease_timeout;
+        backend
+    }
+
     fn send_command(&self, command: GtkTerminalCommand) -> Result<(), TerminalError> {
         self.sender
             .send(command)
             .map_err(|err| TerminalError::Backend(err.to_string()))
+    }
+
+    fn wait_for_generation_leases<'a>(
+        &self,
+        runtime: std::sync::MutexGuard<'a, GtkTerminalRuntime>,
+        surface_id: &str,
+        generation: u64,
+    ) -> Result<std::sync::MutexGuard<'a, GtkTerminalRuntime>, TerminalError> {
+        let entry = runtime
+            .surfaces
+            .get(surface_id)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        if entry.generation != generation {
+            return Err(TerminalError::NotReady(surface_id.to_string()));
+        }
+        if entry.active_generation_leases == 0 {
+            return Ok(runtime);
+        }
+
+        let (runtime, _) = self
+            .generation_leases_released
+            .wait_timeout_while(runtime, self.generation_lease_timeout, |runtime| {
+                runtime.surfaces.get(surface_id).is_some_and(|entry| {
+                    entry.generation == generation && entry.active_generation_leases > 0
+                })
+            })
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        let entry = runtime
+            .surfaces
+            .get(surface_id)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        if entry.generation != generation {
+            return Err(TerminalError::NotReady(surface_id.to_string()));
+        }
+        if entry.active_generation_leases > 0 {
+            return Err(generation_lease_timeout_error(surface_id));
+        }
+        Ok(runtime)
     }
 
     pub(super) fn mark_surface_ready_for_generation(
@@ -528,26 +578,11 @@ impl GtkTerminalBackend {
         surface_id: &str,
         generation: u64,
     ) -> Result<(), TerminalError> {
-        let mut runtime = self
+        let runtime = self
             .runtime
             .lock()
             .map_err(|_| TerminalError::LockPoisoned)?;
-        loop {
-            let entry = runtime
-                .surfaces
-                .get(surface_id)
-                .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
-            if entry.generation != generation {
-                return Err(TerminalError::NotReady(surface_id.to_string()));
-            }
-            if entry.active_generation_leases == 0 {
-                break;
-            }
-            runtime = self
-                .generation_leases_released
-                .wait(runtime)
-                .map_err(|_| TerminalError::LockPoisoned)?;
-        }
+        let mut runtime = self.wait_for_generation_leases(runtime, surface_id, generation)?;
         let removed = runtime
             .surfaces
             .remove(surface_id)
@@ -844,23 +879,16 @@ impl TerminalBackend for GtkTerminalBackend {
     }
 
     fn forget_surface(&self, surface_id: &str) -> Result<(), TerminalError> {
-        let mut runtime = self
+        let runtime = self
             .runtime
             .lock()
             .map_err(|_| TerminalError::LockPoisoned)?;
-        loop {
-            let entry = runtime
-                .surfaces
-                .get(surface_id)
-                .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
-            if entry.active_generation_leases == 0 {
-                break;
-            }
-            runtime = self
-                .generation_leases_released
-                .wait(runtime)
-                .map_err(|_| TerminalError::LockPoisoned)?;
-        }
+        let generation = runtime
+            .surfaces
+            .get(surface_id)
+            .map(|entry| entry.generation)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        let mut runtime = self.wait_for_generation_leases(runtime, surface_id, generation)?;
         runtime
             .surfaces
             .remove(surface_id)
@@ -890,4 +918,10 @@ impl TerminalBackend for GtkTerminalBackend {
             .map(|entry| entry.state.clone())
             .collect())
     }
+}
+
+fn generation_lease_timeout_error(surface_id: &str) -> TerminalError {
+    TerminalError::Backend(format!(
+        "timed out waiting for generation leases on terminal surface {surface_id}"
+    ))
 }

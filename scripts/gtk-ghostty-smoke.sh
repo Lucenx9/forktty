@@ -263,7 +263,9 @@ scrollback_fill_command="i=0; while [ \$i -lt $scrollback_fill_lines ]; do print
 send_text_wait "$surface_id" "${scrollback_fill_command}"$'\r' "scrollback fill terminal"
 wait_surface_contains "$surface_id" "forktty-smoke-scroll-fill-complete" "scrollback fill marker"
 "$BIN" --socket "$FORKTTY_SOCKET_PATH" read-screen --surface-id "$surface_id" --scope all --max-bytes 64 --json |
-  python3 -c 'import json,sys; snapshot=json.load(sys.stdin); assert snapshot["truncated"] and snapshot["total_lines"] > snapshot["lines"], snapshot'
+  # The extended total-lines ABI is optional. Its fallback can report only the
+  # returned fragment's line count, but must still stay bounded and coherent.
+  python3 -c 'import json,sys; snapshot=json.load(sys.stdin); assert snapshot["truncated"] and snapshot["total_lines"] >= snapshot["lines"], snapshot'
 if surface_contains "$surface_id" "$scrollback_restore_marker"; then
   echo "gtk-ghostty smoke: scrollback restore marker remained visible after fill" >&2
   exit 1
