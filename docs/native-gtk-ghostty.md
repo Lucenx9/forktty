@@ -53,9 +53,10 @@ The AppImage target is the primary portable Linux package for alpha
 releases. `scripts/build-appimage.sh` installs the vendored libghostty-vt,
 embedded Ghostty GTK library, and gtk4-layer-shell into `AppDir/usr/lib`,
 and resolves the `forktty` binary's `ldd` graph into
-`AppDir/usr/lib/bundled` for GTK/libadwaita portability. AppRun always adds
-that bundled directory to the library path so terminal panes do not depend on
-host GTK packages. Per the canonical AppImage excludelist it never bundles
+`AppDir/usr/lib/bundled` for GTK/libadwaita portability. AppRun prefers a
+compatible host GTK stack and adds that bundled directory when forced or when
+the auto-mode loader probe fails. Per the canonical AppImage excludelist it
+never bundles
 glibc, fontconfig/freetype/harfbuzz, Wayland/X11 client libraries, the
 OpenGL/Vulkan/Mesa driver stack, GSettings schemas, GIO modules, or desktop
 session services, so the AppImage relies on those parts of the host system.

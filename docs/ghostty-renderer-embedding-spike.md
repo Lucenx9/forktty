@@ -117,9 +117,10 @@ manual-only checks and their deferred validation status live in
 ## Landed and probe-verified: scrollback restore ABI
 
 Embedded panes can already *snapshot* their scrollback into the session (ForkTTY
-reads the tail through `ghostty_gtk_surface_read_text_limited_with_total_lines`
-and stores it on
-the surface). *Restoring* that scrollback on respawn needs a Ghostty-side export
+reads the tail through the bounded limited-read ABI and stores it on the surface;
+an optional `ghostty_gtk_surface_read_text_limited_with_total_lines`
+extension preserves the complete source line count). *Restoring* that scrollback
+on respawn needs a Ghostty-side export
 that pushes bytes into a surface's terminal state (scrollback/screen)
 **without** writing them to the child PTY — otherwise old output would be
 replayed as shell input.

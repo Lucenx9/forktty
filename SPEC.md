@@ -97,7 +97,7 @@ Native session file:
 ~/.local/share/forktty/session-v2.json
 ```
 
-The native session includes workspace order, active workspace, pane tree, focused surface, each local terminal pane's last live cwd, branch, worktree metadata, generated workspace/surface id high-water marks, and opt-in bounded plain-text tails when `appearance.persistent_scrollback_lines` is greater than zero. Embedded Ghostty panes source those tails from the bounded end of full scrollback when `ghostty_gtk_surface_read_text_limited` is available, and fall back to recent visible text with older embedding libraries. The current `ghostty_gtk_surface_read_text_limited_with_total_lines` ABI also reports the complete selected source line count before byte truncation, so socket snapshots keep an accurate `total_lines`. It does not serialize running PTY process handles; the session file records only durable identifiers (surface ids and agent resume metadata). Process survival across a UI restart is a separate, opt-in mechanism (`general.persist_terminal_processes`) described under [PTY process persistence](#pty-process-persistence), keyed by the persisted surface id rather than by any serialized handle.
+The native session includes workspace order, active workspace, pane tree, focused surface, each local terminal pane's last live cwd, branch, worktree metadata, generated workspace/surface id high-water marks, and opt-in bounded plain-text tails when `appearance.persistent_scrollback_lines` is greater than zero. Embedded Ghostty panes source those tails from the bounded end of full scrollback when `ghostty_gtk_surface_read_text_limited` is available, and fall back to recent visible text with older embedding libraries. When the loaded library also provides the optional `ghostty_gtk_surface_read_text_limited_with_total_lines` extension, socket snapshots report `total_lines` for the complete selected source before byte truncation; without it, they report the bounded fragment's line count. It does not serialize running PTY process handles; the session file records only durable identifiers (surface ids and agent resume metadata). Process survival across a UI restart is a separate, opt-in mechanism (`general.persist_terminal_processes`) described under [PTY process persistence](#pty-process-persistence), keyed by the persisted surface id rather than by any serialized handle.
 
 Browser panes persist their surface URL and profile ID in the same session
 model. WebKit processes, in-memory page state, and terminal PTY state are
@@ -214,7 +214,7 @@ Ghostty compatibility scope:
 | Ghostty config area | ForkTTY status |
 | --- | --- |
 | Config discovery | Supported for `~/.config/ghostty/config`, `~/.config/ghostty/config.ghostty`, recursive `config-file`, and Ghostty theme directories, with ForkTTY's regular-file and size guards. |
-| Terminal appearance | Supported for terminal font family/style/synthetic-style fallbacks, font size, font features/variations, foreground/background, cursor colors/blinking, DECSCUSR-backed cursor style defaults, selection colors/clear-on-typing/clear-on-copy/word-chars/copy-on-select, clipboard trim-trailing-spaces/codepoint-map, right-click action, scroll-to-bottom, scrollbar policy, mouse reporting/shift-capture including XTSHIFTESCAPE overrides, mouse-hide-while-typing, bold, faint, ANSI palette, named colors, short/full hex colors, `theme`, cell/text-decoration/cursor metric adjustment, image storage limit, mouse scroll multiplier, and inactive split dimming. Embedded panes follow Ghostty's bounded `scrollback-limit` budget and pack the surface in a GTK scrolled window so retained history is reachable from the UI. |
+| Terminal appearance | Supported for terminal font family/style/synthetic-style fallbacks, font size, font features/variations, foreground/background, cursor colors, DECSCUSR-backed cursor style defaults, selection colors/clear-on-typing/clear-on-copy/word-chars/copy-on-select, clipboard trim-trailing-spaces/codepoint-map, right-click action, scroll-to-bottom, scrollbar policy, mouse reporting/shift-capture including XTSHIFTESCAPE overrides, mouse-hide-while-typing, bold, faint, ANSI palette, named colors, short/full hex colors, `theme`, cell/text-decoration/cursor metric adjustment, image storage limit, mouse scroll multiplier, and inactive split dimming. Embedded panes follow Ghostty's bounded `scrollback-limit` budget and pack the surface in a GTK scrolled window so retained history is reachable from the UI. |
 | Runtime terminal state | Delegated to `libghostty-vt` for VT parsing, key/paste encoding, OSC 8 links, OSC 9/99 notifications, bracketed paste/focus mode mirrors, XTSHIFTESCAPE mouse-shift capture overrides, selection formatting, word selection, and Kitty image protocol storage/loading media plus PNG decode/placement geometry. ForkTTY snapshots Kitty placements across the GTK boundary as RGBA buffers bounded by the rendered pixel footprint, not the stored source image size. Shell startup integration uses Ghostty's upstream shell scripts when resources are available. |
 | ForkTTY-owned UI | Intentionally not read from Ghostty config. Window layout, tabs, splits, sidebar, socket automation, worktrees, agent controls, notifications UI, and session restore use ForkTTY config/session state. |
 | Ghostty GUI/window/platform options | Ignored unless ForkTTY has the same runtime concept. Examples include Ghostty keybinds, quick terminal, window decorations, titlebar/font, shell integration UI, macOS-only options, shaders, background blur/opacity, and Linux cgroup settings. |
@@ -507,14 +507,16 @@ Removal uses its prepared verified target path to match the exact modeled
 workspace. Before terminal close, every target surface ID is registered as
 auto-spawn suppressed, so GTK reconciliation cannot recreate a terminal while
 the model still describes the workspace. Suppression remains active through
-either successful filesystem removal plus model commit or the complete rollback
-restoration attempt. A partial close attempts to restore the surfaces already
-closed; a filesystem finish failure also attempts to restore the prior active
-selection and runtime surfaces. Removing the final workspace stages a
-replacement before destructive close and attempts to remove that replacement
-again on rollback. If a rollback spawn fails, ForkTTY records a terminal error
-status before releasing suppression; that status continues to block automatic
-respawn.
+either a filesystem removal that has started plus model commit or the complete
+rollback restoration attempt. A partial close or pre-destructive filesystem
+failure attempts to restore the prior active selection and any surfaces already
+closed. Once verified target deletion starts, even a later removal error is
+treated as irreversible: model removal commits and ForkTTY does not respawn
+terminals into a potentially partial checkout. Removing the final workspace
+stages a replacement before destructive close and attempts to remove that
+replacement again on rollback. If a rollback spawn fails, ForkTTY records a
+terminal error status before releasing suppression; that status continues to
+block automatic respawn.
 
 ## Notifications
 

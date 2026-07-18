@@ -12,9 +12,9 @@ APPIMAGE_DESKTOP_ID="dev.forktty.forktty"
 DESKTOP_FILE="$ROOT_DIR/packaging/linux/$APPIMAGE_DESKTOP_ID.desktop"
 ICON_FILE="$ROOT_DIR/packaging/linux/icons/forktty.png"
 APPSTREAM_FILE="$ROOT_DIR/packaging/linux/$APPIMAGE_DESKTOP_ID.metainfo.xml"
-# GUI-stack libraries bundled for portability. AppRun always adds
-# usr/lib/bundled to the search path, while display/font/GL/driver libraries
-# stay host-side through should_skip_appimage_lib().
+# GUI-stack fallback libraries bundled for portability. AppRun adds
+# usr/lib/bundled only when bundled mode is forced or the auto-mode host probe
+# fails, while display/font/GL/driver libraries stay host-side.
 BUNDLED_RUNTIME_LIBS=(
   "libgtk-4.so"
   "libadwaita-1.so"
@@ -94,9 +94,9 @@ should_skip_appimage_lib() {
 
 copy_appimage_runtime_libs() {
   local binary="$1"
-  # Bundled GUI-stack directory: AppRun always adds it to the search path so
-  # GTK/libadwaita availability does not depend on host packages. We still keep
-  # host display/font/GL/driver libraries via should_skip_appimage_lib().
+  # Bundled GUI-stack fallback directory: AppRun uses it in bundled mode or
+  # after an auto-mode host probe failure. We still keep host display/font/GL/
+  # driver libraries via should_skip_appimage_lib().
   local private_lib_dir="$APPDIR/usr/lib"
   local lib_dir="$APPDIR/usr/lib/bundled"
   local copied=0

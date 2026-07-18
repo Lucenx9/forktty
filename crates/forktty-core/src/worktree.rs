@@ -161,6 +161,9 @@ pub enum WorktreeRemovalProgress {
     /// Neither the verified checkout nor its Git registration was removed.
     #[default]
     Prepared,
+    /// Removing the verified checkout was attempted and may have partially
+    /// succeeded, so its runtime surfaces cannot be restored safely.
+    TargetRemovalStarted,
     /// The verified checkout was removed, but registration pruning did not
     /// complete successfully.
     TargetRemoved,
@@ -262,8 +265,9 @@ fn finish_preflighted_worktree_removal(
     // A target that was absent must not be re-checked here: it could have been
     // created by another process in the meantime.
     if let Some(target_path) = verified_target {
-        std::fs::remove_dir_all(target_path)?;
-        *progress = WorktreeRemovalProgress::TargetRemoved;
+        remove_verified_worktree_target_with(target_path, progress, |target_path| {
+            std::fs::remove_dir_all(target_path)
+        })?;
     }
     if let Err(error) = prune_worktree_registration(worktree) {
         if matches!(
@@ -280,6 +284,20 @@ fn finish_preflighted_worktree_removal(
             let _ = branch.delete();
         }
     }
+    Ok(())
+}
+
+fn remove_verified_worktree_target_with<F>(
+    target_path: &Path,
+    progress: &mut WorktreeRemovalProgress,
+    remove_target: F,
+) -> Result<(), WorktreeError>
+where
+    F: FnOnce(&Path) -> Result<(), std::io::Error>,
+{
+    *progress = WorktreeRemovalProgress::TargetRemovalStarted;
+    remove_target(target_path)?;
+    *progress = WorktreeRemovalProgress::TargetRemoved;
     Ok(())
 }
 
@@ -1730,6 +1748,28 @@ mod tests {
         assert!(marker.exists());
         assert!(repo.find_worktree(&prepared.worktree_name).is_err());
         assert_eq!(progress, WorktreeRemovalProgress::RegistrationRemoved);
+    }
+
+    #[test]
+    fn removal_progress_becomes_irreversible_before_target_deletion_completes() {
+        let target = tempfile::tempdir().unwrap();
+        let marker = target.path().join("removed-before-error.txt");
+        fs::write(&marker, "partial removal").unwrap();
+        let mut progress = WorktreeRemovalProgress::Prepared;
+
+        let result =
+            remove_verified_worktree_target_with(target.path(), &mut progress, |target_path| {
+                fs::remove_file(target_path.join("removed-before-error.txt"))?;
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "injected partial removal failure",
+                ))
+            });
+
+        assert!(matches!(result, Err(WorktreeError::Io(_))));
+        assert!(!marker.exists());
+        assert_eq!(progress, WorktreeRemovalProgress::TargetRemovalStarted);
+        assert!(progress.requires_model_commit());
     }
 
     #[test]

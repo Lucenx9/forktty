@@ -132,7 +132,6 @@ verify_ghostty_gtk_lib_symbols() {
     ghostty_gtk_surface_new_with_working_directory_and_command \
     ghostty_gtk_surface_new_with_working_directory_command_and_scrollback_limit \
     ghostty_gtk_surface_read_text_limited \
-    ghostty_gtk_surface_read_text_limited_with_total_lines \
     ghostty_gtk_surface_exit_code \
     ghostty_gtk_surface_child_pid \
     ghostty_gtk_surface_perform_action \

@@ -8,9 +8,10 @@ usage() {
 Usage: scripts/check-appimage-bundled-container.sh [APPIMAGE_OR_APPDIR]
 
 Extracts the packaged AppImage when needed, masks host GTK/libadwaita inside a
-bubblewrap sandbox, and verifies that bundled AppRun can load ForkTTY's hidden
-appimage-child-exec helper. The helper must sanitize LD_LIBRARY_PATH, execute a
-host target, and preserve TERM=xterm-ghostty plus Ghostty's Bash integration.
+bubblewrap sandbox, verifies that default AppRun auto mode falls back to the
+bundled stack, and checks ForkTTY's hidden appimage-child-exec helper. The helper
+must sanitize LD_LIBRARY_PATH, execute a host target, and preserve
+TERM=xterm-ghostty plus Ghostty's Bash integration.
 When the path is omitted, exactly one target/packaging/appimage/*.AppImage must
 exist.
 USAGE
@@ -168,6 +169,22 @@ if bwrap "${bwrap_args[@]}" \
   >"$host_probe_stdout" 2>"$host_probe_stderr"
 then
   echo "appimage bundled container: host GTK remained usable inside the sandbox" >&2
+  exit 1
+fi
+
+auto_probe_stdout="$TMP_DIR/auto-probe.stdout"
+auto_probe_stderr="$TMP_DIR/auto-probe.stderr"
+if ! bwrap "${bwrap_args[@]}" \
+  /usr/bin/env -i \
+  HOME=/tmp \
+  PATH=/usr/bin:/bin \
+  LD_LIBRARY_PATH=/unusable-host-loader \
+  APPDIR="$APP_ROOT" \
+  "$APP_RUN" --version \
+  >"$auto_probe_stdout" 2>"$auto_probe_stderr"
+then
+  echo "appimage bundled container: AppRun auto mode did not fall back to bundled GTK" >&2
+  grep -v '^$' "$auto_probe_stderr" >&2 || true
   exit 1
 fi
 

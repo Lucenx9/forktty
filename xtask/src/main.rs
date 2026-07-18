@@ -134,7 +134,6 @@ const GHOSTTY_GTK_PROBE_REQUIRED_SYMBOLS: &[&str] = &[
     "ghostty_gtk_surface_new_with_working_directory_and_command",
     "ghostty_gtk_surface_new_with_working_directory_command_and_scrollback_limit",
     "ghostty_gtk_surface_read_text_limited",
-    "ghostty_gtk_surface_read_text_limited_with_total_lines",
     "ghostty_gtk_surface_exit_code",
     "ghostty_gtk_surface_child_pid",
     "ghostty_gtk_surface_perform_action",
@@ -427,6 +426,7 @@ fn check_packaging_ghostty_gtk_lib_guard() -> Result<()> {
         .map_err(|err| format!("failed to read {}: {err}", bundled_check_path.display()))?;
     for needle in [
         "FORKTTY_APPIMAGE_GTK_RUNTIME=bundled",
+        "appimage bundled container: AppRun auto mode did not fall back to bundled GTK",
         "appimage-child-exec",
         "--unset",
         "LD_LIBRARY_PATH",
@@ -469,6 +469,7 @@ host_gtk_stack_compatible() {
         "grep -q 'libadwaita-1\\.so\\.0'",
         "export LD_PRELOAD",
         "export LD_BIND_NOW",
+        "AppRun always adds",
     ] {
         if appimage.contains(obsolete) {
             return Err(format!(
@@ -799,6 +800,9 @@ mod tests {
         "ghostty_gtk_surface_new",
     ];
 
+    const GHOSTTY_GTK_OPTIONAL_TOTAL_LINES_SYMBOL: &str =
+        "ghostty_gtk_surface_read_text_limited_with_total_lines";
+
     const EXPECTED_GHOSTTY_GTK_PROBE_REQUIRED_SYMBOLS: &[&str] = &[
         "ghostty_gtk_context_new",
         "ghostty_gtk_context_free",
@@ -810,7 +814,6 @@ mod tests {
         "ghostty_gtk_surface_new_with_working_directory_and_command",
         "ghostty_gtk_surface_new_with_working_directory_command_and_scrollback_limit",
         "ghostty_gtk_surface_read_text_limited",
-        "ghostty_gtk_surface_read_text_limited_with_total_lines",
         "ghostty_gtk_surface_exit_code",
         "ghostty_gtk_surface_child_pid",
         "ghostty_gtk_surface_perform_action",
@@ -1067,6 +1070,23 @@ printf '%s\n' 'libgtk-4.so.1 => /host/libgtk-4.so.1' 'libadwaita-1.so.0 => /host
                 "missing-symbol error did not name {missing}: {stderr}"
             );
         }
+    }
+
+    #[test]
+    fn ghostty_probe_accepts_library_without_optional_total_lines_symbol() {
+        let fixture = GhosttyProbeFixture::new();
+        let symbols = EXPECTED_GHOSTTY_GTK_PROBE_REQUIRED_SYMBOLS
+            .iter()
+            .copied()
+            .filter(|symbol| *symbol != GHOSTTY_GTK_OPTIONAL_TOTAL_LINES_SYMBOL)
+            .collect::<Vec<_>>();
+
+        let output = fixture.run(&symbols);
+        assert!(
+            output.status.success(),
+            "probe rejected a library without optional {GHOSTTY_GTK_OPTIONAL_TOTAL_LINES_SYMBOL}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]

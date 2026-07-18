@@ -93,12 +93,12 @@ All notable changes to ForkTTY are documented here.
   shell, so new tabs, splits, restored panes, and Worktree actions inherit the
   current directory.
 - Newly created and restarted embedded Ghostty panes now reliably receive an
-  initial non-zero layout and inherit the current global terminal zoom, while
-  cursor blinking follows Ghostty's configured or default behavior instead of
-  being forcibly disabled by the GTK embed.
-- Bounded embedded Ghostty reads now report `total_lines` for the complete
-  selected source rather than only the returned byte fragment, and the session
-  documentation consistently describes full-scrollback tail capture.
+  initial non-zero layout and inherit the current global terminal zoom.
+- When the loaded Ghostty library provides the optional
+  `ghostty_gtk_surface_read_text_limited_with_total_lines` extension, bounded
+  reads report `total_lines` for the complete selected source rather than only
+  the returned byte fragment. Libraries with only the base limited-read ABI
+  remain byte-bounded and report the returned fragment's line count.
 - AppImage `auto` mode now uses an eager loader compatibility probe and selects
   host GTK only when both the ForkTTY binary and embedded Ghostty library load;
   otherwise it falls back to the bundled GTK/libadwaita stack. Release smoke
@@ -118,10 +118,12 @@ All notable changes to ForkTTY are documented here.
   canonical paths stay distinct. GTK and socket
   worktree mutations now share process-local serialization, and removal
   retains that transaction even if its requesting future is cancelled while
-  suppressing automatic terminal respawn and quiescing the exact target;
-  partial close or filesystem failures trigger explicit runtime/model rollback,
-  with failed terminal respawns recorded as blocking error status so
-  reconciliation does not retry blindly.
+  suppressing automatic terminal respawn and quiescing the exact target. Partial
+  close or pre-destructive filesystem failures trigger explicit runtime/model
+  rollback; once verified target deletion starts, removal is conservatively
+  committed even if filesystem cleanup later fails, avoiding a respawn into a
+  partially deleted checkout. Failed rollback terminal respawns are recorded as
+  blocking error status so reconciliation does not retry blindly.
 - Local terminal panes now track the live shell working directory, use it for new
   tabs and splits, expose it through socket context and sidebar chrome, and
   autosave distinct per-pane directories for restart instead of reverting to
