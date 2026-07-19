@@ -216,4 +216,15 @@ mod tests {
         assert_eq!(plan.mode, ImportMode::SingleDestination);
         assert!(plan.entries.is_empty());
     }
+
+    #[test]
+    fn normalized_trims_and_lowercases() {
+        assert_eq!(normalized("Hello"), "hello");
+        assert_eq!(normalized("  Hello  "), "hello");
+        assert_eq!(normalized("  HeLlO  "), "hello");
+        assert_eq!(normalized("ǅ"), "ǆ");
+        assert_eq!(normalized(""), "");
+        assert_eq!(normalized("   "), "");
+        assert_eq!(normalized("\t \n"), "");
+    }
 }
