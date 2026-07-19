@@ -75,6 +75,7 @@ impl TerminalController {
         request: SpawnRequest,
         generation: u64,
     ) -> Result<(), String> {
+        validate_spawn_cwd(&request.cwd)?;
         let embedder = self.embedded_ghostty()?;
         let config = config::load_config().unwrap_or_default();
         let persistent_scrollback_lines = config.appearance.persistent_scrollback_lines;
@@ -685,6 +686,41 @@ fn defer_embedded_close_request_confirmation_with_completion(
     });
 }
 
+/// Refuse to spawn into a missing working directory. Upstream Ghostty treats
+/// an inaccessible cwd as "ignore and inherit" (src/termio/Exec.zig), which
+/// would silently hand the shell — and any agent driving it — a session in
+/// whatever directory the ForkTTY process itself runs from, e.g. after the
+/// surface's worktree was removed out from under it. Failing here routes the
+/// spawn into the visible spawn-failure status instead.
+fn validate_spawn_cwd(cwd: &Path) -> Result<(), String> {
+    use std::os::unix::ffi::OsStrExt;
+
+    if !cwd.is_dir() {
+        return Err(format!(
+            "working directory {} does not exist or is not a directory",
+            cwd.display()
+        ));
+    }
+    // Existence is not enough: Ghostty's own check is access()-based, so a
+    // directory this user cannot search (traverse) is "ignored and
+    // inherited" exactly like a missing one.
+    let c_path = std::ffi::CString::new(cwd.as_os_str().as_bytes()).map_err(|_| {
+        format!(
+            "working directory contains an interior NUL: {}",
+            cwd.display()
+        )
+    })?;
+    // SAFETY: plain access(2) on a NUL-terminated path.
+    if unsafe { libc::access(c_path.as_ptr(), libc::X_OK) } != 0 {
+        return Err(format!(
+            "working directory {} is not accessible: {}",
+            cwd.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
 fn embedded_zoom_adjustment(zoom_level: i32) -> Option<(EmbeddedSurfaceAction, u32)> {
     match zoom_level.cmp(&0) {
         std::cmp::Ordering::Greater => Some((
@@ -953,6 +989,35 @@ mod tests {
                 parent.close();
             });
         });
+    }
+
+    #[test]
+    fn spawn_cwd_must_be_an_existing_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        assert!(validate_spawn_cwd(dir.path()).is_ok());
+
+        let missing = dir.path().join("removed-worktree");
+        let err = validate_spawn_cwd(&missing).unwrap_err();
+        assert!(err.contains("removed-worktree"));
+
+        let file = dir.path().join("plain-file");
+        std::fs::write(&file, b"not a directory").unwrap();
+        assert!(validate_spawn_cwd(&file).is_err());
+
+        // An existing but unsearchable directory is inherited-and-ignored by
+        // Ghostty just like a missing one. Root bypasses mode bits, so the
+        // assertion only holds for ordinary users.
+        if unsafe { libc::geteuid() } != 0 {
+            let sealed = dir.path().join("sealed");
+            std::fs::create_dir(&sealed).unwrap();
+            std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let result = validate_spawn_cwd(&sealed);
+            std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let err = result.unwrap_err();
+            assert!(err.contains("not accessible"), "unexpected error: {err}");
+        }
     }
 
     #[test]

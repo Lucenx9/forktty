@@ -25,6 +25,10 @@ All notable changes to ForkTTY are documented here.
   with a write timeout) when a large paste coincides with a child flooding
   output: PTY input is now relayed with non-blocking partial writes so output
   draining continues while the child catches up.
+- Embedded terminal panes now refuse to spawn when the requested working
+  directory no longer exists (for example after its worktree was removed),
+  surfacing a visible spawn failure instead of letting Ghostty silently start
+  the shell in an inherited, unrelated directory.
 - The `.deb` package now bundles the private `libgtk4-layer-shell.so` runtime
   library instead of depending on the distro `libgtk4-layer-shell0` package. The
   embedded Ghostty GTK library links against the *unversioned* soname, which the
