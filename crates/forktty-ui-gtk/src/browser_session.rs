@@ -32,8 +32,6 @@ fn is_valid_profile_id(id: &str) -> bool {
 
 /// On-disk locations for one profile's browser data.
 pub struct ProfileDirs {
-    #[allow(dead_code)] // retained for SP3 P2 profile management
-    pub base: PathBuf,
     pub data: PathBuf,
     pub cache: PathBuf,
     pub cookies_sqlite: PathBuf,
@@ -48,7 +46,6 @@ impl ProfileDirs {
         let cache = base.join("cache");
         let cookies_sqlite = base.join("cookies.sqlite");
         Self {
-            base,
             data,
             cache,
             cookies_sqlite,
@@ -267,7 +264,10 @@ mod tests {
     fn default_profile_dirs_use_the_default_id_as_directory_name() {
         let dirs = ProfileDirs::under(std::path::Path::new("/tmp/ft-data"), DEFAULT_PROFILE_ID);
         assert_eq!(
-            dirs.base.file_name().and_then(|s| s.to_str()),
+            dirs.data
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|s| s.to_str()),
             Some(DEFAULT_PROFILE_ID)
         );
     }
@@ -276,10 +276,6 @@ mod tests {
     fn profile_dirs_are_nested_under_profiles_root_by_id() {
         let root = std::path::Path::new("/tmp/ft-data");
         let dirs = ProfileDirs::under(root, "abc");
-        assert_eq!(
-            dirs.base,
-            std::path::Path::new("/tmp/ft-data/browser_profiles/abc")
-        );
         assert_eq!(
             dirs.data,
             std::path::Path::new("/tmp/ft-data/browser_profiles/abc/data")
