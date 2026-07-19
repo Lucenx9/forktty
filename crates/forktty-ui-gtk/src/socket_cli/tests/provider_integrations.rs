@@ -323,6 +323,92 @@ fn merge_hook_config_strips_legacy_script_entry() {
 }
 
 #[test]
+fn claude_hook_setup_removes_retired_worktree_hooks_without_touching_user_hooks() {
+    let spec = agent_spec("claude").unwrap();
+    let user_entry = json!({
+        "hooks": [{
+            "type": "command",
+            "command": "user-worktree-provider"
+        }]
+    });
+    let existing = json!({
+        "hooks": {
+            "WorktreeCreate": [
+                {
+                    "hooks": [{
+                        "type": "command",
+                        "command": "stale-tagged-command"
+                    }],
+                    "forkttySource": FORKTTY_HOOK_TAG
+                },
+                {
+                    "hooks": [{
+                        "type": "command",
+                        "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '/old/forktty' hooks claude worktree-create || echo '{}'"
+                    }]
+                },
+                user_entry.clone()
+            ]
+        }
+    });
+
+    let (changed, merged) = merge_hook_config_with_profile(
+        &existing,
+        spec,
+        Path::new("/usr/bin/forktty"),
+        HookSetupProfile::Lifecycle,
+    )
+    .unwrap();
+
+    assert!(changed);
+    assert_eq!(merged["hooks"]["WorktreeCreate"], json!([user_entry]));
+}
+
+#[test]
+fn claude_hook_remove_cleans_retired_worktree_hooks() {
+    let spec = agent_spec("claude").unwrap();
+    let existing = json!({
+        "hooks": {
+            "WorktreeCreate": [
+                {
+                    "hooks": [{
+                        "type": "command",
+                        "command": "stale-tagged-command"
+                    }],
+                    "forkttySource": FORKTTY_HOOK_TAG
+                },
+                {
+                    "hooks": [{
+                        "type": "command",
+                        "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '/old/forktty' hooks claude worktree-create || echo '{}'"
+                    }]
+                },
+                {
+                    "hooks": [{
+                        "type": "command",
+                        "command": "user-worktree-provider"
+                    }]
+                }
+            ]
+        }
+    });
+
+    let (changed, removed) =
+        remove_hook_config(&existing, spec, Some(Path::new("/usr/bin/forktty"))).unwrap();
+
+    assert!(changed);
+    assert_eq!(
+        removed["hooks"]["WorktreeCreate"],
+        json!([{
+            "hooks": [{
+                "type": "command",
+                "command": "user-worktree-provider"
+            }]
+        }])
+    );
+}
+
+#[test]
 fn merge_hook_config_installs_current_codex_observability_events() {
     let (_, codex) = merge_hook_config(
         &json!({}),

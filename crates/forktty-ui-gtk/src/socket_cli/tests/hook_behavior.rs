@@ -1799,6 +1799,20 @@ fn doctor_supported_events_track_installed_entries_per_provider() {
             "SessionEnd",
         ]
     );
+    assert_eq!(claude_events.len(), 28);
+    assert!(!claude_events.contains(&"WorktreeCreate"));
+    assert_eq!(
+        agent_spec("claude")
+            .unwrap()
+            .retired_hook_entries
+            .iter()
+            .map(|entry| (entry.event_name, entry.hook_event_name, entry.timeout))
+            .collect::<Vec<_>>(),
+        vec![("WorktreeCreate", "worktree-create", 30)]
+    );
+    for key in ["codex", "antigravity", "opencode"] {
+        assert!(agent_spec(key).unwrap().retired_hook_entries.is_empty());
+    }
     // Codex docs do not list Notification or SessionEnd, so the Codex
     // installer must never target them.
     assert!(!codex_events.contains(&"Notification"));

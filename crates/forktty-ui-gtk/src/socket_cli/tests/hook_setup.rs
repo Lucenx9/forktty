@@ -304,16 +304,20 @@ fn claude_hook_setup_plan_profiles_control_tool_hooks() {
             let launcher = Path::new("/usr/bin/forktty");
             let default_plan = build_hook_setup_plan(spec, launcher).unwrap();
             let default_config: Value = serde_json::from_str(&default_plan.content).unwrap();
+            assert_eq!(default_config["hooks"].as_object().unwrap().len(), 25);
             assert!(default_config["hooks"]["SessionStart"].is_array());
             assert!(default_config["hooks"]["PostToolBatch"].is_array());
             assert!(default_config["hooks"]["PostToolBatch"][0]
                 .get("matcher")
                 .is_none());
             assert!(default_config["hooks"].get("PreToolUse").is_none());
+            assert!(default_config["hooks"].get("WorktreeCreate").is_none());
 
             let full_plan =
                 build_hook_setup_plan_with_profile(spec, launcher, HookSetupProfile::Full).unwrap();
             let full_config: Value = serde_json::from_str(&full_plan.content).unwrap();
+            assert_eq!(full_config["hooks"].as_object().unwrap().len(), 28);
+            assert!(full_config["hooks"].get("WorktreeCreate").is_none());
             for event in [
                 "PreToolUse",
                 "PostToolUse",

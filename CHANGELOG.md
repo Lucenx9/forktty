@@ -28,7 +28,9 @@ All notable changes to ForkTTY are documented here.
   treats `WorktreeCreate` as a provider hook that replaces default git worktree
   creation and requires the hook to print a worktree path, so the previous
   observational hook broke `claude --worktree` and `isolation: "worktree"`
-  subagents. The advisory `WorktreeRemove` hook is unaffected and stays.
+  subagents. Setup, removal, and doctor now reconcile retired ForkTTY-managed
+  entries while preserving user-authored `WorktreeCreate` hooks. The advisory
+  `WorktreeRemove` hook is unaffected and stays.
 - A failed `project.action` run no longer leaves an orphaned tab: when the
   action program cannot be resolved after the surface is modeled, the surface is
   now rolled back instead of being filled with the default interactive shell by
