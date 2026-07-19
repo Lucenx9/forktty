@@ -26,6 +26,15 @@ mkdir -p "$DOC_DIR"
   printf '\n\n'
   printf 'License: MIT (libghostty-rs)\n\n'
   cat "$ROOT_DIR/vendor/libghostty-rs/LICENSE"
+  printf '\n\n'
+  printf 'License: GPL-3.0-or-later (Ghostty shell integration)\n\n'
+  cat "$ROOT_DIR/packaging/licenses/GPL-3.0-or-later.txt"
+  printf '\n\n'
+  printf 'License: MIT (bash-preexec 0.6.0)\n\n'
+  cat "$ROOT_DIR/packaging/licenses/bash-preexec-0.6.0-MIT.txt"
+  printf '\n\n'
+  printf 'License: MIT (gtk4-layer-shell 1.1.0)\n\n'
+  cat "$ROOT_DIR/packaging/licenses/gtk4-layer-shell-1.1.0-MIT.txt"
 } > "$COPYRIGHT_FILE"
 
 install -Dm644 "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$DOC_DIR/THIRD_PARTY_NOTICES.md"

@@ -24,7 +24,7 @@ metadata, worktree, or terminal-text primitives.
 | Provider | Hook installation | Notes |
 | --- | --- | --- |
 | Codex | `$CODEX_HOME/hooks.json` or `~/.codex/hooks.json` | Changed hook definitions require review through `/hooks`; ForkTTY can detect trust records but cannot verify their hashes. |
-| Claude Code | `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json` | 26-event lifecycle profile by default; `--full` adds three high-frequency tool hooks for 29 total. |
+| Claude Code | `$CLAUDE_CONFIG_DIR/settings.json` or `~/.claude/settings.json` | 25-event lifecycle profile by default; `--full` adds three high-frequency tool hooks for 28 total. |
 | Antigravity CLI | `~/.gemini/config/hooks.json` plus generated wrappers | Uses a ForkTTY-owned hook group and direct wrapper executables. |
 | OpenCode | Generated plugin under the OpenCode plugin directory | Avoids mutating `opencode.json`. |
 
@@ -42,7 +42,7 @@ record proves neither authentication nor provider-side session validity.
 Claude `SessionStart` enrichment requires complete ForkTTY provenance:
 workspace ID, surface ID, and an absolute socket path. A partial tuple is
 treated atomically as absent, returns the exact continue response, and performs
-no socket I/O. The managed event counts are Codex 10, Claude 26 lifecycle / 29
+no socket I/O. The managed event counts are Codex 10, Claude 25 lifecycle / 28
 full, Antigravity 3, and OpenCode 11. Claude lifecycle excludes only
 `PreToolUse`, `PostToolUse`, and `PostToolUseFailure`; `PostToolBatch` remains.
 

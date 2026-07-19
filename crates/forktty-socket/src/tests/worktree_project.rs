@@ -1489,6 +1489,40 @@ async fn project_actions_list_and_run_from_open_repo_only() {
 }
 
 #[tokio::test]
+async fn project_action_program_resolution_failure_rolls_back_modeled_surface() {
+    let repo_dir = make_temp_repo();
+    fs::write(
+        repo_dir.path().join("forktty.json"),
+        r#"{"actions":[{"id":"missing","label":"Missing","argv":["./missing-tool"],"cwd":"."}]}"#,
+    )
+    .unwrap();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let state = SocketAppState::new(
+        model.clone(),
+        Arc::new(HeadlessTerminalBackend::new()),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&state, repo_dir.path().to_path_buf()).unwrap();
+    let before = model.lock().unwrap().list_surfaces(None);
+
+    let error = dispatch(
+        &state,
+        "project.action.run",
+        json!({"cwd": repo_dir.path(), "id": "missing"}),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(error.code(), "precondition_failed");
+    assert!(error
+        .to_string()
+        .contains("Cannot resolve project action program"));
+    assert_eq!(model.lock().unwrap().list_surfaces(None), before);
+}
+
+#[tokio::test]
 async fn project_actions_run_from_linked_worktree_authorized_repo() {
     let repo_dir = make_temp_repo();
     fs::write(

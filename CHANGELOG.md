@@ -17,9 +17,11 @@ All notable changes to ForkTTY are documented here.
   is in `-dev`) and which Ubuntu 24.04 does not package at all — so the previous
   `.deb` installed a build whose terminal panes could not start.
 - Packaging scripts now select vendored Ghostty build outputs
-  (`libghostty-vt`, shell integration, terminfo) deterministically by newest
-  build time instead of picking an arbitrary cached `OUT_DIR`, preventing a stale
-  library (potentially built with the wrong CPU baseline) from being packaged.
+  (`libghostty-vt`, shell integration, terminfo) from the exact Cargo `OUT_DIR`
+  reported for the current release build instead of searching cached hashes,
+  preventing a stale library (potentially built with the wrong CPU baseline)
+  from being packaged. The private `libgtk4-layer-shell.so` is copied from the
+  same Ghostty Zig output as `ghostty-gtk-embed.so`, never from the build host.
 - Release CI is now gated: the `gtk-ghostty` build/test/clippy gate and the
   browser-feature checks run on release events and the packaging job depends on
   them, and a new step fails the release if the git tag does not match the
@@ -47,7 +49,8 @@ All notable changes to ForkTTY are documented here.
   integration scripts (`bash/ghostty.bash`, `zsh/ghostty-integration`,
   `zsh/.zshenv`) are now declared GPL-3.0-or-later and `bash/bash-preexec.sh` is
   attributed to the MIT-licensed bash-preexec project, instead of all being
-  labeled MIT.
+  labeled MIT. Package legal output now carries the complete pinned GPL and MIT
+  texts for shell integration, bash-preexec, and gtk4-layer-shell.
 
 ## [0.2.0-alpha.19] - 2026-07-18
 

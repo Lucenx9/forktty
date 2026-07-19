@@ -113,8 +113,8 @@ current executable; a still-executable recorded launcher remains healthy even
 when doctor itself runs from another path. Re-run `forktty hooks setup` to
 rewrite unusable managed commands.
 The doctor JSON also exposes `supportedEvents`, the list of provider-side
-event names ForkTTY can install hooks for (Codex: 10; Claude Code: 26
-lifecycle / 29 full; Antigravity: 3; OpenCode plugin events: 11).
+event names ForkTTY can install hooks for (Codex: 10; Claude Code: 25
+lifecycle / 28 full; Antigravity: 3; OpenCode plugin events: 11).
 For Claude Code it also reports `installedProfile` as `lifecycle`, `full`, or
 `not_installed`.
 

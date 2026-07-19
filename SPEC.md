@@ -362,6 +362,12 @@ lifecycle adapter over sessions discovered through optional hooks.
 | Events | `events.subscribe` |
 | Browser (source-only feature) | `browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.fill`, `browser.back`, `browser.forward`, `browser.reload`, `browser.profile.list`, `browser.profile.create`, `browser.profile.delete`, `browser.history.list`, `browser.history.search`, `browser.history.clear`, `browser.bookmark.add`, `browser.bookmark.list`, `browser.bookmark.remove` |
 
+The human-readable `forktty logs` formatter treats socket-provided log levels
+and messages as untrusted terminal text. Newline, carriage return, tab, ESC,
+BEL, and other control characters are rendered as visible escapes before the
+CLI writes them, so metadata cannot inject terminal control sequences. JSON
+mode preserves the protocol response unchanged.
+
 The built-in contract does not include task routing, provider-neutral team or
 workflow stores, approval feeds, orchestration cleanup, an MCP stdio bridge, or
 managed agent skills. External MCP servers and agent processes remain ordinary
@@ -411,8 +417,8 @@ an explicit `forktty hooks setup` action, and are never installed or updated
 automatically at GTK startup. Hook setup writes atomically, preserves unrelated
 entries, and supports dry-run and targeted removal.
 
-The managed event sets contain 10 Codex events, 29 Claude events (26 in the
-default lifecycle profile and 29 with `--full`), 3 Antigravity events, and 11
+The managed event sets contain 10 Codex events, 28 Claude events (25 in the
+default lifecycle profile and 28 with `--full`), 3 Antigravity events, and 11
 OpenCode plugin events. The Claude lifecycle profile excludes only
 `PreToolUse`, `PostToolUse`, and `PostToolUseFailure`; `PostToolBatch` remains
 installed for prompt-result correlation. Claude `SessionStart` workspace

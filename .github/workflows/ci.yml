@@ -155,8 +155,8 @@ jobs:
     name: Release Package
     runs-on: ubuntu-latest
     if: github.event_name == 'release'
-    # Never publish an unvalidated commit: packaging waits for the full
-    # gtk-ghostty gate and the browser-feature checks to pass first.
+    # The release event is already published at this point. Delay artifact
+    # construction and upload until both source gates pass.
     needs: [check, browser-feature]
     permissions:
       contents: write
@@ -165,26 +165,6 @@ jobs:
         with:
           # Slice C builds the embedded Ghostty library from vendor/ghostty.
           submodules: true
-
-      # Guard against a tag whose name disagrees with the packaged version:
-      # every artifact name is derived from Cargo.toml, and gh uploads to the
-      # tag ($REF_NAME), so a mismatch would publish inconsistent assets.
-      - name: Verify tag matches Cargo version
-        env:
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          set -euo pipefail
-          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
-          if [[ -z "$version" ]]; then
-            echo "Could not read version from Cargo.toml" >&2
-            exit 1
-          fi
-          expected="v$version"
-          if [[ "$REF_NAME" != "$expected" ]]; then
-            echo "Release tag '$REF_NAME' does not match Cargo version (expected '$expected')" >&2
-            exit 1
-          fi
-          echo "Release tag matches Cargo version: $REF_NAME"
 
       - name: Install packaging dependencies
         run: |
@@ -205,6 +185,11 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: .
+
+      - name: Verify tag matches Cargo version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: cargo run -p xtask --locked -- check-release-tag "$REF_NAME"
 
       # Embedded Ghostty panes are the default renderer path, so release
       # artifacts must contain the embedding library. A release build may not

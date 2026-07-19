@@ -27,10 +27,20 @@ The bundled `share/ghostty/shell-integration` resources are not all MIT:
 - `bash/ghostty.bash`, `zsh/ghostty-integration`, and `zsh/.zshenv` are derived
   from Kitty and are distributed under **GPL-3.0-or-later**. Their license
   headers are reproduced inline in each file; the full GNU General Public
-  License version 3 is at <https://www.gnu.org/licenses/gpl-3.0.txt>.
+  License version 3 is in `packaging/licenses/GPL-3.0-or-later.txt`.
 - `bash/bash-preexec.sh` is from the bash-preexec project
-  (<https://github.com/rcaloras/bash-preexec>), **MIT**, Copyright (c) 2015
-  Ryan Caloras and bash-preexec contributors.
+  (<https://github.com/rcaloras/bash-preexec>), **MIT**, Copyright (c) 2017
+  Ryan Caloras and contributors. Its pinned license text is in
+  `packaging/licenses/bash-preexec-0.6.0-MIT.txt`.
+
+### gtk4-layer-shell Runtime
+
+ForkTTY release packages include the `libgtk4-layer-shell.so` built alongside
+the pinned Ghostty GTK embedding library. Ghostty pins gtk4-layer-shell 1.1.0;
+it is distributed under the **MIT** license, Copyright (c) 2023 Sophie Winter.
+
+- Source pin: `vendor/ghostty/pkg/gtk4-layer-shell/build.zig.zon`
+- License text: `packaging/licenses/gtk4-layer-shell-1.1.0-MIT.txt`
 
 ## Vendored libghostty-rs Runtime
 

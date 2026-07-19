@@ -5,6 +5,7 @@ set -euo pipefail
 umask 022
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/packaging-ghostty.sh"
 VERSION="${FORKTTY_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -1)}"
 TARGET_DIR="$ROOT_DIR/target/packaging/appimage"
 APPDIR="$TARGET_DIR/ForkTTY.AppDir"
@@ -19,18 +20,6 @@ BUNDLED_RUNTIME_LIBS=(
   "libgtk-4.so"
   "libadwaita-1.so"
 )
-
-# Deterministically pick the newest match under target/release/build. Cargo can
-# leave several stale OUT_DIR hashes in the build cache; `find -print -quit`
-# would return an arbitrary (possibly stale) one, which for libghostty-vt could
-# ship a library built with the wrong CPU baseline. The newest mtime is the
-# output of the build that just ran. Pass the find predicate args.
-find_newest_build_output() {
-  find "$ROOT_DIR/target/release/build" "$@" -printf '%T@\t%p\n' 2>/dev/null |
-    sort -rn |
-    head -1 |
-    cut -f2-
-}
 
 if [[ -z "$VERSION" ]]; then
   echo "Could not determine ForkTTY version from Cargo.toml" >&2
@@ -187,8 +176,8 @@ copy_vendored_ghostty_runtime_lib() {
   local lib_dir="$APPDIR/usr/lib"
   local ghostty_lib
 
-  ghostty_lib="$(find_newest_build_output -path '*/ghostty-install/lib/libghostty-vt.so.0.1.0')"
-  if [[ -z "$ghostty_lib" ]]; then
+  ghostty_lib="$GHOSTTY_BUILD_OUT_DIR/ghostty-install/lib/libghostty-vt.so.0.1.0"
+  if [[ ! -f "$ghostty_lib" ]]; then
     echo "Could not find vendored libghostty-vt.so.0.1.0 in target/release/build" >&2
     exit 1
   fi
@@ -205,67 +194,13 @@ copy_vendored_ghostty_runtime_lib() {
   rm -f "$lib_dir/ghostty-gtk-embed.so"
   install -Dm755 "$ghostty_gtk_lib" "$lib_dir/ghostty-gtk-embed.so"
   test -f "$lib_dir/ghostty-gtk-embed.so"
-}
-
-copy_required_ghostty_layer_shell_lib() {
-  local ghostty_gtk_lib="$APPDIR/usr/lib/ghostty-gtk-embed.so"
-  local lib_dir="$APPDIR/usr/lib"
-  local source
-
-  source="$(
-    ldd "$ghostty_gtk_lib" |
-      awk '
-        $1 ~ /^libgtk4-layer-shell\.so(\..*)?$/ && $2 == "=>" && $3 ~ /^\// && found == "" { found = $3 }
-        END { if (found != "") print found }
-      '
-  )"
-  if [[ -z "$source" ]]; then
-    source="$(
-      { ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null || true; } |
-        awk '/libgtk4-layer-shell\.so/ && found == "" { found = $NF } END { if (found != "") print found }'
-    )"
-  fi
-  if [[ -z "$source" || ! -f "$source" ]]; then
-    cat >&2 <<'ERROR'
-Failed to locate libgtk4-layer-shell.so for the embedded Ghostty GTK library.
-
-Ghostty's GTK embed library links against gtk4-layer-shell, and the AppImage
-must carry that small runtime library so panes can start on hosts that do not
-install gtk4-layer-shell system-wide.
-ERROR
-    exit 1
-  fi
-
-  local soname
-  local install_name
-  soname="$(
-    readelf -d "$source" 2>/dev/null |
-      awk '/\(SONAME\)/ { gsub(/[][]/, "", $NF); print $NF; exit }'
-  )"
-  install_name="${soname:-$(basename "$source")}"
-  if [[ "$install_name" != libgtk4-layer-shell.so* ]]; then
-    install_name="libgtk4-layer-shell.so"
-  fi
-
-  rm -f "$lib_dir"/libgtk4-layer-shell.so*
-  install -Dm755 "$source" "$lib_dir/$install_name"
-  if [[ "$install_name" != "libgtk4-layer-shell.so" ]]; then
-    ln -s "$install_name" "$lib_dir/libgtk4-layer-shell.so"
-  fi
-  if [[ -n "$soname" && "$soname" != "$install_name" ]]; then
-    ln -s "$install_name" "$lib_dir/$soname"
-  fi
-  test -e "$lib_dir/libgtk4-layer-shell.so"
-  test -e "$lib_dir/$install_name"
-  if [[ -n "$soname" ]]; then
-    test -e "$lib_dir/$soname"
-  fi
+  forktty_copy_ghostty_layer_shell_lib "$ghostty_gtk_lib" "$lib_dir"
 }
 
 copy_vendored_ghostty_shell_integration() {
   local source_dir
-  source_dir="$(find_newest_build_output -path '*/ghostty-src/src/shell-integration')"
-  if [[ -z "$source_dir" ]]; then
+  source_dir="$GHOSTTY_BUILD_OUT_DIR/ghostty-src/src/shell-integration"
+  if [[ ! -d "$source_dir" ]]; then
     echo "Could not find vendored Ghostty shell-integration resources in target/release/build" >&2
     exit 1
   fi
@@ -331,8 +266,8 @@ copy_vendored_ghostty_terminfo() {
   }
 
   local source_dir tmp_dir
-  source_dir="$(find_newest_build_output -path '*/ghostty-src/src/terminfo' -type d)"
-  if [[ -z "$source_dir" ]]; then
+  source_dir="$GHOSTTY_BUILD_OUT_DIR/ghostty-src/src/terminfo"
+  if [[ ! -d "$source_dir" ]]; then
     echo "Could not find vendored Ghostty terminfo sources in target/release/build" >&2
     exit 1
   fi
@@ -511,7 +446,7 @@ else
   echo "appstreamcli not found; skipping AppStream metadata validation" >&2
 fi
 
-cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty --release
+GHOSTTY_BUILD_OUT_DIR="$(forktty_build_release_and_print_ghostty_out_dir "$ROOT_DIR")"
 
 rm -rf "$APPDIR" "$APPIMAGE_PATH" "$APPIMAGE_ZSYNC_PATH"
 if [[ "$APPIMAGE_ZSYNC_CWD_PATH" != "$APPIMAGE_ZSYNC_PATH" ]]; then
@@ -529,7 +464,6 @@ write_appimage_hicolor_index_theme
 # would see it missing. (The binary reaches it at runtime via its RUNPATH
 # $ORIGIN/../lib; AppRun's LD_LIBRARY_PATH also covers it.)
 copy_vendored_ghostty_runtime_lib
-copy_required_ghostty_layer_shell_lib
 copy_vendored_ghostty_shell_integration
 copy_vendored_ghostty_themes
 copy_vendored_ghostty_terminfo

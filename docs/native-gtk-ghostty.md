@@ -103,7 +103,8 @@ Both the `.deb` package and the AppImage bundle the small `libgtk4-layer-shell.s
 runtime library privately, because the embedded Ghostty GTK library links against
 its *unversioned* soname — which distro runtime packages (e.g. Debian's
 `libgtk4-layer-shell0`) do not provide, and which Ubuntu 24.04 does not package at
-all.
+all. Packaging copies the sibling produced by the same pinned Ghostty Zig build;
+it never substitutes a library discovered from the build host.
 
 ## Runtime Notes
 

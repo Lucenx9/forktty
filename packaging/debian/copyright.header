@@ -29,12 +29,12 @@ License: GPL-3.0-or-later
 
 Files: vendor/ghostty/src/shell-integration/bash/bash-preexec.sh
  usr/share/ghostty/shell-integration/bash/bash-preexec.sh
-Copyright: 2015 Ryan Caloras and bash-preexec contributors
+Copyright: 2017 Ryan Caloras and contributors
 License: MIT
  See the verbatim MIT text below.
 
 Files: usr/lib/libgtk4-layer-shell.so*
-Copyright: 2021 William Wold and gtk4-layer-shell contributors
+Copyright: 2023 Sophie Winter
 License: MIT
  See the verbatim MIT text below.
 

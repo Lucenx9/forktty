@@ -5,6 +5,7 @@ set -euo pipefail
 umask 022
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/packaging-ghostty.sh"
 VERSION="${FORKTTY_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -1)}"
 DEB_VERSION="${FORKTTY_DEB_VERSION:-$VERSION}"
 TARGET_DIR="$ROOT_DIR/target/packaging/deb"
@@ -12,18 +13,6 @@ ARCH="$(dpkg --print-architecture 2>/dev/null || true)"
 DESKTOP_ID="dev.forktty.forktty"
 DESKTOP_FILE="$ROOT_DIR/packaging/linux/$DESKTOP_ID.desktop"
 APPSTREAM_FILE="$ROOT_DIR/packaging/linux/$DESKTOP_ID.metainfo.xml"
-
-# Deterministically pick the newest match under target/release/build. Cargo can
-# leave several stale OUT_DIR hashes in the build cache; `find -print -quit`
-# would return an arbitrary (possibly stale) one, which for libghostty-vt could
-# ship a library built with the wrong CPU baseline. The newest mtime is the
-# output of the build that just ran. Pass the find predicate args.
-find_newest_build_output() {
-  find "$ROOT_DIR/target/release/build" "$@" -printf '%T@\t%p\n' 2>/dev/null |
-    sort -rn |
-    head -1 |
-    cut -f2-
-}
 
 referenced_forktty_symbolic_icons() {
   grep -Roh '"forktty-[A-Za-z0-9_-]*-symbolic"' "$ROOT_DIR/crates/forktty-ui-gtk/src" |
@@ -58,8 +47,8 @@ verify_forktty_icon_assets() {
 
 copy_vendored_ghostty_shell_integration() {
   local source_dir
-  source_dir="$(find_newest_build_output -path '*/ghostty-src/src/shell-integration')"
-  if [[ -z "$source_dir" ]]; then
+  source_dir="$GHOSTTY_BUILD_OUT_DIR/ghostty-src/src/shell-integration"
+  if [[ ! -d "$source_dir" ]]; then
     echo "Could not find vendored Ghostty shell-integration resources in target/release/build" >&2
     exit 1
   fi
@@ -125,8 +114,8 @@ copy_vendored_ghostty_terminfo() {
   }
 
   local source_dir tmp_dir
-  source_dir="$(find_newest_build_output -path '*/ghostty-src/src/terminfo' -type d)"
-  if [[ -z "$source_dir" ]]; then
+  source_dir="$GHOSTTY_BUILD_OUT_DIR/ghostty-src/src/terminfo"
+  if [[ ! -d "$source_dir" ]]; then
     echo "Could not find vendored Ghostty terminfo sources in target/release/build" >&2
     exit 1
   fi
@@ -154,48 +143,6 @@ ZIG
 
 find_required_ghostty_gtk_lib() {
   "$ROOT_DIR/scripts/ghostty-gtk-lib-probe.sh" --ensure --print-path
-}
-
-# Bundle the unversioned libgtk4-layer-shell.so next to the other private
-# ForkTTY runtime libraries. ghostty-gtk-embed.so records a DT_NEEDED of
-# `libgtk4-layer-shell.so` (unversioned, unlike its other versioned deps), but
-# the Debian/Ubuntu runtime package ships only libgtk4-layer-shell.so.0 — the
-# unversioned symlink lives in -dev, and Ubuntu 24.04 lacks the runtime package
-# entirely. ghostty-gtk-embed.so is dlopened and its own RUNPATH is a stale
-# build-cache path, and DT_RUNPATH does not cascade from the forktty binary, so
-# the loader resolves this NEEDED from the default search path /usr/lib, where
-# this file lands. Mirrors copy_required_ghostty_layer_shell_lib in
-# build-appimage.sh.
-copy_required_ghostty_layer_shell_lib() {
-  local ghostty_gtk_lib="$PKG_ROOT/usr/lib/ghostty-gtk-embed.so"
-  local lib_dir="$PKG_ROOT/usr/lib"
-  local source soname
-
-  source="$(
-    ldd "$ghostty_gtk_lib" |
-      awk '$1 ~ /^libgtk4-layer-shell\.so(\..*)?$/ && $2 == "=>" && $3 ~ /^\// { print $3; exit }'
-  )"
-  if [[ -z "$source" ]]; then
-    source="$(
-      { ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null || true; } |
-        awk '/libgtk4-layer-shell\.so/ { print $NF; exit }'
-    )"
-  fi
-  if [[ -z "$source" || ! -f "$source" ]]; then
-    echo "Failed to locate libgtk4-layer-shell.so for the embedded Ghostty GTK library." >&2
-    echo "Install gtk4-layer-shell (with its development files) on the build host." >&2
-    exit 1
-  fi
-
-  install -Dm755 "$source" "$lib_dir/libgtk4-layer-shell.so"
-  soname="$(
-    readelf -d "$source" 2>/dev/null |
-      awk '/\(SONAME\)/ { gsub(/[][]/, "", $NF); print $NF; exit }'
-  )"
-  if [[ -n "$soname" && "$soname" != "libgtk4-layer-shell.so" ]]; then
-    ln -sf libgtk4-layer-shell.so "$lib_dir/$soname"
-  fi
-  test -e "$lib_dir/libgtk4-layer-shell.so"
 }
 
 if [[ -z "$VERSION" ]]; then
@@ -234,12 +181,12 @@ else
   echo "appstreamcli not found; skipping AppStream metadata validation" >&2
 fi
 
-cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty --release
+GHOSTTY_BUILD_OUT_DIR="$(forktty_build_release_and_print_ghostty_out_dir "$ROOT_DIR")"
 
 rm -rf "$PKG_ROOT"
 install -Dm755 "$ROOT_DIR/target/release/forktty" "$PKG_ROOT/usr/bin/forktty"
-GHOSTTY_LIB="$(find_newest_build_output -path '*/ghostty-install/lib/libghostty-vt.so.0.1.0')"
-if [[ -z "$GHOSTTY_LIB" ]]; then
+GHOSTTY_LIB="$GHOSTTY_BUILD_OUT_DIR/ghostty-install/lib/libghostty-vt.so.0.1.0"
+if [[ ! -f "$GHOSTTY_LIB" ]]; then
   echo "Could not find vendored libghostty-vt.so.0.1.0 in target/release/build" >&2
   exit 1
 fi
@@ -251,7 +198,7 @@ ln -s libghostty-vt.so.0 "$PKG_ROOT/usr/lib/libghostty-vt.so"
 GHOSTTY_GTK_LIB="$(find_required_ghostty_gtk_lib)"
 install -Dm755 "$GHOSTTY_GTK_LIB" "$PKG_ROOT/usr/lib/ghostty-gtk-embed.so"
 test -f "$PKG_ROOT/usr/lib/ghostty-gtk-embed.so"
-copy_required_ghostty_layer_shell_lib
+forktty_copy_ghostty_layer_shell_lib "$GHOSTTY_GTK_LIB" "$PKG_ROOT/usr/lib"
 copy_vendored_ghostty_shell_integration
 copy_vendored_ghostty_themes
 copy_vendored_ghostty_terminfo
