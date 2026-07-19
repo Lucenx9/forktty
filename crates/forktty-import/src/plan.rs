@@ -129,6 +129,39 @@ mod tests {
     }
 
     #[test]
+    fn test_next_create_name_no_collision() {
+        let taken = std::collections::HashSet::new();
+        assert_eq!(next_create_name("Base", &taken), "Base");
+        assert_eq!(next_create_name("  Base  ", &taken), "Base");
+    }
+
+    #[test]
+    fn test_next_create_name_empty_base() {
+        let mut taken = std::collections::HashSet::new();
+        assert_eq!(next_create_name("", &taken), "Profile");
+        assert_eq!(next_create_name("   ", &taken), "Profile");
+
+        taken.insert("profile".to_string());
+        assert_eq!(next_create_name("", &taken), "Profile (2)");
+    }
+
+    #[test]
+    fn test_next_create_name_single_collision() {
+        let mut taken = std::collections::HashSet::new();
+        taken.insert("base".to_string());
+        assert_eq!(next_create_name("Base", &taken), "Base (2)");
+    }
+
+    #[test]
+    fn test_next_create_name_multiple_collisions() {
+        let mut taken = std::collections::HashSet::new();
+        taken.insert("base".to_string());
+        taken.insert("base (2)".to_string());
+        taken.insert("base (3)".to_string());
+        assert_eq!(next_create_name("Base", &taken), "Base (4)");
+    }
+
+    #[test]
     fn default_plan_uses_separate_mode_for_multiple_sources() {
         let default_id = ProfileId::default();
         let plan = resolve_default_plan(
