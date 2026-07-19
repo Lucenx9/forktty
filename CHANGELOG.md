@@ -5,6 +5,8 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- Sped up terminal scrollback searches by rejecting first-character mismatches
+  before running the full case-insensitive substring comparison.
 - Simplified the repository overview around installation and first-use paths,
   moved detailed contracts to their dedicated guides, and refreshed the README
   and public site with a current workspace screenshot.
