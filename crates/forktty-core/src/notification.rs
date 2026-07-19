@@ -242,6 +242,27 @@ fn run_desktop_notification_context_action(args: Vec<String>) {
     let Ok(program) = std::env::current_exe() else {
         return;
     };
+
+    if !program.is_absolute() {
+        return;
+    }
+
+    let Ok(metadata) = std::fs::metadata(&program) else {
+        return;
+    };
+
+    if !metadata.is_file() {
+        return;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o111 == 0 {
+            return;
+        }
+    }
+
     let Ok(mut child) = std::process::Command::new(program).args(args).spawn() else {
         return;
     };
