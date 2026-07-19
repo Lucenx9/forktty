@@ -56,7 +56,11 @@ const CLAUDE_ENTRIES: &[(&str, &str, u64)] = &[
     ("InstructionsLoaded", "instructions-loaded", 30),
     ("CwdChanged", "cwd-changed", 30),
     ("FileChanged", "file-changed", 30),
-    ("WorktreeCreate", "worktree-create", 30),
+    // WorktreeCreate is intentionally not registered: Claude Code treats it as a
+    // provider hook that REPLACES default git worktree creation and must print a
+    // worktree path on stdout, so registering an observational hook here breaks
+    // `claude --worktree` and `isolation: "worktree"` subagents. WorktreeRemove
+    // is advisory (its output is ignored) and stays.
     ("WorktreeRemove", "worktree-remove", 30),
     ("SessionEnd", "session-end", 30),
 ];
@@ -479,9 +483,22 @@ host_gtk_stack_compatible() {
     }
     let deb = fs::read_to_string(root.join("scripts/build-deb.sh"))
         .map_err(|err| format!("failed to read scripts/build-deb.sh: {err}"))?;
-    if !deb.contains("libgtk4-layer-shell0") {
+    if !deb.contains("copy_required_ghostty_layer_shell_lib") {
         return Err(
-            "scripts/build-deb.sh must depend on `libgtk4-layer-shell0` for Ghostty GTK"
+            "scripts/build-deb.sh must bundle the private libgtk4-layer-shell.so via \
+             `copy_required_ghostty_layer_shell_lib` for the embedded Ghostty GTK library"
+                .to_string(),
+        );
+    }
+    if deb.contains("libgtk4-layer-shell0") {
+        // ghostty-gtk-embed.so records DT_NEEDED libgtk4-layer-shell.so (unversioned),
+        // which the Debian/Ubuntu runtime package does not provide (the unversioned
+        // symlink is -dev only, and Ubuntu 24.04 lacks the package entirely). Depending
+        // on the runtime package ships a .deb whose terminal panes cannot start; the
+        // library must be bundled privately instead.
+        return Err(
+            "scripts/build-deb.sh must not depend on `libgtk4-layer-shell0`: bundle the \
+             unversioned libgtk4-layer-shell.so privately instead"
                 .to_string(),
         );
     }

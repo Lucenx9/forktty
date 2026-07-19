@@ -9,6 +9,44 @@ All notable changes to ForkTTY are documented here.
   moved detailed contracts to their dedicated guides, and refreshed the README
   and public site with a current workspace screenshot.
 
+### Fixed
+- The `.deb` package now bundles the private `libgtk4-layer-shell.so` runtime
+  library instead of depending on the distro `libgtk4-layer-shell0` package. The
+  embedded Ghostty GTK library links against the *unversioned* soname, which the
+  runtime package does not provide (it ships only `.so.0`; the unversioned symlink
+  is in `-dev`) and which Ubuntu 24.04 does not package at all — so the previous
+  `.deb` installed a build whose terminal panes could not start.
+- Packaging scripts now select vendored Ghostty build outputs
+  (`libghostty-vt`, shell integration, terminfo) deterministically by newest
+  build time instead of picking an arbitrary cached `OUT_DIR`, preventing a stale
+  library (potentially built with the wrong CPU baseline) from being packaged.
+- Release CI is now gated: the `gtk-ghostty` build/test/clippy gate and the
+  browser-feature checks run on release events and the packaging job depends on
+  them, and a new step fails the release if the git tag does not match the
+  Cargo.toml version.
+- Claude Code hook setup no longer registers a `WorktreeCreate` hook. Claude
+  treats `WorktreeCreate` as a provider hook that replaces default git worktree
+  creation and requires the hook to print a worktree path, so the previous
+  observational hook broke `claude --worktree` and `isolation: "worktree"`
+  subagents. The advisory `WorktreeRemove` hook is unaffected and stays.
+- A failed `project.action` run no longer leaves an orphaned tab: when the
+  action program cannot be resolved after the surface is modeled, the surface is
+  now rolled back instead of being filled with the default interactive shell by
+  GTK reconciliation.
+- `forktty remote-helper pty` now reports signal terminations as `128 + signal`
+  (e.g. `143` for `SIGTERM`) instead of collapsing every signal death to `1`.
+
+### Security
+- `forktty logs` now sanitizes log level and message text before printing, so
+  agent/socket-supplied ESC/OSC/newline/BEL sequences can no longer inject
+  terminal escapes into the CLI output stream, matching the other status
+  formatters.
+- Corrected release-package license metadata: the Kitty-derived Ghostty shell
+  integration scripts (`bash/ghostty.bash`, `zsh/ghostty-integration`,
+  `zsh/.zshenv`) are now declared GPL-3.0-or-later and `bash/bash-preexec.sh` is
+  attributed to the MIT-licensed bash-preexec project, instead of all being
+  labeled MIT.
+
 ## [0.2.0-alpha.19] - 2026-07-18
 
 ### Removed

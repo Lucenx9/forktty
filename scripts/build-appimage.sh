@@ -20,6 +20,18 @@ BUNDLED_RUNTIME_LIBS=(
   "libadwaita-1.so"
 )
 
+# Deterministically pick the newest match under target/release/build. Cargo can
+# leave several stale OUT_DIR hashes in the build cache; `find -print -quit`
+# would return an arbitrary (possibly stale) one, which for libghostty-vt could
+# ship a library built with the wrong CPU baseline. The newest mtime is the
+# output of the build that just ran. Pass the find predicate args.
+find_newest_build_output() {
+  find "$ROOT_DIR/target/release/build" "$@" -printf '%T@\t%p\n' 2>/dev/null |
+    sort -rn |
+    head -1 |
+    cut -f2-
+}
+
 if [[ -z "$VERSION" ]]; then
   echo "Could not determine ForkTTY version from Cargo.toml" >&2
   exit 1
@@ -175,7 +187,7 @@ copy_vendored_ghostty_runtime_lib() {
   local lib_dir="$APPDIR/usr/lib"
   local ghostty_lib
 
-  ghostty_lib="$(find "$ROOT_DIR/target/release/build" -path '*/ghostty-install/lib/libghostty-vt.so.0.1.0' -print -quit)"
+  ghostty_lib="$(find_newest_build_output -path '*/ghostty-install/lib/libghostty-vt.so.0.1.0')"
   if [[ -z "$ghostty_lib" ]]; then
     echo "Could not find vendored libghostty-vt.so.0.1.0 in target/release/build" >&2
     exit 1
@@ -252,7 +264,7 @@ ERROR
 
 copy_vendored_ghostty_shell_integration() {
   local source_dir
-  source_dir="$(find "$ROOT_DIR/target/release/build" -path '*/ghostty-src/src/shell-integration' -print -quit)"
+  source_dir="$(find_newest_build_output -path '*/ghostty-src/src/shell-integration')"
   if [[ -z "$source_dir" ]]; then
     echo "Could not find vendored Ghostty shell-integration resources in target/release/build" >&2
     exit 1
@@ -319,7 +331,7 @@ copy_vendored_ghostty_terminfo() {
   }
 
   local source_dir tmp_dir
-  source_dir="$(find "$ROOT_DIR/target/release/build" -path '*/ghostty-src/src/terminfo' -type d -print -quit)"
+  source_dir="$(find_newest_build_output -path '*/ghostty-src/src/terminfo' -type d)"
   if [[ -z "$source_dir" ]]; then
     echo "Could not find vendored Ghostty terminfo sources in target/release/build" >&2
     exit 1

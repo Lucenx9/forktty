@@ -13,6 +13,31 @@ Copyright: 2024 Mitchell Hashimoto, Ghostty contributors
 License: MIT
  See the verbatim MIT text below.
 
+Files: vendor/ghostty/src/shell-integration/bash/ghostty.bash
+ vendor/ghostty/src/shell-integration/zsh/ghostty-integration
+ vendor/ghostty/src/shell-integration/zsh/.zshenv
+ usr/share/ghostty/shell-integration/bash/ghostty.bash
+ usr/share/ghostty/shell-integration/zsh/ghostty-integration
+ usr/share/ghostty/shell-integration/zsh/.zshenv
+Copyright: 2024 Mitchell Hashimoto, Ghostty contributors
+ 2016 Kitty contributors
+License: GPL-3.0-or-later
+ These shell integration scripts are derived from Kitty and are distributed
+ under the GNU General Public License version 3 or (at your option) any later
+ version. On Debian systems the complete text of the GNU General Public
+ License version 3 can be found in /usr/share/common-licenses/GPL-3.
+
+Files: vendor/ghostty/src/shell-integration/bash/bash-preexec.sh
+ usr/share/ghostty/shell-integration/bash/bash-preexec.sh
+Copyright: 2015 Ryan Caloras and bash-preexec contributors
+License: MIT
+ See the verbatim MIT text below.
+
+Files: usr/lib/libgtk4-layer-shell.so*
+Copyright: 2021 William Wold and gtk4-layer-shell contributors
+License: MIT
+ See the verbatim MIT text below.
+
 Files: vendor/libghostty-rs/* usr/lib/libghostty-vt.so*
 Copyright: 2026 Uzair Aftab, Leah Amelia Chen
 License: MIT

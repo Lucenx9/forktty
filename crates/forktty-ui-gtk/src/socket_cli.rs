@@ -95,8 +95,8 @@ use status::{
 };
 #[cfg(test)]
 use status::{
-    handle_context_snapshot, handle_notifications, handle_set_status, handle_status,
-    handle_statusline,
+    format_log_line, handle_context_snapshot, handle_notifications, handle_set_status,
+    handle_status, handle_statusline,
 };
 #[cfg(test)]
 use surface::format_surface_line;

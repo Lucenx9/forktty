@@ -298,19 +298,6 @@
         "matcher": "*"
       }
     ],
-    "WorktreeCreate": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '{{FORKTTY_LAUNCHER}}' hooks claude worktree-create || echo '{\"continue\":true,\"suppressOutput\":false}'",
-            "statusMessage": "ForkTTY Claude hooks",
-            "timeout": 30
-          }
-        ],
-        "matcher": "*"
-      }
-    ],
     "WorktreeRemove": [
       {
         "hooks": [

@@ -661,6 +661,15 @@ fn human_formatters_escape_socket_payload_control_sequences() {
     assert!(notification_line.contains("Needs\\rinput"));
     assert!(notification_line.contains("Run\\ttool"));
     assert!(!notification_line.contains('\u{1b}'));
+
+    let log_line = format_log_line(&json!({
+        "level": "warn\u{1b}]0;pwned\u{7}",
+        "message": "done\r\nrm -rf",
+    }));
+    assert_eq!(log_line, "[warn\\x1b]0;pwned\\x07] done\\r\\nrm -rf");
+    assert!(!log_line.contains('\u{1b}'));
+    assert!(!log_line.contains('\u{7}'));
+    assert!(!log_line.contains('\n'));
 }
 
 #[test]
@@ -1786,7 +1795,6 @@ fn doctor_supported_events_track_installed_entries_per_provider() {
             "InstructionsLoaded",
             "CwdChanged",
             "FileChanged",
-            "WorktreeCreate",
             "WorktreeRemove",
             "SessionEnd",
         ]

@@ -99,9 +99,11 @@ Arch-style names:
 ForkTTY currently requires libadwaita 1.4+, matching Ubuntu 24.04 LTS and newer
 distro packages. It does not require a system Ghostty package; terminal widgets
 come from the pinned vendored Ghostty GTK embedding library.
-The `.deb` package depends on `libgtk4-layer-shell0`, and AppImages bundle the
-matching small runtime library because the embedded Ghostty GTK library links
-against it.
+Both the `.deb` package and the AppImage bundle the small `libgtk4-layer-shell.so`
+runtime library privately, because the embedded Ghostty GTK library links against
+its *unversioned* soname — which distro runtime packages (e.g. Debian's
+`libgtk4-layer-shell0`) do not provide, and which Ubuntu 24.04 does not package at
+all.
 
 ## Runtime Notes
 

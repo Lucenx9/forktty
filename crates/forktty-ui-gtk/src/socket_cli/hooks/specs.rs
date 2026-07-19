@@ -252,11 +252,11 @@ pub(in crate::socket_cli) const CLAUDE_HOOK_ENTRIES: &[HookEntrySpec] = &[
         hook_event_name: "file-changed",
         timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
-    HookEntrySpec {
-        event_name: "WorktreeCreate",
-        hook_event_name: "worktree-create",
-        timeout: HOOK_ENTRY_TIMEOUT_SECS,
-    },
+    // WorktreeCreate is deliberately omitted: Claude Code treats it as a
+    // provider hook that replaces default git worktree creation and requires the
+    // hook to print a worktree path on stdout (missing path fails creation).
+    // Registering an observational hook there breaks `claude --worktree` and
+    // `isolation: "worktree"` subagents. WorktreeRemove is advisory only.
     HookEntrySpec {
         event_name: "WorktreeRemove",
         hook_event_name: "worktree-remove",
