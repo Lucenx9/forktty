@@ -726,7 +726,7 @@ mod tests {
     fn browser_pane_widget_constructs_and_loads() {
         let _ = crate::test_env::with_gtk_test(|| {
             let pane = BrowserPaneWidget::new(
-                crate::browser_session::DEFAULT_PROFILE_ID,
+                "00000000-0000-0000-0000-000000000001",
                 "https://example.com",
             );
             assert_eq!(pane.last_requested.borrow().as_str(), "https://example.com");

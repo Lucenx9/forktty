@@ -31,7 +31,7 @@ impl ProfileId {
 
 impl Default for ProfileId {
     fn default() -> Self {
-        // 00000000-0000-0000-0000-000000000001 — matches browser_session::DEFAULT_PROFILE_ID.
+        // 00000000-0000-0000-0000-000000000001
         Self(Uuid::from_u128(1))
     }
 }

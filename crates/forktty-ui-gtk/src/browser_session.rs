@@ -11,14 +11,6 @@ use std::os::unix::fs::PermissionsExt;
 
 use webkit6::{CookiePersistentStorage, NetworkSession};
 
-/// Well-known directory id for the Default profile. A fixed UUID string so that
-/// SP3 P2's real `ProfileId::default()` resolves to this same on-disk directory
-/// (no migration). P1 has no profile system, so this is the only profile used.
-/// Used by tests in `browser_pane` and `browser_session` to construct sessions
-/// with the default profile without pulling in `forktty_core`.
-#[allow(dead_code)]
-pub const DEFAULT_PROFILE_ID: &str = "00000000-0000-0000-0000-000000000001";
-
 /// Whether `id` is safe to use as a single on-disk directory name. Rejects empty
 /// ids, anything longer than 64 bytes, and anything outside `[A-Za-z0-9_-]` — in
 /// particular `/`, `\`, and `.`, which could traverse outside the profiles root.
@@ -238,21 +230,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_profile_id_value_is_stable() {
-        assert_eq!(DEFAULT_PROFILE_ID, "00000000-0000-0000-0000-000000000001");
-    }
-
-    #[test]
     fn default_profile_id_matches_core_profile_default() {
         assert_eq!(
-            DEFAULT_PROFILE_ID,
+            "00000000-0000-0000-0000-000000000001",
             forktty_core::ProfileId::default().to_string()
         );
     }
 
     #[test]
     fn profile_id_validation_accepts_safe_ids_rejects_traversal() {
-        assert!(is_valid_profile_id(DEFAULT_PROFILE_ID));
+        assert!(is_valid_profile_id("00000000-0000-0000-0000-000000000001"));
         assert!(is_valid_profile_id("abc"));
         assert!(is_valid_profile_id("work_profile-2"));
         assert!(!is_valid_profile_id(""));
@@ -265,10 +252,13 @@ mod tests {
 
     #[test]
     fn default_profile_dirs_use_the_default_id_as_directory_name() {
-        let dirs = ProfileDirs::under(std::path::Path::new("/tmp/ft-data"), DEFAULT_PROFILE_ID);
+        let dirs = ProfileDirs::under(
+            std::path::Path::new("/tmp/ft-data"),
+            "00000000-0000-0000-0000-000000000001",
+        );
         assert_eq!(
             dirs.base.file_name().and_then(|s| s.to_str()),
-            Some(DEFAULT_PROFILE_ID)
+            Some("00000000-0000-0000-0000-000000000001")
         );
     }
 
