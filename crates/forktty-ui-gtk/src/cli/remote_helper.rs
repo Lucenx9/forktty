@@ -70,11 +70,29 @@ pub fn run_remote_helper_pty(_argv: Vec<String>) -> i32 {
 #[cfg(feature = "gtk-ghostty")]
 fn run_remote_helper_pty_inner(argv: Vec<String>) -> io::Result<i32> {
     use forktty_terminal::ghostty::pty::{PtySession, PtySize};
-    use std::io::Read;
 
     let cwd = std::env::current_dir()?;
     let request = remote_helper_pty_request(argv, cwd)?;
-    let mut session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 })?;
+    let session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 })?;
+    // `Stdin` (not `StdinLock`) because the reader crosses into the relay
+    // thread and the lock guard is not `Send`; it locks per read call.
+    relay_pty_stdio(session, io::stdin(), io::stdout().lock())
+}
+
+/// Relay stdin/stdout to the PTY session until the child exits.
+///
+/// Generic over the stdio endpoints so tests can drive the relay with
+/// in-memory streams; production passes the process stdin/stdout locks.
+#[cfg(feature = "gtk-ghostty")]
+fn relay_pty_stdio<R, W>(
+    mut session: forktty_terminal::ghostty::pty::PtySession,
+    stdin: R,
+    mut stdout: W,
+) -> io::Result<i32>
+where
+    R: std::io::Read + Send + 'static,
+    W: std::io::Write,
+{
     // Keep the stdin relay bounded so a child that stops draining its PTY
     // applies backpressure to the helper instead of letting queued input grow
     // without limit.
@@ -86,7 +104,7 @@ fn run_remote_helper_pty_inner(argv: Vec<String>) -> io::Result<i32> {
 
     let (tx, rx) = std::sync::mpsc::sync_channel::<StdinRelayEvent>(16);
     std::thread::spawn(move || {
-        let mut stdin = io::stdin().lock();
+        let mut stdin = stdin;
         let mut buf = [0u8; 8192];
         loop {
             match stdin.read(&mut buf) {
@@ -104,27 +122,51 @@ fn run_remote_helper_pty_inner(argv: Vec<String>) -> io::Result<i32> {
             }
         }
     });
-    let mut stdout = io::stdout().lock();
-    let mut stdin_eof_sent = false;
+    // Input the PTY has not accepted yet. Writes must never wait for the
+    // child to drain its input: while the input buffer is full the child may
+    // itself be blocked writing output, and only the output pump below can
+    // unwedge it — a waiting write (the old `write_all` here) stalls both
+    // directions until the session dies on the write timeout.
+    let mut pending: Vec<u8> = Vec::new();
+    let mut pending_offset = 0;
+    let mut stdin_eof = false;
+    let mut eof_delivered = false;
     loop {
+        // Pump queued stdin into the PTY until it stops accepting or the
+        // relay has nothing buffered. Self-limiting: a child that stops
+        // reading fills the PTY buffer and try_write returns 0.
         loop {
-            match rx.try_recv() {
-                Ok(StdinRelayEvent::Data(bytes)) => session.write_all(&bytes)?,
-                Ok(StdinRelayEvent::Eof) => {
-                    session.send_eof()?;
-                    stdin_eof_sent = true;
+            while pending_offset < pending.len() {
+                let written = session.try_write(&pending[pending_offset..])?;
+                if written == 0 {
                     break;
                 }
+                pending_offset += written;
+            }
+            if pending_offset < pending.len() {
+                break;
+            }
+            pending.clear();
+            pending_offset = 0;
+            if stdin_eof {
+                // Deliver EOF only once everything before it reached the
+                // child, preserving stdin ordering.
+                if !eof_delivered {
+                    session.send_eof()?;
+                    eof_delivered = true;
+                }
+                break;
+            }
+            match rx.try_recv() {
+                Ok(StdinRelayEvent::Data(bytes)) => pending = bytes,
+                Ok(StdinRelayEvent::Eof) => stdin_eof = true,
                 Ok(StdinRelayEvent::Error(err)) => return Err(err),
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    if !stdin_eof_sent {
-                        return Err(io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "stdin relay disconnected before reporting EOF",
-                        ));
-                    }
-                    break;
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "stdin relay disconnected before reporting EOF",
+                    ));
                 }
             }
         }
@@ -231,9 +273,47 @@ fn non_empty_trimmed(value: String) -> Option<String> {
 
 #[cfg(all(test, feature = "gtk-ghostty"))]
 mod tests {
-    use super::exit_code_from_status;
+    use super::{exit_code_from_status, relay_pty_stdio, remote_helper_pty_request};
+    use forktty_terminal::ghostty::pty::{PtySession, PtySize};
     use std::os::unix::process::ExitStatusExt;
     use std::process::ExitStatus;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn relay_survives_full_duplex_backpressure() {
+        // The child floods hundreds of KiB of output before it starts reading
+        // stdin, while the relay has a large paste queued: the PTY input
+        // buffer fills, and a relay that waits for the child to drain it
+        // stops pumping output, so the child in turn blocks writing — both
+        // directions back up and the session dies on the write timeout
+        // instead of completing.
+        let request = remote_helper_pty_request(
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "seq 1 100000; exec cat >/dev/null".to_string(),
+            ],
+            std::env::current_dir().unwrap(),
+        )
+        .unwrap();
+        let session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
+
+        // Newline-terminated lines: the canonical-mode PTY completes each
+        // line into the input queue, so the queue genuinely fills.
+        let line = b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd\n";
+        let payload = line.repeat(4096); // 256 KiB, far beyond the PTY buffer
+
+        let started = Instant::now();
+        let code = relay_pty_stdio(session, std::io::Cursor::new(payload), std::io::sink())
+            .expect("relay must complete a legitimate full-duplex exchange");
+
+        assert_eq!(code, 0);
+        assert!(
+            started.elapsed() < Duration::from_secs(8),
+            "relay stalled on full-duplex backpressure: took {:?}",
+            started.elapsed()
+        );
+    }
 
     #[test]
     fn preserves_normal_exit_code() {
