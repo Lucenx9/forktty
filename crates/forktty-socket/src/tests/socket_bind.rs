@@ -351,7 +351,7 @@ fn bind_accepts_private_owned_parent_when_enforcing() {
 }
 
 #[test]
-fn peer_uid_allowed_accepts_owner_and_root_only() {
+fn peer_uid_allowed_accepts_server_effective_uid_and_root_only() {
     assert!(peer_uid_allowed(1000, 1000));
     assert!(peer_uid_allowed(0, 1000));
     assert!(!peer_uid_allowed(1001, 1000));

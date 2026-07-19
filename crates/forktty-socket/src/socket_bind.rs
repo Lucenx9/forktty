@@ -340,7 +340,7 @@ pub(crate) fn verify_peer_credentials(stream: &tokio::net::UnixStream) -> Result
         Ok(())
     } else {
         Err(format!(
-            "peer uid {} does not match socket owner uid {server_euid}",
+            "peer uid {} does not match server effective uid {server_euid}",
             cred.uid()
         ))
     }

@@ -170,15 +170,13 @@ impl PtySession {
         }
     }
 
-    /// Deliver the terminal's configured EOF character to a canonical-mode
-    /// child without closing the bidirectional PTY master and losing output.
+    /// Resolve the terminal's configured EOF sequence without writing it.
     ///
     /// # Errors
     ///
-    /// Returns an error when the terminal attributes cannot be read, the PTY
-    /// is not in canonical mode, its EOF character is disabled, or writing the
-    /// configured EOF character fails or times out.
-    pub fn send_eof(&mut self) -> io::Result<()> {
+    /// Returns an error when the terminal attributes cannot be read, the PTY is
+    /// not in canonical mode, or its EOF character is disabled.
+    pub fn eof_bytes(&self) -> io::Result<[u8; 2]> {
         use nix::sys::termios::{tcgetattr, LocalFlags, SpecialCharacterIndices, _POSIX_VDISABLE};
 
         let termios = tcgetattr(&self.master).map_err(io_error)?;
@@ -198,7 +196,19 @@ impl PtySession {
         // The first VEOF flushes a pending unterminated canonical line. The
         // second, now at the beginning of a line, makes the slave read return
         // zero without appending a synthetic newline.
-        self.write_all(&[eof, eof])
+        Ok([eof, eof])
+    }
+
+    /// Deliver the terminal's configured EOF character to a canonical-mode
+    /// child without closing the bidirectional PTY master and losing output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when resolving the EOF sequence fails or writing it
+    /// fails or times out.
+    pub fn send_eof(&mut self) -> io::Result<()> {
+        let eof = self.eof_bytes()?;
+        self.write_all(&eof)
     }
 
     pub fn read_available(&mut self) -> io::Result<Vec<u8>> {

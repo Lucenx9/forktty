@@ -589,7 +589,7 @@ notifications and terminal output. The CLI exposes one-page access as `forktty n
   and optional PR lookup can make user-directed network requests.
 - Owner-only Unix socket permissions and private runtime directory validation;
   the socket parent must not be a symlink, and accepted connections must carry
-  a same-uid (or root) `SO_PEERCRED` peer credential.
+  the server's effective uid (or root) in their `SO_PEERCRED` credentials.
 - 1 MiB bounds for socket requests, config, and session files.
 - Hook session-to-surface routing and prompt-correlation state is local process
   memory only. The routing cache is capped at 256 entries; prompt correlations
