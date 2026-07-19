@@ -1497,11 +1497,12 @@ async fn project_action_program_resolution_failure_rolls_back_modeled_surface() 
     )
     .unwrap();
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let runtime_dir = super::test_runtime::private_runtime_tempdir("forktty-project-action-");
     let state = SocketAppState::new(
         model.clone(),
         Arc::new(HeadlessTerminalBackend::new()),
         "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
+        runtime_dir.path().join("forktty.sock"),
     )
     .with_notification_dispatch(false);
     bootstrap_default_workspace(&state, repo_dir.path().to_path_buf()).unwrap();

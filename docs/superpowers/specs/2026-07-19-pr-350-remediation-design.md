@@ -7,7 +7,7 @@
 ## Goal
 
 Resolve every verified merge blocker and the non-blocking review findings in PR
-#350 without broadening the product scope. The result must preserve user-owned
+350 without broadening the product scope. The result must preserve user-owned
 hook configuration, package the exact artifacts produced by the current build,
 ship complete and accurate legal notices, keep release validation testable, and
 restore documentation consistency. After the implementation passes the full
