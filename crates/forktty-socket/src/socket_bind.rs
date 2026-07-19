@@ -1,4 +1,4 @@
-use crate::env_var;
+use crate::{connect_unix_stream_with_timeout, env_var};
 use serde_json::Value;
 use std::fs::{self, DirBuilder};
 use std::io;
@@ -148,7 +148,7 @@ enum ExistingSocketOccupant {
 }
 
 fn inspect_existing_socket(path: &Path) -> ExistingSocketOccupant {
-    match StdUnixStream::connect(path) {
+    match connect_unix_stream_with_timeout(path, SOCKET_PROBE_TIMEOUT) {
         Ok(stream) => match probe_forktty_socket(stream) {
             Ok(true) => ExistingSocketOccupant::ForkTTY,
             Ok(false) | Err(_) => ExistingSocketOccupant::Other,

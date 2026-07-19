@@ -6,7 +6,7 @@ use std::path::Path;
 
 pub(super) struct SidebarWorkspaceRow {
     workspace: forktty_core::Workspace,
-    meta: String,
+    pub(super) meta: String,
     summary: String,
     status: Option<WorkspaceStatusBadge>,
     pub(super) pane_count: usize,
@@ -25,7 +25,7 @@ pub(super) struct SidebarSnapshot {
     active_status_label: Option<String>,
     pub(super) active_full_path: Option<String>,
     pub(super) active_pane_label: Option<String>,
-    signature: String,
+    pub(super) signature: String,
 }
 
 #[derive(Clone)]
@@ -440,16 +440,14 @@ pub(super) fn refresh_sidebar(
         primary_click.connect_released(move |_, _n_press, _x, _y| {
             close_sidebar_context_menu(&ui_for_click);
             ui_for_click.sidebar.select_row(Some(&row_for_click));
-            select_sidebar_workspace(
-                &state_for_click,
-                &workspace_id_for_click,
-                &controller_for_click,
-            );
-            schedule_sidebar_refresh(
-                ui_for_click.clone(),
-                state_for_click.clone(),
-                controller_for_click.clone(),
-            );
+            let state = state_for_click.clone();
+            let workspace_id = workspace_id_for_click.clone();
+            let controller = controller_for_click.clone();
+            let ui = ui_for_click.clone();
+            glib::spawn_future_local(async move {
+                select_sidebar_workspace(&state, &workspace_id, &controller).await;
+                schedule_sidebar_refresh(ui, state, controller);
+            });
         });
         row.add_controller(primary_click);
 
@@ -469,12 +467,14 @@ pub(super) fn refresh_sidebar(
             }
             close_sidebar_context_menu(&ui_for_key);
             ui_for_key.sidebar.select_row(Some(&row_for_key));
-            select_sidebar_workspace(&state_for_key, &workspace_id_for_key, &controller_for_key);
-            schedule_sidebar_refresh(
-                ui_for_key.clone(),
-                state_for_key.clone(),
-                controller_for_key.clone(),
-            );
+            let state = state_for_key.clone();
+            let workspace_id = workspace_id_for_key.clone();
+            let controller = controller_for_key.clone();
+            let ui = ui_for_key.clone();
+            glib::spawn_future_local(async move {
+                select_sidebar_workspace(&state, &workspace_id, &controller).await;
+                schedule_sidebar_refresh(ui, state, controller);
+            });
             glib::Propagation::Stop
         });
         row.add_controller(key);
@@ -539,6 +539,8 @@ pub(super) fn refresh_sidebar(
 }
 
 pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
+    let terminal_surfaces = state.terminal.surfaces().unwrap_or_default();
+    let ready_surface_ids = ready_surface_ids(state, &terminal_surfaces).unwrap_or_default();
     let Ok(model) = state.model.lock() else {
         return SidebarSnapshot {
             rows: Vec::new(),
@@ -584,9 +586,12 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
         );
         let surfaces = model.list_surfaces(Some(&workspace.id));
         let pane_count = collect_panes(&workspace.pane_tree).len();
-        let ssh_host = surfaces.iter().find_map(|s| {
-            if let forktty_core::SurfaceKind::Ssh { host } = &s.kind {
-                Some(host.clone())
+        let ssh_state = surfaces.iter().find_map(|surface| {
+            if let forktty_core::SurfaceKind::Ssh { host } = &surface.kind {
+                Some((
+                    host.clone(),
+                    ready_surface_ids.contains(surface.id.as_str()),
+                ))
             } else {
                 None
             }
@@ -594,7 +599,13 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
         let agent_project_cwd = model
             .surface(&workspace.focused_surface_id)
             .and_then(surface_agent_resume_cwd);
-        let meta = workspace_meta_line(&workspace, ssh_host.as_deref(), agent_project_cwd);
+        let meta = workspace_meta_line(
+            &workspace,
+            ssh_state
+                .as_ref()
+                .map(|(host, connected)| (host.as_str(), *connected)),
+            agent_project_cwd,
+        );
         rows.push(SidebarWorkspaceRow {
             workspace,
             meta,
@@ -691,12 +702,17 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
 
 pub(super) fn workspace_meta_line(
     workspace: &forktty_core::Workspace,
-    ssh_host: Option<&str>,
+    ssh_state: Option<(&str, bool)>,
     effective_project_cwd: Option<&Path>,
 ) -> String {
     let mut parts = Vec::new();
-    if let Some(host) = ssh_host {
+    if let Some((host, connected)) = ssh_state {
         parts.push(format!("ssh:{host}"));
+        parts.push(if connected {
+            "connected".to_string()
+        } else {
+            "disconnected".to_string()
+        });
     }
     if !workspace.git_branch.trim().is_empty() {
         parts.push(workspace.git_branch.clone());
@@ -738,12 +754,12 @@ fn title_matches_path_echo(title: &str, path: &Path) -> bool {
     title == compact.as_str() || title == full.as_ref() || full.ends_with(&format!("/{title}"))
 }
 
-pub(super) fn select_sidebar_workspace(
+pub(super) async fn select_sidebar_workspace(
     state: &SocketAppState,
     workspace_id: &str,
     controller: &Rc<RefCell<TerminalController>>,
 ) {
-    if let Err(err) = select_workspace_with_terminal(state, workspace_id) {
+    if let Err(err) = select_workspace_with_terminal(state, workspace_id).await {
         eprintln!("Failed to spawn selected workspace terminal: {err}");
         create_global_notification(
             state,
@@ -980,7 +996,7 @@ pub(super) fn sidebar_visible_metadata(
 ) -> (Vec<StatusEntry>, Vec<ProgressEntry>) {
     let workspace_surface_ids = collect_leaves(&workspace.pane_tree);
     let active_agent_aliases = active_agent_metadata_aliases(model, &workspace.id);
-    let statuses = statuses
+    let mut statuses = statuses
         .iter()
         .filter(|status| {
             sidebar_metadata_key_is_visible(
@@ -991,6 +1007,7 @@ pub(super) fn sidebar_visible_metadata(
         })
         .cloned()
         .collect::<Vec<_>>();
+    append_agent_lifecycle_statuses(model, &workspace.id, &mut statuses);
     let progress = progress
         .iter()
         .filter(|progress| {
@@ -1003,6 +1020,84 @@ pub(super) fn sidebar_visible_metadata(
         .cloned()
         .collect::<Vec<_>>();
     (statuses, progress)
+}
+
+fn append_agent_lifecycle_statuses(
+    model: &forktty_core::WorkspaceModel,
+    workspace_id: &str,
+    statuses: &mut Vec<StatusEntry>,
+) {
+    let sessions = model
+        .list_surfaces(Some(workspace_id))
+        .into_iter()
+        .filter_map(|surface| surface.agent_session)
+        .collect::<Vec<_>>();
+
+    for agent in [
+        forktty_core::AgentKind::Codex,
+        forktty_core::AgentKind::ClaudeCode,
+        forktty_core::AgentKind::Pi,
+        forktty_core::AgentKind::OpenCode,
+        forktty_core::AgentKind::Antigravity,
+        forktty_core::AgentKind::Grok,
+        forktty_core::AgentKind::Custom,
+    ] {
+        let aliases = forktty_core::agents::agent_metadata_aliases(agent);
+        let has_primary_status = statuses.iter().any(|status| {
+            status
+                .key
+                .strip_prefix("agent:")
+                .is_some_and(|key| aliases.contains(&key))
+        });
+        if has_primary_status {
+            continue;
+        }
+
+        let lifecycle = sessions
+            .iter()
+            .filter(|session| session.agent == agent)
+            .map(|session| session.lifecycle)
+            .min_by_key(|lifecycle| match lifecycle {
+                forktty_core::AgentSessionLifecycle::NeedsInput => 0,
+                forktty_core::AgentSessionLifecycle::Running => 1,
+                _ => 2,
+            });
+        let Some((value, color)) = lifecycle.and_then(agent_lifecycle_sidebar_status) else {
+            continue;
+        };
+        let (key, label) = sidebar_agent_identity(agent);
+        statuses.push(StatusEntry {
+            key: format!("agent:{key}"),
+            label: label.to_string(),
+            value: value.to_string(),
+            color: Some(color.to_string()),
+        });
+    }
+}
+
+fn agent_lifecycle_sidebar_status(
+    lifecycle: forktty_core::AgentSessionLifecycle,
+) -> Option<(&'static str, &'static str)> {
+    match lifecycle {
+        forktty_core::AgentSessionLifecycle::Running => Some(("Running", "blue")),
+        forktty_core::AgentSessionLifecycle::NeedsInput => Some(("Needs input", "yellow")),
+        forktty_core::AgentSessionLifecycle::Idle
+        | forktty_core::AgentSessionLifecycle::Suspended
+        | forktty_core::AgentSessionLifecycle::Ended
+        | forktty_core::AgentSessionLifecycle::Unknown => None,
+    }
+}
+
+fn sidebar_agent_identity(agent: forktty_core::AgentKind) -> (&'static str, &'static str) {
+    match agent {
+        forktty_core::AgentKind::ClaudeCode => ("claude", "Claude"),
+        forktty_core::AgentKind::Codex => ("codex", "Codex"),
+        forktty_core::AgentKind::Antigravity => ("antigravity", "Antigravity"),
+        forktty_core::AgentKind::Grok => ("grok", "Grok"),
+        forktty_core::AgentKind::Pi => ("pi", "Pi"),
+        forktty_core::AgentKind::OpenCode => ("opencode", "OpenCode"),
+        forktty_core::AgentKind::Custom => ("custom", "Agent"),
+    }
 }
 
 fn active_agent_metadata_aliases(
@@ -1240,73 +1335,36 @@ fn format_status_summary_part(status: &StatusEntry) -> String {
     format!("{}: {}", status.label, value)
 }
 
-/// Fixed sidebar sections below the workspace list: TEAM (latest team
-/// workers grouped by agent), RESOURCES project shortcuts, and the Settings/About
-/// footer, mirroring the agent-workspace layout.
+/// Fixed sidebar sections below the workspace list: project shortcuts and the
+/// Settings/About footer.
 #[derive(Clone)]
 pub(super) struct SidebarSectionsUi {
-    pub(super) team_shell: gtk::Box,
-    team_rows: gtk::Box,
-    team_signature: Rc<RefCell<String>>,
     pub(super) resources_shell: gtk::Box,
     pub(super) git_repos_row: gtk::Button,
     pub(super) footer_shell: gtk::Box,
     pub(super) about_row: gtk::Button,
 }
 
-pub(super) fn build_sidebar_sections(state: &SocketAppState) -> SidebarSectionsUi {
-    let team_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    team_shell.add_css_class("sidebar-fixed-section");
-    team_shell.append(&sidebar_section_label("Team"));
-    let team_rows = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    team_shell.append(&team_rows);
-
+pub(super) fn build_sidebar_sections() -> SidebarSectionsUi {
     let resources_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
     resources_shell.add_css_class("sidebar-fixed-section");
     resources_shell.append(&sidebar_section_label("Resources"));
-    let git_repos_row = sidebar_nav_row("forktty-merge-symbolic", "Worktrees", None);
+    let git_repos_row = sidebar_nav_row("forktty-merge-symbolic", "Worktrees");
     resources_shell.append(&git_repos_row);
 
     let footer_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
     footer_shell.add_css_class("sidebar-footer");
-    let settings_row = sidebar_nav_row("forktty-settings-symbolic", "Settings", None);
+    let settings_row = sidebar_nav_row("forktty-settings-symbolic", "Settings");
     settings_row.set_action_name(Some("app.settings"));
     footer_shell.append(&settings_row);
-    let about_row = sidebar_nav_row("forktty-info-symbolic", "About ForkTTY", None);
+    let about_row = sidebar_nav_row("forktty-info-symbolic", "About ForkTTY");
     footer_shell.append(&about_row);
 
-    let ui = SidebarSectionsUi {
-        team_shell,
-        team_rows,
-        team_signature: Rc::new(RefCell::new(String::new())),
+    SidebarSectionsUi {
         resources_shell,
         git_repos_row,
         footer_shell,
         about_row,
-    };
-    refresh_sidebar_team_section(&ui, state);
-    ui
-}
-
-pub(super) fn refresh_sidebar_team_section(ui: &SidebarSectionsUi, state: &SocketAppState) {
-    let chips = latest_team_chips_for_state(state);
-    let signature = chips
-        .iter()
-        .map(|chip| format!("{}:{}:{}", chip.label, chip.count, chip.dot))
-        .collect::<Vec<_>>()
-        .join("|");
-    if *ui.team_signature.borrow() == signature {
-        return;
-    }
-    *ui.team_signature.borrow_mut() = signature;
-    while let Some(child) = ui.team_rows.first_child() {
-        ui.team_rows.remove(&child);
-    }
-    ui.team_shell.set_visible(!chips.is_empty());
-    for chip in &chips {
-        let row = sidebar_nav_row("forktty-terminal-symbolic", &chip.label, Some(chip));
-        row.set_action_name(Some("app.agents"));
-        ui.team_rows.append(&row);
     }
 }
 
@@ -1321,7 +1379,7 @@ fn sidebar_section_label(title: &str) -> gtk::Label {
     label
 }
 
-fn sidebar_nav_row(icon: &str, label: &str, chip: Option<&TeamChip>) -> gtk::Button {
+fn sidebar_nav_row(icon: &str, label: &str) -> gtk::Button {
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let icon = gtk::Image::from_icon_name(icon);
     icon.add_css_class("sidebar-nav-icon");
@@ -1335,19 +1393,6 @@ fn sidebar_nav_row(icon: &str, label: &str, chip: Option<&TeamChip>) -> gtk::But
         .build();
     text.add_css_class("sidebar-nav-label");
     content.append(&text);
-    if let Some(chip) = chip {
-        let dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        dot.add_css_class("rail-dot");
-        dot.add_css_class(chip.dot);
-        dot.set_valign(gtk::Align::Center);
-        content.append(&dot);
-        let count = gtk::Label::builder()
-            .label(chip.count.to_string())
-            .single_line_mode(true)
-            .build();
-        count.add_css_class("sidebar-nav-count");
-        content.append(&count);
-    }
     let button = gtk::Button::builder()
         .child(&content)
         .has_frame(false)

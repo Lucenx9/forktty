@@ -5,6 +5,7 @@ set -euo pipefail
 umask 022
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/packaging-ghostty.sh"
 VERSION="${FORKTTY_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -1)}"
 DEB_VERSION="${FORKTTY_DEB_VERSION:-$VERSION}"
 TARGET_DIR="$ROOT_DIR/target/packaging/deb"
@@ -46,8 +47,8 @@ verify_forktty_icon_assets() {
 
 copy_vendored_ghostty_shell_integration() {
   local source_dir
-  source_dir="$(find "$ROOT_DIR/target/release/build" -path '*/ghostty-src/src/shell-integration' -print -quit)"
-  if [[ -z "$source_dir" ]]; then
+  source_dir="$GHOSTTY_BUILD_OUT_DIR/ghostty-src/src/shell-integration"
+  if [[ ! -d "$source_dir" ]]; then
     echo "Could not find vendored Ghostty shell-integration resources in target/release/build" >&2
     exit 1
   fi
@@ -113,8 +114,8 @@ copy_vendored_ghostty_terminfo() {
   }
 
   local source_dir tmp_dir
-  source_dir="$(find "$ROOT_DIR/target/release/build" -path '*/ghostty-src/src/terminfo' -type d -print -quit)"
-  if [[ -z "$source_dir" ]]; then
+  source_dir="$GHOSTTY_BUILD_OUT_DIR/ghostty-src/src/terminfo"
+  if [[ ! -d "$source_dir" ]]; then
     echo "Could not find vendored Ghostty terminfo sources in target/release/build" >&2
     exit 1
   fi
@@ -180,12 +181,12 @@ else
   echo "appstreamcli not found; skipping AppStream metadata validation" >&2
 fi
 
-cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty --release
+GHOSTTY_BUILD_OUT_DIR="$(forktty_build_release_and_print_ghostty_out_dir "$ROOT_DIR")"
 
 rm -rf "$PKG_ROOT"
 install -Dm755 "$ROOT_DIR/target/release/forktty" "$PKG_ROOT/usr/bin/forktty"
-GHOSTTY_LIB="$(find "$ROOT_DIR/target/release/build" -path '*/ghostty-install/lib/libghostty-vt.so.0.1.0' -print -quit)"
-if [[ -z "$GHOSTTY_LIB" ]]; then
+GHOSTTY_LIB="$GHOSTTY_BUILD_OUT_DIR/ghostty-install/lib/libghostty-vt.so.0.1.0"
+if [[ ! -f "$GHOSTTY_LIB" ]]; then
   echo "Could not find vendored libghostty-vt.so.0.1.0 in target/release/build" >&2
   exit 1
 fi
@@ -197,6 +198,7 @@ ln -s libghostty-vt.so.0 "$PKG_ROOT/usr/lib/libghostty-vt.so"
 GHOSTTY_GTK_LIB="$(find_required_ghostty_gtk_lib)"
 install -Dm755 "$GHOSTTY_GTK_LIB" "$PKG_ROOT/usr/lib/ghostty-gtk-embed.so"
 test -f "$PKG_ROOT/usr/lib/ghostty-gtk-embed.so"
+forktty_copy_ghostty_layer_shell_lib "$GHOSTTY_GTK_LIB" "$PKG_ROOT/usr/lib"
 copy_vendored_ghostty_shell_integration
 copy_vendored_ghostty_themes
 copy_vendored_ghostty_terminfo
@@ -223,10 +225,10 @@ Architecture: $ARCH
 Installed-Size: $INSTALLED_SIZE
 Maintainer: Lucenx9
 Homepage: https://forktty.dev/
-Depends: libc6, libgcc-s1, libstdc++6, libgtk-4-1, libadwaita-1-0 (>= 1.4), libgtk4-layer-shell0, libssl3, libssh2-1, zlib1g, libzstd1, hicolor-icon-theme
-Description: Linux-native multi-agent terminal
- ForkTTY is a Linux-native GTK4/libadwaita/Ghostty terminal for multi-agent
- workflows, programmable socket automation, and git worktree isolation.
+Depends: libc6, libgcc-s1, libstdc++6, libgtk-4-1, libadwaita-1-0 (>= 1.4), libssl3, libssh2-1, zlib1g, libzstd1, hicolor-icon-theme
+Description: Linux-native workspace terminal
+ ForkTTY is a Linux-native GTK4/libadwaita/Ghostty terminal for workspaces,
+ programmable socket automation, and git worktree isolation.
 CONTROL
 
 cat > "$PKG_ROOT/DEBIAN/postinst" <<'SCRIPT'

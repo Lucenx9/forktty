@@ -49,6 +49,14 @@ type SurfaceReadText =
     unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, i32, *mut GhosttyGtkText) -> i32;
 type SurfaceReadTextLimited =
     unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, i32, usize, i32, *mut GhosttyGtkText) -> i32;
+type SurfaceReadTextLimitedWithTotalLines = unsafe extern "C" fn(
+    *mut gtk::ffi::GtkWidget,
+    i32,
+    usize,
+    i32,
+    *mut GhosttyGtkText,
+    *mut usize,
+) -> i32;
 type SurfaceExitCode = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *mut u32) -> i32;
 type SurfaceChildPid = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *mut i64) -> i32;
 type SurfacePerformAction = unsafe extern "C" fn(*mut gtk::ffi::GtkWidget, *const c_char) -> i32;
@@ -128,6 +136,7 @@ pub(super) struct GhosttyGtkEmbedder {
     surface_send_text: Option<SurfaceSendText>,
     surface_read_text: Option<SurfaceReadText>,
     surface_read_text_limited: Option<SurfaceReadTextLimited>,
+    surface_read_text_limited_with_total_lines: Option<SurfaceReadTextLimitedWithTotalLines>,
     surface_exit_code: Option<SurfaceExitCode>,
     surface_child_pid: Option<SurfaceChildPid>,
     surface_perform_action: Option<SurfacePerformAction>,
@@ -170,6 +179,12 @@ impl GhosttyGtkEmbedder {
             unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_READ_TEXT_SYMBOL) };
         let surface_read_text_limited =
             unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_READ_TEXT_LIMITED_SYMBOL) };
+        let surface_read_text_limited_with_total_lines = unsafe {
+            load_optional_symbol(
+                &library,
+                GHOSTTY_GTK_SURFACE_READ_TEXT_LIMITED_WITH_TOTAL_LINES_SYMBOL,
+            )
+        };
         let surface_exit_code =
             unsafe { load_optional_symbol(&library, GHOSTTY_GTK_SURFACE_EXIT_CODE_SYMBOL) };
         let surface_child_pid =
@@ -228,6 +243,7 @@ impl GhosttyGtkEmbedder {
             surface_send_text,
             surface_read_text,
             surface_read_text_limited,
+            surface_read_text_limited_with_total_lines,
             surface_exit_code,
             surface_child_pid,
             surface_perform_action,
@@ -365,12 +381,16 @@ impl GhosttyGtkEmbedder {
     }
 
     pub(super) fn supports_read_text(&self) -> bool {
-        (self.surface_read_text_limited.is_some() || self.surface_read_text.is_some())
+        (self.surface_read_text_limited_with_total_lines.is_some()
+            || self.surface_read_text_limited.is_some()
+            || self.surface_read_text.is_some())
             && self.text_free.is_some()
     }
 
     pub(super) fn supports_bounded_read_text(&self) -> bool {
-        self.surface_read_text_limited.is_some() && self.text_free.is_some()
+        (self.surface_read_text_limited_with_total_lines.is_some()
+            || self.surface_read_text_limited.is_some())
+            && self.text_free.is_some()
     }
 
     pub(super) fn supports_child_pid(&self) -> bool {
@@ -417,7 +437,24 @@ impl GhosttyGtkEmbedder {
             return Err("Ghostty GTK library does not export text-free support".to_string());
         };
         let mut raw = GhosttyGtkText::default();
-        let ok = if let Some(surface_read_text_limited) = self.surface_read_text_limited {
+        let mut source_total_lines = None;
+        let ok = if let Some(surface_read_text_limited_with_total_lines) =
+            self.surface_read_text_limited_with_total_lines
+        {
+            let mut total_lines = 0usize;
+            let ok = unsafe {
+                surface_read_text_limited_with_total_lines(
+                    widget.to_glib_none().0,
+                    scope as i32,
+                    max_bytes,
+                    i32::from(truncate_from_end),
+                    &mut raw,
+                    &mut total_lines,
+                )
+            };
+            source_total_lines = Some(total_lines);
+            ok
+        } else if let Some(surface_read_text_limited) = self.surface_read_text_limited {
             unsafe {
                 surface_read_text_limited(
                     widget.to_glib_none().0,
@@ -436,7 +473,8 @@ impl GhosttyGtkEmbedder {
         if ok == 0 {
             return Err("Ghostty GTK surface rejected read-text".to_string());
         }
-        let result = embedded_ghostty_text_from_raw(&raw, max_bytes, truncate_from_end);
+        let result =
+            embedded_ghostty_text_from_raw(&raw, max_bytes, truncate_from_end, source_total_lines);
         unsafe { text_free(&mut raw) };
         result
     }
@@ -525,7 +563,10 @@ impl GhosttyGtkEmbedder {
                 let text = unsafe {
                     self.read_text(
                         widget,
-                        embedded_ghostty_read_scope_for_capture(capture.clone()),
+                        embedded_ghostty_read_scope_for_capture(
+                            capture.clone(),
+                            self.supports_bounded_read_text(),
+                        ),
                         max_bytes,
                         embedded_ghostty_truncates_from_end(&capture),
                     )
@@ -569,11 +610,14 @@ impl GhosttyGtkEmbedder {
 
 fn embedded_ghostty_read_scope_for_capture(
     capture: TerminalTextCapture,
+    supports_bounded_read_text: bool,
 ) -> EmbeddedGhosttyTextScope {
     match capture {
-        TerminalTextCapture::Visible | TerminalTextCapture::Tail { .. } => {
-            EmbeddedGhosttyTextScope::Visible
+        TerminalTextCapture::Visible => EmbeddedGhosttyTextScope::Visible,
+        TerminalTextCapture::Tail { .. } if supports_bounded_read_text => {
+            EmbeddedGhosttyTextScope::All
         }
+        TerminalTextCapture::Tail { .. } => EmbeddedGhosttyTextScope::Visible,
         TerminalTextCapture::All => EmbeddedGhosttyTextScope::All,
     }
 }
@@ -732,6 +776,8 @@ pub(super) const GHOSTTY_GTK_SURFACE_NEW_WITH_WORKING_DIRECTORY_COMMAND_AND_SCRO
 pub(super) const GHOSTTY_GTK_SURFACE_READ_TEXT_SYMBOL: &[u8] = b"ghostty_gtk_surface_read_text";
 pub(super) const GHOSTTY_GTK_SURFACE_READ_TEXT_LIMITED_SYMBOL: &[u8] =
     b"ghostty_gtk_surface_read_text_limited";
+pub(super) const GHOSTTY_GTK_SURFACE_READ_TEXT_LIMITED_WITH_TOTAL_LINES_SYMBOL: &[u8] =
+    b"ghostty_gtk_surface_read_text_limited_with_total_lines";
 pub(super) const GHOSTTY_GTK_SURFACE_EXIT_CODE_SYMBOL: &[u8] = b"ghostty_gtk_surface_exit_code";
 pub(super) const GHOSTTY_GTK_SURFACE_CHILD_PID_SYMBOL: &[u8] = b"ghostty_gtk_surface_child_pid";
 pub(super) const GHOSTTY_GTK_SURFACE_PERFORM_ACTION_SYMBOL: &[u8] =
@@ -744,6 +790,7 @@ fn embedded_ghostty_text_from_raw(
     raw: &GhosttyGtkText,
     max_bytes: usize,
     truncate_from_end: bool,
+    source_total_lines: Option<usize>,
 ) -> Result<EmbeddedGhosttyText, String> {
     if raw.text.is_null() && raw.text_len > 0 {
         return Err("Ghostty GTK returned null text with nonzero length".to_string());
@@ -753,7 +800,7 @@ fn embedded_ghostty_text_from_raw(
     } else {
         unsafe { std::slice::from_raw_parts(raw.text.cast::<u8>(), raw.text_len) }
     };
-    let source_total_lines = text_line_count_bytes(bytes);
+    let source_total_lines = source_total_lines.unwrap_or_else(|| text_line_count_bytes(bytes));
     let (bytes, truncated) = bounded_text_bytes(bytes, max_bytes, truncate_from_end);
     Ok(EmbeddedGhosttyText {
         text: String::from_utf8_lossy(bytes).into_owned(),
@@ -820,6 +867,7 @@ pub(super) fn embedded_ghostty_snapshot_from_text(
             max_bytes,
         ),
     };
+    snapshot.total_lines = total_lines;
     snapshot.truncated |= was_truncated;
     snapshot
 }
@@ -1059,6 +1107,10 @@ mod tests {
             "ghostty_gtk_surface_read_text_limited"
         );
         assert_eq!(
+            symbol_name(GHOSTTY_GTK_SURFACE_READ_TEXT_LIMITED_WITH_TOTAL_LINES_SYMBOL),
+            "ghostty_gtk_surface_read_text_limited_with_total_lines"
+        );
+        assert_eq!(
             symbol_name(GHOSTTY_GTK_SURFACE_EXIT_CODE_SYMBOL),
             "ghostty_gtk_surface_exit_code"
         );
@@ -1223,7 +1275,7 @@ mod tests {
             rows: 24,
         };
 
-        let text = embedded_ghostty_text_from_raw(&raw, 3, false).expect("text");
+        let text = embedded_ghostty_text_from_raw(&raw, 3, false, None).expect("text");
 
         assert_eq!(text.text, "abc");
         assert!(text.truncated);
@@ -1240,11 +1292,47 @@ mod tests {
             rows: 24,
         };
 
-        let text = embedded_ghostty_text_from_raw(&raw, 3, true).expect("text");
+        let text = embedded_ghostty_text_from_raw(&raw, 3, true, None).expect("text");
 
         assert_eq!(text.text, "def");
         assert!(text.truncated);
         assert_eq!(text.source_total_lines, 1);
+    }
+
+    #[test]
+    fn embedded_snapshots_drop_partial_utf8_at_bounded_ffi_edges() {
+        let mut head_bytes = "abc💡".as_bytes()[..4].to_vec();
+        let head_raw = GhosttyGtkText {
+            text: head_bytes.as_mut_ptr().cast(),
+            text_len: head_bytes.len(),
+            cols: 80,
+            rows: 24,
+        };
+        let head = embedded_ghostty_text_from_raw(&head_raw, 4, false, None).expect("head");
+        let head_snapshot =
+            embedded_ghostty_snapshot_from_text("surface-1", TerminalTextCapture::All, 4, head, 1);
+
+        let tail_source = "💡xyz".as_bytes();
+        let mut tail_bytes = tail_source[tail_source.len() - 4..].to_vec();
+        let tail_raw = GhosttyGtkText {
+            text: tail_bytes.as_mut_ptr().cast(),
+            text_len: tail_bytes.len(),
+            cols: 80,
+            rows: 24,
+        };
+        let tail = embedded_ghostty_text_from_raw(&tail_raw, 4, true, None).expect("tail");
+        let tail_snapshot = embedded_ghostty_snapshot_from_text(
+            "surface-1",
+            TerminalTextCapture::Tail { lines: 1 },
+            4,
+            tail,
+            1,
+        );
+
+        assert_eq!(head_snapshot.text, "abc");
+        assert_eq!(tail_snapshot.text, "xyz");
+        assert!(head_snapshot.text.len() <= 4);
+        assert!(tail_snapshot.text.len() <= 4);
     }
 
     #[test]
@@ -1268,8 +1356,8 @@ mod tests {
     }
 
     #[test]
-    fn embedded_all_snapshot_preserves_raw_total_lines_when_precapped() {
-        let mut raw_bytes = b"one\ntwo\nthree\nfour".to_vec();
+    fn embedded_all_snapshot_preserves_abi_total_lines_when_precapped() {
+        let mut raw_bytes = b"one\ntwoX".to_vec();
         let raw = GhosttyGtkText {
             text: raw_bytes.as_mut_ptr().cast(),
             text_len: raw_bytes.len(),
@@ -1277,7 +1365,7 @@ mod tests {
             rows: 24,
         };
 
-        let text = embedded_ghostty_text_from_raw(&raw, 7, false).expect("text");
+        let text = embedded_ghostty_text_from_raw(&raw, 7, false, Some(4)).expect("text");
         let total_lines = text.source_total_lines;
         let snapshot = embedded_ghostty_snapshot_from_text(
             "surface-1",
@@ -1314,39 +1402,44 @@ mod tests {
     }
 
     #[test]
-    fn embedded_tail_snapshot_is_derived_from_full_text() {
+    fn embedded_tail_snapshot_preserves_abi_total_lines_when_precapped() {
         let snapshot = embedded_ghostty_snapshot_from_text(
             "surface-1",
             TerminalTextCapture::Tail { lines: 2 },
             1024,
             EmbeddedGhosttyText {
-                text: "one\ntwo\nthree\n".to_string(),
+                text: "two\nthree\n".to_string(),
                 cols: 80,
                 rows: 24,
-                truncated: false,
-                source_total_lines: 3,
+                truncated: true,
+                source_total_lines: 12,
             },
-            3,
+            12,
         );
 
         assert_eq!(snapshot.scope, "tail");
         assert_eq!(snapshot.text, "two\nthree\n");
         assert_eq!(snapshot.lines, 2);
-        assert_eq!(snapshot.total_lines, 3);
+        assert_eq!(snapshot.total_lines, 12);
+        assert!(snapshot.truncated);
     }
 
     #[test]
-    fn embedded_bounded_reads_do_not_request_full_scrollback() {
+    fn embedded_tail_reads_full_scrollback_only_when_bounded() {
         assert_eq!(
-            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::Visible),
+            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::Visible, true),
             EmbeddedGhosttyTextScope::Visible
         );
         assert_eq!(
-            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::Tail { lines: 8 }),
+            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::Tail { lines: 8 }, true),
+            EmbeddedGhosttyTextScope::All
+        );
+        assert_eq!(
+            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::Tail { lines: 8 }, false),
             EmbeddedGhosttyTextScope::Visible
         );
         assert_eq!(
-            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::All),
+            embedded_ghostty_read_scope_for_capture(TerminalTextCapture::All, false),
             EmbeddedGhosttyTextScope::All
         );
     }

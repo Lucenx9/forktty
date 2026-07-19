@@ -46,7 +46,7 @@ ForkTTY does not upload crash reports, terminal contents, project data, socket p
 | Worktree removal | Rejects dirty or tampered linked worktrees before deletion. |
 | Worktree merge | Rejects dirty target checkouts and merge conflicts before completing the operation. |
 | Worktree hooks | Only `.forktty/setup` and `.forktty/teardown` are executed; hook paths are canonicalized and must remain inside the worktree; execution uses argv, not `sh -c`. |
-| Logs | Newlines are sanitized before writing structured log lines. |
+| Logs | Newlines are sanitized before writing structured log lines. Human-readable `forktty logs` output also treats socket/agent-provided level and message fields as untrusted and renders ESC, OSC/BEL, newlines, and other control characters as visible escapes before writing to the terminal; JSON output remains unchanged. |
 | Browser profiles | Profile IDs are UUID-backed and validated before becoming directory names under `~/.local/share/forktty/browser_profiles/`; profile metadata writes are atomic. |
 | Browser scripting | `browser.snapshot`/`click`/`fill`/`eval` are local socket operations. `browser.eval` runs caller-provided JavaScript in the addressed WebKit page, so it is inside the same-user automation trust boundary. |
 

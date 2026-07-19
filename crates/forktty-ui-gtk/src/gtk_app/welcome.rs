@@ -92,7 +92,7 @@ pub(super) fn show_welcome_dialog(
         .build();
     integration_title.add_css_class("welcome-integration-title");
     let integration_subtitle = gtk::Label::builder()
-        .label("Hooks, local MCP bridge, and agent skills.")
+        .label("Lifecycle and notification hooks for supported agents.")
         .xalign(0.0)
         .build();
     integration_subtitle.add_css_class("welcome-integration-subtitle");
@@ -103,11 +103,10 @@ pub(super) fn show_welcome_dialog(
         .label("Set Up")
         .valign(gtk::Align::Center)
         .build();
-    setup_button.add_css_class("suggested-action");
     setup_button.add_css_class("welcome-setup");
     integration_row.append(&setup_button);
     let setup_status = gtk::Label::builder()
-        .label("Review install status, update managed entries, or set up providers.")
+        .label("Review install status or configure optional agent hooks.")
         .wrap(true)
         .justify(gtk::Justification::Left)
         .xalign(0.0)
@@ -176,6 +175,7 @@ pub(super) fn show_welcome_dialog(
     footer.append(&privacy_link);
 
     let get_started = gtk::Button::with_label("Get Started");
+    get_started.add_css_class("suggested-action");
     get_started.add_css_class("welcome-start");
     get_started.add_css_class("pill");
     get_started.connect_clicked({

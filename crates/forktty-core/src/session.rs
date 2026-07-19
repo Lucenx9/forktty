@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
 use thiserror::Error;
 
 #[cfg(unix)]
@@ -38,6 +38,8 @@ pub enum SessionError {
 
 pub const SESSION_FORMAT_VERSION: u32 = 3;
 const MAX_SESSION_SIZE_BYTES: u64 = 1_048_576;
+const MAX_SESSION_TEMP_FILE_ATTEMPTS: usize = 128;
+static SESSION_TEMP_NONCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SessionData {
@@ -46,14 +48,14 @@ pub struct SessionData {
     pub workspaces: Vec<Workspace>,
     #[serde(default)]
     pub active_workspace_id: Option<String>,
-    /// Persisted per-surface state keyed by surface id: non-terminal kind data
+    /// Persisted per-surface state keyed by surface id: non-terminal kind data,
+    /// terminal directories that differ from the workspace launch directory,
     /// and optional restorable agent session metadata. Empty on older sessions,
     /// in which case restore falls back to a plain terminal for every leaf.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub surfaces: Vec<Surface>,
     /// Monotonic high-water mark for generated workspace ids. This prevents a
-    /// closed workspace id from being reused after restart while durable
-    /// workflow/team records may still reference the old id.
+    /// closed workspace id from being reused after restart.
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub next_workspace: u64,
     /// Monotonic high-water mark for generated surface ids. See
@@ -259,16 +261,10 @@ pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), Sessi
             "session data is too large".to_string(),
         ));
     }
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let tmp_path = write_path.with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
+    let (mut tmp_file, tmp_path) = create_session_temp_file(&write_path, || {
+        SESSION_TEMP_NONCE.fetch_add(1, Ordering::Relaxed)
+    })?;
     let result = (|| -> Result<(), SessionError> {
-        let mut tmp_file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)?;
         apply_session_permissions(&tmp_path)?;
         tmp_file.write_all(json.as_bytes())?;
         tmp_file.sync_all()?;
@@ -280,6 +276,30 @@ pub fn save_session_to_path(path: &Path, data: &SessionData) -> Result<(), Sessi
         let _ = fs::remove_file(&tmp_path);
     }
     result
+}
+
+fn create_session_temp_file(
+    write_path: &Path,
+    mut next_nonce: impl FnMut() -> u64,
+) -> std::io::Result<(fs::File, PathBuf)> {
+    for _ in 0..MAX_SESSION_TEMP_FILE_ATTEMPTS {
+        let nonce = next_nonce();
+        let tmp_path =
+            write_path.with_extension(format!("json.tmp-{}-{nonce}", std::process::id()));
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        match options.open(&tmp_path) {
+            Ok(file) => return Ok((file, tmp_path)),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not allocate a unique session temporary file",
+    ))
 }
 
 fn ensure_session_parent_dir(parent: &Path) -> Result<(), SessionError> {
@@ -988,6 +1008,26 @@ mod tests {
             (actual - expected).abs() < 1e-6,
             "expected ratio {expected}, got {actual}"
         );
+    }
+
+    #[test]
+    fn session_temp_file_retries_name_collisions() {
+        let dir = tempfile::tempdir().unwrap();
+        let write_path = dir.path().join("session-v2.json");
+        let colliding_path =
+            write_path.with_extension(format!("json.tmp-{}-7", std::process::id()));
+        fs::write(&colliding_path, b"stale").unwrap();
+        let mut nonces = [7_u64, 8_u64].into_iter();
+
+        let (file, tmp_path) =
+            create_session_temp_file(&write_path, || nonces.next().unwrap()).unwrap();
+
+        drop(file);
+        assert_eq!(
+            tmp_path,
+            write_path.with_extension(format!("json.tmp-{}-8", std::process::id()))
+        );
+        assert_eq!(fs::read(colliding_path).unwrap(), b"stale");
     }
 
     #[cfg(unix)]
@@ -2154,7 +2194,7 @@ mod tests {
         assert_eq!(loaded, data);
 
         let mut restored = WorkspaceModel::new();
-        restored.restore_session(loaded);
+        restored.restore_session(loaded, &[]);
         let restored_data = restored.to_session_data();
         assert_eq!(restored_data, data);
 

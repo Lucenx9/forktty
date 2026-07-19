@@ -2,6 +2,7 @@ use crate::agent_params::{
     AgentHibernateRequest, AgentReclaimPlanRequest, AgentReclaimRequest, AgentResumeRequest,
     AgentWorkspaceRequest,
 };
+use crate::hook_session::hook_target_gate_for_surface;
 use crate::{
     agent_kind_from_status_key, close_terminal_surface_if_present, current_unix_epoch_ms,
     env_var_os, rollback_surface_creation, surface_effective_project_cwd, DispatchError,
@@ -57,12 +58,20 @@ pub(crate) fn reclaim_plan(state: &SocketAppState, params: &Value) -> Result<Val
     ))
 }
 
-pub(crate) fn hibernate(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+pub(crate) async fn hibernate(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<Value, DispatchError> {
     let request = AgentHibernateRequest::decode(params)?;
+    let _surface_set_guard = state.surface_set_guard().await;
     hibernate_agent_surface(state, &request.surface_id, request.min_idle_ms)
 }
 
-pub(crate) fn reclaim(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+pub(crate) async fn reclaim(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<Value, DispatchError> {
+    let _surface_set_guard = state.surface_set_guard().await;
     let (plan, request) = {
         let model = state
             .model
@@ -109,7 +118,7 @@ pub(crate) fn reclaim(state: &SocketAppState, params: &Value) -> Result<Value, D
 pub(crate) async fn resume(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = AgentResumeRequest::decode(params)?;
     let source_surface_id = request.source_surface_id;
-    let _surface_set_guard = state.coordinator.surface_set.lock().await;
+    let _surface_set_guard = state.surface_set_guard().await;
     let (surface, agent, session_id, program, args, resume_cwd) = {
         let mut model = state
             .model
@@ -493,6 +502,10 @@ fn hibernate_agent_surface(
     surface_id: &str,
     min_idle_ms: u64,
 ) -> Result<Value, DispatchError> {
+    let target_gate = hook_target_gate_for_surface(state, surface_id)?;
+    let _target_guard = target_gate
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
     let now_ms = current_unix_epoch_ms();
     let path = env_var_os("PATH");
     let (surface, status, agent, session_id, resume_cwd, permission_mode, argv, idle_ms, rollback) = {
@@ -658,7 +671,7 @@ pub(crate) fn agent_session_lifecycle_from_hook(
         .to_ascii_lowercase();
     match hook_event.as_str() {
         "session-end" => AgentSessionLifecycle::Ended,
-        "stop" | "subagent-stop" | "teammate-idle" => AgentSessionLifecycle::Idle,
+        "stop" | "stop-failure" | "teammate-idle" => AgentSessionLifecycle::Idle,
         "permission-request" | "elicitation" | "ask-user-question" => {
             AgentSessionLifecycle::NeedsInput
         }
@@ -683,7 +696,7 @@ pub(crate) fn agent_session_lifecycle_from_hook(
         | "file-changed"
         | "worktree-create"
         | "worktree-remove"
-        | "stop-failure" => AgentSessionLifecycle::Running,
+        | "subagent-stop" => AgentSessionLifecycle::Running,
         _ => agent_session_lifecycle_from_status(status_value),
     }
 }

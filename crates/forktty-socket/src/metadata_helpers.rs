@@ -75,6 +75,10 @@ pub(crate) fn agent_kind_from_status_key(key: &str) -> Option<AgentKind> {
     if parts.next().is_some() {
         return None;
     }
+    agent_kind_from_provider_alias(provider)
+}
+
+pub(crate) fn agent_kind_from_provider_alias(provider: &str) -> Option<AgentKind> {
     match provider {
         "claude" | "claude-code" | "claude_code" => Some(AgentKind::ClaudeCode),
         "codex" => Some(AgentKind::Codex),
@@ -99,16 +103,7 @@ pub(crate) fn agent_kind_from_permission_status_key(key: &str) -> Option<AgentKi
     if parts.next().is_some() {
         return None;
     }
-    match provider {
-        "claude" | "claude-code" | "claude_code" => Some(AgentKind::ClaudeCode),
-        "codex" => Some(AgentKind::Codex),
-        "antigravity" | "agy" => Some(AgentKind::Antigravity),
-        "grok" | "grok-build" | "grok_build" => Some(AgentKind::Grok),
-        "pi" => Some(AgentKind::Pi),
-        "opencode" | "open-code" | "open_code" => Some(AgentKind::OpenCode),
-        "custom" => Some(AgentKind::Custom),
-        _ => None,
-    }
+    agent_kind_from_provider_alias(provider)
 }
 
 fn is_supported_status_color(color: &str) -> bool {
@@ -147,6 +142,8 @@ pub(crate) fn optional_hook_status_metadata(
         .unwrap_or_default();
     let clock = optional_non_blank_string_param(params, "hook_event_clock")?.map(str::to_string);
     let turn_id = optional_non_blank_string_param(params, "hook_turn_id")?.map(str::to_string);
+    let session_id =
+        optional_non_blank_string_param(params, "hook_session_id")?.map(str::to_string);
 
     if event.is_empty() && order.is_none() && clock.is_none() && turn_id.is_none() {
         return Ok(None);
@@ -159,8 +156,12 @@ pub(crate) fn optional_hook_status_metadata(
     if let Some(turn_id) = &turn_id {
         ensure_max_text_size("hook_turn_id", turn_id)?;
     }
+    if let Some(session_id) = &session_id {
+        ensure_max_text_size("hook_session_id", session_id)?;
+    }
 
     Ok(Some(StatusHookMetadata {
+        session_id,
         event,
         order,
         clock,

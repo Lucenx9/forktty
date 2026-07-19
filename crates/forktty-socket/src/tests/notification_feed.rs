@@ -1,6 +1,7 @@
-//! Notification and feed method regression tests.
+//! Notification method regression tests.
 
 use super::*;
+use forktty_core::{NotificationKind, TerminalNotificationMetadata};
 
 #[tokio::test]
 async fn dispatches_notification_methods() {
@@ -17,6 +18,10 @@ async fn dispatches_notification_methods() {
     .unwrap();
     assert_eq!(notification["title"], "Prompt");
     assert_eq!(notification["workspace_id"], workspaces[0]["id"]);
+    let listed = dispatch(&state, "notification.list", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(notification, listed[0]);
     dispatch(&state, "notification.clear", json!({}))
         .await
         .unwrap();
@@ -26,6 +31,216 @@ async fn dispatches_notification_methods() {
         .as_array()
         .unwrap()
         .is_empty());
+}
+
+#[tokio::test]
+async fn notification_list_pages_newest_first_while_preserving_page_order() {
+    let (state, _) = test_state();
+    let ids = {
+        let mut model = state.model.lock().unwrap();
+        (0..205)
+            .map(|index| {
+                model
+                    .create_notification(
+                        format!("n{index}"),
+                        "body",
+                        NotificationKind::Info,
+                        None,
+                        None,
+                    )
+                    .id
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let default_page = dispatch(&state, "notification.list", json!({}))
+        .await
+        .unwrap();
+    let default_page = default_page.as_array().unwrap();
+    assert_eq!(default_page.len(), 200);
+    assert_eq!(default_page.first().unwrap()["id"], ids[5]);
+    assert_eq!(default_page.last().unwrap()["id"], ids[204]);
+
+    let latest = dispatch(&state, "notification.list", json!({"limit": 3}))
+        .await
+        .unwrap();
+    let latest = latest.as_array().unwrap();
+    assert_eq!(latest.len(), 3);
+    assert_eq!(latest[0]["id"], ids[202]);
+    assert_eq!(latest[2]["id"], ids[204]);
+
+    let previous = dispatch(
+        &state,
+        "notification.list",
+        json!({"limit": 3, "before_id": ids[202]}),
+    )
+    .await
+    .unwrap();
+    let previous = previous.as_array().unwrap();
+    assert_eq!(previous.len(), 3);
+    assert_eq!(previous[0]["id"], ids[199]);
+    assert_eq!(previous[2]["id"], ids[201]);
+
+    let max_page = dispatch(&state, "notification.list", json!({"limit": 200}))
+        .await
+        .unwrap();
+    assert_eq!(max_page.as_array().unwrap().len(), 200);
+}
+
+#[tokio::test]
+async fn maximum_notification_page_fits_the_official_encoded_response_limit() {
+    let (state, _) = test_state();
+    let max_text = "x".repeat(MAX_METADATA_TEXT_BYTES);
+    {
+        let mut model = state.model.lock().unwrap();
+        for _ in 0..200 {
+            model.create_notification(
+                max_text.clone(),
+                max_text.clone(),
+                NotificationKind::Info,
+                None,
+                None,
+            );
+        }
+    }
+
+    let page = dispatch(&state, "notification.list", json!({}))
+        .await
+        .unwrap();
+    let response = JsonRpcResponse::ok(json!("max-page"), page);
+    let encoded = response_encoding::serialize_response(&response).unwrap();
+
+    assert!(encoded.encoded_len() <= protocol_limits::OFFICIAL_SOCKET_RESPONSE_MAX_BYTES);
+    let value: serde_json::Value =
+        serde_json::from_slice(&encoded.as_bytes()[..encoded.as_bytes().len() - 1]).unwrap();
+    assert_eq!(value["ok"], true);
+    assert_eq!(value["result"].as_array().unwrap().len(), 200);
+}
+
+#[tokio::test]
+async fn notification_list_rejects_invalid_limits_and_nonretained_cursor() {
+    let (state, _) = test_state();
+
+    for limit in [json!(0), json!(201), json!(-1), json!(1.5), json!("2")] {
+        let error = dispatch(&state, "notification.list", json!({"limit": limit}))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), "invalid_param");
+    }
+
+    let dropped_id = {
+        let mut model = state.model.lock().unwrap();
+        let dropped =
+            model.create_notification("dropped", "body", NotificationKind::Info, None, None);
+        for index in 0..1_000 {
+            model.create_notification(
+                format!("retained-{index}"),
+                "body",
+                NotificationKind::Info,
+                None,
+                None,
+            );
+        }
+        dropped.id
+    };
+    let error = dispatch(
+        &state,
+        "notification.list",
+        json!({"before_id": dropped_id}),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error.code(), "invalid_param");
+
+    for before_id in [json!(""), json!(42)] {
+        let error = dispatch(&state, "notification.list", json!({"before_id": before_id}))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), "invalid_param");
+    }
+}
+
+#[tokio::test]
+async fn notification_socket_projection_omits_icon_bytes_and_preserves_metadata() {
+    let (state, _) = test_state();
+    let notification_id = {
+        let mut model = state.model.lock().unwrap();
+        let notification =
+            model.create_notification("Terminal", "Metadata", NotificationKind::Custom, None, None);
+        model.set_notification_terminal_metadata(
+            &notification.id,
+            Some(TerminalNotificationMetadata {
+                id: "terminal-id".to_string(),
+                report_activation: true,
+                report_close: true,
+                buttons: vec!["Open".to_string()],
+                icon_names: vec!["dialog-information".to_string()],
+                icon_data: Some(vec![1, 2, 3]),
+                icon_cache_id: Some("cache-id".to_string()),
+                urgency: Some(2),
+                sound_name: Some("bell".to_string()),
+                expires_after_ms: Some(5000),
+                app_name: Some("ForkTTY test".to_string()),
+                notification_types: vec!["system".to_string()],
+            }),
+        );
+        notification.id
+    };
+
+    let page = dispatch(&state, "notification.list", json!({"limit": 1}))
+        .await
+        .unwrap();
+    let notification = &page[0];
+    assert_eq!(notification["id"], notification_id);
+    let metadata = &notification["terminal_metadata"];
+    assert!(metadata.get("icon_data").is_none());
+    assert_eq!(metadata["id"], "terminal-id");
+    assert_eq!(metadata["report_activation"], true);
+    assert_eq!(metadata["report_close"], true);
+    assert_eq!(metadata["buttons"], json!(["Open"]));
+    assert_eq!(metadata["icon_names"], json!(["dialog-information"]));
+    assert_eq!(metadata["icon_cache_id"], "cache-id");
+    assert_eq!(metadata["urgency"], 2);
+    assert_eq!(metadata["sound_name"], "bell");
+    assert_eq!(metadata["expires_after_ms"], 5000);
+    assert_eq!(metadata["app_name"], "ForkTTY test");
+    assert_eq!(metadata["notification_types"], json!(["system"]));
+}
+
+#[tokio::test]
+async fn notification_list_pages_updated_item_as_newest_with_exclusive_cursor() {
+    let (state, _) = test_state();
+    let (first_id, second_id) = {
+        let mut model = state.model.lock().unwrap();
+        let first =
+            model.create_notification("first", "old body", NotificationKind::Info, None, None);
+        let second =
+            model.create_notification("second", "body", NotificationKind::Info, None, None);
+        model
+            .update_notification(
+                &first.id,
+                "first updated",
+                "new body",
+                NotificationKind::Prompt,
+            )
+            .unwrap();
+        (first.id, second.id)
+    };
+
+    let newest = dispatch(&state, "notification.list", json!({"limit": 1}))
+        .await
+        .unwrap();
+    assert_eq!(newest[0]["id"], first_id);
+    assert_eq!(newest[0]["title"], "first updated");
+
+    let previous = dispatch(
+        &state,
+        "notification.list",
+        json!({"limit": 1, "before_id": first_id}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(previous[0]["id"], second_id);
 }
 
 #[tokio::test]
@@ -174,854 +389,4 @@ async fn notification_create_respects_workspace_selectors() {
 
     assert_eq!(notification["workspace_id"], created["id"]);
     assert!(notification["surface_id"].is_null());
-}
-
-#[tokio::test]
-async fn notification_clear_marks_persisted_approvals_dismissed() {
-    let dir = tempfile::tempdir().unwrap();
-    let feed_path = dir.path().join("feed.json");
-    let (state, _) = test_state();
-    let state = state.with_feed_store_path(&feed_path).unwrap();
-    let workspace_id = state.model.lock().unwrap().active_workspace_id().unwrap();
-
-    dispatch(
-        &state,
-        "notification.create",
-        json!({
-            "workspace_id": workspace_id,
-            "kind": "prompt",
-            "title": "Permission",
-            "body": "Run command?"
-        }),
-    )
-    .await
-    .unwrap();
-
-    dispatch(&state, "notification.clear", json!({}))
-        .await
-        .unwrap();
-    let feed = dispatch(
-        &state,
-        "feed.list",
-        json!({"workspace_id": workspace_id, "limit": 10}),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(feed[0]["type"], "approval");
-    assert_eq!(feed[0]["approval_state"], "dismissed");
-}
-
-#[tokio::test]
-async fn notification_clear_handles_global_prompt_approvals_with_feed_store() {
-    let dir = tempfile::tempdir().unwrap();
-    let feed_path = dir.path().join("feed.json");
-    let (state, _) = test_state();
-    let state = state.with_feed_store_path(&feed_path).unwrap();
-
-    dispatch(
-        &state,
-        "notification.create",
-        json!({
-            "kind": "prompt",
-            "title": "Global permission",
-            "body": "Run command?"
-        }),
-    )
-    .await
-    .unwrap();
-
-    let cleared = dispatch(&state, "notification.clear", json!({}))
-        .await
-        .unwrap();
-    let feed = dispatch(&state, "feed.list", json!({"limit": 10}))
-        .await
-        .unwrap();
-
-    assert_eq!(cleared["cleared"], true);
-    assert_eq!(feed[0]["type"], "approval");
-    assert_eq!(feed[0]["workspace_id"], Value::Null);
-    assert_eq!(feed[0]["surface_id"], Value::Null);
-    assert_eq!(feed[0]["approval_state"], "dismissed");
-}
-
-#[tokio::test]
-async fn notification_clear_marks_persisted_notifications_read() {
-    let dir = tempfile::tempdir().unwrap();
-    let feed_path = dir.path().join("feed.json");
-    let (state, _) = test_state();
-    let state = state.with_feed_store_path(&feed_path).unwrap();
-    let workspace_id = state.model.lock().unwrap().active_workspace_id().unwrap();
-
-    dispatch(
-        &state,
-        "notification.create",
-        json!({
-            "workspace_id": workspace_id,
-            "kind": "info",
-            "title": "UI smoke",
-            "body": "Temporary notification"
-        }),
-    )
-    .await
-    .unwrap();
-
-    dispatch(&state, "notification.clear", json!({}))
-        .await
-        .unwrap();
-    let feed = dispatch(
-        &state,
-        "feed.list",
-        json!({"workspace_id": workspace_id, "limit": 10}),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(feed[0]["type"], "notification");
-    assert_eq!(feed[0]["title"], "UI smoke");
-    assert_eq!(feed[0]["read"], true);
-}
-
-#[tokio::test]
-async fn context_snapshot_marks_missing_surface_approvals_stale() {
-    let dir = tempfile::tempdir().unwrap();
-    let feed_path = dir.path().join("feed.json");
-    let (state, _) = test_state();
-    let state = state.with_feed_store_path(&feed_path).unwrap();
-    let (workspace_id, stale_surface_id) = {
-        let mut model = state.model.lock().unwrap();
-        let workspace = model.active_workspace().unwrap();
-        let split = model
-            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
-            .unwrap();
-        (workspace.id, split.id)
-    };
-    {
-        let prev = current_snapshot(&state.model);
-        let mut model = state.model.lock().unwrap();
-        model.create_notification(
-            "Permission",
-            "Run stale command?",
-            NotificationKind::Prompt,
-            Some(workspace_id.clone()),
-            Some(stale_surface_id.clone()),
-        );
-        drop(model);
-        let next = current_snapshot(&state.model);
-        feed_events::record_feed_events(&state, &events::diff(&prev, &next)).unwrap();
-        let mut model = state.model.lock().unwrap();
-        model.close_surface(&stale_surface_id).unwrap();
-    }
-
-    let snapshot = dispatch(
-        &state,
-        "context.snapshot",
-        json!({"workspace_id": workspace_id, "tail_lines": 0}),
-    )
-    .await
-    .unwrap();
-    let feed = snapshot["feed"].as_array().unwrap();
-
-    assert_eq!(feed[0]["surface_id"], stale_surface_id);
-    assert_eq!(feed[0]["approval_state"], "stale");
-    assert!(!snapshot["risk_flags"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("pending_approval")));
-}
-
-#[tokio::test]
-async fn persisted_prompt_approval_without_live_notification_is_stale() {
-    let dir = tempfile::tempdir().unwrap();
-    let feed_path = dir.path().join("feed.json");
-    let (first_state, _) = test_state();
-    let first_state = first_state.with_feed_store_path(&feed_path).unwrap();
-    let workspace_id = first_state
-        .model
-        .lock()
-        .unwrap()
-        .active_workspace_id()
-        .unwrap();
-    let surface_id = first_state
-        .model
-        .lock()
-        .unwrap()
-        .active_workspace()
-        .unwrap()
-        .focused_surface_id;
-
-    dispatch(
-        &first_state,
-        "notification.create",
-        json!({
-            "workspace_id": workspace_id,
-            "surface_id": surface_id,
-            "kind": "prompt",
-            "title": "Old hook prompt",
-            "body": "Claude is waiting for your input"
-        }),
-    )
-    .await
-    .unwrap();
-
-    let (second_state, _) = test_state();
-    let second_state = second_state.with_feed_store_path(&feed_path).unwrap();
-    let second_workspace_id = second_state
-        .model
-        .lock()
-        .unwrap()
-        .active_workspace_id()
-        .unwrap();
-
-    let feed = dispatch(
-        &second_state,
-        "feed.list",
-        json!({"workspace_id": second_workspace_id, "limit": 10}),
-    )
-    .await
-    .unwrap();
-    assert_eq!(feed[0]["title"], "Old hook prompt");
-    assert_eq!(feed[0]["approval_state"], "stale");
-
-    let snapshot = dispatch(
-        &second_state,
-        "context.snapshot",
-        json!({"workspace_id": second_workspace_id, "tail_lines": 0}),
-    )
-    .await
-    .unwrap();
-    assert!(!snapshot["risk_flags"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("pending_approval")));
-    assert_eq!(second_state.pending_feed_approval_count(), Some(0));
-    assert_eq!(second_state.pending_feed_approvals(10), Some(Vec::new()));
-
-    let approval_id = feed[0]["id"].as_str().unwrap();
-    let err = second_state
-        .decide_feed_approval(approval_id, forktty_core::FeedApprovalState::Approved)
-        .unwrap_err();
-    assert!(err.contains("no longer active"));
-    assert_eq!(
-        forktty_core::FeedStore::open_at(&feed_path)
-            .unwrap()
-            .list(None, 10)[0]
-            .approval_state,
-        Some(forktty_core::FeedApprovalState::Stale)
-    );
-}
-
-#[tokio::test]
-async fn feed_approval_respond_rejects_stale_surface_approval() {
-    let dir = tempfile::tempdir().unwrap();
-    let feed_path = dir.path().join("feed.json");
-    let (state, _) = test_state();
-    let state = state.with_feed_store_path(&feed_path).unwrap();
-    let (workspace_id, stale_surface_id) = {
-        let mut model = state.model.lock().unwrap();
-        let workspace = model.active_workspace().unwrap();
-        let split = model
-            .split_surface(&workspace.focused_surface_id, SplitAxis::Horizontal)
-            .unwrap();
-        (workspace.id, split.id)
-    };
-    {
-        let prev = current_snapshot(&state.model);
-        let mut model = state.model.lock().unwrap();
-        model.create_notification(
-            "Permission",
-            "Run stale command?",
-            NotificationKind::Prompt,
-            Some(workspace_id.clone()),
-            Some(stale_surface_id.clone()),
-        );
-        drop(model);
-        let next = current_snapshot(&state.model);
-        feed_events::record_feed_events(&state, &events::diff(&prev, &next)).unwrap();
-        let mut model = state.model.lock().unwrap();
-        model.close_surface(&stale_surface_id).unwrap();
-    }
-
-    let feed = dispatch(
-        &state,
-        "feed.list",
-        json!({"workspace_id": workspace_id, "limit": 10}),
-    )
-    .await
-    .unwrap();
-    let approval_id = feed[0]["id"].as_str().unwrap();
-    assert_eq!(feed[0]["approval_state"], "stale");
-
-    let err = dispatch(
-        &state,
-        "feed.approval.respond",
-        json!({"id": approval_id, "decision": "approved"}),
-    )
-    .await
-    .unwrap_err();
-
-    assert_eq!(err.code(), "precondition_failed");
-    assert!(err.to_string().contains("no longer active"));
-    assert_eq!(
-        forktty_core::FeedStore::open_at(&feed_path)
-            .unwrap()
-            .list(None, 10)[0]
-            .approval_state,
-        Some(forktty_core::FeedApprovalState::Stale)
-    );
-}
-
-#[tokio::test]
-async fn dispatches_minimal_feed_list() {
-    let (state, _) = test_state();
-    let (workspace_id, surface_id) = {
-        let mut model = state.model.lock().unwrap();
-        let workspace = model.active_workspace().unwrap();
-        let surface_id = workspace.focused_surface_id.clone();
-        model
-            .set_status(&workspace.id, "agent:codex", "Codex", "Running", None)
-            .unwrap();
-        model
-            .set_progress(&workspace.id, "build", "Build", 2.0, Some(4.0))
-            .unwrap();
-        let note = model.create_notification(
-            "Permission",
-            "Run command?",
-            NotificationKind::Prompt,
-            Some(workspace.id.clone()),
-            Some(surface_id.clone()),
-        );
-        assert!(note.created_at_ms > 0);
-        for title in ["One", "Two", "Three"] {
-            model.create_notification(
-                title,
-                "Plain notification",
-                NotificationKind::Info,
-                Some(workspace.id.clone()),
-                None,
-            );
-        }
-        (workspace.id, surface_id)
-    };
-
-    let feed = dispatch(
-        &state,
-        "feed.list",
-        json!({"workspace_id": workspace_id, "limit": 3}),
-    )
-    .await
-    .unwrap();
-    let items = feed.as_array().unwrap();
-    assert_eq!(items.len(), 3);
-    assert_eq!(items[0]["type"], "approval");
-    assert_eq!(items[0]["title"], "Permission");
-    assert_eq!(items[0]["body"], "Run command?");
-    assert_eq!(items[0]["surface_id"], surface_id);
-    assert!(!items.iter().any(|item| item["type"] == "notification"));
-    assert!(items
-        .iter()
-        .any(|item| item["type"] == "status" && item["title"] == "Codex"));
-    assert!(items
-        .iter()
-        .any(|item| item["type"] == "progress" && item["title"] == "Build"));
-}
-
-#[tokio::test]
-async fn context_snapshot_compacts_feed_trace_by_default_and_expands_on_request() {
-    let (state, _) = test_state();
-    let workspace_id = {
-        let mut model = state.model.lock().unwrap();
-        let workspace = model.active_workspace().unwrap();
-        let surface_id = workspace.focused_surface_id.clone();
-        model
-            .set_status(
-                &workspace.id,
-                "tool:mcp__forktty__context_snapshot",
-                "Tool",
-                "Running mcp__forktty__context_snapshot",
-                None,
-            )
-            .unwrap();
-        model
-            .set_progress(&workspace.id, "tool:review", "Review", 1.0, Some(2.0))
-            .unwrap();
-        model.create_notification(
-            "Permission",
-            "Run command?",
-            NotificationKind::Prompt,
-            Some(workspace.id.clone()),
-            Some(surface_id),
-        );
-        workspace.id
-    };
-
-    let compact = dispatch(
-        &state,
-        "context.snapshot",
-        json!({"workspace_id": workspace_id, "tail_lines": 0}),
-    )
-    .await
-    .unwrap();
-    let compact_feed = compact["feed"].as_array().unwrap();
-    assert!(compact_feed.iter().any(|item| item["type"] == "approval"));
-    assert!(!compact_feed
-        .iter()
-        .any(|item| matches!(item["type"].as_str(), Some("status" | "progress"))));
-
-    let expanded = dispatch(
-        &state,
-        "context.snapshot",
-        json!({
-            "workspace_id": workspace_id,
-            "tail_lines": 0,
-            "include_feed_trace": true
-        }),
-    )
-    .await
-    .unwrap();
-    let expanded_feed = expanded["feed"].as_array().unwrap();
-    assert!(expanded_feed.iter().any(|item| item["type"] == "status"));
-    assert!(expanded_feed.iter().any(|item| item["type"] == "progress"));
-}
-
-#[tokio::test]
-async fn context_snapshot_compact_feed_hides_finalized_approval_prompts() {
-    let dir = tempfile::tempdir().unwrap();
-    let feed_path = dir.path().join("feed.json");
-    let (state, _) = test_state();
-    let state = state.with_feed_store_path(&feed_path).unwrap();
-    let workspace_id = state.model.lock().unwrap().active_workspace_id().unwrap();
-
-    dispatch(
-        &state,
-        "notification.create",
-        json!({
-            "workspace_id": workspace_id,
-            "kind": "prompt",
-            "title": "Stale Claude needs input",
-            "body": "Background task completed"
-        }),
-    )
-    .await
-    .unwrap();
-    dispatch(&state, "notification.clear", json!({}))
-        .await
-        .unwrap();
-    dispatch(
-        &state,
-        "notification.create",
-        json!({
-            "workspace_id": workspace_id,
-            "kind": "prompt",
-            "title": "Current approval",
-            "body": "Review command?"
-        }),
-    )
-    .await
-    .unwrap();
-
-    let compact = dispatch(
-        &state,
-        "context.snapshot",
-        json!({"workspace_id": workspace_id, "tail_lines": 0}),
-    )
-    .await
-    .unwrap();
-    let compact_feed = compact["feed"].as_array().unwrap();
-    assert!(compact_feed
-        .iter()
-        .any(|item| item["title"] == "Current approval" && item["approval_state"] == "pending"));
-    assert!(!compact_feed
-        .iter()
-        .any(|item| item["title"] == "Stale Claude needs input"));
-
-    let expanded = dispatch(
-        &state,
-        "context.snapshot",
-        json!({
-            "workspace_id": workspace_id,
-            "tail_lines": 0,
-            "include_feed_trace": true
-        }),
-    )
-    .await
-    .unwrap();
-    let expanded_feed = expanded["feed"].as_array().unwrap();
-    assert!(expanded_feed
-        .iter()
-        .any(|item| item["title"] == "Stale Claude needs input"
-            && item["approval_state"] == "dismissed"));
-}
-
-#[tokio::test]
-async fn feed_list_live_fallback_limits_status_and_progress_to_newest_entries() {
-    let (state, _) = test_state();
-    let workspace_id = {
-        let mut model = state.model.lock().unwrap();
-        let workspace = model.active_workspace().unwrap();
-        for i in 0..5 {
-            model
-                .set_status(
-                    &workspace.id,
-                    format!("status-{i}"),
-                    "Status",
-                    format!("value-{i}"),
-                    None,
-                )
-                .unwrap();
-        }
-        workspace.id
-    };
-
-    let feed = dispatch(
-        &state,
-        "feed.list",
-        json!({"workspace_id": workspace_id, "limit": 2}),
-    )
-    .await
-    .unwrap();
-    let status_keys = feed
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|item| item["type"] == "status")
-        .map(|item| item["key"].as_str().unwrap().to_string())
-        .collect::<Vec<_>>();
-    assert_eq!(status_keys, vec!["status-3", "status-4"]);
-
-    {
-        let mut model = state.model.lock().unwrap();
-        assert!(model.clear_status(&workspace_id, None));
-        for i in 0..5 {
-            model
-                .set_progress(
-                    &workspace_id,
-                    format!("progress-{i}"),
-                    "Progress",
-                    i as f64,
-                    None,
-                )
-                .unwrap();
-        }
-    }
-
-    let feed = dispatch(
-        &state,
-        "feed.list",
-        json!({"workspace_id": workspace_id, "limit": 2}),
-    )
-    .await
-    .unwrap();
-    let progress_keys = feed
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|item| item["type"] == "progress")
-        .map(|item| item["key"].as_str().unwrap().to_string())
-        .collect::<Vec<_>>();
-    assert_eq!(progress_keys, vec!["progress-3", "progress-4"]);
-}
-
-#[tokio::test]
-async fn feed_list_reads_persisted_feed_entries_and_records_approval_decisions() {
-    let dir = tempfile::tempdir().unwrap();
-    let feed_path = dir.path().join("feed.json");
-    let (state, _) = test_state();
-    let state = state.with_feed_store_path(&feed_path).unwrap();
-    let workspace_id = state.model.lock().unwrap().active_workspace_id().unwrap();
-    {
-        let prev = current_snapshot(&state.model);
-        state.model.lock().unwrap().create_notification(
-            "Permission",
-            "Run command?",
-            NotificationKind::Prompt,
-            Some(workspace_id.clone()),
-            None,
-        );
-        let next = current_snapshot(&state.model);
-        feed_events::record_feed_events(&state, &events::diff(&prev, &next)).unwrap();
-    }
-
-    let feed = dispatch(
-        &state,
-        "feed.list",
-        json!({"workspace_id": workspace_id, "limit": 10}),
-    )
-    .await
-    .unwrap();
-    let approval_id = feed[0]["id"].as_str().unwrap();
-    assert_eq!(feed[0]["type"], "approval");
-    assert_eq!(feed[0]["kind"], "prompt");
-    assert_eq!(feed[0]["read"], false);
-    assert_eq!(feed[0]["approval_state"], "pending");
-
-    let decided = dispatch(
-        &state,
-        "feed.approval.respond",
-        json!({"id": approval_id, "decision": "approved"}),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(decided["approval_state"], "approved");
-    assert_eq!(
-        forktty_core::FeedStore::open_at(&feed_path)
-            .unwrap()
-            .list(None, 10)[0]
-            .approval_state,
-        Some(forktty_core::FeedApprovalState::Approved)
-    );
-}
-
-#[tokio::test]
-async fn socket_state_counts_pending_feed_approvals() {
-    let dir = tempfile::tempdir().unwrap();
-    let feed_path = dir.path().join("feed.json");
-    let (state, _) = test_state();
-    let state = state.with_feed_store_path(&feed_path).unwrap();
-    let workspace_id = state.model.lock().unwrap().active_workspace_id().unwrap();
-
-    assert_eq!(state.pending_feed_approval_count(), Some(0));
-    {
-        let prev = current_snapshot(&state.model);
-        let mut model = state.model.lock().unwrap();
-        model.create_notification(
-            "Permission",
-            "Run command?",
-            NotificationKind::Prompt,
-            Some(workspace_id.clone()),
-            None,
-        );
-        model.create_notification(
-            "Apply",
-            "Launch workers?",
-            NotificationKind::Prompt,
-            Some(workspace_id.clone()),
-            None,
-        );
-        model.create_notification(
-            "Done",
-            "No approval required",
-            NotificationKind::Info,
-            Some(workspace_id.clone()),
-            None,
-        );
-        drop(model);
-        let next = current_snapshot(&state.model);
-        feed_events::record_feed_events(&state, &events::diff(&prev, &next)).unwrap();
-    }
-
-    assert_eq!(state.pending_feed_approval_count(), Some(2));
-    assert_eq!(
-        state.pending_feed_approval_summaries(3),
-        Some(vec!["Permission".to_string(), "Apply".to_string()])
-    );
-    let feed = dispatch(
-        &state,
-        "feed.list",
-        json!({"workspace_id": workspace_id, "limit": 10}),
-    )
-    .await
-    .unwrap();
-    let approval_id = feed
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|entry| entry["approval_state"] == "pending")
-        .unwrap()["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    dispatch(
-        &state,
-        "feed.approval.respond",
-        json!({"id": approval_id, "decision": "approved"}),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(state.pending_feed_approval_count(), Some(1));
-    let remaining = state.pending_feed_approval_summaries(3).unwrap();
-    assert_eq!(remaining.len(), 1);
-    assert!(remaining
-        .iter()
-        .any(|title| title == "Permission" || title == "Apply"));
-}
-
-#[tokio::test]
-async fn socket_state_lists_and_decides_pending_feed_approvals() {
-    let dir = tempfile::tempdir().unwrap();
-    let feed_path = dir.path().join("feed.json");
-    let (state, _) = test_state();
-    let state = state.with_feed_store_path(&feed_path).unwrap();
-    let workspace_id = state.model.lock().unwrap().active_workspace_id().unwrap();
-
-    assert_eq!(state.pending_feed_approvals(3), Some(Vec::new()));
-    assert!(state
-        .decide_feed_approval("missing", forktty_core::FeedApprovalState::Denied)
-        .is_err());
-
-    {
-        let prev = current_snapshot(&state.model);
-        let mut model = state.model.lock().unwrap();
-        model.create_notification(
-            "Permission",
-            "Run command?",
-            NotificationKind::Prompt,
-            Some(workspace_id.clone()),
-            None,
-        );
-        model.create_notification(
-            "Apply",
-            "Launch workers?",
-            NotificationKind::Prompt,
-            Some(workspace_id.clone()),
-            None,
-        );
-        drop(model);
-        let next = current_snapshot(&state.model);
-        feed_events::record_feed_events(&state, &events::diff(&prev, &next)).unwrap();
-    }
-
-    let approvals = state.pending_feed_approvals(3).unwrap();
-    assert_eq!(approvals.len(), 2);
-    assert!(approvals
-        .iter()
-        .all(|approval| !approval.id.is_empty() && approval.created_at_ms > 0));
-    let denied = approvals
-        .iter()
-        .find(|approval| approval.title == "Apply")
-        .unwrap();
-
-    state
-        .decide_feed_approval(&denied.id, forktty_core::FeedApprovalState::Denied)
-        .unwrap();
-
-    let remaining = state.pending_feed_approvals(3).unwrap();
-    assert_eq!(remaining.len(), 1);
-    assert_eq!(remaining[0].title, "Permission");
-    // Deciding twice must fail instead of silently rewriting the decision.
-    assert!(state
-        .decide_feed_approval(&denied.id, forktty_core::FeedApprovalState::Approved)
-        .is_err());
-    assert_eq!(
-        forktty_core::FeedStore::open_at(&feed_path)
-            .unwrap()
-            .list(None, 10)
-            .iter()
-            .find(|entry| entry.id == denied.id)
-            .unwrap()
-            .approval_state,
-        Some(forktty_core::FeedApprovalState::Denied)
-    );
-}
-
-#[tokio::test]
-async fn feed_list_sees_socket_created_notification_without_waiting_for_event_tick() {
-    let dir = tempfile::tempdir().unwrap();
-    let feed_path = dir.path().join("feed.json");
-    let (state, _) = test_state();
-    let state = state.with_feed_store_path(&feed_path).unwrap();
-    let workspace_id = state.model.lock().unwrap().active_workspace_id().unwrap();
-
-    dispatch(
-        &state,
-        "notification.create",
-        json!({
-            "workspace_id": workspace_id,
-            "kind": "prompt",
-            "title": "Permission",
-            "body": "Run command?"
-        }),
-    )
-    .await
-    .unwrap();
-    let feed = dispatch(
-        &state,
-        "feed.list",
-        json!({"workspace_id": workspace_id, "limit": 10}),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(feed[0]["type"], "approval");
-    assert_eq!(feed[0]["title"], "Permission");
-    assert_eq!(feed[0]["approval_state"], "pending");
-}
-
-#[tokio::test]
-async fn feed_notification_approval_ids_do_not_collide_after_model_restart() {
-    let dir = tempfile::tempdir().unwrap();
-    let feed_path = dir.path().join("feed.json");
-    let (first_state, _) = test_state();
-    let first_state = first_state.with_feed_store_path(&feed_path).unwrap();
-    let first_workspace_id = first_state
-        .model
-        .lock()
-        .unwrap()
-        .active_workspace_id()
-        .unwrap();
-
-    dispatch(
-        &first_state,
-        "notification.create",
-        json!({
-            "workspace_id": first_workspace_id,
-            "kind": "prompt",
-            "title": "Old prompt",
-            "body": "Run old command?"
-        }),
-    )
-    .await
-    .unwrap();
-    let old_feed = dispatch(
-        &first_state,
-        "feed.list",
-        json!({"workspace_id": first_workspace_id, "limit": 10}),
-    )
-    .await
-    .unwrap();
-    let old_approval_id = old_feed[0]["id"].as_str().unwrap();
-    dispatch(
-        &first_state,
-        "feed.approval.respond",
-        json!({"id": old_approval_id, "decision": "approved"}),
-    )
-    .await
-    .unwrap();
-
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
-    let (second_state, _) = test_state();
-    let second_state = second_state.with_feed_store_path(&feed_path).unwrap();
-    let second_workspace_id = second_state
-        .model
-        .lock()
-        .unwrap()
-        .active_workspace_id()
-        .unwrap();
-    dispatch(
-        &second_state,
-        "notification.create",
-        json!({
-            "workspace_id": second_workspace_id,
-            "kind": "prompt",
-            "title": "New prompt",
-            "body": "Run new command?"
-        }),
-    )
-    .await
-    .unwrap();
-    let feed = dispatch(
-        &second_state,
-        "feed.list",
-        json!({"workspace_id": second_workspace_id, "limit": 10}),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(feed[0]["title"], "New prompt");
-    assert_eq!(feed[0]["approval_state"], "pending");
-    assert_ne!(feed[0]["id"], old_approval_id);
 }

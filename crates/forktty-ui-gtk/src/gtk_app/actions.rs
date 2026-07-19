@@ -110,11 +110,6 @@ pub(super) fn install_actions(
         let controller = controller.clone();
         move || show_command_palette_with_controller(&window, &state, Some(controller.clone()))
     });
-    add_action(app, "task-router", {
-        let window = window.clone();
-        let state = state.clone();
-        move || show_task_router_dialog(&window, &state)
-    });
     add_action(app, "notifications", {
         let window = window.clone();
         let state = state.clone();

@@ -1,185 +1,6 @@
 use super::*;
 
 #[test]
-fn mcp_codex_setup_and_remove_preserve_comments_and_formatting() {
-    let codex_home = tempfile::tempdir().unwrap();
-    let codex_home_s = codex_home.path().to_string_lossy().to_string();
-    with_env(&[("CODEX_HOME", Some(codex_home_s.as_str()))], || {
-        let original = "# my model choice\nmodel = \"gpt-5.2-codex\" # keep high\n\n[mcp_servers.foreign]\ncommand = \"/bin/true\"\n";
-        let path = codex_mcp_config_path();
-        ensure_parent_dir(&path).unwrap();
-        fs::write(&path, original).unwrap();
-
-        let spec = mcp_agent_spec("codex").unwrap();
-        let launcher = Path::new("/usr/bin/forktty");
-        let plan = build_mcp_setup_plan(spec, launcher).unwrap();
-        assert!(plan.changed);
-        assert!(plan.content.contains("# my model choice"));
-        assert!(plan
-            .content
-            .contains("model = \"gpt-5.2-codex\" # keep high"));
-        assert!(plan.content.contains("[mcp_servers.foreign]"));
-        assert!(plan.content.contains("[mcp_servers.forktty]"));
-        fs::write(&path, &plan.content).unwrap();
-        assert!(!build_mcp_setup_plan(spec, launcher).unwrap().changed);
-
-        let remove = build_mcp_remove_plan(spec).unwrap();
-        let McpRemoveAction::Write(content) = remove.action else {
-            panic!("codex remove should rewrite config");
-        };
-        assert_eq!(content, original);
-    });
-}
-
-#[test]
-fn mcp_codex_setup_updates_managed_env_vars_when_defaults_change() {
-    let codex_home = tempfile::tempdir().unwrap();
-    let codex_home_s = codex_home.path().to_string_lossy().to_string();
-    with_env(&[("CODEX_HOME", Some(codex_home_s.as_str()))], || {
-        let path = codex_mcp_config_path();
-        ensure_parent_dir(&path).unwrap();
-        fs::write(
-            &path,
-            "[mcp_servers.forktty]\ncommand = \"/usr/bin/forktty\"\nargs = [\"mcp\"]\nenv_vars = [\"FORKTTY_SOCKET_PATH\", \"FORKTTY_WORKSPACE_ID\", \"FORKTTY_SURFACE_ID\"]\n\n[mcp_servers.forktty.env]\nFORKTTY_MCP_MANAGED = \"forktty\"\n",
-        )
-        .unwrap();
-
-        let spec = mcp_agent_spec("codex").unwrap();
-        let plan = build_mcp_setup_plan(spec, Path::new("/usr/bin/forktty")).unwrap();
-
-        assert!(plan.changed);
-        let config: toml::Table = plan.content.parse().unwrap();
-        let env_vars = config["mcp_servers"]["forktty"]["env_vars"]
-            .as_array()
-            .unwrap();
-        assert!(env_vars
-            .iter()
-            .any(|value| value.as_str() == Some("XDG_RUNTIME_DIR")));
-    });
-}
-
-#[test]
-fn mcp_codex_setup_allows_config_above_hook_config_limit() {
-    let codex_home = tempfile::tempdir().unwrap();
-    let codex_home_s = codex_home.path().to_string_lossy().to_string();
-    with_env(&[("CODEX_HOME", Some(codex_home_s.as_str()))], || {
-        let path = codex_mcp_config_path();
-        ensure_parent_dir(&path).unwrap();
-        let original = format!(
-            "# {}\nmodel = \"gpt-5.2-codex\"\n",
-            "x".repeat(MAX_HOOK_CONFIG_SIZE_BYTES as usize + 1)
-        );
-        fs::write(&path, &original).unwrap();
-
-        let spec = mcp_agent_spec("codex").unwrap();
-        let plan = build_mcp_setup_plan(spec, Path::new("/usr/bin/forktty")).unwrap();
-
-        assert!(plan.changed);
-        assert!(plan.content.contains("model = \"gpt-5.2-codex\""));
-        assert!(plan.content.contains("[mcp_servers.forktty]"));
-    });
-}
-
-#[test]
-fn mcp_setup_sets_extract_and_run_for_appimage_launchers() {
-    let home = tempfile::tempdir().unwrap();
-    let codex_home = tempfile::tempdir().unwrap();
-    let home = home.path().to_string_lossy().to_string();
-    let codex_home = codex_home.path().to_string_lossy().to_string();
-    with_env(
-        &[
-            ("HOME", Some(home.as_str())),
-            ("CODEX_HOME", Some(codex_home.as_str())),
-        ],
-        || {
-            let launcher = Path::new("/home/me/AppImages/forktty.appimage");
-
-            let codex = mcp_agent_spec("codex").unwrap();
-            let plan = build_mcp_setup_plan(codex, launcher).unwrap();
-            let codex_config: toml::Table = plan.content.parse().unwrap();
-            let codex_server = &codex_config["mcp_servers"]["forktty"];
-            assert_eq!(
-                codex_server["command"].as_str(),
-                Some(launcher.to_str().unwrap())
-            );
-            assert_eq!(
-                codex_server["env"]["APPIMAGE_EXTRACT_AND_RUN"].as_str(),
-                Some("1")
-            );
-
-            let claude = mcp_agent_spec("claude").unwrap();
-            let plan = build_mcp_setup_plan(claude, launcher).unwrap();
-            let claude_config: Value = serde_json::from_str(&plan.content).unwrap();
-            let claude_server = &claude_config["mcpServers"]["forktty"];
-            assert_eq!(claude_server["command"], launcher.to_str().unwrap());
-            assert_eq!(claude_server["env"]["APPIMAGE_EXTRACT_AND_RUN"], "1");
-        },
-    );
-}
-
-#[test]
-fn mcp_remove_preserves_foreign_servers_and_is_idempotent() {
-    let home = tempfile::tempdir().unwrap();
-    let codex_home = tempfile::tempdir().unwrap();
-    let home = home.path().to_string_lossy().to_string();
-    let codex_home = codex_home.path().to_string_lossy().to_string();
-    with_env(
-        &[
-            ("HOME", Some(home.as_str())),
-            ("CODEX_HOME", Some(codex_home.as_str())),
-        ],
-        || {
-            let launcher = Path::new("/usr/bin/forktty");
-            let codex = mcp_agent_spec("codex").unwrap();
-            let codex_plan = build_mcp_setup_plan(codex, launcher).unwrap();
-            ensure_parent_dir(&codex_plan.config_path).unwrap();
-            fs::write(
-                &codex_plan.config_path,
-                format!(
-                    "{}\n[mcp_servers.foreign]\ncommand = \"/bin/true\"\n",
-                    codex_plan.content
-                ),
-            )
-            .unwrap();
-            let remove = build_mcp_remove_plan(codex).unwrap();
-            let McpRemoveAction::Write(content) = remove.action else {
-                panic!("codex remove should rewrite config");
-            };
-            assert!(!content.contains("[mcp_servers.forktty]"));
-            assert!(content.contains("[mcp_servers.foreign]"));
-            fs::write(codex_mcp_config_path(), content).unwrap();
-            assert!(!build_mcp_remove_plan(codex).unwrap().changed);
-
-            let claude = mcp_agent_spec("claude").unwrap();
-            let path = claude_mcp_config_path();
-            ensure_parent_dir(&path).unwrap();
-            fs::write(
-                &path,
-                serde_json::to_string_pretty(&json!({
-                    "mcpServers": {
-                        "foreign": { "command": "/bin/true" },
-                        "forktty": json_mcp_server_config(launcher),
-                    },
-                    "theme": "dark",
-                }))
-                .unwrap(),
-            )
-            .unwrap();
-            let remove = build_mcp_remove_plan(claude).unwrap();
-            let McpRemoveAction::Write(content) = remove.action else {
-                panic!("claude remove should rewrite config");
-            };
-            let value: Value = serde_json::from_str(&content).unwrap();
-            assert!(value["mcpServers"].get("forktty").is_none());
-            assert_eq!(value["mcpServers"]["foreign"]["command"], "/bin/true");
-            assert_eq!(value["theme"], "dark");
-            fs::write(path, content).unwrap();
-            assert!(!build_mcp_remove_plan(claude).unwrap().changed);
-        },
-    );
-}
-
-#[test]
 fn hook_setup_dry_run_and_option_errors_do_not_write_configs() {
     let dir = tempfile::tempdir().unwrap();
     let codex_home = dir.path().join("codex");
@@ -205,6 +26,26 @@ fn hook_setup_dry_run_and_option_errors_do_not_write_configs() {
                 "hooks setup: unknown option --dryrun",
             );
             assert!(!codex_home.join("hooks.json").exists());
+        },
+    );
+}
+
+#[test]
+fn hook_setup_rejects_relative_config_roots() {
+    let home = tempfile::tempdir().unwrap();
+    let home_s = home.path().display().to_string();
+
+    with_env(
+        &[
+            ("CODEX_HOME", Some("relative-codex-home")),
+            ("CLAUDE_CONFIG_DIR", None),
+            ("HOME", Some(&home_s)),
+        ],
+        || {
+            assert_err_contains(
+                handle_hooks_setup(&test_context(), strings(&["--dry-run", "codex"])),
+                "hook config path must be absolute",
+            );
         },
     );
 }
@@ -483,6 +324,22 @@ fn appimage_hook_commands_use_extract_and_run_env() {
 
     let native = build_hook_shell_command(Path::new("/usr/bin/forktty"), spec, "pre-tool");
     assert!(!native.contains("APPIMAGE_EXTRACT_AND_RUN"));
+}
+
+#[test]
+fn renamed_appimage_hook_commands_use_runtime_env_provenance() {
+    let spec = agent_spec("codex").unwrap();
+    let launcher = "/home/me/AppImages/forktty-renamed";
+
+    with_env(&[("APPIMAGE", Some(launcher))], || {
+        let command = build_hook_shell_command(Path::new(launcher), spec, "pre-tool");
+        assert!(command.contains(
+            "&& APPIMAGE_EXTRACT_AND_RUN=1 '/home/me/AppImages/forktty-renamed' hooks codex pre-tool"
+        ));
+
+        let native = build_hook_shell_command(Path::new("/usr/bin/forktty"), spec, "pre-tool");
+        assert!(!native.contains("APPIMAGE_EXTRACT_AND_RUN"));
+    });
 }
 
 #[test]

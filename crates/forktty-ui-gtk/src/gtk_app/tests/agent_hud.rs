@@ -171,208 +171,6 @@ fn agent_hud_safe_permission_modes_remain_meta_outside_needs_input() {
 }
 
 #[test]
-fn agent_hud_row_carries_loop_badge_for_matching_surface() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp/project");
-    let surface_id = workspace.focused_surface_id.clone();
-    assert!(model.set_surface_agent_session(
-        &surface_id,
-        forktty_core::AgentKind::Codex,
-        "019ebd1f-870e-7053-9765-11facbd295d2",
-    ));
-    assert!(model.set_surface_agent_session_lifecycle(
-        &surface_id,
-        forktty_core::AgentSessionLifecycle::Running,
-    ));
-    let workflow = forktty_core::WorkflowState {
-        id: "loop-1".to_string(),
-        workspace_id: Some(workspace.id.clone()),
-        surface_id: Some(surface_id.clone()),
-        agent: Some("codex".to_string()),
-        session_id: Some("019ebd1f-870e-7053-9765-11facbd295d2".to_string()),
-        mode: "closed-loop".to_string(),
-        status: "running".to_string(),
-        goal: None,
-        memory: None,
-        loop_recipe: Some("review-fix-verify".to_string()),
-        loop_stage: Some("verify".to_string()),
-        loop_iteration: Some(2),
-        loop_max_iterations: Some(3),
-        loop_stop_reason: None,
-        loop_updated_at_ms: Some(1_700_000_250_000),
-        loop_gates: vec![
-            forktty_core::WorkflowLoopGate {
-                id: "test".to_string(),
-                kind: "command".to_string(),
-                label: "Tests".to_string(),
-                status: "passed".to_string(),
-                summary: None,
-                updated_at_ms: 1_700_000_240_000,
-            },
-            forktty_core::WorkflowLoopGate {
-                id: "review".to_string(),
-                kind: "review".to_string(),
-                label: "Review".to_string(),
-                status: "running".to_string(),
-                summary: None,
-                updated_at_ms: 1_700_000_245_000,
-            },
-        ],
-        created_at_ms: 1_700_000_100_000,
-        updated_at_ms: 1_700_000_250_000,
-        plan: Vec::new(),
-        evidence: Vec::new(),
-    };
-
-    let loop_badges = agent_hud_loop_badges_from_workflows(&[workflow]);
-    let rows = agent_hud_rows_with_loops(&model, &loop_badges, 1_700_000_300_000);
-
-    assert_eq!(rows.len(), 1);
-    let badge = rows[0].loop_badge.as_ref().unwrap();
-    assert_eq!(badge.label, "Loop verify 2/3");
-    assert_eq!(badge.class_name, "running");
-    assert!(badge.tooltip.contains("review-fix-verify"));
-    assert!(badge.tooltip.contains("2 gates"));
-    assert!(badge.tooltip.contains("1 passed"));
-    assert!(badge.tooltip.contains("1 running"));
-}
-
-#[test]
-fn agent_hud_loop_badges_pick_latest_workflow_per_surface() {
-    let mut older = forktty_core::WorkflowState {
-        id: "older".to_string(),
-        workspace_id: Some("workspace-1".to_string()),
-        surface_id: Some("surface-1".to_string()),
-        agent: Some("codex".to_string()),
-        session_id: Some("session-1".to_string()),
-        mode: "closed-loop".to_string(),
-        status: "running".to_string(),
-        goal: None,
-        memory: None,
-        loop_recipe: Some("old-loop".to_string()),
-        loop_stage: Some("execute".to_string()),
-        loop_iteration: Some(1),
-        loop_max_iterations: Some(3),
-        loop_stop_reason: None,
-        loop_updated_at_ms: Some(1_700_000_100_000),
-        loop_gates: Vec::new(),
-        created_at_ms: 1_700_000_000_000,
-        updated_at_ms: 1_700_000_100_000,
-        plan: Vec::new(),
-        evidence: Vec::new(),
-    };
-    let mut newer = older.clone();
-    newer.id = "newer".to_string();
-    newer.loop_recipe = Some("new-loop".to_string());
-    newer.loop_stage = Some("review".to_string());
-    newer.loop_iteration = Some(2);
-    newer.loop_updated_at_ms = Some(1_700_000_200_000);
-    older.updated_at_ms = 1_700_000_100_000;
-
-    let loop_badges = agent_hud_loop_badges_from_workflows(&[older, newer]);
-    let badge = loop_badges.by_surface.get("surface-1").unwrap();
-
-    assert_eq!(badge.label, "Loop review 2/3");
-    assert!(badge.tooltip.contains("new-loop"));
-}
-
-#[test]
-fn agent_hud_loop_badges_fall_back_to_matching_session_binding() {
-    let mut model = WorkspaceModel::new();
-    let workspace = model.create_workspace("main", "/tmp/project");
-    let surface_id = workspace.focused_surface_id.clone();
-    let session_id = "019ebd1f-870e-7053-9765-11facbd295d2";
-    assert!(model.set_surface_agent_session(
-        &surface_id,
-        forktty_core::AgentKind::Codex,
-        session_id,
-    ));
-    let workflow = forktty_core::WorkflowState {
-        id: "session-loop".to_string(),
-        workspace_id: Some(workspace.id.clone()),
-        surface_id: None,
-        agent: Some("codex".to_string()),
-        session_id: Some(session_id.to_string()),
-        mode: "closed-loop".to_string(),
-        status: "running".to_string(),
-        goal: None,
-        memory: None,
-        loop_recipe: Some("review-fix-verify".to_string()),
-        loop_stage: Some("execute".to_string()),
-        loop_iteration: Some(1),
-        loop_max_iterations: Some(3),
-        loop_stop_reason: None,
-        loop_updated_at_ms: Some(1_700_000_250_000),
-        loop_gates: Vec::new(),
-        created_at_ms: 1_700_000_100_000,
-        updated_at_ms: 1_700_000_250_000,
-        plan: Vec::new(),
-        evidence: Vec::new(),
-    };
-
-    let loop_badges = agent_hud_loop_badges_from_workflows(&[workflow]);
-    let rows = agent_hud_rows_with_loops(&model, &loop_badges, 1_700_000_300_000);
-
-    assert_eq!(
-        rows[0]
-            .loop_badge
-            .as_ref()
-            .map(|badge| badge.label.as_str()),
-        Some("Loop execute 1/3")
-    );
-}
-
-#[test]
-fn agent_hud_loop_badges_classify_attention_and_done_states() {
-    let warning = forktty_core::WorkflowState {
-        id: "warning".to_string(),
-        workspace_id: Some("workspace-1".to_string()),
-        surface_id: Some("surface-1".to_string()),
-        agent: Some("codex".to_string()),
-        session_id: Some("session-1".to_string()),
-        mode: "closed-loop".to_string(),
-        status: "running".to_string(),
-        goal: None,
-        memory: None,
-        loop_recipe: Some("loop".to_string()),
-        loop_stage: Some("needs_human".to_string()),
-        loop_iteration: Some(1),
-        loop_max_iterations: Some(3),
-        loop_stop_reason: None,
-        loop_updated_at_ms: Some(1_700_000_100_000),
-        loop_gates: Vec::new(),
-        created_at_ms: 1_700_000_000_000,
-        updated_at_ms: 1_700_000_100_000,
-        plan: Vec::new(),
-        evidence: Vec::new(),
-    };
-    let mut done = warning.clone();
-    done.id = "done".to_string();
-    done.surface_id = Some("surface-2".to_string());
-    done.status = "done".to_string();
-    done.loop_stage = Some("verify".to_string());
-    done.loop_stop_reason = Some("passed".to_string());
-    done.loop_updated_at_ms = Some(1_700_000_200_000);
-
-    let loop_badges = agent_hud_loop_badges_from_workflows(&[warning, done]);
-
-    assert_eq!(
-        loop_badges
-            .by_surface
-            .get("surface-1")
-            .map(|badge| badge.class_name),
-        Some("warning")
-    );
-    assert_eq!(
-        loop_badges
-            .by_surface
-            .get("surface-2")
-            .map(|badge| badge.class_name),
-        Some("done")
-    );
-}
-
-#[test]
 fn agent_surface_for_row_index_ignores_section_headers() {
     let row_targets = vec![
         None,
@@ -486,10 +284,7 @@ fn agent_hud_css_keeps_chips_quiet_and_tail_unboxed() {
             .unwrap_or_else(|| panic!("missing CSS block {selector}"))
     };
 
-    for selector in [
-        ".agent-lifecycle {",
-        ".agent-current,\n.agent-permission,\n.agent-loop {",
-    ] {
+    for selector in [".agent-lifecycle {", ".agent-current,\n.agent-permission {"] {
         let css = block(selector);
         assert!(!css.contains("text-transform: uppercase;"));
         assert!(!css.contains("font-weight: 700;"));
@@ -511,13 +306,14 @@ fn agent_hud_css_preserves_attention_tints_on_hover_and_focus() {
             .unwrap_or_else(|| panic!("missing CSS block {selector}"))
     };
 
+    // Quieter attention: neutral @ft_bg_2 backgrounds + thin left accent bar (hairline focus)
     assert!(
-        block(".agent-list row:hover .agent-row.needs-input {").contains("background: #1e1a17;")
+        block(".agent-list row:hover .agent-row.needs-input {").contains("background: @ft_bg_2;")
     );
-    assert!(block(".agent-list row:hover .agent-row.current {").contains("background: #1c1b18;"));
+    assert!(block(".agent-list row:hover .agent-row.current {").contains("background: @ft_bg_2;"));
     assert!(
         block(".agent-list row:focus-visible .agent-row.needs-input {")
-            .contains("inset 3px 0 0 alpha(@accent_color")
+            .contains("border-color: alpha(@accent_color")
     );
 }
 
@@ -534,25 +330,6 @@ fn agent_hud_scrollbar_does_not_overlay_row_actions() {
     let source = include_str!("../agents_panel.rs");
 
     assert!(source.contains(".overlay_scrolling(false)"));
-}
-
-#[test]
-fn agent_hud_loop_badge_has_quiet_warning_css() {
-    let source = include_str!("../../style.css");
-    let block = |selector: &str| {
-        source
-            .split(selector)
-            .nth(1)
-            .and_then(|rest| rest.split('}').next())
-            .unwrap_or_else(|| panic!("missing CSS block {selector}"))
-    };
-
-    assert!(block(".agent-current,\n.agent-permission,\n.agent-loop {")
-        .contains("border-radius: 999px;"));
-    assert!(!block(".agent-current,\n.agent-permission,\n.agent-loop {")
-        .contains("text-transform: uppercase;"));
-    assert!(source.contains(".agent-loop {\n  color: #9aa0a6;\n  background: @ft_line;\n}"));
-    assert!(block(".agent-loop.warning {").contains("background: #2b1d1d;"));
 }
 
 #[test]
@@ -592,7 +369,7 @@ fn agent_hud_focuses_existing_agent_surface() {
         (first_surface, second_surface)
     };
 
-    assert!(open_agent_surface(&state, &second_surface, None));
+    assert!(glib::MainContext::new().block_on(open_agent_surface(&state, &second_surface, None)));
 
     let model = model.lock().unwrap();
     assert_eq!(

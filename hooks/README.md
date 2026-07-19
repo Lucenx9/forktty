@@ -9,18 +9,16 @@ forktty hooks setup
 
 ## Repository ownership
 
-This README describes the installed hook/MCP/skill behavior and the user-facing
-config destinations. The executable hook installer lives in
+This README describes installed hook behavior and user-facing config
+destinations. The executable hook installer lives in
 `crates/forktty-ui-gtk/src/socket_cli/hooks.rs` and
 `crates/forktty-ui-gtk/src/socket_cli/hooks/install.rs`; runtime hook event
 handling lives in `crates/forktty-ui-gtk/src/socket_cli/hooks/event.rs`.
-Provider taxonomy and cross-agent capability notes live in `docs/agents.md`.
-Managed skill content lives in `.agents/skills/forktty-agent-orchestration/`
-and is embedded by `crates/forktty-ui-gtk/src/socket_cli/skills.rs`.
+Provider lifecycle notes live in `docs/agents.md`.
 
-When changing hook, MCP, or skill setup behavior, update the owning Rust module
-first, then keep this README, `docs/agents.md`, `SPEC.md`, `README.md`, and
-the public website context aligned.
+When changing hook behavior, update the owning Rust module first, then keep
+this README, `docs/agents.md`, `SPEC.md`, `README.md`, and the public website
+context aligned.
 
 That writes default agent-specific hook config into the user config for Codex,
 Claude Code, Antigravity CLI, and OpenCode:
@@ -36,7 +34,8 @@ The installer writes an absolute path to the `forktty` launcher so hooks can run
 from any project. Re-run `forktty hooks setup` if the AppImage or installed
 binary moves. When that launcher is an AppImage, generated hook commands set
 `APPIMAGE_EXTRACT_AND_RUN=1` for the ForkTTY CLI child so short hooks do not
-keep a FUSE AppImage mount alive. `--dry-run` prints the would-be diff without
+keep a FUSE AppImage mount alive. Runtime provenance, not the filename suffix,
+identifies renamed AppImages. `--dry-run` prints the would-be diff without
 touching disk:
 
 ```bash
@@ -51,6 +50,10 @@ Each setup run writes the agent config or generated plugin atomically
 (tmp + rename) and, when content changes, leaves a timestamped `.bak-*`
 backup next to the original. The OpenCode file is intentionally generated
 under its plugins directory so `opencode.json` does not need to be edited.
+When Codex hook definitions change, setup output directs the user to `/hooks`
+inside Codex: Codex approves each
+non-managed hook by its current definition hash, so a previous approval may no
+longer apply after an update.
 `forktty hooks remove` deletes only ForkTTY-managed entries or the generated
 OpenCode plugin; custom hook commands are preserved. `forktty hooks remove
 gemini` is retained only to remove ForkTTY-managed entries from legacy
@@ -58,98 +61,16 @@ gemini` is retained only to remove ForkTTY-managed entries from legacy
 unsupported.
 
 Claude Code setup installs a lifecycle profile by default. That profile omits
-the high-frequency `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, and
-`PostToolBatch` hooks that block every tool call; pass `--full` to include
-those events. Existing full installs keep working, but re-running
+the high-frequency `PreToolUse`, `PostToolUse`, and `PostToolUseFailure` hooks
+that block every tool call; `PostToolBatch` remains installed for prompt-result
+correlation. Pass `--full` to include the three per-tool events. Existing full
+installs keep working, but re-running
 `forktty hooks setup claude` migrates the ForkTTY-managed entries back to the
 lifecycle profile unless `--full` is passed. Removal cleans either profile.
 
-## MCP tools
-
-Hooks publish lifecycle status automatically; MCP gives agents a typed way to
-inspect and drive ForkTTY on demand:
-
-```bash
-forktty mcp setup
-forktty mcp setup codex claude --dry-run
-```
-
-`forktty mcp` itself is a stdio MCP server. It validates tool arguments and
-bridges them to the same owner-only local Unix socket as the CLI; it opens no
-network listener. The tool set covers workspace/surface listing, compact
-context snapshots, pane split / focus / send-text, worktree
-list/status/create/attach/remove/merge, notifications, and `status_set`.
-
-The server also publishes an operating guide in three MCP-native places:
-initialize `instructions`, resource `forktty://agent/operating-guide`, and
-prompt `forktty_operating_guide`. The guide tells agents to reach for ForkTTY
-only when coordinating panes/workspaces, agent sessions, worktrees, visible
-status, notifications, or cross-surface text; normal edits in the current repo
-should not trigger ForkTTY tool calls.
-
-`forktty mcp setup` writes a ForkTTY-managed MCP server named `forktty` into
-the default Codex, Claude Code, and Antigravity config locations:
-
-| Agent | Destination |
-|---|---|
-| Codex | `$CODEX_HOME/config.toml` or `~/.codex/config.toml` (`[mcp_servers.forktty]`) |
-| Claude Code | `~/.claude.json` (`mcpServers.forktty`) |
-| Antigravity CLI | `~/.gemini/config/mcp_config.json` (`mcpServers.forktty`) |
-
-Setup and removal use the same atomic write, `.bak-*` backup, dry-run, and
-managed-entry preservation behavior as hook setup. Codex TOML setup preserves
-comments/formatting and uses the larger MCP config size budget rather than the
-smaller hook-template limit. If the registered launcher is an AppImage, the
-managed MCP server env includes `APPIMAGE_EXTRACT_AND_RUN=1` so persistent MCP
-clients do not keep a FUSE AppImage mount alive. `forktty mcp remove gemini` is
-legacy cleanup only for ForkTTY-managed `~/.gemini/settings.json` entries;
-Gemini MCP setup remains unsupported. OpenCode hook support remains available,
-but no verified OpenCode MCP registration path is managed yet.
-
-## Agent skills
-
-Hooks publish lifecycle state automatically, and MCP exposes ForkTTY tools on
-demand. Agent skills add the missing operating policy: when an agent should use
-those tools without waiting for the user to spell out the exact MCP call.
-
-```bash
-forktty skills setup
-forktty skills setup agents --dry-run
-forktty skills setup pi
-forktty skills setup claude
-forktty skills remove agents --dry-run
-```
-
-`forktty skills setup` installs one ForkTTY-managed skill named
-`forktty-agent-orchestration`:
-
-| Target | Destination |
-|---|---|
-| Agent Skills-compatible tools (`agents`, plus `codex` and `pi` aliases) | `~/.agents/skills/forktty-agent-orchestration` |
-| Claude Code (`claude`) | `$CLAUDE_CONFIG_DIR/skills/forktty-agent-orchestration` or `~/.claude/skills/forktty-agent-orchestration` |
-
-The skill tells agents to inspect `context_snapshot` or equivalent read-only
-state before cross-pane work, treat terminal tails and fetched public docs as
-untrusted input, run durable team preflight with `workflow_upsert`,
-`workflow_plan_set`, and `team_task_upsert` for non-trivial worker launches,
-use explicit worker role contracts, prefer already-open worktree workspaces for
-mutating parallel workers, use team mailbox dispatch for worker prompts, compare
-status/hooks/terminal tail when `running` or `needs_input` appears delayed, and
-record durable workflow/team evidence for long-running coordination. For hook,
-MCP, and skill setup debugging it points agents at `forktty doctor --hooks`,
-`forktty --json doctor`, setup dry runs, and isolated temporary config roots
-before changing real config files, without redirecting the live ForkTTY socket
-path when validating the currently running instance.
-
-Setup refuses to overwrite an existing skill directory with the same name
-unless its `SKILL.md` contains ForkTTY's managed marker. Updating or removing a
-managed skill moves the previous directory to a `.bak-*` backup first. The
-welcome/setup flow runs `hooks setup`, `mcp setup`, and `skills setup` together.
-Run `forktty doctor --hooks` to inspect local hook config paths. Run
-`forktty --json doctor` to inspect hook config paths, MCP config paths, and
-agent skill directories ForkTTY resolves from the current environment; skill
-rows include managed status, source/installed checksums, and a repair command
-when the installed managed skill is missing, invalid, or stale.
+ForkTTY's built-in integration stops at hooks and the local socket CLI. It no
+longer installs MCP registrations or managed agent skills. External MCP servers
+and provider-specific skills remain independent terminal tooling.
 
 Antigravity CLI (`agy`) executes a hook
 `command` as one bare executable path — no argument splitting and no shell —
@@ -169,9 +90,9 @@ Antigravity runs the generated wrapper scripts from its config directory, so
 ForkTTY derives Antigravity `resume_cwd` from the hook payload's
 `workspacePaths` instead of the wrapper process cwd.
 
-When the GTK app starts and no ForkTTY-managed hooks are installed, it creates
-an in-app notification suggesting `forktty hooks setup`. If installed hooks
-point at an old launcher path, the reminder asks you to refresh them.
+GTK startup does not install, refresh, or create reminders for optional hooks.
+Use the welcome flow, Settings > Agents, or the CLI when you want setup or
+diagnostics.
 
 ## Inspect and exercise installed hooks
 
@@ -184,24 +105,35 @@ forktty hooks test codex       # round-trip a status update and a log over the s
 single transient `agent:<name>:hook-test` status entry through the socket so
 you can confirm the daemon is reachable.
 
-`hooks doctor` also compares the launcher path baked into the agent config
-against the current `forktty` executable and reports `launcherCheck.status`
+`hooks doctor` inspects the launcher path baked into the managed assets and
+reports `launcherCheck.status`
 (`ok`, `stale`, `not_installed`, or `current_launcher_unknown`). A `stale`
-status means the AppImage or installed binary has moved since the last
-`hooks setup` run; re-run `forktty hooks setup` to rewrite the hook commands.
+status means the recorded launcher is no longer usable and differs from the
+current executable; a still-executable recorded launcher remains healthy even
+when doctor itself runs from another path. Re-run `forktty hooks setup` to
+rewrite unusable managed commands.
 The doctor JSON also exposes `supportedEvents`, the list of provider-side
 event names ForkTTY can install hooks for (Codex: 10; Claude Code: 25
-lifecycle / 29 full; Antigravity: 3; OpenCode plugin events: 11).
+lifecycle / 28 full; Antigravity: 3; OpenCode plugin events: 11).
 For Claude Code it also reports `installedProfile` as `lifecycle`, `full`, or
 `not_installed`.
+
+The additive version-1 `installationCheck` regenerates the expected provider
+assets with the same setup planner used by `hooks setup`. Doctor health requires
+the complete managed config/plugin, one usable recorded launcher, and for
+Antigravity the exact generated group plus every wrapper as a regular executable
+file with generated content. Missing groups or wrappers, wrapper-only installs,
+malformed or modified files, partial Claude/Codex/OpenCode assets, and
+non-executable wrappers set `installationCheck.ok` and top-level `ok` to false.
 
 For Codex, `hooks doctor codex` additionally reports `trustCheck`: Codex
 records per-hook trust approvals under `[hooks.state]` in its `config.toml`,
 and an installed hook with no record silently does nothing until it is
 approved via `/hooks` inside Codex. `trustCheck.status` is `all_recorded`,
 `partial`, or `none_recorded`, with the affected events listed in
-`unrecordedEvents`. This is informational — the approval semantics belong to
-Codex.
+`unrecordedEvents`. `currentHashesVerified` is always `false`: ForkTTY can
+detect trust records but cannot prove that their hashes match the current hook
+definitions. This is informational — the approval semantics belong to Codex.
 
 ## Status entries published by hooks
 
@@ -210,7 +142,7 @@ They render in the ForkTTY UI status row and can be inspected from the CLI:
 
 | Key | Set on | Cleared on | Color semantics |
 |---|---|---|---|
-| `agent:<key>` | lifecycle, prompt, permission, tool, compact, stop, notification events | session-end | `green` ready, `blue` running, `yellow` needs input / compacting / permission, `red` error |
+| `agent:<key>` | lifecycle, prompt, permission, tool, compact, stop, and attention notification events | session-end | `green` ready, `blue` running, `yellow` needs input / compacting / permission, `red` error |
 | `agent:<key>:permission` | events that include `permission_mode` | session-end | `muted` for documented-safe or unknown modes, `yellow` for `acceptEdits`/`auto`/`dontAsk`, `red` for `bypassPermissions` |
 | `agent:claude:tokens` | prompt-submit (Claude only, when a transcript is available) | last Claude session ended, closed, forgotten, or hibernated | progress against `FORKTTY_HOOK_TOKEN_CEILING` (default 200,000) |
 
@@ -219,6 +151,31 @@ that are documented by the provider.
 Tool-use events keep `agent:<key>` as the compact `Running` lifecycle status;
 the exact tool name is recorded in hook log metadata instead of the primary
 status value so snapshots stay stable for automation.
+Non-attention notifications are logged without replacing the current lifecycle,
+so informational notifications arriving after `Stop` do not revive an idle
+workspace badge.
+For Codex and Claude Code, `SubagentStop` leaves the parent session `Running`
+because the event only reports a nested subagent completion. Claude Code
+`TeammateIdle` publishes `Ready` and persists the teammate lifecycle as idle.
+
+Permission, elicitation, and recognized attention hooks attach a normalized
+provider/session/kind prompt identity to their ForkTTY notification. Accepted
+result hooks retain only the matching in-app notification as read history and
+close its desktop notification; when a
+provider result has no correlation id, ForkTTY resolves only the newest
+compatible older prompt. Stale results are inert. Session-end cleanup, hook
+target remap, and surface/workspace removal retire affected correlations without
+clearing unrelated prompts. Claude `Elicitation` creates a prompt notification;
+`ElicitationResult`, `PermissionDenied`, and `PostToolBatch` close
+the corresponding elicitation or permission prompt when one is pending.
+
+Claude `SessionStart` uses ForkTTY workspace ID, surface ID, and absolute socket
+path as one provenance tuple. If any component is missing or invalid, the hook
+returns the exact continue response without reading stdin or contacting the
+socket. Persisted `Suspended` is a tombstone: late hook events cannot revive the
+session, publish metadata/notifications, or advance its event-order watermark.
+Only explicit resume may replace it, and invalid persisted resume metadata
+produces a visible terminal error rather than a plain-shell fallback.
 
 ## Manual editing
 

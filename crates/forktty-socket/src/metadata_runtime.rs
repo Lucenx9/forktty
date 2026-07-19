@@ -1,17 +1,16 @@
 use crate::metadata_params::{
     MetadataClearKeyRequest, MetadataClearStatusRequest, MetadataLogRequest,
     MetadataSetProgressRequest, MetadataSetStatusRequest, MetadataWorkspaceRequest,
-    NotificationCreateRequest,
+    NotificationCreateRequest, NotificationListRequest,
 };
 use crate::{
     agent_kind_from_permission_status_key, agent_kind_from_status_key,
     agent_session_lifecycle_from_hook, current_unix_epoch_ms,
-    feed_events::{feed_entry_from_notification, record_feed_entry},
-    feed_view,
     notification_dispatch::dispatch_notification_with_loaded_config,
+    notification_view::{notification_views, NotificationView},
     DispatchError, SocketAppState,
 };
-use forktty_core::{close_desktop_notification, AgentSessionLifecycle};
+use forktty_core::AgentSessionLifecycle;
 use serde_json::{json, Value};
 
 pub(crate) fn notification_create(
@@ -19,34 +18,57 @@ pub(crate) fn notification_create(
     params: &Value,
 ) -> Result<Value, DispatchError> {
     let request = NotificationCreateRequest::decode(state, params)?;
-    let item = {
+    let creation = {
         let mut model = state
             .model
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
-        model.create_notification(
-            &request.title,
-            &request.body,
-            request.kind,
-            request.workspace_id,
-            request.surface_id,
-        )
+        if let Some(hook_prompt) = request.hook_prompt {
+            model.create_hook_prompt_notification_with_evictions(
+                &request.title,
+                &request.body,
+                request.kind,
+                request.workspace_id,
+                request.surface_id,
+                hook_prompt,
+            )
+        } else {
+            model.create_notification_with_evictions(
+                &request.title,
+                &request.body,
+                request.kind,
+                request.workspace_id,
+                request.surface_id,
+            )
+        }
     };
+    for notification_id in creation.evicted_desktop_notification_ids {
+        state.close_desktop_notification(&notification_id);
+    }
+    let item = creation.notification;
     if state.notification_dispatch {
         dispatch_notification_with_loaded_config(&item);
     }
-    if let Err(err) = record_feed_entry(state, feed_entry_from_notification(&item)) {
-        eprintln!("forktty feed history update failed: {err}");
-    }
-    Ok(json!(item))
+    Ok(json!(NotificationView::from(&item)))
 }
 
-pub(crate) fn notification_list(state: &SocketAppState) -> Result<Value, DispatchError> {
+pub(crate) fn notification_list(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<Value, DispatchError> {
+    let request = NotificationListRequest::decode(params)?;
     let model = state
         .model
         .lock()
         .map_err(|_| "Lock poisoned".to_string())?;
-    Ok(json!(model.list_notifications()))
+    let notifications = model
+        .notification_page(request.limit, request.before_id)
+        .ok_or_else(|| {
+            DispatchError::InvalidParam(
+                "Invalid parameter before_id: notification is no longer retained".to_string(),
+            )
+        })?;
+    Ok(json!(notification_views(notifications)))
 }
 
 pub(crate) fn notification_clear(state: &SocketAppState) -> Result<Value, DispatchError> {
@@ -59,15 +81,34 @@ pub(crate) fn notification_clear(state: &SocketAppState) -> Result<Value, Dispat
         model.clear_notifications();
         notifications
     };
-    state.mark_notification_feed_entries_cleared(&notifications);
     for notification in &notifications {
-        close_desktop_notification(&notification.id);
-        feed_view::send_terminal_notification_close_report(state, notification);
+        state.close_desktop_notification(&notification.id);
     }
     Ok(json!({"cleared": true}))
 }
 
 pub(crate) fn set_status(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    set_status_with_ordering(state, params, StatusHookOrdering::LegacyModel)
+}
+
+pub(crate) fn set_status_after_serialized_hook_ingress(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<Value, DispatchError> {
+    set_status_with_ordering(state, params, StatusHookOrdering::SerializedIngress)
+}
+
+#[derive(Clone, Copy)]
+enum StatusHookOrdering {
+    LegacyModel,
+    SerializedIngress,
+}
+
+fn set_status_with_ordering(
+    state: &SocketAppState,
+    params: &Value,
+    ordering: StatusHookOrdering,
+) -> Result<Value, DispatchError> {
     let request = MetadataSetStatusRequest::decode(state, params)?;
     let agent_session_lifecycle = agent_session_lifecycle_from_hook(
         &request.value,
@@ -81,16 +122,27 @@ pub(crate) fn set_status(state: &SocketAppState, params: &Value) -> Result<Value
             .model
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
-        let (status, status_applied) = model
-            .set_status_with_hook_metadata_applied(
+        let status_result = match ordering {
+            StatusHookOrdering::LegacyModel => model.set_status_with_hook_metadata_applied(
                 &request.workspace_id,
                 &request.key,
                 &request.label,
                 &request.value,
                 request.color,
                 request.hook,
-            )
-            .ok_or(DispatchError::NotFound("workspace".to_string()))?;
+            ),
+            StatusHookOrdering::SerializedIngress => model
+                .set_status_with_hook_metadata_applied_after_serialized_ordering(
+                    &request.workspace_id,
+                    &request.key,
+                    &request.label,
+                    &request.value,
+                    request.color,
+                    request.hook,
+                ),
+        };
+        let (status, status_applied) =
+            status_result.ok_or(DispatchError::NotFound("workspace".to_string()))?;
         if status_applied {
             if let (Some(agent), Some(surface_id), Some(hook_session_id)) = (
                 agent,
@@ -145,8 +197,23 @@ pub(crate) fn list_status(state: &SocketAppState, params: &Value) -> Result<Valu
 }
 
 pub(crate) fn clear_status(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+    clear_status_with_ordering(state, params, StatusHookOrdering::LegacyModel)
+}
+
+pub(crate) fn clear_status_after_serialized_hook_ingress(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<Value, DispatchError> {
+    clear_status_with_ordering(state, params, StatusHookOrdering::SerializedIngress)
+}
+
+fn clear_status_with_ordering(
+    state: &SocketAppState,
+    params: &Value,
+    ordering: StatusHookOrdering,
+) -> Result<Value, DispatchError> {
     let request = MetadataClearStatusRequest::decode(state, params)?;
-    let session_end_agent = request
+    let reported_session_end_agent = request
         .key
         .as_deref()
         .filter(|_| {
@@ -156,17 +223,26 @@ pub(crate) fn clear_status(state: &SocketAppState, params: &Value) -> Result<Val
                 .is_some_and(|hook| hook.event.trim().eq_ignore_ascii_case("session-end"))
         })
         .and_then(agent_kind_from_status_key);
+    let session_end_agent = reported_session_end_agent;
     let last_activity_ms = current_unix_epoch_ms();
     let cleared = {
         let mut model = state
             .model
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
-        let cleared = model.clear_status_with_hook_metadata(
-            &request.workspace_id,
-            request.key.as_deref(),
-            request.hook,
-        );
+        let cleared = match ordering {
+            StatusHookOrdering::LegacyModel => model.clear_status_with_hook_metadata(
+                &request.workspace_id,
+                request.key.as_deref(),
+                request.hook,
+            ),
+            StatusHookOrdering::SerializedIngress => model
+                .clear_status_with_hook_metadata_after_serialized_ordering(
+                    &request.workspace_id,
+                    request.key.as_deref(),
+                    request.hook,
+                ),
+        };
         let primary_status_cleared = cleared
             && request.key.as_deref().is_some_and(|key| {
                 model

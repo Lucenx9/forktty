@@ -1,14 +1,17 @@
+//! Builds a workspace-local snapshot from the terminal, model, and metadata state.
+
 use crate::context_params::ContextSnapshotRequest;
+use crate::notification_view::notification_views;
 use crate::{
-    agent_health_rows, agent_session_rows, current_unix_epoch_ms, feed_view, remote,
-    status_runtime, store_access, surface_effective_project_cwd, team_state, topology_view,
-    workflow_runtime, DispatchError, SocketAppState, DEFAULT_TEAM_WORKER_STALE_MS,
-    MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES, MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_SURFACES,
+    agent_health_rows, agent_session_rows, current_unix_epoch_ms, remote, status_runtime,
+    surface_effective_project_cwd, topology_view, DispatchError, SocketAppState,
+    MAX_CONTEXT_SNAPSHOT_NOTIFICATIONS, MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_BYTES,
+    MAX_CONTEXT_SNAPSHOT_TERMINAL_TAIL_SURFACES,
 };
-use forktty_core::{SurfaceKind, WorkflowLoopGate, WorkflowQuery, WorkflowState};
+use forktty_core::{NotificationItem, NotificationKind, SurfaceKind};
 use forktty_terminal::TerminalTextCapture;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 pub(crate) async fn snapshot(
@@ -16,7 +19,9 @@ pub(crate) async fn snapshot(
     params: &Value,
 ) -> Result<Value, DispatchError> {
     let request = ContextSnapshotRequest::decode(state, params)?;
+    crate::sync_live_surface_cwds(state)?;
     let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
+    let ready_surface_ids = remote::ready_surface_ids(state, &terminal_surfaces)?;
     let now_ms = current_unix_epoch_ms();
 
     let (
@@ -26,9 +31,9 @@ pub(crate) async fn snapshot(
         status,
         agents,
         agent_health,
-        feed,
+        notifications,
         remotes,
-        terminal_surface_ids,
+        terminal_ids,
     ) = {
         let model = state
             .model
@@ -41,7 +46,11 @@ pub(crate) async fn snapshot(
             .ok_or(DispatchError::NotFound("workspace".to_string()))?;
         let pane_tree = workspace.pane_tree.clone();
         let model_surfaces = model.list_surfaces(Some(&request.workspace_id));
-        let terminal_surface_ids = model_surfaces
+        let surface_ids = model_surfaces
+            .iter()
+            .map(|surface| surface.id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let terminal_ids = model_surfaces
             .iter()
             .filter(|surface| {
                 matches!(
@@ -57,18 +66,19 @@ pub(crate) async fn snapshot(
             .collect::<HashMap<_, _>>();
         let remotes = model_surfaces
             .iter()
-            .filter_map(|surface| remote::row(surface, &model, &terminal_by_id))
+            .filter_map(|surface| remote::row(surface, &model, &terminal_by_id, &ready_surface_ids))
             .collect::<Vec<_>>();
-        let raw_feed = if let Some(entries) = state.feed_store.lock().ok().and_then(|store| {
-            store
-                .as_ref()
-                .map(|store| store.list(Some(&request.workspace_id), 20))
-        }) {
-            feed_view::entries_for_model(&model, entries)
-        } else {
-            feed_view::list(&model, Some(&request.workspace_id), 20)
-        };
-        let feed = context_snapshot_feed(raw_feed, request.include_feed_trace);
+        let notifications = model
+            .list_notifications()
+            .into_iter()
+            .filter(|notification| match notification.workspace_id.as_deref() {
+                Some(workspace_id) => workspace_id == request.workspace_id,
+                None => notification
+                    .surface_id
+                    .as_deref()
+                    .is_none_or(|surface_id| surface_ids.contains(surface_id)),
+            })
+            .collect::<Vec<_>>();
         let effective_project_cwd = workspace_effective_project_cwd(&workspace, &model_surfaces);
         (
             json!({
@@ -92,38 +102,27 @@ pub(crate) async fn snapshot(
                 .unwrap_or(Value::Null),
             agent_session_rows(&model, Some(&request.workspace_id), now_ms),
             agent_health_rows(&model, Some(&request.workspace_id), now_ms),
-            feed,
+            notifications,
             remotes,
-            terminal_surface_ids,
+            terminal_ids,
         )
     };
 
     let (terminal_tails, terminal_tail_errors) = context_snapshot_terminal_tails(
         state,
-        &terminal_surface_ids,
+        &terminal_ids,
         request.tail_lines,
         request.tail_max_bytes,
     );
-    let (workflows, workflow_summaries, loop_summaries) = context_snapshot_workflows(
-        state,
-        &request.workspace_id,
-        request.include_workflow_details,
-    )
-    .await?;
-    let (teams, team_summaries) =
-        context_snapshot_team_state(state, &request.workspace_id, request.include_team_details)
-            .await?;
     let risk_flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
         status: &status,
         agent_health: &agent_health,
-        feed: &feed,
+        notifications: &notifications,
         remotes: &remotes,
         terminal_tails: &terminal_tails,
         terminal_tail_errors: &terminal_tail_errors,
-        workflow_summaries: &workflow_summaries,
-        loop_summaries: &loop_summaries,
-        team_summaries: &team_summaries,
     });
+    let notifications = context_snapshot_notification_rows(&notifications);
 
     Ok(json!({
         "workspace": workspace,
@@ -132,12 +131,7 @@ pub(crate) async fn snapshot(
         "status": status,
         "agents": agents,
         "agent_health": agent_health,
-        "workflows": workflows,
-        "workflow_summaries": workflow_summaries,
-        "loop_summaries": loop_summaries,
-        "teams": teams,
-        "team_summaries": team_summaries,
-        "feed": feed,
+        "notifications": notifications,
         "remotes": remotes,
         "terminal_tails": terminal_tails,
         "terminal_tail_errors": terminal_tail_errors,
@@ -145,31 +139,13 @@ pub(crate) async fn snapshot(
     }))
 }
 
-fn context_snapshot_feed(feed: Vec<Value>, include_trace: bool) -> Vec<Value> {
-    if include_trace {
-        return feed;
-    }
-    feed.into_iter()
-        .filter(|entry| !matches!(feed_entry_type_name(entry), Some("status" | "progress")))
-        .filter(feed_entry_is_active_context_item)
-        .collect()
-}
-
-fn feed_entry_type_name(entry: &Value) -> Option<&str> {
-    entry
-        .get("type")
-        .or_else(|| entry.get("entry_type"))
-        .and_then(Value::as_str)
-}
-
-fn feed_entry_is_active_context_item(entry: &Value) -> bool {
-    if !matches!(feed_entry_type_name(entry), Some("approval")) {
-        return true;
-    }
-    matches!(
-        entry.get("approval_state").and_then(Value::as_str),
-        Some("pending" | "stale")
-    )
+fn context_snapshot_notification_rows(
+    notifications: &[NotificationItem],
+) -> Vec<crate::notification_view::NotificationView<'_>> {
+    let start = notifications
+        .len()
+        .saturating_sub(MAX_CONTEXT_SNAPSHOT_NOTIFICATIONS);
+    notification_views(&notifications[start..])
 }
 
 fn context_snapshot_terminal_tails(
@@ -238,288 +214,6 @@ fn context_snapshot_terminal_tails(
     (tails, errors)
 }
 
-async fn context_snapshot_workflows(
-    state: &SocketAppState,
-    workspace_id: &str,
-    include_workflow_details: bool,
-) -> Result<(Value, Value, Value), DispatchError> {
-    let Some(store_access) = store_access::optional_workflow_store_access(state) else {
-        return Ok((json!([]), json!([]), json!([])));
-    };
-    let store = store_access.load().await.map_err(workflow_runtime::error)?;
-    let workflows = store
-        .list(&WorkflowQuery {
-            workspace_id: Some(workspace_id.to_string()),
-            surface_id: None,
-            session_id: None,
-            query: None,
-            limit: Some(20),
-        })
-        .into_iter()
-        .collect::<Vec<_>>();
-    let current_surface_ids = {
-        let model = state
-            .model
-            .lock()
-            .map_err(|_| "Lock poisoned".to_string())?;
-        model
-            .list_surfaces(Some(workspace_id))
-            .into_iter()
-            .map(|surface| surface.id)
-            .collect::<HashSet<_>>()
-    };
-    let summaries = workflows
-        .iter()
-        .map(|workflow| context_snapshot_workflow_summary_row(workflow, &current_surface_ids))
-        .collect::<Vec<_>>();
-    let loop_summaries = workflows
-        .iter()
-        .filter_map(|workflow| context_snapshot_loop_summary_row(workflow, &current_surface_ids))
-        .collect::<Vec<_>>();
-    let workflows = if include_workflow_details {
-        json!(workflows
-            .into_iter()
-            .map(|workflow| context_snapshot_workflow_row(workflow, &current_surface_ids))
-            .collect::<Vec<_>>())
-    } else {
-        json!([])
-    };
-    Ok((workflows, json!(summaries), json!(loop_summaries)))
-}
-
-fn context_snapshot_workflow_row(
-    workflow: WorkflowState,
-    current_surface_ids: &HashSet<String>,
-) -> Value {
-    let surface_present = workflow_surface_present(&workflow, current_surface_ids);
-    let stale_binding = surface_present == Some(false);
-    let warnings = workflow_consistency_warnings(&workflow, stale_binding);
-    let mut value = serde_json::to_value(workflow).unwrap_or_else(|_| json!({}));
-    if let Some(object) = value.as_object_mut() {
-        object.insert("surface_present".to_string(), json!(surface_present));
-        object.insert("stale_binding".to_string(), json!(stale_binding));
-        object.insert("consistency_warnings".to_string(), json!(warnings));
-    }
-    value
-}
-
-fn context_snapshot_workflow_summary_row(
-    workflow: &WorkflowState,
-    current_surface_ids: &HashSet<String>,
-) -> Value {
-    let surface_present = workflow_surface_present(workflow, current_surface_ids);
-    let stale_binding = surface_present == Some(false);
-    let warnings = workflow_consistency_warnings(workflow, stale_binding);
-    let plan_steps_total = workflow.plan.len();
-    let plan_steps_open = workflow
-        .plan
-        .iter()
-        .filter(|step| !workflow_plan_step_status_is_terminal(&step.status))
-        .count();
-    json!({
-        "id": &workflow.id,
-        "workspace_id": &workflow.workspace_id,
-        "surface_id": &workflow.surface_id,
-        "agent": &workflow.agent,
-        "session_id": &workflow.session_id,
-        "mode": &workflow.mode,
-        "status": &workflow.status,
-        "goal": &workflow.goal,
-        "created_at_ms": workflow.created_at_ms,
-        "updated_at_ms": workflow.updated_at_ms,
-        "plan_steps_total": plan_steps_total,
-        "plan_steps_open": plan_steps_open,
-        "evidence_total": workflow.evidence.len(),
-        "surface_present": surface_present,
-        "stale_binding": stale_binding,
-        "consistency_warnings": warnings,
-    })
-}
-
-fn workflow_surface_present(
-    workflow: &WorkflowState,
-    current_surface_ids: &HashSet<String>,
-) -> Option<bool> {
-    workflow
-        .surface_id
-        .as_deref()
-        .map(|surface_id| current_surface_ids.contains(surface_id))
-}
-
-fn context_snapshot_loop_summary_row(
-    workflow: &WorkflowState,
-    current_surface_ids: &HashSet<String>,
-) -> Option<Value> {
-    if !workflow_has_loop_state(workflow) {
-        return None;
-    }
-    let surface_present = workflow_surface_present(workflow, current_surface_ids);
-    let stale_binding = surface_present == Some(false);
-    let gates_total = workflow.loop_gates.len();
-    let gates_passed = workflow
-        .loop_gates
-        .iter()
-        .filter(|gate| loop_gate_status_is_passed(&gate.status))
-        .count();
-    let gates_failed = workflow
-        .loop_gates
-        .iter()
-        .filter(|gate| loop_gate_status_is_failed(&gate.status))
-        .count();
-    let gates_running = workflow
-        .loop_gates
-        .iter()
-        .filter(|gate| loop_gate_status_is_running(&gate.status))
-        .count();
-    Some(json!({
-        "workflow_id": &workflow.id,
-        "workspace_id": &workflow.workspace_id,
-        "surface_id": &workflow.surface_id,
-        "surface_present": surface_present,
-        "stale_binding": stale_binding,
-        "mode": &workflow.mode,
-        "status": &workflow.status,
-        "recipe": &workflow.loop_recipe,
-        "stage": &workflow.loop_stage,
-        "iteration": workflow.loop_iteration,
-        "max_iterations": workflow.loop_max_iterations,
-        "stop_reason": &workflow.loop_stop_reason,
-        "updated_at_ms": workflow.loop_updated_at_ms.unwrap_or(workflow.updated_at_ms),
-        "gates_total": gates_total,
-        "gates_passed": gates_passed,
-        "gates_failed": gates_failed,
-        "gates_running": gates_running,
-        "gates_open": gates_total.saturating_sub(gates_passed + gates_failed),
-    }))
-}
-
-fn workflow_has_loop_state(workflow: &WorkflowState) -> bool {
-    workflow.loop_recipe.is_some()
-        || workflow.loop_stage.is_some()
-        || workflow.loop_iteration.is_some()
-        || workflow.loop_max_iterations.is_some()
-        || workflow.loop_stop_reason.is_some()
-        || !workflow.loop_gates.is_empty()
-}
-
-fn loop_gate_status_is_passed(status: &str) -> bool {
-    matches!(
-        status.trim().to_ascii_lowercase().as_str(),
-        "passed" | "pass" | "done" | "success" | "succeeded" | "ok"
-    )
-}
-
-fn loop_gate_status_is_failed(status: &str) -> bool {
-    matches!(
-        status.trim().to_ascii_lowercase().as_str(),
-        "failed" | "fail" | "error" | "errored" | "blocked"
-    )
-}
-
-fn loop_gate_status_is_running(status: &str) -> bool {
-    matches!(
-        status.trim().to_ascii_lowercase().as_str(),
-        "running" | "working" | "in_progress" | "in-progress"
-    )
-}
-
-fn workflow_consistency_warnings(
-    workflow: &WorkflowState,
-    stale_binding: bool,
-) -> Vec<&'static str> {
-    let mut warnings = Vec::new();
-    if workflow_status_is_active(&workflow.status) && stale_binding {
-        warnings.push("active_with_missing_surface");
-    }
-    if workflow_status_is_terminal(&workflow.status)
-        && workflow
-            .loop_recipe
-            .as_deref()
-            .is_some_and(workflow_loop_recipe_requires_adoption)
-        && workflow.loop_iteration == Some(0)
-        && workflow_loop_gates_never_recorded(&workflow.loop_gates)
-        && workflow.loop_stop_reason.is_none()
-    {
-        warnings.push("loop_never_recorded");
-    }
-    if workflow_status_is_terminal(&workflow.status)
-        && workflow
-            .loop_stop_reason
-            .as_deref()
-            .is_some_and(workflow_loop_stop_reason_is_success)
-        && workflow.evidence.is_empty()
-    {
-        warnings.push("loop_passed_without_evidence");
-    }
-    if workflow.plan.is_empty() {
-        return warnings;
-    }
-    let plan_open = workflow
-        .plan
-        .iter()
-        .any(|step| !workflow_plan_step_status_is_terminal(&step.status));
-    let plan_complete = workflow
-        .plan
-        .iter()
-        .all(|step| workflow_plan_step_status_is_terminal(&step.status));
-    if workflow_status_is_terminal(&workflow.status) && plan_open {
-        warnings.push("done_with_open_plan_steps");
-    } else if workflow_status_is_active(&workflow.status) && plan_complete {
-        warnings.push("running_with_completed_plan");
-    }
-    warnings
-}
-
-fn workflow_status_is_terminal(status: &str) -> bool {
-    matches!(
-        status.trim().to_ascii_lowercase().as_str(),
-        "done" | "closed" | "cancelled" | "canceled" | "failed"
-    )
-}
-
-fn workflow_loop_recipe_requires_adoption(recipe: &str) -> bool {
-    matches!(
-        recipe.trim().to_ascii_lowercase().as_str(),
-        "solo_with_verify_loop" | "implementer_plus_reviewer" | "team_pipeline" | "review_only"
-    )
-}
-
-fn workflow_loop_gates_never_recorded(gates: &[WorkflowLoopGate]) -> bool {
-    gates.is_empty()
-        || gates
-            .iter()
-            .all(|gate| workflow_loop_gate_is_unstarted(&gate.status))
-}
-
-fn workflow_loop_gate_is_unstarted(status: &str) -> bool {
-    matches!(
-        status.trim().to_ascii_lowercase().as_str(),
-        "pending" | "planned" | "open" | "todo" | "to_do"
-    )
-}
-
-fn workflow_loop_stop_reason_is_success(reason: &str) -> bool {
-    let reason = reason.trim().to_ascii_lowercase();
-    matches!(
-        reason.as_str(),
-        "passed" | "pass" | "ok" | "success" | "succeeded" | "done" | "published"
-    ) || reason.starts_with("published ")
-}
-
-fn workflow_status_is_active(status: &str) -> bool {
-    matches!(
-        status.trim().to_ascii_lowercase().as_str(),
-        "active" | "running" | "in_progress" | "in-progress"
-    )
-}
-
-fn workflow_plan_step_status_is_terminal(status: &str) -> bool {
-    matches!(
-        status.trim().to_ascii_lowercase().as_str(),
-        "done" | "completed" | "closed" | "cancelled" | "canceled" | "skipped"
-    )
-}
-
 pub(crate) fn workspace_effective_project_cwd(
     workspace: &forktty_core::Workspace,
     surfaces: &[forktty_core::Surface],
@@ -531,51 +225,13 @@ pub(crate) fn workspace_effective_project_cwd(
         .unwrap_or_else(|| workspace.working_dir.clone())
 }
 
-async fn context_snapshot_team_state(
-    state: &SocketAppState,
-    workspace_id: &str,
-    include_team_details: bool,
-) -> Result<(Value, Value), DispatchError> {
-    let Some(store_access) = store_access::optional_team_store_access(state) else {
-        return Ok((json!([]), json!([])));
-    };
-    let store = store_access.load().await.map_err(DispatchError::from)?;
-    let teams = store.list(&forktty_core::TeamQuery {
-        workspace_id: Some(workspace_id.to_string()),
-        status: None,
-        query: None,
-        limit: Some(20),
-    });
-    let summaries = teams
-        .iter()
-        .map(|team| {
-            let summary = store.summary(&team.id).map_err(DispatchError::from)?;
-            team_state::runtime_team_summary_value(
-                state,
-                summary,
-                team,
-                DEFAULT_TEAM_WORKER_STALE_MS,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let teams = if include_team_details {
-        json!(teams)
-    } else {
-        json!([])
-    };
-    Ok((teams, json!(summaries)))
-}
-
 pub(crate) struct ContextSnapshotRiskInputs<'a> {
     pub(crate) status: &'a Value,
     pub(crate) agent_health: &'a [Value],
-    pub(crate) feed: &'a [Value],
+    pub(crate) notifications: &'a [NotificationItem],
     pub(crate) remotes: &'a [Value],
     pub(crate) terminal_tails: &'a [Value],
     pub(crate) terminal_tail_errors: &'a [Value],
-    pub(crate) workflow_summaries: &'a Value,
-    pub(crate) loop_summaries: &'a Value,
-    pub(crate) team_summaries: &'a Value,
 }
 
 pub(crate) fn context_snapshot_risk_flags(
@@ -595,76 +251,15 @@ pub(crate) fn context_snapshot_risk_flags(
     if !inputs.terminal_tail_errors.is_empty() {
         flags.push("terminal_tail_unavailable");
     }
-    if inputs.team_summaries.as_array().is_some_and(|summaries| {
-        summaries.iter().any(|summary| {
-            summary
-                .get("consistency_warnings")
-                .and_then(Value::as_array)
-                .is_some_and(|warnings| !warnings.is_empty())
-        })
-    }) {
-        flags.push("team_consistency_warning");
-    }
-    if inputs
-        .workflow_summaries
-        .as_array()
-        .is_some_and(|summaries| {
-            summaries.iter().any(|summary| {
-                summary
-                    .get("consistency_warnings")
-                    .and_then(Value::as_array)
-                    .is_some_and(|warnings| !warnings.is_empty())
-            })
-        })
-    {
-        flags.push("workflow_consistency_warning");
-    }
-    if inputs.loop_summaries.as_array().is_some_and(|summaries| {
-        summaries.iter().any(|summary| {
-            summary
-                .get("gates_failed")
-                .and_then(Value::as_u64)
-                .is_some_and(|count| count > 0)
-        })
-    }) {
-        flags.push("loop_gate_failed");
-    }
-    if inputs
-        .loop_summaries
-        .as_array()
-        .is_some_and(|summaries| summaries.iter().any(loop_summary_needs_human))
-    {
-        flags.push("loop_needs_human");
-    }
-    if inputs
-        .loop_summaries
-        .as_array()
-        .is_some_and(|summaries| summaries.iter().any(loop_summary_blocked))
-    {
-        flags.push("loop_blocked");
-    }
-    if inputs.loop_summaries.as_array().is_some_and(|summaries| {
-        summaries
-            .iter()
-            .any(|summary| summary.get("stale_binding").and_then(Value::as_bool) == Some(true))
-    }) {
-        flags.push("loop_stale_binding");
-    }
-    if inputs.loop_summaries.as_array().is_some_and(|summaries| {
-        summaries.iter().any(|summary| {
-            summary
-                .get("stop_reason")
-                .and_then(Value::as_str)
-                .is_some_and(|reason| reason.eq_ignore_ascii_case("budget_exhausted"))
-        })
-    }) {
-        flags.push("loop_budget_exhausted");
-    }
     if !inputs.remotes.is_empty() {
         flags.push("remote_surface");
     }
-    if inputs.feed.iter().any(feed_entry_is_pending_approval) {
-        flags.push("pending_approval");
+    if inputs
+        .notifications
+        .iter()
+        .any(|notification| !notification.read && notification.kind == NotificationKind::Prompt)
+    {
+        flags.push("notification_needs_input");
     }
     let permission_status_bypass = inputs
         .status
@@ -692,36 +287,4 @@ pub(crate) fn context_snapshot_risk_flags(
         flags.push("permission_bypass");
     }
     flags
-}
-
-fn loop_summary_needs_human(summary: &Value) -> bool {
-    value_field_matches(summary, "stage", "needs_human")
-        || value_field_matches(summary, "stop_reason", "needs_human")
-}
-
-fn loop_summary_blocked(summary: &Value) -> bool {
-    value_field_matches(summary, "stage", "blocked")
-        || value_field_matches(summary, "stop_reason", "blocked")
-}
-
-fn value_field_matches(value: &Value, field: &str, expected: &str) -> bool {
-    value
-        .get(field)
-        .and_then(Value::as_str)
-        .is_some_and(|actual| actual.eq_ignore_ascii_case(expected))
-}
-
-fn feed_entry_is_pending_approval(entry: &Value) -> bool {
-    if entry
-        .get("type")
-        .or_else(|| entry.get("entry_type"))
-        .and_then(Value::as_str)
-        != Some("approval")
-    {
-        return false;
-    }
-    entry
-        .get("approval_state")
-        .and_then(Value::as_str)
-        .is_none_or(|state| state == "pending")
 }

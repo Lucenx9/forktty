@@ -10,7 +10,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0-alpha.18"
+version = "0.2.0-alpha.19"
 edition = "2021"
 rust-version = "1.96"
 license = "AGPL-3.0-only"
@@ -45,7 +45,6 @@ tempfile = "3.10.1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "io-util", "time"] }
 toml = "1.1"
-toml_edit = "0.25"
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 

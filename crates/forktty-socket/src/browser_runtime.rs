@@ -17,8 +17,9 @@ use crate::{
 
 const BROWSER_CMD_TIMEOUT: Duration = Duration::from_secs(10);
 
-pub(crate) fn open(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+pub(crate) async fn open(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = BrowserOpenRequest::decode(params)?;
+    let _surface_set_guard = state.surface_set_guard().await;
     let surface = {
         let _profile_store_guard = state
             .profile_store_lock

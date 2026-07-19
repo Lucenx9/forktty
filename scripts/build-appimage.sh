@@ -5,6 +5,7 @@ set -euo pipefail
 umask 022
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/packaging-ghostty.sh"
 VERSION="${FORKTTY_VERSION:-$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -1)}"
 TARGET_DIR="$ROOT_DIR/target/packaging/appimage"
 APPDIR="$TARGET_DIR/ForkTTY.AppDir"
@@ -12,9 +13,9 @@ APPIMAGE_DESKTOP_ID="dev.forktty.forktty"
 DESKTOP_FILE="$ROOT_DIR/packaging/linux/$APPIMAGE_DESKTOP_ID.desktop"
 ICON_FILE="$ROOT_DIR/packaging/linux/icons/forktty.png"
 APPSTREAM_FILE="$ROOT_DIR/packaging/linux/$APPIMAGE_DESKTOP_ID.metainfo.xml"
-# GUI-stack libraries bundled for portability. AppRun always adds
-# usr/lib/bundled to the search path, while display/font/GL/driver libraries
-# stay host-side through should_skip_appimage_lib().
+# GUI-stack fallback libraries bundled for portability. AppRun adds
+# usr/lib/bundled only when bundled mode is forced or the auto-mode host probe
+# fails, while display/font/GL/driver libraries stay host-side.
 BUNDLED_RUNTIME_LIBS=(
   "libgtk-4.so"
   "libadwaita-1.so"
@@ -37,6 +38,12 @@ esac
 APPIMAGE_PATH="$TARGET_DIR/forktty-${VERSION}-${APPIMAGE_ARCH}.AppImage"
 APPIMAGE_ZSYNC_PATH="$APPIMAGE_PATH.zsync"
 APPIMAGE_ZSYNC_CWD_PATH="$PWD/$(basename "$APPIMAGE_ZSYNC_PATH")"
+APPIMAGE_UPDATE_CHANNEL="latest"
+if [[ "$VERSION" == *-* ]]; then
+  # Pre-release users should receive newer pre-releases and the eventual
+  # stable release; stable builds remain on the stable-only channel.
+  APPIMAGE_UPDATE_CHANNEL="latest-all"
+fi
 
 resolve_tool() {
   local env_name="$1"
@@ -88,9 +95,9 @@ should_skip_appimage_lib() {
 
 copy_appimage_runtime_libs() {
   local binary="$1"
-  # Bundled GUI-stack directory: AppRun always adds it to the search path so
-  # GTK/libadwaita availability does not depend on host packages. We still keep
-  # host display/font/GL/driver libraries via should_skip_appimage_lib().
+  # Bundled GUI-stack fallback directory: AppRun uses it in bundled mode or
+  # after an auto-mode host probe failure. We still keep host display/font/GL/
+  # driver libraries via should_skip_appimage_lib().
   local private_lib_dir="$APPDIR/usr/lib"
   local lib_dir="$APPDIR/usr/lib/bundled"
   local copied=0
@@ -169,8 +176,8 @@ copy_vendored_ghostty_runtime_lib() {
   local lib_dir="$APPDIR/usr/lib"
   local ghostty_lib
 
-  ghostty_lib="$(find "$ROOT_DIR/target/release/build" -path '*/ghostty-install/lib/libghostty-vt.so.0.1.0' -print -quit)"
-  if [[ -z "$ghostty_lib" ]]; then
+  ghostty_lib="$GHOSTTY_BUILD_OUT_DIR/ghostty-install/lib/libghostty-vt.so.0.1.0"
+  if [[ ! -f "$ghostty_lib" ]]; then
     echo "Could not find vendored libghostty-vt.so.0.1.0 in target/release/build" >&2
     exit 1
   fi
@@ -187,67 +194,13 @@ copy_vendored_ghostty_runtime_lib() {
   rm -f "$lib_dir/ghostty-gtk-embed.so"
   install -Dm755 "$ghostty_gtk_lib" "$lib_dir/ghostty-gtk-embed.so"
   test -f "$lib_dir/ghostty-gtk-embed.so"
-}
-
-copy_required_ghostty_layer_shell_lib() {
-  local ghostty_gtk_lib="$APPDIR/usr/lib/ghostty-gtk-embed.so"
-  local lib_dir="$APPDIR/usr/lib"
-  local source
-
-  source="$(
-    ldd "$ghostty_gtk_lib" |
-      awk '
-        $1 ~ /^libgtk4-layer-shell\.so(\..*)?$/ && $2 == "=>" && $3 ~ /^\// && found == "" { found = $3 }
-        END { if (found != "") print found }
-      '
-  )"
-  if [[ -z "$source" ]]; then
-    source="$(
-      { ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null || true; } |
-        awk '/libgtk4-layer-shell\.so/ && found == "" { found = $NF } END { if (found != "") print found }'
-    )"
-  fi
-  if [[ -z "$source" || ! -f "$source" ]]; then
-    cat >&2 <<'ERROR'
-Failed to locate libgtk4-layer-shell.so for the embedded Ghostty GTK library.
-
-Ghostty's GTK embed library links against gtk4-layer-shell, and the AppImage
-must carry that small runtime library so panes can start on hosts that do not
-install gtk4-layer-shell system-wide.
-ERROR
-    exit 1
-  fi
-
-  local soname
-  local install_name
-  soname="$(
-    readelf -d "$source" 2>/dev/null |
-      awk '/\(SONAME\)/ { gsub(/[][]/, "", $NF); print $NF; exit }'
-  )"
-  install_name="${soname:-$(basename "$source")}"
-  if [[ "$install_name" != libgtk4-layer-shell.so* ]]; then
-    install_name="libgtk4-layer-shell.so"
-  fi
-
-  rm -f "$lib_dir"/libgtk4-layer-shell.so*
-  install -Dm755 "$source" "$lib_dir/$install_name"
-  if [[ "$install_name" != "libgtk4-layer-shell.so" ]]; then
-    ln -s "$install_name" "$lib_dir/libgtk4-layer-shell.so"
-  fi
-  if [[ -n "$soname" && "$soname" != "$install_name" ]]; then
-    ln -s "$install_name" "$lib_dir/$soname"
-  fi
-  test -e "$lib_dir/libgtk4-layer-shell.so"
-  test -e "$lib_dir/$install_name"
-  if [[ -n "$soname" ]]; then
-    test -e "$lib_dir/$soname"
-  fi
+  forktty_copy_ghostty_layer_shell_lib "$ghostty_gtk_lib" "$lib_dir"
 }
 
 copy_vendored_ghostty_shell_integration() {
   local source_dir
-  source_dir="$(find "$ROOT_DIR/target/release/build" -path '*/ghostty-src/src/shell-integration' -print -quit)"
-  if [[ -z "$source_dir" ]]; then
+  source_dir="$GHOSTTY_BUILD_OUT_DIR/ghostty-src/src/shell-integration"
+  if [[ ! -d "$source_dir" ]]; then
     echo "Could not find vendored Ghostty shell-integration resources in target/release/build" >&2
     exit 1
   fi
@@ -313,8 +266,8 @@ copy_vendored_ghostty_terminfo() {
   }
 
   local source_dir tmp_dir
-  source_dir="$(find "$ROOT_DIR/target/release/build" -path '*/ghostty-src/src/terminfo' -type d -print -quit)"
-  if [[ -z "$source_dir" ]]; then
+  source_dir="$GHOSTTY_BUILD_OUT_DIR/ghostty-src/src/terminfo"
+  if [[ ! -d "$source_dir" ]]; then
     echo "Could not find vendored Ghostty terminfo sources in target/release/build" >&2
     exit 1
   fi
@@ -476,7 +429,7 @@ if [[ "${APPIMAGE_UPDATE_INFO:-0}" == "1" ]]; then
     exit 1
   fi
   APPIMAGETOOL_ARGS=(
-    -u "gh-releases-zsync|Lucenx9|forktty|latest|forktty-*-${APPIMAGE_ARCH}.AppImage.zsync"
+    -u "gh-releases-zsync|Lucenx9|forktty|${APPIMAGE_UPDATE_CHANNEL}|forktty-*-${APPIMAGE_ARCH}.AppImage.zsync"
     "${APPIMAGETOOL_ARGS[@]}"
   )
 fi
@@ -493,7 +446,7 @@ else
   echo "appstreamcli not found; skipping AppStream metadata validation" >&2
 fi
 
-cargo build -p forktty-ui-gtk --no-default-features --features gtk-ghostty --release
+GHOSTTY_BUILD_OUT_DIR="$(forktty_build_release_and_print_ghostty_out_dir "$ROOT_DIR")"
 
 rm -rf "$APPDIR" "$APPIMAGE_PATH" "$APPIMAGE_ZSYNC_PATH"
 if [[ "$APPIMAGE_ZSYNC_CWD_PATH" != "$APPIMAGE_ZSYNC_PATH" ]]; then
@@ -511,7 +464,6 @@ write_appimage_hicolor_index_theme
 # would see it missing. (The binary reaches it at runtime via its RUNPATH
 # $ORIGIN/../lib; AppRun's LD_LIBRARY_PATH also covers it.)
 copy_vendored_ghostty_runtime_lib
-copy_required_ghostty_layer_shell_lib
 copy_vendored_ghostty_shell_integration
 copy_vendored_ghostty_themes
 copy_vendored_ghostty_terminfo
@@ -558,23 +510,18 @@ export GDK_DISABLE
 # GTK/libadwaita fallback, but modern hosts should use their own GTK stack so it
 # can match the host fontconfig/display/GL driver stack. Force a choice with
 # FORKTTY_APPIMAGE_GTK_RUNTIME=bundled|host|auto when debugging packaging.
-host_gtk_stack_available() {
-  if command -v ldconfig >/dev/null 2>&1; then
-    cache="$(ldconfig -p 2>/dev/null || true)"
-  elif [ -x /sbin/ldconfig ]; then
-    cache="$(/sbin/ldconfig -p 2>/dev/null || true)"
-  else
-    return 1
-  fi
-  [ -n "$cache" ] || return 1
-  printf '%s\n' "$cache" | grep -q 'libgtk-4\.so\.1' || return 1
-  printf '%s\n' "$cache" | grep -q 'libadwaita-1\.so\.0' || return 1
+host_ld_library_path="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+host_gtk_stack_compatible() {
+  LD_LIBRARY_PATH="$host_ld_library_path" \
+  LD_PRELOAD="$HERE/usr/lib/ghostty-gtk-embed.so${LD_PRELOAD:+:$LD_PRELOAD}" \
+  LD_BIND_NOW=1 \
+  "$HERE/usr/bin/forktty" --version >/dev/null 2>&1
 }
 
 gtk_runtime="${FORKTTY_APPIMAGE_GTK_RUNTIME:-auto}"
 case "$gtk_runtime" in
   auto | "")
-    if host_gtk_stack_available; then
+    if host_gtk_stack_compatible; then
       use_bundled_gtk=0
     else
       use_bundled_gtk=1
@@ -595,7 +542,7 @@ esac
 if [ "$use_bundled_gtk" = 1 ]; then
   export LD_LIBRARY_PATH="$HERE/usr/lib:$HERE/usr/lib/bundled${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 else
-  export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  export LD_LIBRARY_PATH="$host_ld_library_path"
 fi
 if [ -n "${XDG_DATA_DIRS:-}" ]; then
   export XDG_DATA_DIRS="$HERE/usr/share:$XDG_DATA_DIRS"

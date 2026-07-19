@@ -182,98 +182,6 @@ fn embedded_ghostty_legacy_key_is_dropped_on_save() {
 }
 
 #[test]
-fn team_config_defaults_to_auto_provider_policy() {
-    let config = AppConfig::default();
-
-    assert_eq!(config.team.default_agent, "auto");
-    assert_eq!(
-        config.team.provider_order,
-        ["codex", "claude", "pi", "opencode", "antigravity", "grok"]
-    );
-    assert!(config.team.auto_fallback);
-    assert!(config.team.disabled_agents.is_empty());
-    assert!(config.team.provider_commands.is_empty());
-}
-
-#[test]
-fn team_config_normalizes_provider_aliases_and_drops_invalid_entries() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    fs::write(
-            &path,
-            r#"
-            [general]
-            shell = "/bin/sh"
-
-            [team]
-            default_agent = "claude-code"
-            provider_order = ["Pi", "unknown", "codex", "pi", "agy", "grok-build"]
-            auto_fallback = false
-            disabled_agents = ["open-code", "bad", "codex", "codex"]
-            provider_commands = { "claude-code" = " /opt/claude/bin/claude ", agy = "agy-dev", "grok-build" = " /opt/grok/bin/grok ", unknown = "ignored" }
-            "#,
-        )
-        .unwrap();
-
-    let config = load_config_from_path(&path).unwrap();
-
-    assert_eq!(config.team.default_agent, "claude");
-    assert_eq!(
-        config.team.provider_order,
-        ["pi", "codex", "antigravity", "grok"]
-    );
-    assert!(!config.team.auto_fallback);
-    assert_eq!(config.team.disabled_agents, ["opencode", "codex"]);
-    assert_eq!(
-        config
-            .team
-            .provider_commands
-            .get("claude")
-            .map(String::as_str),
-        Some("/opt/claude/bin/claude")
-    );
-    assert_eq!(
-        config
-            .team
-            .provider_commands
-            .get("antigravity")
-            .map(String::as_str),
-        Some("agy-dev")
-    );
-    assert_eq!(
-        config
-            .team
-            .provider_commands
-            .get("grok")
-            .map(String::as_str),
-        Some("/opt/grok/bin/grok")
-    );
-    assert!(!config.team.provider_commands.contains_key("unknown"));
-}
-
-#[test]
-fn team_provider_command_values_reject_args_and_relative_paths() {
-    for valid in ["codex", "/opt/codex/bin/codex", "/opt/My Tools/codex"] {
-        assert!(
-            validate_team_provider_command_value(valid).is_ok(),
-            "{valid} should be accepted"
-        );
-    }
-    for invalid in [
-        "codex --model fast",
-        "./codex",
-        "bin/codex",
-        "-codex",
-        "co\ndex",
-    ] {
-        assert!(
-            validate_team_provider_command_value(invalid).is_err(),
-            "{invalid:?} should be rejected"
-        );
-    }
-}
-
-#[test]
 fn default_shell_uses_executable_shell_env() {
     assert_eq!(
         default_shell_from_env(Some("/bin/sh".to_string())),
@@ -895,23 +803,6 @@ fn sidebar_visible_defaults_to_true_when_missing() {
     let dir = tempfile::tempdir().unwrap();
     let config = load_config_from_path(&dir.path().join("missing.toml")).unwrap();
     assert!(config.appearance.sidebar_visible);
-}
-
-#[test]
-fn workbench_panel_visibility_defaults_on_and_round_trips() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    let config = load_config_from_path(&path).unwrap();
-    assert!(config.appearance.show_orchestration_rail);
-    assert!(config.appearance.show_workflow_feed);
-
-    let mut config = config;
-    config.appearance.show_orchestration_rail = false;
-    config.appearance.show_workflow_feed = false;
-    save_config_to_path(&path, &config).unwrap();
-    let loaded = load_config_from_path(&path).unwrap();
-    assert!(!loaded.appearance.show_orchestration_rail);
-    assert!(!loaded.appearance.show_workflow_feed);
 }
 
 #[test]

@@ -58,9 +58,13 @@ DBus session against isolated config/data/state/socket paths under
 input/readback, tab create/select/close, runtime zoom reflow/reset, GTK action
 split/focus behavior, socket split readback, live pane close, restart with
 scrollback restore, and the socket notification create/list/clear flow. The
-temporary config disables desktop notifications and telemetry so the smoke does
-not depend on host notification services. It uses the current display or
-`xvfb-run` when available.
+scrollback assertion deliberately truncates a multi-line read and requires the
+pinned release library to report a `total_lines` value larger than the returned
+fragment's line count, proving that the optional extended ABI was packaged and
+loaded. ForkTTY's runtime fallback for older compatible libraries remains
+covered by Rust tests. The temporary config disables desktop notifications and
+telemetry so the smoke does not depend on host notification services. It uses
+the current display or `xvfb-run` when available.
 
 ## Manual Runtime Smoke
 
@@ -93,39 +97,20 @@ not depend on host notification services. It uses the current display or
 - Open the Settings font family picker and confirm the dropdown lists installed monospace fonts with a working search field; the font size and scrollback spin rows show theme-independent −/+ glyph buttons.
 - Open Notifications, dismiss one notification, then Clear All.
 
-## Attention-first UI Smoke
-
-Use this when the Router rail or bottom workflow feed changes. The goal is to
-verify the manual metrics in `METRICS.md`, not to add telemetry.
-
-- Create or reuse a workspace with mixed orchestration state: at least one
-  active worker, one worker or approval needing input, one warning/error/stale
-  feed item, and at least one routine event/log row.
-- Open ForkTTY at a normal laptop-width window with the Router rail and bottom
-  workflow feed visible.
-- Without scrolling, identify every item that needs intervention from the
-  Router rail plus the bottom `ATTENTION` tab. Target: all critical items named
-  within 3 seconds.
-- Count critical items hidden behind scrolling or non-attention tabs. Target:
-  at least 90% of critical items visible without scrolling, and 0 missed
-  `needs_input`, stuck/stale, approval, error, warning, or conflict states.
-- Ask the tester to rate monitoring effort from 1 to 5. Target: 1-2. If the
-  answer is 3 or higher, save a screenshot and note which section caused the
-  scan friction.
-- Switch back to `WORKFLOW FEED`, `EVENTS`, and `LOGS` and confirm routine
-  trace rows remain available without crowding the attention view.
-
 ## General UI Quality Smoke
 
 Use this for visible GTK changes. It applies the visual rules in
 `docs/DESIGN.md` and the general UI metrics in `METRICS.md`.
 
 - Open ForkTTY at normal laptop width and wide desktop width.
-- Inspect the default workspace, sidebar, Router rail, workflow feed, command
+- Inspect the default workspace, sidebar, pane chrome, status bar, command
   palette, notifications panel, Settings, and any dialog touched by the change.
+- Create a three-pane layout and move focus between panes. Confirm exactly one
+  pane header has the warm focus hairline, no redundant shell/status footer is
+  shown per pane, and the global status bar remains readable.
 - Confirm the screen keeps one accent color, no gradients/glow, no emoji-as-UI,
   compact operational spacing, sentence-case labels, and no decorative elements
-  that compete with terminal/workflow state.
+  that compete with terminal state or navigation.
 - Score visual clarity, visual noise, and consistency/polish using
   `METRICS.md`. Target: visual clarity 4-5/5, consistency/polish 4-5/5,
   and no distracting visual noise in the primary viewport.
@@ -217,7 +202,7 @@ rebuilding.
 - `printf '{"id":"x","method":"surface.send_text","params":{"surface_id":"<surface-id>","text":""}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response reports an invalid `text` parameter instead of reporting a successful no-op send.
 - `printf '{"id":"x","method":"nonsense.bogus","params":{}}\n' | nc -U $XDG_RUNTIME_DIR/forktty.sock` — response includes `"code":"method_not_found"`.
 - Against a stub socket that returns a different response `id`, `forktty ping --socket <stub>` errors with a response-id mismatch that names the method and socket path.
-- Against a stub socket that returns `{"id":null,"ok":false,"error":{"code":"request_too_large","message":"Request exceeds 1 MiB"}}`, the CLI surfaces `request_too_large` instead of reporting a response-id mismatch.
+- Against a stub socket that returns `{"id":null,"ok":false,"error":{"code":"payload_too_large","message":"Request exceeds 1 MiB"}}`, the CLI surfaces `payload_too_large` instead of reporting a response-id mismatch.
 - Close a split pane, then send `surface.send_text` or `notification.create` for that closed pane's `surface_id` — response includes `"code":"not_found"` and no notification row is added.
 - If replacement terminal spawn fails while closing the only pane in a workspace over the socket, the close request reports the spawn error and keeps the old pane and terminal visible.
 - Close the last workspace over the socket from a project directory — ForkTTY creates the replacement `main` workspace in that project directory, not the app launch directory.
@@ -262,30 +247,9 @@ checking that the opt-in browser feature still builds and starts.
 - `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= OPENCODE_CONFIG_DIR= forktty hooks setup` — creates `.codex`, `.claude`, `.gemini/config` for Antigravity, and `.config/opencode/plugins/forktty.generated.js` under that temporary home, not the real home directory.
 - `forktty hooks remove codex --dry-run` — prints `would remove` and leaves the Codex config unchanged.
 - `forktty hooks remove codex opencode` — removes only ForkTTY-managed Codex entries and the generated OpenCode plugin, preserving unrelated hook commands.
-- Launch the GTK app with no ForkTTY-managed hooks installed — it shows an Agent Hooks Available notification that suggests `forktty hooks setup`; if at least one provider is already configured and current, missing optional providers do not nag.
+- Launch the GTK app with no ForkTTY-managed hooks installed — it does not create an unread setup reminder; setup remains available from the first-run welcome flow and Settings > Agents.
 - Inspect one generated hook command — it calls the absolute `forktty` launcher directly, so AppImage and packaged installs do not need a source checkout or Node.js; if that launcher is an AppImage, the command includes `APPIMAGE_EXTRACT_AND_RUN=1`.
 - Repeat the previous command — prints `already configured` for each agent and does not create new backups.
-
-## Skill Installer Smoke
-
-- `forktty skills setup agents --dry-run` — prints `would install` but does not create `~/.agents/skills/forktty-agent-orchestration`.
-- `forktty skills setup codex` — writes the shared `~/.agents/skills/forktty-agent-orchestration` skill via the interoperable agents target.
-- `forktty skills setup claude` — writes `~/.claude/skills/forktty-agent-orchestration` or `$CLAUDE_CONFIG_DIR/skills/forktty-agent-orchestration`.
-- Create an unmanaged `SKILL.md` at the same destination, then run `forktty skills setup agents` — setup refuses to overwrite it.
-- `forktty skills remove agents` — moves the managed skill directory to a `.bak-*` backup and leaves no active skill with that name.
-- `forktty hooks codex session-start --socket <stub>` without `FORKTTY_SOCKET_PATH` — sends status/log actions to the supplied socket and still prints the hook continue JSON.
-- `forktty hooks codex sesion-start` — prints an unsupported hook event warning to stderr and still prints the hook continue JSON.
-- `forktty hooks codex session-start extra` — prints an unexpected hook argument warning to stderr and still prints the hook continue JSON.
-- Symlink `~/.codex/hooks.json` to a real managed JSON file, then run `hooks setup codex` —
-  the target file is updated and backed up, and the symlink remains a symlink.
-- Modify an existing agent hook config and re-run setup twice quickly — each changed run creates a distinct `.bak-*` file and does not overwrite a prior backup.
-- Corrupt `~/.codex/hooks.json` (`echo '{ not json' >~/.codex/hooks.json`), re-run `hooks setup codex` — error message names both the agent and the path; the file is left untouched.
-- Corrupt `~/.claude/settings.json`, then run `hooks setup codex claude` — setup fails before creating or updating the Codex hook config.
-- Replace `~/.codex/hooks.json` with a JSON array (`echo '[]' >~/.codex/hooks.json`), re-run `hooks setup codex` — error message says the top-level config must be a JSON object; the file is left untouched.
-- Replace `~/.codex/hooks.json` with a directory, re-run `hooks setup codex` —
-  error message says the path is not a regular file; no backup or replacement is created.
-- Replace `~/.codex/hooks.json` with a broken symlink, re-run `hooks setup codex` —
-  setup warns about the broken symlink and replaces it with a regular managed hook file.
 
 ## Worktree Smoke
 
@@ -377,8 +341,10 @@ checking that the opt-in browser feature still builds and starts.
   present.
 - Confirm `forktty --version`, `forktty --help`, `forktty doctor`, and `forktty hooks setup --dry-run codex` work from the AppImage.
 - Launch the GTK app and walk the basic terminal, split-pane, desktop icon, and notification checks above.
-- ForkTTY defaults to `GSK_RENDERER=ngl`. If the GTK UI renders incorrectly,
-  retry with `GSK_RENDERER=gl` (or `cairo` only as a last resort; it is slower
+- ForkTTY defaults to the new OpenGL renderer name supported by the loaded GTK:
+  `GSK_RENDERER=ngl` through GTK 4.18 and `GSK_RENDERER=gl` from GTK 4.20. If
+  the GTK UI renders incorrectly, retry with the other GL spelling (or `cairo`
+  only as a last resort; it is slower
   and far heavier on memory under sustained redraws) and compare against the
   `.deb`; treat AppImage-only GL/Vulkan artifacts as package notes, not as
   proof that the native GTK runtime is broken.

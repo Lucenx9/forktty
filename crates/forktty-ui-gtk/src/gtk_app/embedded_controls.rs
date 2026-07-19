@@ -185,9 +185,7 @@ fn build_embedded_ghostty_context_menu(
         Some("Ctrl+Shift+H"),
         false,
         move || {
-            focus_surface_and(&state_, &sid, |state| {
-                split_active_surface(state, SplitAxis::Horizontal)
-            });
+            request_split_surface_by_id(&state_, &sid, SplitAxis::Horizontal);
         },
     );
 
@@ -201,9 +199,7 @@ fn build_embedded_ghostty_context_menu(
         Some(SPLIT_VERTICAL_SHORTCUT),
         false,
         move || {
-            focus_surface_and(&state_, &sid, |state| {
-                split_active_surface(state, SplitAxis::Vertical)
-            });
+            request_split_surface_by_id(&state_, &sid, SplitAxis::Vertical);
         },
     );
 

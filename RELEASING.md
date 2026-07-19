@@ -37,7 +37,9 @@ are all driven from `Cargo.toml`'s `[workspace.package].version`.
 ## 2. Version bump
 
 1. Update `version` in `Cargo.toml` (workspace package).
-2. Run `cargo check --workspace` so `Cargo.lock` re-pins.
+2. Run `cargo check --workspace` so `Cargo.lock` re-pins, then verify the tag
+   you intend to publish matches the new workspace version:
+   `cargo run -p xtask -- check-release-tag v0.2.0-alpha.N`.
 3. In `CHANGELOG.md`:
    - Move every entry under `## [Unreleased]` into a new
      `## [<version>] - <YYYY-MM-DD>` section.
@@ -93,15 +95,23 @@ Or via the GitHub UI:
 Publishing the release triggers the `release-package` job in
 `.github/workflows/ci.yml`, which:
 
-- Builds the `.deb` and AppImage from the tagged commit.
-- Generates `SHA256SUMS` for both artifacts.
-- Uploads both artifacts and `SHA256SUMS` into the release.
+- Waits for the `gtk-ghostty` and browser source gates, then verifies the
+  published release tag is exactly `v<workspace-version>`.
+- Builds the `.deb`, AppImage, and AppImage `.zsync` metadata from the tagged commit.
+- Generates `SHA256SUMS` for all three artifacts.
+- Uploads all three artifacts and `SHA256SUMS` into the release.
+
+These gates protect artifact construction and upload after GitHub has published
+the release event; they do not validate the release before publication. A tag
+mismatch leaves the published release without package assets and must be fixed
+forward using section 6.
 
 ## 5. Post-publish verification
 
-1. Download the `.deb`, AppImage, and `SHA256SUMS` from the published release.
+1. Download the `.deb`, AppImage, AppImage `.zsync`, and `SHA256SUMS` from the
+   published release.
 2. Run `sha256sum -c SHA256SUMS` in the download directory — it must
-   print `OK` for both artifacts.
+   print `OK` for all three artifacts.
 3. Install on a clean Debian 13/Trixie+ or Ubuntu 24.04 LTS+ VM
    (`sudo apt install ./forktty_*.deb`). Debian 12/Bookworm is below the
    packaged `.deb` baseline because it does not provide libadwaita 1.4+.

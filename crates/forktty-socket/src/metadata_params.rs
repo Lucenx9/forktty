@@ -1,4 +1,6 @@
-use forktty_core::{LogLevel, NotificationKind, StatusHookMetadata};
+use forktty_core::{
+    HookPromptKind, HookPromptMetadata, LogLevel, NotificationKind, StatusHookMetadata,
+};
 use serde_json::Value;
 use std::path::PathBuf;
 
@@ -6,10 +8,13 @@ use crate::{
     ensure_max_text_size, hook_session::optional_hook_session_cwd, log_level_from_params,
     notification_body_from_params, notification_kind_from_params, notification_title_from_params,
     optional_f64, optional_hook_status_metadata, optional_non_blank_string_param,
-    optional_surface_id_param, required_f64, required_string, required_trimmed_string,
-    resolve_notification_target, resolve_workspace_id_for_metadata, status_color_from_params,
-    DispatchError, SocketAppState,
+    optional_surface_id_param, optional_u64_param, required_f64, required_string,
+    required_trimmed_string, resolve_notification_target, resolve_workspace_id_for_metadata,
+    status_color_from_params, DispatchError, SocketAppState,
 };
+
+pub(crate) const MAX_NOTIFICATION_PAGE_SIZE: usize =
+    forktty_core::protocol_limits::SOCKET_NOTIFICATION_PAGE_MAX_ITEMS;
 
 pub(crate) struct NotificationCreateRequest {
     pub(crate) title: String,
@@ -17,6 +22,7 @@ pub(crate) struct NotificationCreateRequest {
     pub(crate) kind: NotificationKind,
     pub(crate) workspace_id: Option<String>,
     pub(crate) surface_id: Option<String>,
+    pub(crate) hook_prompt: Option<HookPromptMetadata>,
 }
 
 impl NotificationCreateRequest {
@@ -27,12 +33,86 @@ impl NotificationCreateRequest {
         ensure_max_text_size("body", body)?;
         let kind = notification_kind_from_params(params)?;
         let (workspace_id, surface_id) = resolve_notification_target(state, params)?;
+        let hook_prompt = optional_hook_prompt_metadata(params)?;
         Ok(Self {
             title: title.to_string(),
             body: body.to_string(),
             kind,
             workspace_id,
             surface_id,
+            hook_prompt,
+        })
+    }
+}
+
+fn optional_hook_prompt_metadata(
+    params: &Value,
+) -> Result<Option<HookPromptMetadata>, DispatchError> {
+    let id = optional_non_blank_string_param(params, "hook_prompt_id")?;
+    let prompt_kind = optional_non_blank_string_param(params, "hook_prompt_kind")?;
+    let correlation_id = optional_non_blank_string_param(params, "hook_correlation_id")?;
+    let Some(id) = id else {
+        if prompt_kind.is_some() || correlation_id.is_some() {
+            return Err(DispatchError::MissingParam("hook_prompt_id"));
+        }
+        return Ok(None);
+    };
+    let provider = required_trimmed_string(params, "hook_agent")?;
+    let session_id = required_trimmed_string(params, "hook_session_id")?;
+    let kind = match prompt_kind.ok_or(DispatchError::MissingParam("hook_prompt_kind"))? {
+        "permission" => HookPromptKind::Permission,
+        "elicitation" => HookPromptKind::Elicitation,
+        "attention" => HookPromptKind::Attention,
+        other => {
+            return Err(DispatchError::InvalidParam(format!(
+                "Invalid parameter hook_prompt_kind: unknown prompt kind {other}"
+            )))
+        }
+    };
+    let event_order = optional_hook_status_metadata(params)?
+        .and_then(|metadata| metadata.order)
+        .ok_or(DispatchError::MissingParam("hook_event_order"))?;
+    for (field, value) in [
+        ("hook_prompt_id", id),
+        ("hook_agent", provider),
+        ("hook_session_id", session_id),
+    ] {
+        ensure_max_text_size(field, value)?;
+    }
+    if let Some(correlation_id) = correlation_id {
+        ensure_max_text_size("hook_correlation_id", correlation_id)?;
+    }
+    Ok(Some(HookPromptMetadata {
+        id: id.to_string(),
+        provider: provider.to_string(),
+        session_id: session_id.to_string(),
+        kind,
+        event_order,
+        correlation_id: correlation_id.map(str::to_string),
+    }))
+}
+
+pub(crate) struct NotificationListRequest<'a> {
+    pub(crate) limit: usize,
+    pub(crate) before_id: Option<&'a str>,
+}
+
+impl<'a> NotificationListRequest<'a> {
+    pub(crate) fn decode(params: &'a Value) -> Result<Self, DispatchError> {
+        let limit =
+            optional_u64_param(params, "limit")?.unwrap_or(MAX_NOTIFICATION_PAGE_SIZE as u64);
+        if !(1..=MAX_NOTIFICATION_PAGE_SIZE as u64).contains(&limit) {
+            return Err(DispatchError::InvalidParam(format!(
+                "Invalid parameter limit: expected an integer from 1 to {MAX_NOTIFICATION_PAGE_SIZE}"
+            )));
+        }
+        let before_id = optional_non_blank_string_param(params, "before_id")?;
+        if let Some(before_id) = before_id {
+            ensure_max_text_size("before_id", before_id)?;
+        }
+        Ok(Self {
+            limit: limit as usize,
+            before_id,
         })
     }
 }

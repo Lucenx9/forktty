@@ -1,10 +1,9 @@
 //! JSON-RPC method dispatcher.
 
 use crate::{
-    agent_runtime, browser_import, browser_runtime, context_runtime, feed_runtime, hook_session,
-    metadata_runtime, methods, orchestration_cleanup_runtime, project_action_runtime, remote,
-    status_runtime, surface_runtime, system_runtime, task_strategy_runtime, team_runtime,
-    topology_runtime, workflow_runtime, workspace_runtime, worktree_runtime, DispatchError,
+    agent_runtime, browser_import, browser_runtime, context_runtime, hook_session,
+    metadata_runtime, methods, project_action_runtime, remote, status_runtime, surface_runtime,
+    system_runtime, topology_runtime, workspace_runtime, worktree_runtime, DispatchError,
     SocketAppState,
 };
 use serde_json::Value;
@@ -20,56 +19,32 @@ pub async fn dispatch(
     }
 
     let mut params = params;
-    let _hook_session_end = hook_session::prepare_hook_session_targets(state, method, &mut params)?;
+    if let Some(result) =
+        hook_session::run_serialized_hook_ingress(state, method, &mut params, |params| {
+            dispatch_hook_mutation(state, method, params)
+        })?
+    {
+        return Ok(result);
+    }
 
     match method {
         "system.ping" => Ok(system_runtime::ping()),
         "system.capabilities" => Ok(system_runtime::capabilities()),
         "system.identify" => system_runtime::identify(state, &params),
         "context.snapshot" => context_runtime::snapshot(state, &params).await,
-        "orchestration.cleanup" => orchestration_cleanup_runtime::cleanup(state, &params).await,
-        "task.strategy.plan" => task_strategy_runtime::plan(state, &params).await,
-        "task.strategy.apply" => task_strategy_runtime::apply(state, &params).await,
-        "feed.approval.respond" => feed_runtime::approval_respond(state, &params),
-        "feed.list" => feed_runtime::list(state, &params),
-        "workflow.list" => workflow_runtime::list(state, &params).await,
-        "workflow.get" => workflow_runtime::get(state, &params).await,
-        "workflow.upsert" => workflow_runtime::upsert(state, &params).await,
-        "workflow.loop.set" => workflow_runtime::loop_set(state, &params).await,
-        "workflow.plan.set" => workflow_runtime::plan_set(state, &params).await,
-        "workflow.evidence.add" => workflow_runtime::evidence_add(state, &params).await,
-        "workflow.replay" => workflow_runtime::replay(state, &params).await,
-        "team.list" => team_runtime::list(state, &params).await,
-        "team.get" => team_runtime::get(state, &params).await,
-        "team.upsert" => team_runtime::upsert(state, &params).await,
-        "team.finish" => team_runtime::finish(state, &params).await,
-        "team.worker.upsert" => team_runtime::worker_upsert(state, &params).await,
-        "team.worker.heartbeat" => team_runtime::worker_heartbeat(state, &params).await,
-        "team.worker.launch" => team_runtime::worker_launch(state, &params).await,
-        "team.worker.health" => team_runtime::worker_health(state, &params).await,
-        "team.worker.nudge" => team_runtime::worker_nudge(state, &params).await,
-        "team.worker.shutdown" => team_runtime::worker_shutdown(state, &params).await,
-        "team.task.upsert" => team_runtime::task_upsert(state, &params).await,
-        "team.message.send" => team_runtime::message_send(state, &params).await,
-        "team.message.dispatch" => team_runtime::message_dispatch(state, &params).await,
-        "team.message.ack" => team_runtime::message_ack(state, &params).await,
-        "team.inbox" => team_runtime::inbox(state, &params).await,
-        "team.summary" => team_runtime::summary(state, &params).await,
-        "team.events" => team_runtime::events(state, &params).await,
-
         "agent.health" => agent_runtime::health(state, &params),
-        "agent.hibernate" => agent_runtime::hibernate(state, &params),
+        "agent.hibernate" => agent_runtime::hibernate(state, &params).await,
         "agent.list" => agent_runtime::list(state, &params),
         "agent.reclaim.plan" => agent_runtime::reclaim_plan(state, &params),
-        "agent.reclaim" => agent_runtime::reclaim(state, &params),
+        "agent.reclaim" => agent_runtime::reclaim(state, &params).await,
         "agent.resume" => agent_runtime::resume(state, &params).await,
         "status.summary" => status_runtime::summary(state, &params),
         "remote.list" => remote::list(state, &params),
         "remote.status" => remote::status(state, &params),
         "system.top" => topology_runtime::system_top(state, &params),
         "workspace.list" => topology_runtime::workspace_list(state),
-        "workspace.create" => workspace_runtime::create(state, &params),
-        "workspace.create_ssh" => workspace_runtime::create_ssh(state, &params),
+        "workspace.create" => workspace_runtime::create(state, &params).await,
+        "workspace.create_ssh" => workspace_runtime::create_ssh(state, &params).await,
         "workspace.select" => workspace_runtime::select(state, &params).await,
         "workspace.close" => workspace_runtime::close(state, &params).await,
         "worktree.list" => worktree_runtime::list(state, &params).await,
@@ -86,7 +61,7 @@ pub async fn dispatch(
         "surface.send_text" => topology_runtime::surface_send_text(state, &params),
         "topology.tree" => topology_runtime::tree(state, &params),
         "surface.split" => surface_runtime::split(state, &params).await,
-        "browser.open" => browser_runtime::open(state, &params),
+        "browser.open" => browser_runtime::open(state, &params).await,
         "browser.navigate" => browser_runtime::navigate(state, &params),
         "browser.snapshot" => browser_runtime::snapshot(state, &params).await,
         "browser.click" => browser_runtime::click(state, &params).await,
@@ -111,7 +86,7 @@ pub async fn dispatch(
         "surface.focus" => surface_runtime::focus(state, &params).await,
         "surface.close" => surface_runtime::close(state, &params).await,
         "notification.create" => metadata_runtime::notification_create(state, &params),
-        "notification.list" => metadata_runtime::notification_list(state),
+        "notification.list" => metadata_runtime::notification_list(state, &params),
         "notification.clear" => metadata_runtime::notification_clear(state),
         "metadata.set_status" => metadata_runtime::set_status(state, &params),
         "metadata.list_status" => metadata_runtime::list_status(state, &params),
@@ -122,6 +97,25 @@ pub async fn dispatch(
         "metadata.log" => metadata_runtime::log(state, &params),
         "metadata.list_logs" => metadata_runtime::list_logs(state, &params),
         "metadata.clear_logs" => metadata_runtime::clear_logs(state, &params),
+        _ => Err(DispatchError::MethodNotFound(method.to_string())),
+    }
+}
+
+fn dispatch_hook_mutation(
+    state: &SocketAppState,
+    method: &str,
+    params: &Value,
+) -> Result<Value, DispatchError> {
+    match method {
+        "notification.create" => metadata_runtime::notification_create(state, params),
+        "metadata.set_status" => {
+            metadata_runtime::set_status_after_serialized_hook_ingress(state, params)
+        }
+        "metadata.clear_status" => {
+            metadata_runtime::clear_status_after_serialized_hook_ingress(state, params)
+        }
+        "metadata.set_progress" => metadata_runtime::set_progress(state, params),
+        "metadata.log" => metadata_runtime::log(state, params),
         _ => Err(DispatchError::MethodNotFound(method.to_string())),
     }
 }

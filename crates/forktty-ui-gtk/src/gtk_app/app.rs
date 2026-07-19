@@ -3,7 +3,71 @@
 use super::*;
 
 const TERMINAL_FRAME_INTERVAL: Duration = Duration::from_millis(16);
-const TERMINAL_LAYOUT_SYNC_INTERVAL: Duration = Duration::from_millis(500);
+const WORKBENCH_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ClosePhase {
+    Running,
+    Draining,
+    Finalizing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CloseRequestAction {
+    StartDrain,
+    Stop,
+    Proceed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct CloseTransition {
+    pub(super) phase: ClosePhase,
+    pub(super) ui_alive: bool,
+    pub(super) action: CloseRequestAction,
+}
+
+pub(super) fn close_request_transition(phase: ClosePhase, ui_alive: bool) -> CloseTransition {
+    match phase {
+        ClosePhase::Running => CloseTransition {
+            phase: ClosePhase::Draining,
+            ui_alive,
+            action: CloseRequestAction::StartDrain,
+        },
+        ClosePhase::Draining => CloseTransition {
+            phase,
+            ui_alive,
+            action: CloseRequestAction::Stop,
+        },
+        ClosePhase::Finalizing => CloseTransition {
+            phase,
+            ui_alive,
+            action: CloseRequestAction::Proceed,
+        },
+    }
+}
+
+pub(super) fn close_drain_completed_transition(
+    phase: ClosePhase,
+    _ui_alive: bool,
+) -> Option<CloseTransition> {
+    (phase == ClosePhase::Draining).then_some(CloseTransition {
+        phase: ClosePhase::Finalizing,
+        ui_alive: false,
+        action: CloseRequestAction::Proceed,
+    })
+}
+
+pub(super) fn run_close_persistence_steps(
+    snapshot_scrollback: impl FnOnce(),
+    sync_live_cwds: impl FnOnce(),
+    save_session: impl FnOnce(),
+    cleanup_ptys: impl FnOnce(),
+) {
+    snapshot_scrollback();
+    sync_live_cwds();
+    save_session();
+    cleanup_ptys();
+}
 
 pub(super) fn install_gtk_runtime_defaults() {
     if std::env::var_os("GSK_RENDERER").is_none() {
@@ -33,7 +97,17 @@ pub(super) fn install_gtk_runtime_defaults() {
 /// default lingered from the removed GTK/Pango/Cairo terminal renderer; an
 /// explicit `GSK_RENDERER` override is still honored for QA/debugging.
 fn default_gsk_renderer() -> &'static str {
-    "ngl"
+    default_gsk_renderer_for_gtk_minor(gtk::minor_version())
+}
+
+fn default_gsk_renderer_for_gtk_minor(minor: u32) -> &'static str {
+    // GTK 4.20 renamed the new OpenGL renderer selector from `ngl` to `gl`.
+    // GTK 4.18 still warns for `gl`, so keep the legacy spelling through 4.18.
+    if minor >= 20 {
+        "gl"
+    } else {
+        "ngl"
+    }
 }
 
 fn gdk_disable_with_ghostty_opengl_defaults(value: &str) -> String {
@@ -168,14 +242,14 @@ pub(super) fn build_ui(app: &adw::Application) {
     #[cfg(feature = "browser")]
     let (browser_cmd_tx, browser_cmd_rx) =
         async_channel::unbounded::<forktty_core::BrowserCommand>();
-    let state = SocketAppState::new(model.clone(), backend, shell.clone(), socket_path)
-        .with_default_feed_store();
+    let state = SocketAppState::new(model.clone(), backend.clone(), shell.clone(), socket_path);
     #[cfg(feature = "browser")]
     let state = state.with_browser_cmd(browser_cmd_tx);
     if let Some(message) = config_load_warning.as_deref() {
         create_global_notification(&state, "Config Issue", message, NotificationKind::Error);
     }
     let ui_alive = Rc::new(Cell::new(true));
+    let close_phase = Rc::new(Cell::new(ClosePhase::Running));
     let socket_server_handle = Rc::new(RefCell::new(None::<SocketServerHandle>));
 
     let header = adw::HeaderBar::new();
@@ -213,11 +287,9 @@ pub(super) fn build_ui(app: &adw::Application) {
     header.pack_start(&app_menu);
     header.pack_start(&brand_separator);
 
-    // Router cluster: sidebar toggle, Router breadcrumb, workspace selector,
-    // and the single review CTA. Lives left-of-center in the titlebar like the
-    // agent-workspace mockups instead of a second strip below the header.
-    let router_cluster = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    router_cluster.add_css_class("header-router-cluster");
+    // Keep workspace orientation on the left and global actions on the right.
+    let location_cluster = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    location_cluster.add_css_class("header-location-cluster");
     let sidebar_toggle = gtk::Button::builder()
         .icon_name("forktty-grid-symbolic")
         .tooltip_text("Toggle Sidebar (F9)")
@@ -227,26 +299,7 @@ pub(super) fn build_ui(app: &adw::Application) {
     sidebar_toggle.add_css_class("header-action");
     sidebar_toggle.set_action_name(Some("app.toggle-sidebar"));
     set_accessible_button_text(&sidebar_toggle, "Toggle Sidebar", Some("F9"));
-    router_cluster.append(&sidebar_toggle);
-    let router_crumb_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let router_crumb_label = gtk::Label::builder()
-        .label("Router")
-        .single_line_mode(true)
-        .build();
-    let router_crumb_chevron = gtk::Label::builder().label("\u{203a}").build();
-    router_crumb_chevron.add_css_class("header-router-chevron");
-    router_crumb_content.append(&router_crumb_label);
-    router_crumb_content.append(&router_crumb_chevron);
-    let router_crumb = gtk::Button::builder()
-        .child(&router_crumb_content)
-        .has_frame(false)
-        .tooltip_text("Open Router planner")
-        .build();
-    router_crumb.add_css_class("flat");
-    router_crumb.add_css_class("header-router-crumb");
-    router_crumb.set_action_name(Some("app.task-router"));
-    set_accessible_button_text(&router_crumb, "Open Router planner", None);
-    router_cluster.append(&router_crumb);
+    location_cluster.append(&sidebar_toggle);
 
     let workspace_title_label = gtk::Label::builder()
         .label("")
@@ -268,21 +321,10 @@ pub(super) fn build_ui(app: &adw::Application) {
     workspace_title.add_css_class("header-workspace-chip");
     workspace_title.set_sensitive(false);
     set_accessible_button_text(&workspace_title, "No active workspace", None);
-    router_cluster.append(&workspace_title);
-
-    let apply_button = gtk::Button::builder()
-        .label("Review Plan")
-        .has_frame(false)
-        .tooltip_text("Review the routing plan before applying it elsewhere")
-        .build();
-    apply_button.add_css_class("flat");
-    apply_button.add_css_class("header-apply-button");
-    apply_button.set_action_name(Some("app.task-router"));
-    set_accessible_button_text(&apply_button, "Review routing plan", None);
-    router_cluster.append(&apply_button);
-    header.pack_start(&router_cluster);
+    location_cluster.append(&workspace_title);
+    header.pack_start(&location_cluster);
     // Suppress the default centered window title; the workspace selector
-    // lives in the router cluster instead.
+    // lives in the location cluster instead.
     header.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
 
     let command_palette = gtk::Button::builder()
@@ -352,8 +394,6 @@ pub(super) fn build_ui(app: &adw::Application) {
     header.pack_end(&notifications);
     header.pack_end(&agents);
     header.pack_end(&command_palette);
-    let orchestration_header_chips = build_orchestration_header_chips(&state);
-    header.pack_end(&orchestration_header_chips.shell);
 
     let sidebar = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::Single)
@@ -395,8 +435,7 @@ pub(super) fn build_ui(app: &adw::Application) {
 
     sidebar_shell.append(&sidebar_header);
     sidebar_shell.append(&sidebar_scroll);
-    let sidebar_sections = build_sidebar_sections(&state);
-    sidebar_shell.append(&sidebar_sections.team_shell);
+    let sidebar_sections = build_sidebar_sections();
     sidebar_shell.append(&sidebar_sections.resources_shell);
     sidebar_shell.append(&sidebar_sections.footer_shell);
 
@@ -411,25 +450,11 @@ pub(super) fn build_ui(app: &adw::Application) {
     terminal_workbench.set_vexpand(true);
     terminal_workbench.add_css_class("terminal-workbench");
     terminal_workbench.append(&*terminal_stack.borrow());
-    let orchestration_feed = build_orchestration_feed(&state);
-    terminal_workbench.append(&orchestration_feed.shell);
-    let orchestration_rail = build_orchestration_rail(&state);
-    orchestration_feed
-        .shell
-        .set_visible(app_config.appearance.show_workflow_feed);
-    orchestration_rail
-        .shell
-        .set_visible(app_config.appearance.show_orchestration_rail);
-    let workspace_area = gtk::Paned::new(gtk::Orientation::Horizontal);
+    let workspace_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
     workspace_area.set_hexpand(true);
     workspace_area.set_vexpand(true);
     workspace_area.add_css_class("workspace-area");
-    workspace_area.set_start_child(Some(&terminal_workbench));
-    workspace_area.set_resize_start_child(true);
-    workspace_area.set_shrink_start_child(false);
-    workspace_area.set_end_child(Some(&orchestration_rail.shell));
-    workspace_area.set_resize_end_child(false);
-    workspace_area.set_shrink_end_child(false);
+    workspace_area.append(&terminal_workbench);
 
     let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
     paned.add_css_class("workspace-paned");
@@ -487,20 +512,10 @@ pub(super) fn build_ui(app: &adw::Application) {
     palette_hint.add_css_class("status-shortcut");
     palette_hint.set_action_name(Some("app.command-palette"));
     set_accessible_button_text(&palette_hint, "Open Command Palette", Some("Ctrl+Shift+P"));
-    let status_router = gtk::Label::builder()
-        .label("")
-        .xalign(1.0)
-        .ellipsize(gtk::pango::EllipsizeMode::End)
-        .max_width_chars(48)
-        .single_line_mode(true)
-        .build();
-    status_router.add_css_class("status-router");
-    status_router.set_label(&orchestration_status_summary(&state));
     status_bar.append(&status_location);
     status_bar.append(&pane_status);
     status_bar.append(&status_spacer);
     status_bar.append(&palette_hint);
-    status_bar.append(&status_router);
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.add_css_class("app-root");
@@ -564,6 +579,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         terminal_stack.borrow().clone(),
         window.clone(),
         model.clone(),
+        backend,
     )));
     controller
         .borrow_mut()
@@ -638,92 +654,38 @@ pub(super) fn build_ui(app: &adw::Application) {
         }
         glib::ControlFlow::Continue
     });
-    let controller_for_layout_timer = controller.clone();
-    let alive_for_layout_timer = ui_alive.clone();
-    glib::timeout_add_local(TERMINAL_LAYOUT_SYNC_INTERVAL, move || {
-        if !alive_for_layout_timer.get() {
+    refresh_sidebar(&sidebar_ui, &state, &controller, true);
+    let state_for_workbench_refresh = state.clone();
+    let controller_for_workbench_refresh = controller.clone();
+    let sidebar_ui_for_workbench_refresh = sidebar_ui.clone();
+    let notifications_for_workbench_refresh = notifications.clone();
+    let agents_for_workbench_refresh = agents.clone();
+    let agent_badge_for_workbench_refresh = agent_badge.clone();
+    let alive_for_workbench_refresh = ui_alive.clone();
+    glib::timeout_add_local(WORKBENCH_REFRESH_INTERVAL, move || {
+        if !alive_for_workbench_refresh.get() {
             return glib::ControlFlow::Break;
         }
-        // Keep socket/model-driven focus or title changes visible without
-        // rewriting chrome widgets every frame. The controller skips unchanged
-        // chrome signatures, so idle windows do no GTK label/class churn.
-        controller_for_layout_timer
+        // Keep socket/model-driven state visible without four independent
+        // timers waking at the same cadence. Each renderer skips unchanged
+        // signatures or values, so idle windows do no GTK widget churn.
+        controller_for_workbench_refresh
             .borrow_mut()
             .ensure_layout_current();
-        glib::ControlFlow::Continue
-    });
-    refresh_sidebar(&sidebar_ui, &state, &controller, true);
-    let state_for_sidebar = state.clone();
-    let controller_for_sidebar = controller.clone();
-    let sidebar_ui_for_timer = sidebar_ui.clone();
-    let alive_for_sidebar_timer = ui_alive.clone();
-    glib::timeout_add_local(Duration::from_millis(500), move || {
-        if !alive_for_sidebar_timer.get() {
-            return glib::ControlFlow::Break;
-        }
         refresh_sidebar(
-            &sidebar_ui_for_timer,
-            &state_for_sidebar,
-            &controller_for_sidebar,
+            &sidebar_ui_for_workbench_refresh,
+            &state_for_workbench_refresh,
+            &controller_for_workbench_refresh,
             false,
         );
-        glib::ControlFlow::Continue
-    });
-    let notifications_for_timer = notifications.clone();
-    let state_for_notifications_timer = state.clone();
-    let alive_for_notifications_timer = ui_alive.clone();
-    glib::timeout_add_local(Duration::from_millis(500), move || {
-        if !alive_for_notifications_timer.get() {
-            return glib::ControlFlow::Break;
-        }
-        refresh_notification_indicator(&notifications_for_timer, &state_for_notifications_timer);
-        glib::ControlFlow::Continue
-    });
-    let orchestration_rail_for_timer = orchestration_rail.clone();
-    let sidebar_sections_for_timer = sidebar_sections.clone();
-    let orchestration_header_chips_for_timer = orchestration_header_chips.clone();
-    let orchestration_feed_for_timer = orchestration_feed.clone();
-    let status_router_for_timer = status_router.clone();
-    let state_for_orchestration_rail_timer = state.clone();
-    let alive_for_orchestration_rail_timer = ui_alive.clone();
-    glib::timeout_add_local(Duration::from_secs(1), move || {
-        if !alive_for_orchestration_rail_timer.get() {
-            return glib::ControlFlow::Break;
-        }
-        refresh_orchestration_rail(
-            &orchestration_rail_for_timer,
-            &state_for_orchestration_rail_timer,
+        refresh_notification_indicator(
+            &notifications_for_workbench_refresh,
+            &state_for_workbench_refresh,
         );
-        refresh_orchestration_header_chips(
-            &orchestration_header_chips_for_timer,
-            &state_for_orchestration_rail_timer,
-        );
-        refresh_orchestration_feed(
-            &orchestration_feed_for_timer,
-            &state_for_orchestration_rail_timer,
-        );
-        refresh_sidebar_team_section(
-            &sidebar_sections_for_timer,
-            &state_for_orchestration_rail_timer,
-        );
-        let router_summary = orchestration_status_summary(&state_for_orchestration_rail_timer);
-        if status_router_for_timer.label() != router_summary {
-            status_router_for_timer.set_label(&router_summary);
-        }
-        glib::ControlFlow::Continue
-    });
-    let agents_for_timer = agents.clone();
-    let agent_badge_for_timer = agent_badge.clone();
-    let state_for_agents_timer = state.clone();
-    let alive_for_agents_timer = ui_alive.clone();
-    glib::timeout_add_local(Duration::from_millis(500), move || {
-        if !alive_for_agents_timer.get() {
-            return glib::ControlFlow::Break;
-        }
         refresh_agent_indicator(
-            &agents_for_timer,
-            &agent_badge_for_timer,
-            &state_for_agents_timer,
+            &agents_for_workbench_refresh,
+            &agent_badge_for_workbench_refresh,
+            &state_for_workbench_refresh,
         );
         glib::ControlFlow::Continue
     });
@@ -765,8 +727,6 @@ pub(super) fn build_ui(app: &adw::Application) {
             paned: paned.clone(),
             sidebar: sidebar_shell.clone(),
             workspace_area: workspace_area_for_settings,
-            orchestration_rail: orchestration_rail.shell.clone(),
-            workflow_feed: orchestration_feed.shell.clone(),
         },
         &controller,
         pr_model.clone(),
@@ -820,21 +780,71 @@ pub(super) fn build_ui(app: &adw::Application) {
         install_global_quake_shortcut(&window, ui_alive.clone());
     }
     let state_for_close = state.clone();
+    let controller_for_close = controller.clone();
     let alive_for_close = ui_alive.clone();
+    let phase_for_close = close_phase.clone();
     let socket_server_for_close = socket_server_handle.clone();
+    let window_for_close = window.downgrade();
     window.connect_close_request(move |_| {
-        alive_for_close.set(false);
-        if let Some(mut server) = socket_server_for_close.borrow_mut().take() {
-            server.shutdown();
+        let transition = close_request_transition(phase_for_close.get(), alive_for_close.get());
+        phase_for_close.set(transition.phase);
+        alive_for_close.set(transition.ui_alive);
+
+        match transition.action {
+            CloseRequestAction::Proceed => glib::Propagation::Proceed,
+            CloseRequestAction::Stop => glib::Propagation::Stop,
+            CloseRequestAction::StartDrain => {
+                let server = socket_server_for_close.borrow_mut().take();
+                let state = state_for_close.clone();
+                let controller = controller_for_close.clone();
+                let ui_alive = alive_for_close.clone();
+                let close_phase = phase_for_close.clone();
+                let window = window_for_close.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    if let Some(server) = server {
+                        server.shutdown_and_wait().await;
+                    }
+
+                    let close_config = config::load_config().ok();
+                    let persistent_scrollback_lines = close_config
+                        .as_ref()
+                        .map(|config| config.appearance.persistent_scrollback_lines)
+                        .unwrap_or(0);
+                    let cleanup_pty_persistence = close_config
+                        .as_ref()
+                        .map(|config| !config.general.persist_terminal_processes)
+                        .unwrap_or(false);
+                    run_close_persistence_steps(
+                        || {
+                            controller
+                                .borrow()
+                                .snapshot_live_embedded_scrollback(persistent_scrollback_lines);
+                        },
+                        || {
+                            let _ = forktty_socket::sync_live_surface_cwds(&state);
+                        },
+                        || save_session_from_state(&state),
+                        || {
+                            if cleanup_pty_persistence {
+                                cleanup_pty_persistence_sessions(&state, false);
+                            }
+                        },
+                    );
+
+                    let Some(transition) =
+                        close_drain_completed_transition(close_phase.get(), ui_alive.get())
+                    else {
+                        return;
+                    };
+                    close_phase.set(transition.phase);
+                    ui_alive.set(transition.ui_alive);
+                    if let Some(window) = window.upgrade() {
+                        window.close();
+                    }
+                });
+                glib::Propagation::Stop
+            }
         }
-        save_session_from_state(&state_for_close);
-        let cleanup_pty_persistence_on_close = config::load_config()
-            .map(|config| !config.general.persist_terminal_processes)
-            .unwrap_or(false);
-        if cleanup_pty_persistence_on_close {
-            cleanup_pty_persistence_sessions(&state_for_close, false);
-        }
-        glib::Propagation::Proceed
     });
 
     window.present();
@@ -869,9 +879,10 @@ pub(super) fn build_ui(app: &adw::Application) {
     let enable_pr_lookup_on_startup = app_config.general.enable_pr_lookup;
     let persist_terminal_processes_on_startup = app_config.general.persist_terminal_processes;
     let alive_for_bootstrap = ui_alive.clone();
+    let phase_for_bootstrap = close_phase.clone();
     let socket_server_for_bootstrap = socket_server_handle.clone();
     glib::idle_add_local_once(move || {
-        if !alive_for_bootstrap.get() {
+        if !alive_for_bootstrap.get() || phase_for_bootstrap.get() != ClosePhase::Running {
             return;
         }
         if !persist_terminal_processes_on_startup {
@@ -889,7 +900,6 @@ pub(super) fn build_ui(app: &adw::Application) {
         controller_for_bootstrap
             .borrow_mut()
             .ensure_layout_current();
-        start_agent_integration_auto_refresh(&state_for_bootstrap);
         refresh_sidebar(
             &sidebar_ui_for_bootstrap,
             &state_for_bootstrap,
@@ -1083,9 +1093,7 @@ pub(super) fn default_startup_workspace_dir_from(
 pub(super) struct WorkbenchShells {
     pub(super) paned: gtk::Paned,
     pub(super) sidebar: gtk::Box,
-    pub(super) workspace_area: gtk::Paned,
-    pub(super) orchestration_rail: gtk::Box,
-    pub(super) workflow_feed: gtk::Box,
+    pub(super) workspace_area: gtk::Box,
 }
 
 pub(super) fn settings_apply_callback(
@@ -1097,8 +1105,6 @@ pub(super) fn settings_apply_callback(
     let paned = shells.paned.clone();
     let sidebar_shell = shells.sidebar.clone();
     let workspace_area = shells.workspace_area.clone();
-    let orchestration_rail_shell = shells.orchestration_rail.clone();
-    let orchestration_feed_shell = shells.workflow_feed.clone();
     let controller = controller.clone();
     let pr_model = pr_model.clone();
     let pr_in_flight = pr_in_flight.clone();
@@ -1111,8 +1117,6 @@ pub(super) fn settings_apply_callback(
             &config.appearance.sidebar_position,
         );
         sidebar_shell.set_visible(config.appearance.sidebar_visible);
-        orchestration_rail_shell.set_visible(config.appearance.show_orchestration_rail);
-        orchestration_feed_shell.set_visible(config.appearance.show_workflow_feed);
         let model = {
             let controller = controller.borrow();
             for widget in controller.widgets.values() {
@@ -1131,7 +1135,7 @@ pub(super) fn settings_apply_callback(
 pub(super) fn apply_sidebar_position(
     paned: &gtk::Paned,
     sidebar_shell: &gtk::Box,
-    workspace_area: &gtk::Paned,
+    workspace_area: &gtk::Box,
     position: &str,
 ) {
     let sidebar_visible = sidebar_shell.is_visible();
@@ -1246,20 +1250,23 @@ pub(super) fn restore_or_bootstrap_workspaces(
     match session::load_session() {
         Ok(Some(mut data)) if !data.workspaces.is_empty() => {
             let repaired_paths = repair_restored_workspace_paths(&mut data, &cwd);
+            let worktree_identity_snapshots =
+                WorktreeIdentitySnapshot::from_workspaces(&data.workspaces);
+            let resolved_worktree_identities =
+                resolve_worktree_identity_snapshots(worktree_identity_snapshots);
             {
                 let mut model = state
                     .model
                     .lock()
                     .map_err(|_| "Lock poisoned".to_string())?;
-                model.restore_session(data);
+                model.restore_session(data, &resolved_worktree_identities);
                 // session::load_session already runs validate_session_data, but
                 // running the invariant repair here is cheap and turns any
                 // belt-and-suspenders mismatch (e.g. an empty pane tree slipping
                 // past validation in a future migration) into a no-op rather than
                 // an inconsistent UI.
-                let _ = model.repair_session_invariants();
+                let _ = model.repair_session_invariants(&resolved_worktree_identities);
             }
-            reserve_orchestration_record_ids(state);
             if repaired_paths > 0 {
                 create_global_notification(
                     state,
@@ -1274,16 +1281,7 @@ pub(super) fn restore_or_bootstrap_workspaces(
             }
             Ok(())
         }
-        Ok(_) => {
-            create_global_notification(
-                state,
-                "Welcome to ForkTTY",
-                "Opened your home directory as the main workspace. Use Ctrl+Shift+P for commands, F9 to toggle the sidebar, and New Worktree for isolated git work.",
-                NotificationKind::Info,
-            );
-            reserve_orchestration_record_ids(state);
-            bootstrap_default_workspace(state, cwd)
-        }
+        Ok(_) => bootstrap_default_workspace(state, cwd),
         Err(err) => {
             eprintln!("Failed to load GTK session, bootstrapping a new workspace: {err}");
             create_global_notification(
@@ -1292,143 +1290,9 @@ pub(super) fn restore_or_bootstrap_workspaces(
                 &format!("Could not restore the saved session; starting a new workspace. {err}"),
                 NotificationKind::Error,
             );
-            reserve_orchestration_record_ids(state);
             bootstrap_default_workspace(state, cwd)
         }
     }
-}
-
-fn reserve_orchestration_record_ids(state: &SocketAppState) {
-    let mut workspace_ids = Vec::new();
-    let mut surface_ids = Vec::new();
-
-    if let Some(path) = state.workflow_store_path.as_deref() {
-        match forktty_core::load_workflows_from_path(path) {
-            Ok(store) => {
-                for workflow in store.workflows {
-                    if let Some(workspace_id) = workflow.workspace_id {
-                        workspace_ids.push(workspace_id);
-                    }
-                    if let Some(surface_id) = workflow.surface_id {
-                        surface_ids.push(surface_id);
-                    }
-                }
-            }
-            Err(err) => eprintln!(
-                "ForkTTY: failed to reserve workflow orchestration ids from {}: {err}",
-                path.display()
-            ),
-        }
-    }
-
-    if let Some(path) = state.team_store_path.as_deref() {
-        match forktty_core::load_teams_from_path(path) {
-            Ok(store) => {
-                for team in store.teams {
-                    if let Some(workspace_id) = team.workspace_id {
-                        workspace_ids.push(workspace_id);
-                    }
-                    if let Some(surface_id) = team.leader_surface_id {
-                        surface_ids.push(surface_id);
-                    }
-                    for worker in team.workers {
-                        if let Some(surface_id) = worker.surface_id {
-                            surface_ids.push(surface_id);
-                        }
-                        if let Some(surface_id) = worker.launched_surface_id {
-                            surface_ids.push(surface_id);
-                        }
-                    }
-                }
-            }
-            Err(err) => eprintln!(
-                "ForkTTY: failed to reserve team orchestration ids from {}: {err}",
-                path.display()
-            ),
-        }
-    }
-
-    if let Some(targets) = state.feed_record_targets_for_reservation() {
-        for target in targets {
-            if let Some(workspace_id) = target.workspace_id {
-                workspace_ids.push(workspace_id);
-            }
-            if let Some(surface_id) = target.surface_id {
-                surface_ids.push(surface_id);
-            }
-        }
-    }
-
-    if workspace_ids.is_empty() && surface_ids.is_empty() {
-        return;
-    }
-
-    let Ok(mut model) = state.model.lock() else {
-        return;
-    };
-    for workspace_id in workspace_ids {
-        model.reserve_workspace_id(&workspace_id);
-    }
-    for surface_id in surface_ids {
-        model.reserve_surface_id(&surface_id);
-    }
-}
-
-pub(super) fn show_hook_setup_reminder(state: &SocketAppState) {
-    if let Some(body) = crate::socket_cli::hook_setup_reminder_message() {
-        create_global_notification(
-            state,
-            "Agent Hooks Available",
-            &body,
-            NotificationKind::Info,
-        );
-    }
-}
-
-pub(super) fn start_agent_integration_auto_refresh(state: &SocketAppState) {
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(auto_refresh_managed_agent_integrations());
-    });
-    let state = state.clone();
-    glib::timeout_add_local(Duration::from_millis(250), move || match rx.try_recv() {
-        Ok(outcome) => {
-            if !outcome.hooks_updated.is_empty()
-                || !outcome.mcp_updated.is_empty()
-                || !outcome.skills_updated.is_empty()
-            {
-                let mut parts = Vec::new();
-                if !outcome.hooks_updated.is_empty() {
-                    parts.push(format!("hooks: {}", outcome.hooks_updated.join(", ")));
-                }
-                if !outcome.mcp_updated.is_empty() {
-                    parts.push(format!("MCP: {}", outcome.mcp_updated.join(", ")));
-                }
-                if !outcome.skills_updated.is_empty() {
-                    parts.push(format!("skills: {}", outcome.skills_updated.join(", ")));
-                }
-                create_global_notification(
-                    &state,
-                    "Agent Integrations Updated",
-                    &format!(
-                        "Refreshed managed ForkTTY integrations ({})",
-                        parts.join("; ")
-                    ),
-                    NotificationKind::Info,
-                );
-            }
-            for error in outcome.errors {
-                eprintln!("forktty: agent integration auto-refresh failed: {error}");
-            }
-            show_hook_setup_reminder(&state);
-            glib::ControlFlow::Break
-        }
-        Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-        Err(mpsc::TryRecvError::Disconnected) => {
-            show_hook_setup_reminder(&state);
-            glib::ControlFlow::Break
-        }
-    });
 }
 
 pub(super) fn repair_restored_workspace_paths(
@@ -1535,15 +1399,41 @@ pub(super) fn register_app_icon() {
 }
 
 pub(super) fn save_session_from_state(state: &SocketAppState) {
-    let data = match state.model.lock() {
-        Ok(mut model) => {
-            let _ = model.repair_session_invariants();
-            model.to_session_data()
-        }
-        Err(_) => return,
+    let Some(data) = session_data_from_state(state) else {
+        return;
     };
     if let Err(err) = session::save_session(&data) {
         eprintln!("Failed to save GTK session: {err}");
+    }
+}
+
+fn session_data_from_state(state: &SocketAppState) -> Option<session::SessionData> {
+    let worktree_identity_snapshots = {
+        let model = state.model.lock().ok()?;
+        model.worktree_identity_snapshots()
+    };
+    let resolved_worktree_identities =
+        resolve_worktree_identity_snapshots(worktree_identity_snapshots);
+    let mut model = state.model.lock().ok()?;
+    let _ = model.repair_session_invariants(&resolved_worktree_identities);
+    Some(model.to_session_data())
+}
+
+pub(super) fn autosave_session_from_state(
+    state: &SocketAppState,
+    last_saved: &mut Option<session::SessionData>,
+) {
+    let _ = forktty_socket::sync_live_surface_cwds(state);
+    let Some(data) = session_data_from_state(state) else {
+        return;
+    };
+    if last_saved.as_ref() == Some(&data) {
+        return;
+    }
+    if let Err(err) = session::save_session(&data) {
+        eprintln!("Failed to autosave GTK session: {err}");
+    } else {
+        *last_saved = Some(data);
     }
 }
 
@@ -1554,9 +1444,10 @@ pub(super) fn refresh_listening_ports(
     in_flight: Arc<AtomicBool>,
     generation: Arc<AtomicU64>,
 ) {
-    let (model, targets) = {
+    let (model, backend, workspace_surface_ids, surface_pids) = {
         let controller = controller.borrow();
         let model = controller.model.clone();
+        let backend = controller.backend_for_generation_checks();
         let Ok(model_guard) = model.lock() else {
             return;
         };
@@ -1568,21 +1459,43 @@ pub(super) fn refresh_listening_ports(
         let mut surface_pids = controller.surface_pids.borrow_mut();
         surface_pids.retain(|surface_id, _| live_surface_ids.contains(surface_id));
         let surface_pids = surface_pids.clone();
-        let targets = model_guard
+        let workspace_surface_ids = model_guard
             .list_workspaces()
             .into_iter()
             .map(|workspace| {
-                let roots = model_guard
+                let surface_ids = model_guard
                     .list_surfaces(Some(&workspace.id))
-                    .iter()
-                    .filter_map(|surface| surface_pids.get(&surface.id).map(|entry| entry.pid))
+                    .into_iter()
+                    .map(|surface| surface.id)
                     .collect::<Vec<_>>();
-                (workspace.id, roots)
+                (workspace.id, surface_ids)
             })
             .collect::<Vec<_>>();
         drop(model_guard);
-        (model, targets)
+        (model, backend, workspace_surface_ids, surface_pids)
     };
+    let targets = workspace_surface_ids
+        .into_iter()
+        .map(|(workspace_id, surface_ids)| {
+            let roots = surface_ids
+                .into_iter()
+                .filter_map(|surface_id| {
+                    let entry = *surface_pids.get(&surface_id)?;
+                    current_embedded_surface_pid(&backend, &surface_id, entry)
+                        .map(|pid| (pid, surface_id, entry.generation))
+                })
+                .collect::<Vec<_>>();
+            (workspace_id, roots)
+        })
+        .collect::<Vec<_>>();
+    let observed_generations = targets
+        .iter()
+        .flat_map(|(_, roots)| {
+            roots
+                .iter()
+                .map(|(_, surface_id, generation)| (surface_id.clone(), *generation))
+        })
+        .collect::<Vec<_>>();
     if targets.iter().all(|(_, roots)| roots.is_empty()) {
         generation.fetch_add(1, Ordering::SeqCst);
         if let Ok(mut model) = model.lock() {
@@ -1604,7 +1517,8 @@ pub(super) fn refresh_listening_ports(
                 let ports = if roots.is_empty() {
                     Vec::new()
                 } else {
-                    forktty_core::ports::listening_ports(&roots, proc_root)
+                    let root_pids = roots.into_iter().map(|(pid, _, _)| pid).collect::<Vec<_>>();
+                    forktty_core::ports::listening_ports(&root_pids, proc_root)
                         .into_iter()
                         .collect()
                 };
@@ -1613,11 +1527,13 @@ pub(super) fn refresh_listening_ports(
             .collect::<Vec<_>>();
         glib::MainContext::default().invoke(move || {
             if generation.load(Ordering::SeqCst) == scan_generation {
-                if let Ok(mut model) = model.lock() {
-                    for (workspace_id, ports) in results {
-                        model.set_listening_ports(&workspace_id, ports);
+                let _ = backend.with_surface_generations(observed_generations, || {
+                    if let Ok(mut model) = model.lock() {
+                        for (workspace_id, ports) in results {
+                            model.set_listening_ports(&workspace_id, ports);
+                        }
                     }
-                }
+                });
             }
             in_flight.store(false, Ordering::SeqCst);
         });
@@ -1631,21 +1547,7 @@ pub(super) fn install_session_autosave(state: &SocketAppState, ui_alive: Rc<Cell
         if !ui_alive.get() {
             return glib::ControlFlow::Break;
         }
-        let data = match state.model.lock() {
-            Ok(mut model) => {
-                let _ = model.repair_session_invariants();
-                model.to_session_data()
-            }
-            Err(_) => return glib::ControlFlow::Continue,
-        };
-        if last_saved.borrow().as_ref() == Some(&data) {
-            return glib::ControlFlow::Continue;
-        }
-        if let Err(err) = session::save_session(&data) {
-            eprintln!("Failed to autosave GTK session: {err}");
-        } else {
-            *last_saved.borrow_mut() = Some(data);
-        }
+        autosave_session_from_state(&state, &mut last_saved.borrow_mut());
         glib::ControlFlow::Continue
     });
 }
@@ -1654,13 +1556,9 @@ pub(super) fn install_session_autosave(state: &SocketAppState, ui_alive: Rc<Cell
 mod tests {
     use super::{
         app_chrome_override_css, app_chrome_override_priority, default_gsk_renderer,
-        gdk_disable_with_ghostty_opengl_defaults, reserve_orchestration_record_ids,
+        default_gsk_renderer_for_gtk_minor, gdk_disable_with_ghostty_opengl_defaults,
     };
-    use forktty_core::{FeedEntry, FeedEntryType, FeedStore};
-    use forktty_socket::SocketAppState;
     use gtk4 as gtk;
-    use std::path::PathBuf;
-    use std::sync::{Arc, Mutex};
 
     #[test]
     fn default_gsk_renderer_avoids_leaky_cairo_software_path() {
@@ -1669,7 +1567,15 @@ mod tests {
         // default must be a GL renderer, never cairo.
         let renderer = default_gsk_renderer();
         assert_ne!(renderer, "cairo");
-        assert_eq!(renderer, "ngl");
+        assert!(matches!(renderer, "ngl" | "gl"));
+    }
+
+    #[test]
+    fn default_gsk_renderer_uses_the_name_supported_without_warning() {
+        assert_eq!(default_gsk_renderer_for_gtk_minor(14), "ngl");
+        assert_eq!(default_gsk_renderer_for_gtk_minor(18), "ngl");
+        assert_eq!(default_gsk_renderer_for_gtk_minor(20), "gl");
+        assert_eq!(default_gsk_renderer_for_gtk_minor(22), "gl");
     }
 
     #[test]
@@ -1703,45 +1609,5 @@ mod tests {
         assert!(css.contains("window.ft-settings-window headerbar.settings-titlebar"));
         assert!(css.contains("background-color: #171717"));
         assert!(css.contains("background-image: none"));
-    }
-
-    #[test]
-    fn reserves_orchestration_ids_from_feed_history_targets() {
-        let dir = tempfile::tempdir().unwrap();
-        let feed_path = dir.path().join("feed.json");
-        let mut store = FeedStore::open_at(&feed_path).unwrap();
-        store
-            .append(FeedEntry {
-                id: "approval-1".to_string(),
-                entry_type: FeedEntryType::Approval,
-                kind: Some("approval".to_string()),
-                read: false,
-                key: None,
-                value: None,
-                total: None,
-                title: "Claude needs input".to_string(),
-                body: "Approve?".to_string(),
-                workspace_id: Some("workspace-1".to_string()),
-                surface_id: Some("surface-1".to_string()),
-                created_at_ms: 1,
-                approval_state: Some(forktty_core::FeedApprovalState::Pending),
-            })
-            .unwrap();
-        let model = Arc::new(Mutex::new(forktty_core::WorkspaceModel::new()));
-        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-        let state = SocketAppState::new(
-            model.clone(),
-            terminal,
-            "/bin/sh",
-            PathBuf::from("/tmp/forktty.sock"),
-        )
-        .with_feed_store_path(&feed_path)
-        .unwrap();
-
-        reserve_orchestration_record_ids(&state);
-        let workspace = model.lock().unwrap().create_workspace("main", dir.path());
-
-        assert_ne!(workspace.id, "workspace-1");
-        assert_ne!(workspace.focused_surface_id, "surface-1");
     }
 }

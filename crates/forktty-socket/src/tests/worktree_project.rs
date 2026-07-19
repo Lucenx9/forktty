@@ -24,6 +24,160 @@ fn commit_failing_setup_hook(dir: &Path) {
         .unwrap();
 }
 
+#[cfg(unix)]
+fn commit_blocking_setup_hook(dir: &Path, started_fifo: &Path, release_fifo: &Path) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let hook_dir = dir.join(".forktty");
+    fs::create_dir_all(&hook_dir).unwrap();
+    let hook_path = hook_dir.join("setup");
+    fs::write(
+        &hook_path,
+        format!(
+            "#!/bin/sh\nprintf x > '{}'\nread _ < '{}'\n",
+            started_fifo.display(),
+            release_fifo.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let repo = Repository::open(dir).unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(Path::new(".forktty/setup")).unwrap();
+    index.write().unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = repo.find_tree(tree_id).unwrap();
+    let sig = git2::Signature::now("ForkTTY Tests", "tests@forktty.local").unwrap();
+    let parent = repo.head().unwrap().peel_to_commit().unwrap();
+    repo.commit(
+        Some("HEAD"),
+        &sig,
+        &sig,
+        "add blocking setup hook",
+        &tree,
+        &[&parent],
+    )
+    .unwrap();
+}
+
+#[cfg(unix)]
+fn commit_blocking_teardown_hook(dir: &Path, started_fifo: &Path, release_fifo: &Path) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let hook_dir = dir.join(".forktty");
+    fs::create_dir_all(&hook_dir).unwrap();
+    let hook_path = hook_dir.join("teardown");
+    fs::write(
+        &hook_path,
+        format!(
+            "#!/bin/sh\nprintf x > '{}'\nread _ < '{}'\n",
+            started_fifo.display(),
+            release_fifo.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let repo = Repository::open(dir).unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(Path::new(".forktty/teardown")).unwrap();
+    index.write().unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = repo.find_tree(tree_id).unwrap();
+    let sig = git2::Signature::now("ForkTTY Tests", "tests@forktty.local").unwrap();
+    let parent = repo.head().unwrap().peel_to_commit().unwrap();
+    repo.commit(
+        Some("HEAD"),
+        &sig,
+        &sig,
+        "add blocking teardown hook",
+        &tree,
+        &[&parent],
+    )
+    .unwrap();
+}
+
+#[derive(Debug, Default)]
+struct FailingSurfaceInventoryBackend;
+
+impl TerminalBackend for FailingSurfaceInventoryBackend {
+    fn spawn(&self, _request: SpawnRequest) -> Result<(), TerminalError> {
+        Ok(())
+    }
+
+    fn send_text(&self, _surface_id: &str, _text: &str) -> Result<(), TerminalError> {
+        Ok(())
+    }
+
+    fn resize(&self, _surface_id: &str, _cols: u16, _rows: u16) -> Result<(), TerminalError> {
+        Ok(())
+    }
+
+    fn close(&self, _surface_id: &str) -> Result<(), TerminalError> {
+        Ok(())
+    }
+
+    fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+        Err(TerminalError::Backend(
+            "surface inventory failed".to_string(),
+        ))
+    }
+}
+
+#[derive(Debug)]
+struct FailsNthSpawnBackend {
+    inner: HeadlessTerminalBackend,
+    spawn_count: AtomicUsize,
+    fail_on_spawn: usize,
+}
+
+impl FailsNthSpawnBackend {
+    fn with_initial_surface(surface: &forktty_core::Surface, fail_on_spawn: usize) -> Self {
+        let inner = HeadlessTerminalBackend::new();
+        inner
+            .spawn(SpawnRequest::for_surface(
+                surface,
+                "/bin/sh",
+                PathBuf::from("/tmp/forktty.sock"),
+            ))
+            .unwrap();
+        Self {
+            inner,
+            spawn_count: AtomicUsize::new(0),
+            fail_on_spawn,
+        }
+    }
+}
+
+impl TerminalBackend for FailsNthSpawnBackend {
+    fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+        let spawn_number = self.spawn_count.fetch_add(1, Ordering::SeqCst) + 1;
+        if spawn_number == self.fail_on_spawn {
+            return Err(TerminalError::Backend(format!(
+                "spawn {spawn_number} failed"
+            )));
+        }
+        self.inner.spawn(request)
+    }
+
+    fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {
+        self.inner.send_text(surface_id, text)
+    }
+
+    fn resize(&self, surface_id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
+        self.inner.resize(surface_id, cols, rows)
+    }
+
+    fn close(&self, surface_id: &str) -> Result<(), TerminalError> {
+        self.inner.close(surface_id)
+    }
+
+    fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+        self.inner.surfaces()
+    }
+}
+
 #[test]
 fn dispatch_error_from_worktree_error_assigns_stable_codes() {
     use forktty_core::worktree::WorktreeError as W;
@@ -291,6 +445,906 @@ async fn dispatches_worktree_lifecycle_methods_and_updates_workspace_model() {
 }
 
 #[tokio::test]
+async fn worktree_create_repeatedly_returns_same_workspace_with_one_surface() {
+    let repo_dir = make_temp_repo();
+    let (state, backend) = test_state();
+    dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "repo", "workingDir": repo_dir.path()}),
+    )
+    .await
+    .unwrap();
+
+    let first = dispatch(
+        &state,
+        "worktree.create",
+        json!({"name": "topic/idempotent", "cwd": repo_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let second = dispatch(
+        &state,
+        "worktree.create",
+        json!({"name": "topic/idempotent", "cwd": repo_dir.path()}),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(second["id"], first["id"]);
+    let workspace_id = first["id"].as_str().unwrap();
+    let model = state.model.lock().unwrap();
+    assert_eq!(model.list_surfaces(Some(workspace_id)).len(), 1);
+    assert_eq!(
+        model
+            .list_workspaces()
+            .iter()
+            .filter(|workspace| {
+                workspace.worktree_name.as_deref() == first["worktree_name"].as_str()
+            })
+            .count(),
+        1
+    );
+    drop(model);
+    assert_eq!(
+        backend
+            .surfaces()
+            .unwrap()
+            .iter()
+            .filter(|surface| surface.workspace_id == workspace_id)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn worktree_attach_after_create_returns_same_workspace() {
+    let repo_dir = make_temp_repo();
+    let (state, backend) = test_state();
+    dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "repo", "workingDir": repo_dir.path()}),
+    )
+    .await
+    .unwrap();
+
+    let created = dispatch(
+        &state,
+        "worktree.create",
+        json!({"name": "topic/create-attach", "cwd": repo_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let attached = dispatch(
+        &state,
+        "worktree.attach",
+        json!({"branch": "topic/create-attach", "cwd": repo_dir.path()}),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(attached["id"], created["id"]);
+    let workspace_id = created["id"].as_str().unwrap();
+    assert_eq!(
+        backend
+            .surfaces()
+            .unwrap()
+            .iter()
+            .filter(|surface| surface.workspace_id == workspace_id)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn concurrent_worktree_create_requests_converge_on_one_workspace() {
+    const BLOCKED_WAIT: Duration = Duration::from_millis(100);
+
+    let repo_dir = make_temp_repo();
+    let (state, backend) = test_state();
+    dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "repo", "workingDir": repo_dir.path()}),
+    )
+    .await
+    .unwrap();
+
+    let writer = state.worktree_write_guard().await;
+    let start = Arc::new(tokio::sync::Barrier::new(3));
+    let first_state = state.clone();
+    let first_cwd = repo_dir.path().to_path_buf();
+    let first_start = start.clone();
+    let mut first = tokio::spawn(async move {
+        first_start.wait().await;
+        dispatch(
+            &first_state,
+            "worktree.create",
+            json!({"name": "topic/concurrent", "cwd": first_cwd}),
+        )
+        .await
+    });
+    let second_state = state.clone();
+    let second_cwd = repo_dir.path().to_path_buf();
+    let second_start = start.clone();
+    let mut second = tokio::spawn(async move {
+        second_start.wait().await;
+        dispatch(
+            &second_state,
+            "worktree.create",
+            json!({"name": "topic/concurrent", "cwd": second_cwd}),
+        )
+        .await
+    });
+    start.wait().await;
+    assert!(tokio::time::timeout(BLOCKED_WAIT, &mut first)
+        .await
+        .is_err());
+    assert!(tokio::time::timeout(BLOCKED_WAIT, &mut second)
+        .await
+        .is_err());
+    drop(writer);
+    let (first, second) = tokio::join!(first, second);
+    let first = first.unwrap().unwrap();
+    let second = second.unwrap().unwrap();
+
+    assert_eq!(second["id"], first["id"]);
+    let workspace_id = first["id"].as_str().unwrap();
+    let model = state.model.lock().unwrap();
+    assert_eq!(model.list_surfaces(Some(workspace_id)).len(), 1);
+    assert_eq!(
+        model
+            .list_workspaces()
+            .iter()
+            .filter(|workspace| workspace.git_branch == "topic/concurrent")
+            .count(),
+        1
+    );
+    drop(model);
+    assert_eq!(
+        backend
+            .surfaces()
+            .unwrap()
+            .iter()
+            .filter(|surface| surface.workspace_id == workspace_id)
+            .count(),
+        1
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cancelled_worktree_create_keeps_writer_until_model_and_runtime_commit() {
+    use std::io::{Read as _, Write as _};
+
+    const BLOCKED_WAIT: Duration = Duration::from_millis(100);
+    const COMPLETION_WAIT: Duration = Duration::from_secs(5);
+
+    let repo_dir = make_temp_repo();
+    let fifo_dir = tempfile::tempdir().unwrap();
+    let started_fifo = fifo_dir.path().join("socket-create-started");
+    let release_fifo = fifo_dir.path().join("socket-create-release");
+    for fifo in [&started_fifo, &release_fifo] {
+        assert!(std::process::Command::new("mkfifo")
+            .arg(fifo)
+            .status()
+            .unwrap()
+            .success());
+    }
+    commit_blocking_setup_hook(repo_dir.path(), &started_fifo, &release_fifo);
+
+    let (state, backend) = test_state();
+    dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "repo", "workingDir": repo_dir.path()}),
+    )
+    .await
+    .unwrap();
+
+    let (setup_started_tx, setup_started_rx) = mpsc::channel();
+    let started_reader = std::thread::spawn(move || {
+        let mut fifo = fs::File::open(started_fifo).unwrap();
+        let mut byte = [0_u8; 1];
+        fifo.read_exact(&mut byte).unwrap();
+        setup_started_tx.send(()).unwrap();
+    });
+
+    let create_state = state.clone();
+    let create_cwd = repo_dir.path().to_path_buf();
+    let create = tokio::spawn(async move {
+        dispatch(
+            &create_state,
+            "worktree.create",
+            json!({"name": "topic/cancelled-create", "cwd": create_cwd}),
+        )
+        .await
+    });
+    tokio::time::timeout(
+        COMPLETION_WAIT,
+        tokio::task::spawn_blocking(move || setup_started_rx.recv()),
+    )
+    .await
+    .expect("worktree.create should reach its setup hook")
+    .unwrap()
+    .unwrap();
+    create.abort();
+    assert!(create.await.unwrap_err().is_cancelled());
+
+    let writer_state = state.clone();
+    let mut competing_writer =
+        tokio::spawn(async move { writer_state.worktree_write_guard().await });
+    let writer_before_release = tokio::time::timeout(BLOCKED_WAIT, &mut competing_writer).await;
+    let writer_was_retained = writer_before_release.is_err();
+
+    let mut release = fs::OpenOptions::new()
+        .write(true)
+        .open(release_fifo)
+        .unwrap();
+    release.write_all(b"x\n").unwrap();
+    started_reader.join().unwrap();
+
+    let writer = match writer_before_release {
+        Ok(writer) => writer.unwrap(),
+        Err(_) => tokio::time::timeout(COMPLETION_WAIT, competing_writer)
+            .await
+            .expect("competing writer should proceed after cancelled create completes")
+            .unwrap(),
+    };
+    assert!(
+        writer_was_retained,
+        "caller cancellation must not release the worktree writer while Git mutation continues"
+    );
+
+    let workspace = state
+        .model
+        .lock()
+        .unwrap()
+        .list_workspaces()
+        .into_iter()
+        .find(|workspace| workspace.git_branch == "topic/cancelled-create")
+        .expect("cancelled requester must not cancel model commit");
+    assert_eq!(
+        state
+            .model
+            .lock()
+            .unwrap()
+            .list_surfaces(Some(&workspace.id))
+            .len(),
+        1
+    );
+    assert_eq!(
+        backend
+            .surfaces()
+            .unwrap()
+            .into_iter()
+            .filter(|surface| surface.workspace_id == workspace.id)
+            .count(),
+        1,
+        "cancelled requester must not cancel runtime commit"
+    );
+    drop(writer);
+}
+
+#[tokio::test]
+async fn cancelled_worktree_read_keeps_guard_until_blocking_read_finishes() {
+    const BLOCKED_WAIT: Duration = Duration::from_millis(100);
+    const COMPLETION_WAIT: Duration = Duration::from_secs(2);
+
+    let (state, _backend) = test_state();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let read_state = state.clone();
+    let read = tokio::spawn(async move {
+        run_guarded_worktree_read(&read_state, move || {
+            let _ = started_tx.send(());
+            release_rx.recv().unwrap();
+            Ok(())
+        })
+        .await
+    });
+    tokio::time::timeout(COMPLETION_WAIT, started_rx)
+        .await
+        .expect("guarded worktree read should start")
+        .unwrap();
+    read.abort();
+    assert!(read.await.unwrap_err().is_cancelled());
+
+    let writer_state = state.clone();
+    let mut writer = tokio::spawn(async move { writer_state.worktree_write_guard().await });
+    assert!(
+        tokio::time::timeout(BLOCKED_WAIT, &mut writer)
+            .await
+            .is_err(),
+        "caller cancellation must not release a still-running worktree read"
+    );
+
+    release_tx.send(()).unwrap();
+    let _writer = tokio::time::timeout(COMPLETION_WAIT, writer)
+        .await
+        .expect("writer should proceed after guarded read finishes")
+        .unwrap();
+}
+
+#[tokio::test]
+async fn cancelled_worktree_write_keeps_guard_until_blocking_mutation_finishes() {
+    const BLOCKED_WAIT: Duration = Duration::from_millis(100);
+    const COMPLETION_WAIT: Duration = Duration::from_secs(2);
+
+    let (state, _backend) = test_state();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let mutation_state = state.clone();
+    let mutation = tokio::spawn(async move {
+        run_guarded_worktree_write(&mutation_state, move || {
+            let _ = started_tx.send(());
+            release_rx.recv().unwrap();
+            Ok(())
+        })
+        .await
+    });
+    tokio::time::timeout(COMPLETION_WAIT, started_rx)
+        .await
+        .expect("guarded worktree mutation should start")
+        .unwrap();
+    mutation.abort();
+    assert!(mutation.await.unwrap_err().is_cancelled());
+
+    let reader_state = state.clone();
+    let mut reader = tokio::spawn(async move { reader_state.worktree_read_guard().await });
+    assert!(
+        tokio::time::timeout(BLOCKED_WAIT, &mut reader)
+            .await
+            .is_err(),
+        "caller cancellation must not release a still-running worktree mutation"
+    );
+
+    release_tx.send(()).unwrap();
+    let _reader = tokio::time::timeout(COMPLETION_WAIT, reader)
+        .await
+        .expect("reader should proceed after guarded mutation finishes")
+        .unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cancelled_worktree_remove_keeps_writer_during_teardown_and_commits_removal() {
+    use std::io::{Read as _, Write as _};
+
+    const BLOCKED_WAIT: Duration = Duration::from_millis(100);
+    const COMPLETION_WAIT: Duration = Duration::from_secs(5);
+
+    let repo_dir = make_temp_repo();
+    let (state, backend) = test_state();
+    dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "repo", "workingDir": repo_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let created = dispatch(
+        &state,
+        "worktree.create",
+        json!({"name": "topic/cancelled-remove-preflight", "cwd": repo_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let workspace_id = created["id"].as_str().unwrap().to_string();
+    let worktree_path = PathBuf::from(created["path"].as_str().unwrap());
+
+    let fifo_dir = tempfile::tempdir().unwrap();
+    let started_fifo = fifo_dir.path().join("socket-remove-started");
+    let release_fifo = fifo_dir.path().join("socket-remove-release");
+    for fifo in [&started_fifo, &release_fifo] {
+        assert!(std::process::Command::new("mkfifo")
+            .arg(fifo)
+            .status()
+            .unwrap()
+            .success());
+    }
+    commit_blocking_teardown_hook(&worktree_path, &started_fifo, &release_fifo);
+
+    let (teardown_started_tx, teardown_started_rx) = mpsc::channel();
+    let started_reader = std::thread::spawn(move || {
+        let mut fifo = fs::File::open(started_fifo).unwrap();
+        let mut byte = [0_u8; 1];
+        fifo.read_exact(&mut byte).unwrap();
+        teardown_started_tx.send(()).unwrap();
+    });
+    let remove_state = state.clone();
+    let remove_cwd = repo_dir.path().to_path_buf();
+    let remove = tokio::spawn(async move {
+        dispatch(
+            &remove_state,
+            "worktree.remove",
+            json!({
+                "name": "topic/cancelled-remove-preflight",
+                "cwd": remove_cwd,
+            }),
+        )
+        .await
+    });
+    tokio::time::timeout(
+        COMPLETION_WAIT,
+        tokio::task::spawn_blocking(move || teardown_started_rx.recv()),
+    )
+    .await
+    .expect("worktree.remove should reach its teardown hook")
+    .unwrap()
+    .unwrap();
+    remove.abort();
+    assert!(remove.await.unwrap_err().is_cancelled());
+
+    let reader_state = state.clone();
+    let mut competing_reader =
+        tokio::spawn(async move { reader_state.worktree_read_guard().await });
+    assert!(
+        tokio::time::timeout(BLOCKED_WAIT, &mut competing_reader)
+            .await
+            .is_err(),
+        "caller cancellation must retain the writer while teardown is running"
+    );
+
+    let mut release = fs::OpenOptions::new()
+        .write(true)
+        .open(release_fifo)
+        .unwrap();
+    release.write_all(b"x\n").unwrap();
+    started_reader.join().unwrap();
+    let _reader = tokio::time::timeout(COMPLETION_WAIT, competing_reader)
+        .await
+        .expect("reader should proceed after cancelled remove commits")
+        .unwrap();
+
+    assert!(!worktree_path.exists());
+    assert!(state
+        .model
+        .lock()
+        .unwrap()
+        .list_workspaces()
+        .iter()
+        .all(|workspace| workspace.id != workspace_id));
+    assert!(backend
+        .surfaces()
+        .unwrap()
+        .iter()
+        .all(|surface| surface.workspace_id != workspace_id));
+    assert!(worktree::list(repo_dir.path().to_str().unwrap())
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn existing_worktree_workspace_spawns_every_missing_runtime_surface() {
+    let repo_dir = make_temp_repo();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let healthy_state = SocketAppState::new(
+        model.clone(),
+        Arc::new(HeadlessTerminalBackend::new()),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&healthy_state, repo_dir.path().to_path_buf()).unwrap();
+    let created = dispatch(
+        &healthy_state,
+        "worktree.create",
+        json!({"name": "topic/missing-surfaces", "cwd": repo_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let workspace_id = created["id"].as_str().unwrap().to_string();
+    let expected_surface_ids = {
+        let mut model = model.lock().unwrap();
+        let initial_surface_id = model
+            .list_surfaces(Some(&workspace_id))
+            .into_iter()
+            .next()
+            .unwrap()
+            .id;
+        let second = model
+            .split_surface(&initial_surface_id, forktty_core::SplitAxis::Horizontal)
+            .unwrap();
+        model
+            .split_surface(&second.id, forktty_core::SplitAxis::Vertical)
+            .unwrap();
+        model
+            .list_surfaces(Some(&workspace_id))
+            .into_iter()
+            .map(|surface| surface.id)
+            .collect::<BTreeSet<_>>()
+    };
+    let backend = Arc::new(HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model,
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+
+    let reopened = dispatch(
+        &state,
+        "worktree.create",
+        json!({"name": "topic/missing-surfaces", "cwd": repo_dir.path()}),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(reopened["id"], created["id"]);
+    let runtime_surface_ids = backend
+        .surfaces()
+        .unwrap()
+        .into_iter()
+        .map(|surface| surface.surface_id)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(runtime_surface_ids, expected_surface_ids);
+}
+
+#[tokio::test]
+async fn existing_worktree_partial_spawn_failure_preserves_preexisting_runtime() {
+    let repo_dir = make_temp_repo();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let healthy_state = SocketAppState::new(
+        model.clone(),
+        Arc::new(HeadlessTerminalBackend::new()),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&healthy_state, repo_dir.path().to_path_buf()).unwrap();
+    let created = dispatch(
+        &healthy_state,
+        "worktree.create",
+        json!({"name": "topic/partial-spawn", "cwd": repo_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let workspace_id = created["id"].as_str().unwrap().to_string();
+    let (preexisting_surface, expected_surface_ids, previous_workspace_id) = {
+        let mut model = model.lock().unwrap();
+        let preexisting_surface = model
+            .list_surfaces(Some(&workspace_id))
+            .into_iter()
+            .next()
+            .unwrap();
+        let second = model
+            .split_surface(&preexisting_surface.id, forktty_core::SplitAxis::Horizontal)
+            .unwrap();
+        model
+            .split_surface(&second.id, forktty_core::SplitAxis::Vertical)
+            .unwrap();
+        let expected_surface_ids = model
+            .list_surfaces(Some(&workspace_id))
+            .into_iter()
+            .map(|surface| surface.id)
+            .collect::<BTreeSet<_>>();
+        let previous_workspace_id = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.id != workspace_id)
+            .unwrap()
+            .id;
+        model
+            .select_workspace(forktty_core::WorkspaceSelector::Id(&previous_workspace_id))
+            .unwrap();
+        (
+            preexisting_surface,
+            expected_surface_ids,
+            previous_workspace_id,
+        )
+    };
+    let backend = Arc::new(FailsNthSpawnBackend::with_initial_surface(
+        &preexisting_surface,
+        2,
+    ));
+    let state = SocketAppState::new(
+        model.clone(),
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+
+    let error = dispatch(
+        &state,
+        "worktree.create",
+        json!({"name": "topic/partial-spawn", "cwd": repo_dir.path()}),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("spawn 2 failed"));
+    let runtime_surface_ids = backend
+        .surfaces()
+        .unwrap()
+        .into_iter()
+        .map(|surface| surface.surface_id)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        runtime_surface_ids,
+        BTreeSet::from([preexisting_surface.id])
+    );
+    let model = model.lock().unwrap();
+    assert_eq!(
+        model.active_workspace_id().as_deref(),
+        Some(previous_workspace_id.as_str())
+    );
+    assert_eq!(
+        model
+            .list_surfaces(Some(&workspace_id))
+            .into_iter()
+            .map(|surface| surface.id)
+            .collect::<BTreeSet<_>>(),
+        expected_surface_ids
+    );
+    drop(model);
+    assert_eq!(
+        worktree::list(repo_dir.path().to_str().unwrap())
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn existing_worktree_workspace_survives_missing_runtime_spawn_failure() {
+    let repo_dir = make_temp_repo();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let healthy_state = SocketAppState::new(
+        model.clone(),
+        Arc::new(HeadlessTerminalBackend::new()),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&healthy_state, repo_dir.path().to_path_buf()).unwrap();
+    let created = dispatch(
+        &healthy_state,
+        "worktree.create",
+        json!({"name": "topic/existing-workspace", "cwd": repo_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let workspace_id = created["id"].as_str().unwrap().to_string();
+    let worktree_path = created["path"].as_str().unwrap().to_string();
+    let previous_workspace_id = {
+        let mut model = model.lock().unwrap();
+        let previous_workspace_id = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.id != workspace_id)
+            .unwrap()
+            .id;
+        model
+            .select_workspace(forktty_core::WorkspaceSelector::Id(&previous_workspace_id))
+            .unwrap();
+        previous_workspace_id
+    };
+
+    let failing_state = SocketAppState::new(
+        model.clone(),
+        Arc::new(FailingSpawnBackend),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let error = dispatch(
+        &failing_state,
+        "worktree.create",
+        json!({"name": "topic/existing-workspace", "cwd": repo_dir.path()}),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("spawn failed"));
+    assert!(Path::new(&worktree_path).exists());
+    assert_eq!(
+        worktree::list(repo_dir.path().to_str().unwrap())
+            .unwrap()
+            .len(),
+        1
+    );
+    let model = model.lock().unwrap();
+    assert!(model
+        .list_workspaces()
+        .iter()
+        .any(|workspace| workspace.id == workspace_id));
+    assert_eq!(model.list_surfaces(Some(&workspace_id)).len(), 1);
+    assert_eq!(
+        model.active_workspace_id().as_deref(),
+        Some(previous_workspace_id.as_str())
+    );
+}
+
+#[tokio::test]
+async fn existing_worktree_workspace_restores_active_after_runtime_inventory_failure() {
+    let repo_dir = make_temp_repo();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let healthy_state = SocketAppState::new(
+        model.clone(),
+        Arc::new(HeadlessTerminalBackend::new()),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&healthy_state, repo_dir.path().to_path_buf()).unwrap();
+    let created = dispatch(
+        &healthy_state,
+        "worktree.create",
+        json!({"name": "topic/existing-inventory", "cwd": repo_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let workspace_id = created["id"].as_str().unwrap().to_string();
+    let worktree_path = created["path"].as_str().unwrap().to_string();
+    let previous_workspace_id = {
+        let mut model = model.lock().unwrap();
+        let previous_workspace_id = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.id != workspace_id)
+            .unwrap()
+            .id;
+        model
+            .select_workspace(forktty_core::WorkspaceSelector::Id(&previous_workspace_id))
+            .unwrap();
+        previous_workspace_id
+    };
+    let state = SocketAppState::new(
+        model.clone(),
+        Arc::new(FailingSurfaceInventoryBackend),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+
+    let error = dispatch(
+        &state,
+        "worktree.create",
+        json!({"name": "topic/existing-inventory", "cwd": repo_dir.path()}),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("surface inventory failed"));
+    assert!(Path::new(&worktree_path).exists());
+    let model = model.lock().unwrap();
+    assert!(model
+        .list_workspaces()
+        .iter()
+        .any(|workspace| workspace.id == workspace_id));
+    assert_eq!(
+        model.active_workspace_id().as_deref(),
+        Some(previous_workspace_id.as_str())
+    );
+}
+
+#[tokio::test]
+async fn new_worktree_workspace_rolls_back_when_runtime_inventory_fails() {
+    let repo_dir = make_temp_repo();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let bootstrap_state = SocketAppState::new(
+        model.clone(),
+        Arc::new(HeadlessTerminalBackend::new()),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&bootstrap_state, repo_dir.path().to_path_buf()).unwrap();
+    let state = SocketAppState::new(
+        model.clone(),
+        Arc::new(FailingSurfaceInventoryBackend),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+
+    let error = dispatch(
+        &state,
+        "worktree.create",
+        json!({"name": "topic/inventory-failure", "cwd": repo_dir.path()}),
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("surface inventory failed"));
+    assert!(worktree::list(repo_dir.path().to_str().unwrap())
+        .unwrap()
+        .is_empty());
+    let model = model.lock().unwrap();
+    assert_eq!(model.list_workspaces().len(), 1);
+    assert!(model
+        .list_workspaces()
+        .iter()
+        .all(|workspace| workspace.git_branch != "topic/inventory-failure"));
+}
+
+#[tokio::test]
+async fn worktree_list_and_status_wait_for_writer_and_share_read_access() {
+    const BLOCKED_WAIT: Duration = Duration::from_millis(100);
+    const COMPLETION_WAIT: Duration = Duration::from_secs(2);
+
+    let repo_dir = make_temp_repo();
+    let (state, _backend) = test_state();
+    dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "repo", "workingDir": repo_dir.path()}),
+    )
+    .await
+    .unwrap();
+
+    let writer = state.worktree_write_guard().await;
+    let list_state = state.clone();
+    let list_cwd = repo_dir.path().to_path_buf();
+    let mut list_task = tokio::spawn(async move {
+        dispatch(&list_state, "worktree.list", json!({"cwd": list_cwd})).await
+    });
+    let status_state = state.clone();
+    let status_path = repo_dir.path().to_path_buf();
+    let mut status_task = tokio::spawn(async move {
+        dispatch(
+            &status_state,
+            "worktree.status",
+            json!({"path": status_path}),
+        )
+        .await
+    });
+    assert!(tokio::time::timeout(BLOCKED_WAIT, &mut list_task)
+        .await
+        .is_err());
+    assert!(tokio::time::timeout(BLOCKED_WAIT, &mut status_task)
+        .await
+        .is_err());
+    drop(writer);
+    tokio::time::timeout(COMPLETION_WAIT, list_task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(COMPLETION_WAIT, status_task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    let reader = state.worktree_read_guard().await;
+    let list_state = state.clone();
+    let list_cwd = repo_dir.path().to_path_buf();
+    let list_task = tokio::spawn(async move {
+        dispatch(&list_state, "worktree.list", json!({"cwd": list_cwd})).await
+    });
+    let status_state = state.clone();
+    let status_path = repo_dir.path().to_path_buf();
+    let status_task = tokio::spawn(async move {
+        dispatch(
+            &status_state,
+            "worktree.status",
+            json!({"path": status_path}),
+        )
+        .await
+    });
+    tokio::time::timeout(COMPLETION_WAIT, list_task)
+        .await
+        .expect("worktree.list should share worktree read access")
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(COMPLETION_WAIT, status_task)
+        .await
+        .expect("worktree.status should share worktree read access")
+        .unwrap()
+        .unwrap();
+    drop(reader);
+}
+
+#[tokio::test]
 async fn worktree_socket_allows_cwd_from_open_surface() {
     let repo_dir = make_temp_repo();
     let (state, _) = test_state();
@@ -435,6 +1489,41 @@ async fn project_actions_list_and_run_from_open_repo_only() {
 }
 
 #[tokio::test]
+async fn project_action_program_resolution_failure_rolls_back_modeled_surface() {
+    let repo_dir = make_temp_repo();
+    fs::write(
+        repo_dir.path().join("forktty.json"),
+        r#"{"actions":[{"id":"missing","label":"Missing","argv":["./missing-tool"],"cwd":"."}]}"#,
+    )
+    .unwrap();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let runtime_dir = super::test_runtime::private_runtime_tempdir("forktty-project-action-");
+    let state = SocketAppState::new(
+        model.clone(),
+        Arc::new(HeadlessTerminalBackend::new()),
+        "/bin/sh",
+        runtime_dir.path().join("forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&state, repo_dir.path().to_path_buf()).unwrap();
+    let before = model.lock().unwrap().list_surfaces(None);
+
+    let error = dispatch(
+        &state,
+        "project.action.run",
+        json!({"cwd": repo_dir.path(), "id": "missing"}),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(error.code(), "precondition_failed");
+    assert!(error
+        .to_string()
+        .contains("Cannot resolve project action program"));
+    assert_eq!(model.lock().unwrap().list_surfaces(None), before);
+}
+
+#[tokio::test]
 async fn project_actions_run_from_linked_worktree_authorized_repo() {
     let repo_dir = make_temp_repo();
     fs::write(
@@ -565,211 +1654,6 @@ async fn worktree_create_surfaces_setup_hook_failure_as_warning_and_notification
         .expect("setup hook failure should produce a notification");
     assert_eq!(hook_notification["workspace_id"], workspace_id);
     assert_eq!(hook_notification["kind"], "error");
-}
-
-#[tokio::test]
-async fn worktree_remove_keeps_workspace_when_backend_close_fails() {
-    let repo_dir = make_temp_repo();
-    let branch_name = format!("topic/socket-close-{}", std::process::id());
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let backend = Arc::new(FailingCloseBackend::default());
-    let state = SocketAppState::new(
-        model,
-        backend.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    bootstrap_default_workspace(&state, repo_dir.path().to_path_buf()).unwrap();
-
-    let created = dispatch(
-        &state,
-        "worktree.create",
-        json!({"name": branch_name.as_str(), "cwd": repo_dir.path()}),
-    )
-    .await
-    .unwrap();
-    let workspace_id = created["id"].as_str().unwrap();
-    let surface_id = dispatch(
-        &state,
-        "surface.list",
-        json!({"workspace_id": workspace_id}),
-    )
-    .await
-    .unwrap()[0]["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
-
-    let error = dispatch(
-        &state,
-        "worktree.remove",
-        json!({"name": branch_name.as_str(), "cwd": repo_dir.path()}),
-    )
-    .await
-    .unwrap_err()
-    .to_string();
-
-    assert!(error.contains("close failed"));
-    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
-    assert!(workspaces
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|workspace| workspace["id"] == workspace_id));
-    let surfaces = dispatch(
-        &state,
-        "surface.list",
-        json!({"workspace_id": workspace_id}),
-    )
-    .await
-    .unwrap();
-    assert_eq!(surfaces.as_array().unwrap().len(), 1);
-    assert_eq!(surfaces[0]["id"], surface_id);
-    assert!(backend
-        .surfaces()
-        .unwrap()
-        .iter()
-        .any(|surface| surface.surface_id == surface_id));
-    assert_eq!(
-        worktree::list(repo_dir.path().to_str().unwrap())
-            .unwrap()
-            .len(),
-        1
-    );
-}
-
-#[tokio::test]
-async fn worktree_remove_last_workspace_keeps_old_workspace_when_replacement_spawn_fails() {
-    let repo_dir = make_temp_repo();
-    let branch_name = format!("topic/socket-remove-spawn-{}", std::process::id());
-    let info = worktree::create(
-        repo_dir.path().to_str().unwrap(),
-        &branch_name,
-        &path_resolver::worktree_layout(),
-    )
-    .unwrap();
-    let worktree_cwd = PathBuf::from(&info.path);
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let workspace = {
-        let mut model = model.lock().unwrap();
-        model.create_worktree_workspace(
-            &info.branch,
-            &worktree_cwd,
-            &info.branch,
-            &info.worktree_name,
-        )
-    };
-    let surface_id = workspace.focused_surface_id.clone();
-    let backend = Arc::new(SpawnFailsCloseSucceedsBackend::new(TerminalSurfaceState {
-        surface_id: surface_id.clone(),
-        workspace_id: workspace.id.clone(),
-        cwd: worktree_cwd,
-        shell: "/bin/sh".to_string(),
-        cols: 80,
-        rows: 24,
-        pid: None,
-    }));
-    let state = SocketAppState::new(
-        model,
-        backend.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-
-    let error = dispatch(
-        &state,
-        "worktree.remove",
-        json!({"name": branch_name.as_str(), "cwd": repo_dir.path()}),
-    )
-    .await
-    .unwrap_err()
-    .to_string();
-
-    assert!(error.contains("spawn failed"));
-    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
-    assert_eq!(workspaces.as_array().unwrap().len(), 1);
-    assert_eq!(workspaces[0]["id"], workspace.id);
-    assert_eq!(workspaces[0]["active"], true);
-    let surfaces = dispatch(
-        &state,
-        "surface.list",
-        json!({"workspace_id": workspace.id}),
-    )
-    .await
-    .unwrap();
-    assert_eq!(surfaces.as_array().unwrap().len(), 1);
-    assert_eq!(surfaces[0]["id"], surface_id);
-    assert_eq!(backend.surfaces().unwrap().len(), 1);
-    assert_eq!(backend.surfaces().unwrap()[0].surface_id, surface_id);
-    assert_eq!(
-        worktree::list(repo_dir.path().to_str().unwrap())
-            .unwrap()
-            .len(),
-        1
-    );
-}
-
-#[tokio::test]
-async fn worktree_remove_last_workspace_closes_replacement_when_finish_fails() {
-    let repo_dir = make_temp_repo();
-    let branch_name = format!("topic/socket-remove-finish-{}", std::process::id());
-    let info = worktree::create(
-        repo_dir.path().to_str().unwrap(),
-        &branch_name,
-        &path_resolver::worktree_layout(),
-    )
-    .unwrap();
-    let worktree_cwd = PathBuf::from(&info.path);
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let workspace = {
-        let mut model = model.lock().unwrap();
-        model.create_worktree_workspace(
-            &info.branch,
-            &worktree_cwd,
-            &info.branch,
-            &info.worktree_name,
-        )
-    };
-    let surface_id = workspace.focused_surface_id.clone();
-    let backend = Arc::new(DirtyOnCloseBackend::new(
-        TerminalSurfaceState {
-            surface_id: surface_id.clone(),
-            workspace_id: workspace.id.clone(),
-            cwd: worktree_cwd.clone(),
-            shell: "/bin/sh".to_string(),
-            cols: 80,
-            rows: 24,
-            pid: None,
-        },
-        worktree_cwd.join("dirty-after-close.txt"),
-    ));
-    let state = SocketAppState::new(
-        model,
-        backend.clone(),
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-
-    let error = dispatch(
-        &state,
-        "worktree.remove",
-        json!({"name": branch_name.as_str(), "cwd": repo_dir.path()}),
-    )
-    .await
-    .unwrap_err()
-    .to_string();
-
-    assert!(error.contains("uncommitted changes"));
-    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
-    assert_eq!(workspaces.as_array().unwrap().len(), 1);
-    assert_eq!(workspaces[0]["id"], workspace.id);
-    let backend_surfaces = backend.surfaces().unwrap();
-    assert_eq!(backend_surfaces.len(), 1);
-    assert_eq!(backend_surfaces[0].surface_id, surface_id);
-    assert_eq!(backend.active_children(), BTreeSet::from([surface_id]));
 }
 
 #[tokio::test]

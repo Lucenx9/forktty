@@ -7,7 +7,7 @@ use super::integration_files::{
 use super::{
     bool_option, format_doctor_path, inspect_path, parse_flags, print_json, reject_unknown_options,
     require_no_args, sanitize_for_terminal, send_socket_request, socket_path_from_env, trimmed_env,
-    write_stdout_line, CliContext, CliError, CliResult,
+    write_stdout_line, write_stdout_text, CliContext, CliError, CliResult, HOOKS_HELP_TEXT,
 };
 use serde_json::{json, Map, Value};
 use std::fs;
@@ -16,36 +16,38 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 pub(super) mod event;
+mod health;
 pub(super) mod install;
 mod specs;
+use health::{
+    describe_installation_check, format_installation_check, hook_doctor_report_is_healthy,
+};
 use install::{
     agent_spec, antigravity_script_path, build_hook_remove_plan, build_hook_setup_plan,
     build_hook_setup_plan_with_profile, default_hook_setup_agents,
-    ensure_private_antigravity_hook_dirs, hook_setup_profile_name, is_claude_high_frequency_event,
-    is_forktty_managed_entry, read_opencode_plugin_file, supported_agents,
+    ensure_private_antigravity_hook_dirs, hook_setup_profile_name, is_claude_per_tool_event,
+    is_effectively_executable_file, is_forktty_managed_entry, normalize_agent_name,
+    read_opencode_plugin_file, read_regular_managed_script, supported_agents,
     supported_hook_remove_agents, HookRemoveAction,
-};
-pub(super) use install::{
-    antigravity_config_dir, codex_home_dir, home_dir, legacy_gemini_config_path,
-    normalize_agent_name,
 };
 
 pub(super) use event::{
     handle_hook_event, hook_target_params, increment_hook_event_order, next_hook_event_order,
 };
+pub(crate) use specs::HookSetupProfile;
 #[cfg(test)]
 pub(super) use specs::HOOK_ENTRY_TIMEOUT_SECS;
 pub(super) use specs::{
-    AgentSpec, HookEntrySpec, HookInstallKind, HookSetupProfile, AGENTS,
-    CLAUDE_HIGH_FREQUENCY_HOOK_ENTRIES, CLAUDE_HOOK_ENTRIES, CODEX_HOOK_ENTRIES,
-    DEFAULT_HOOK_SETUP_AGENT_KEYS, FORKTTY_HOOK_TAG, HOOK_CONTINUE_JSON, HOOK_EVENT_CLOCK,
-    HOOK_EVENT_ORDER_PARAM, HOOK_STATUS_TIMEOUT, HOOK_TOKEN_CEILING_DEFAULT, HOOK_TOOL_LABEL_MAX,
-    LEGACY_GEMINI_HOOK_AGENT, OPENCODE_HOOK_TIMEOUT_MS, OPENCODE_MAX_INPUT_BYTES,
-    OPENCODE_PLUGIN_TAG,
+    AgentSpec, HookEntrySpec, HookInstallKind, AGENTS, CLAUDE_HOOK_ENTRIES,
+    CLAUDE_PER_TOOL_HOOK_ENTRIES, CODEX_HOOK_ENTRIES, DEFAULT_HOOK_SETUP_AGENT_KEYS,
+    FORKTTY_HOOK_TAG, HOOK_CONTINUE_JSON, HOOK_EVENT_CLOCK, HOOK_EVENT_ORDER_PARAM,
+    HOOK_STATUS_TIMEOUT, HOOK_TOKEN_CEILING_DEFAULT, HOOK_TOOL_LABEL_MAX, LEGACY_GEMINI_HOOK_AGENT,
+    OPENCODE_HOOK_TIMEOUT_MS, OPENCODE_MAX_INPUT_BYTES, OPENCODE_PLUGIN_TAG,
 };
 
 pub(super) fn handle_hooks(context: &CliContext, args: Vec<String>) -> CliResult<()> {
     match args.first().map(String::as_str) {
+        Some("help" | "--help" | "-h") => write_stdout_text(HOOKS_HELP_TEXT),
         Some("setup") => handle_hooks_setup(context, args[1..].to_vec()),
         Some("remove") | Some("uninstall") => handle_hooks_remove(context, args[1..].to_vec()),
         Some("doctor") => handle_hooks_doctor(context, args[1..].to_vec()),
@@ -137,6 +139,10 @@ pub(super) fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> Cli
         if plan.spec.key == "claude" {
             summary["profile"] = json!(hook_setup_profile_name(profile));
         }
+        if plan.spec.key == "codex" {
+            summary["requiresTrustReview"] = json!(plan.changed);
+            summary["trustReviewCommand"] = json!("/hooks");
+        }
         summaries.push(summary);
     }
 
@@ -158,6 +164,16 @@ pub(super) fn handle_hooks_setup(context: &CliContext, args: Vec<String>) -> Cli
         write_stdout_line(&format!("{agent}: {verb} at {config_path}"))?;
         if let Some(backup) = summary["backupPath"].as_str() {
             write_stdout_line(&format!("  backup: {backup}"))?;
+        }
+        if summary["requiresTrustReview"].as_bool() == Some(true) {
+            let prefix = if dry_run {
+                "  after updating"
+            } else {
+                "  action required"
+            };
+            write_stdout_line(&format!(
+                "{prefix}: run /hooks inside Codex to review the changed hook definitions"
+            ))?;
         }
     }
     Ok(())
@@ -245,6 +261,18 @@ pub(super) fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> Cl
     let config_path = (spec.config_path)();
     let config_info = inspect_path(&config_path);
     let launcher_check = describe_launcher_check(spec, &config_path, current_launcher.as_deref());
+    let installed_launcher = launcher_check
+        .get("installedLauncher")
+        .and_then(Value::as_str)
+        .map(Path::new);
+    let installation_check = describe_installation_check(spec, &config_path, installed_launcher);
+    let installation_summary = format_installation_check(&installation_check);
+    let installation_check_json = serde_json::to_value(&installation_check).map_err(|error| {
+        CliError::new(format!(
+            "hooks doctor {}: cannot encode installation check: {error}",
+            spec.key
+        ))
+    })?;
     let supported_events: Vec<&str> = spec
         .hook_entries
         .iter()
@@ -271,6 +299,7 @@ pub(super) fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> Cl
         },
         "hookConfig": config_info,
         "launcherCheck": launcher_check,
+        "installationCheck": installation_check_json,
         "supportedEvents": supported_events,
     });
     if spec.key == "claude" {
@@ -280,11 +309,7 @@ pub(super) fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> Cl
     if spec.key == "codex" && hooks_installed {
         report["trustCheck"] = describe_codex_hook_trust(&config_path);
     }
-    let healthy = report["socket"]["inspect"]["exists"] == json!(true)
-        && report["socket"]["inspect"]["readable"] == json!(true)
-        && report["socket"]["inspect"]["writable"] == json!(true)
-        && report["hookConfig"]["exists"] == json!(true)
-        && report["launcherCheck"]["status"] == json!("ok");
+    let healthy = hook_doctor_report_is_healthy(&report, &installation_check);
     report["version"] = json!(1);
     report["ok"] = json!(healthy);
     if context.json {
@@ -323,6 +348,7 @@ pub(super) fn handle_hooks_doctor(context: &CliContext, args: Vec<String>) -> Cl
     if let Some(line) = format_launcher_check(&report["launcherCheck"]) {
         eprintln!("{line}");
     }
+    eprintln!("{installation_summary}");
     if let Some(line) = format_codex_trust_check(&report["trustCheck"]) {
         eprintln!("{line}");
     }
@@ -377,6 +403,10 @@ pub(super) fn format_codex_trust_check(check: &Value) -> Option<String> {
         "partial" | "none_recorded" => Some(format!(
             "hook trust: no Codex trust record yet for {unrecorded}; if those hooks seem inactive, run /hooks inside Codex to review approval."
         )),
+        "all_recorded" => Some(
+            "hook trust: records exist, but ForkTTY cannot verify that they match the current hook hashes; after a hook update, run /hooks inside Codex to review approval."
+                .to_string(),
+        ),
         _ => None,
     }
 }
@@ -398,7 +428,8 @@ pub(super) fn describe_launcher_check(
         // The launcher path lives in the generated wrapper scripts, not in
         // hooks.json (whose commands are bare script paths).
         HookInstallKind::AntigravityConfig => spec.hook_entries.iter().find_map(|entry| {
-            let text = fs::read_to_string(antigravity_script_path(entry.hook_event_name)).ok()?;
+            let text =
+                read_regular_managed_script(&antigravity_script_path(entry.hook_event_name))?;
             text.lines()
                 .find_map(|line| parse_launcher_from_managed_command(line, spec))
         }),
@@ -413,7 +444,7 @@ pub(super) fn describe_launcher_check(
     // reminder is a real signal instead of firing on every launch.
     let installed_usable = installed
         .as_deref()
-        .is_some_and(|path| forktty_core::command_safety::is_executable_file(Path::new(path)));
+        .is_some_and(|path| is_effectively_executable_file(Path::new(path)));
     let status = match (&installed, &current) {
         (Some(installed_path), Some(current_path)) if installed_path == current_path => "ok",
         (Some(_), _) if installed_usable => "ok",
@@ -429,26 +460,34 @@ pub(super) fn describe_launcher_check(
 }
 
 pub(super) fn describe_claude_installed_profile(config_path: &Path) -> &'static str {
+    match read_claude_installed_profile(config_path) {
+        Ok(Some(profile)) => hook_setup_profile_name(profile),
+        Ok(None) | Err(_) => "not_installed",
+    }
+}
+
+pub(super) fn read_claude_installed_profile(
+    config_path: &Path,
+) -> CliResult<Option<HookSetupProfile>> {
     let Some(spec) = agent_spec("claude") else {
-        return "not_installed";
+        return Err(CliError::new("Claude hook specification is unavailable"));
     };
-    let Ok(config) = read_json_file(config_path) else {
-        return "not_installed";
-    };
-    let has_high_frequency = CLAUDE_HIGH_FREQUENCY_HOOK_ENTRIES
+    let config = read_json_file(config_path)?;
+    let has_per_tool = CLAUDE_HOOK_ENTRIES
         .iter()
+        .filter(|entry| is_claude_per_tool_event(entry.event_name))
         .any(|entry| config_has_forktty_hook(&config, spec, entry));
-    if has_high_frequency {
-        return "full";
+    if has_per_tool {
+        return Ok(Some(HookSetupProfile::Full));
     }
     let has_lifecycle = CLAUDE_HOOK_ENTRIES
         .iter()
-        .filter(|entry| !is_claude_high_frequency_event(entry.event_name))
+        .filter(|entry| !is_claude_per_tool_event(entry.event_name))
         .any(|entry| config_has_forktty_hook(&config, spec, entry));
     if has_lifecycle {
-        "lifecycle"
+        Ok(Some(HookSetupProfile::Lifecycle))
     } else {
-        "not_installed"
+        Ok(None)
     }
 }
 
@@ -537,7 +576,8 @@ pub(super) fn codex_hook_trust_report(
         "configPath": config_toml,
         "recordedEvents": recorded,
         "unrecordedEvents": unrecorded,
-        "hint": "Codex asks for approval before running hooks it has no trust record for; run /hooks inside Codex to review.",
+        "currentHashesVerified": false,
+        "hint": "Codex ties approval to each hook's current hash. ForkTTY can detect trust records but cannot verify those hashes; after hook definitions change, run /hooks inside Codex to review.",
     })
 }
 
@@ -554,49 +594,6 @@ pub(super) fn camel_to_snake_event_name(event: &str) -> String {
         }
     }
     out
-}
-
-#[cfg(feature = "gtk-ghostty")]
-pub(crate) fn hook_setup_reminder_message() -> Option<String> {
-    let current_launcher = stable_hook_launcher_path();
-    let statuses = default_hook_setup_agents()
-        .iter()
-        .map(|spec| {
-            let config_path = (spec.config_path)();
-            describe_launcher_check(spec, &config_path, current_launcher.as_deref())
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("not_installed")
-                .to_string()
-        })
-        .collect::<Vec<_>>();
-    hook_setup_reminder_message_for_statuses(statuses.iter().map(String::as_str))
-}
-
-#[cfg(any(test, feature = "gtk-ghostty"))]
-pub(super) fn hook_setup_reminder_message_for_statuses<'a>(
-    statuses: impl IntoIterator<Item = &'a str>,
-) -> Option<String> {
-    let statuses = statuses.into_iter().collect::<Vec<_>>();
-    let installed = statuses
-        .iter()
-        .any(|status| matches!(*status, "ok" | "stale" | "current_launcher_unknown"));
-    let stale = statuses
-        .iter()
-        .any(|status| matches!(*status, "stale" | "current_launcher_unknown"));
-    if stale {
-        Some(
-            "Refresh ForkTTY agent hooks by running `forktty hooks setup` so Codex, Claude Code, Antigravity, and OpenCode can publish status, progress, and notifications."
-                .to_string(),
-        )
-    } else if !installed {
-        Some(
-            "Install ForkTTY agent hooks by running `forktty hooks setup` to connect Codex, Claude Code, Antigravity, and OpenCode to status, progress, and notifications."
-                .to_string(),
-        )
-    } else {
-        None
-    }
 }
 
 pub(super) fn extract_launcher_from_opencode_plugin(text: &str) -> Option<String> {

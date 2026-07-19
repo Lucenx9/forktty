@@ -1,12 +1,11 @@
 use super::*;
 
-pub(super) fn notification_target_exists(
-    state: &SocketAppState,
+const NOTIFICATION_PANEL_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
+
+fn notification_target_exists_in_model(
+    model: &WorkspaceModel,
     notification: &NotificationItem,
 ) -> bool {
-    let Ok(model) = state.model.lock() else {
-        return false;
-    };
     if let Some(surface_id) = notification.surface_id.as_deref() {
         let Some(surface) = model.surface(surface_id) else {
             return false;
@@ -26,43 +25,51 @@ pub(super) fn notification_target_exists(
         })
 }
 
-pub(super) fn latest_openable_notification_from(
-    state: &SocketAppState,
-    notifications: Vec<NotificationItem>,
-) -> Option<NotificationItem> {
-    let mut openable = notifications
-        .into_iter()
-        .enumerate()
-        .filter(|(_, notification)| notification_target_exists(state, notification))
-        .collect::<Vec<_>>();
-    openable.sort_by(|a, b| {
-        let (a_index, a_notification) = a;
-        let (b_index, b_notification) = b;
-        notification_jump_priority(b_notification)
-            .cmp(&notification_jump_priority(a_notification))
-            .then_with(|| {
-                b_notification
-                    .created_at_ms
-                    .cmp(&a_notification.created_at_ms)
-            })
-            .then_with(|| b_index.cmp(a_index))
-    });
-    openable
-        .into_iter()
-        .next()
-        .map(|(_, notification)| notification)
-}
-
-pub(super) fn latest_openable_notification_for_panel_click(
-    state: &SocketAppState,
-    panel_notifications: &[NotificationItem],
-) -> Option<NotificationItem> {
-    let current_notifications = state
+#[cfg(test)]
+fn notification_target_exists(state: &SocketAppState, notification: &NotificationItem) -> bool {
+    state
         .model
         .lock()
         .ok()
-        .map(|model| model.list_notifications())
-        .unwrap_or_default();
+        .is_some_and(|model| notification_target_exists_in_model(&model, notification))
+}
+
+fn latest_openable_notification_from_model(
+    model: &WorkspaceModel,
+    notifications: &[NotificationItem],
+) -> Option<NotificationItem> {
+    notifications
+        .iter()
+        .enumerate()
+        .filter(|(_, notification)| notification_target_exists_in_model(model, notification))
+        .max_by_key(|(index, notification)| {
+            (
+                notification_jump_priority(notification),
+                notification.created_at_ms,
+                *index,
+            )
+        })
+        .map(|(_, notification)| notification.clone())
+}
+
+#[cfg(test)]
+fn latest_openable_notification_from(
+    state: &SocketAppState,
+    notifications: Vec<NotificationItem>,
+) -> Option<NotificationItem> {
+    state
+        .model
+        .lock()
+        .ok()
+        .and_then(|model| latest_openable_notification_from_model(&model, &notifications))
+}
+
+fn select_open_latest_notification_for_panel_click(
+    state: &SocketAppState,
+    panel_notifications: &[NotificationItem],
+) -> Option<NotificationItem> {
+    let model = state.model.lock().ok()?;
+    let current_notifications = model.list_notifications();
     let current_ids = current_notifications
         .iter()
         .map(|notification| notification.id.as_str())
@@ -72,8 +79,16 @@ pub(super) fn latest_openable_notification_for_panel_click(
         .filter(|notification| current_ids.contains(notification.id.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    latest_openable_notification_from(state, panel_notifications)
-        .or_else(|| latest_openable_notification_from(state, current_notifications))
+    latest_openable_notification_from_model(&model, &panel_notifications)
+        .or_else(|| latest_openable_notification_from_model(&model, &current_notifications))
+}
+
+#[cfg(test)]
+fn latest_openable_notification_for_panel_click(
+    state: &SocketAppState,
+    panel_notifications: &[NotificationItem],
+) -> Option<NotificationItem> {
+    select_open_latest_notification_for_panel_click(state, panel_notifications)
 }
 
 fn notification_jump_priority(notification: &NotificationItem) -> u8 {
@@ -85,29 +100,12 @@ fn notification_jump_priority(notification: &NotificationItem) -> u8 {
     }
 }
 
-pub(super) fn notification_count_label(count: usize) -> String {
+fn notification_count_label(count: usize) -> String {
     match count {
         0 => "All clear".to_string(),
         1 => "1 notification".to_string(),
         count => format!("{count} notifications"),
     }
-}
-
-fn notification_openable_count(state: &SocketAppState) -> usize {
-    let notifications = state
-        .model
-        .lock()
-        .ok()
-        .map(|model| model.list_notifications())
-        .unwrap_or_default();
-    notifications
-        .iter()
-        .filter(|notification| notification_target_exists(state, notification))
-        .count()
-}
-
-pub(super) fn open_latest_button_visible(state: &SocketAppState) -> bool {
-    notification_openable_count(state) > 1
 }
 
 fn notification_workspace_id(
@@ -125,37 +123,36 @@ fn notification_workspace_id(
         .and_then(|workspace_id| model.workspace_id_for(WorkspaceSelector::Id(workspace_id)))
 }
 
-fn notification_targets_active_workspace(
-    state: &SocketAppState,
+fn notification_targets_active_workspace_in_model(
+    model: &WorkspaceModel,
     notification: &NotificationItem,
 ) -> bool {
-    let Ok(model) = state.model.lock() else {
-        return false;
-    };
     let Some(active_workspace_id) = model.active_workspace_id() else {
         return false;
     };
-    notification_workspace_id(&model, notification).as_deref() == Some(active_workspace_id.as_str())
+    notification_workspace_id(model, notification).as_deref() == Some(active_workspace_id.as_str())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct NotificationPanelRow {
-    pub(super) notification: NotificationItem,
-    pub(super) section_label: &'static str,
-    pub(super) current_workspace: bool,
-    pub(super) openable: bool,
+struct NotificationPanelRow {
+    notification: NotificationItem,
+    section_label: &'static str,
+    current_workspace: bool,
+    openable: bool,
+    target_label: Option<String>,
 }
 
-pub(super) fn notification_panel_rows(
-    state: &SocketAppState,
+fn notification_panel_rows_from_model(
+    model: &WorkspaceModel,
     notifications: &[NotificationItem],
 ) -> Vec<NotificationPanelRow> {
     let mut rows = notifications
         .iter()
         .enumerate()
         .map(|(index, notification)| {
-            let openable = notification_target_exists(state, notification);
-            let current_workspace = notification_targets_active_workspace(state, notification);
+            let openable = notification_target_exists_in_model(model, notification);
+            let current_workspace =
+                notification_targets_active_workspace_in_model(model, notification);
             let (priority, section_label) =
                 if notification.kind == NotificationKind::Prompt && openable {
                     (0, "Needs action")
@@ -174,6 +171,7 @@ pub(super) fn notification_panel_rows(
                     section_label,
                     current_workspace,
                     openable,
+                    target_label: notification_target_label_from_model(model, notification),
                 },
             )
         })
@@ -186,47 +184,102 @@ pub(super) fn notification_panel_rows(
     rows.into_iter().map(|(_, _, _, row)| row).collect()
 }
 
-pub(super) fn notification_panel_section_counts(
-    rows: &[NotificationPanelRow],
-) -> BTreeMap<&'static str, usize> {
-    let mut counts = BTreeMap::new();
-    for row in rows {
-        *counts.entry(row.section_label).or_insert(0) += 1;
-    }
-    counts
+#[cfg(test)]
+fn notification_panel_rows(
+    state: &SocketAppState,
+    notifications: &[NotificationItem],
+) -> Vec<NotificationPanelRow> {
+    state
+        .model
+        .lock()
+        .ok()
+        .map(|model| notification_panel_rows_from_model(&model, notifications))
+        .unwrap_or_default()
 }
 
-pub(super) fn notification_panel_section_should_hide_after_dismiss(
-    counts: &mut BTreeMap<&'static str, usize>,
-    section_label: &'static str,
-) -> bool {
-    match counts.get_mut(section_label) {
-        Some(count) if *count > 1 => {
-            *count -= 1;
-            false
-        }
-        Some(count) if *count == 1 => {
-            *count = 0;
-            true
-        }
-        _ => false,
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NotificationPanelSnapshot {
+    rows: Vec<NotificationPanelRow>,
+    count_label: String,
+    clear_enabled: bool,
+    footer_visible: bool,
+    open_latest_visible: bool,
+    open_latest: Option<NotificationItem>,
 }
 
-fn notifications_for_panel_open(model: &mut WorkspaceModel) -> Vec<NotificationItem> {
+fn notification_panel_snapshot_from_model(model: &mut WorkspaceModel) -> NotificationPanelSnapshot {
     let mut notifications = model.list_notifications();
+    let open_latest_id = latest_openable_notification_from_model(model, &notifications)
+        .map(|notification| notification.id);
+    let openable_count = notifications
+        .iter()
+        .filter(|notification| notification_target_exists_in_model(model, notification))
+        .count();
     model.mark_notifications_read();
     for notification in &mut notifications {
         notification.read = true;
     }
+    let open_latest = open_latest_id.and_then(|notification_id| {
+        notifications
+            .iter()
+            .find(|notification| notification.id == notification_id)
+            .cloned()
+    });
+    let rows = notification_panel_rows_from_model(model, &notifications);
+    let count = rows.len();
+    NotificationPanelSnapshot {
+        rows,
+        count_label: notification_count_label(count),
+        clear_enabled: count > 0,
+        footer_visible: count > 0,
+        open_latest_visible: openable_count > 1,
+        open_latest,
+    }
+}
+
+fn notification_panel_snapshot(state: &SocketAppState) -> NotificationPanelSnapshot {
+    state
+        .model
+        .lock()
+        .ok()
+        .map(|mut model| notification_panel_snapshot_from_model(&mut model))
+        .unwrap_or_else(|| NotificationPanelSnapshot {
+            rows: Vec::new(),
+            count_label: notification_count_label(0),
+            clear_enabled: false,
+            footer_visible: false,
+            open_latest_visible: false,
+            open_latest: None,
+        })
+}
+
+fn dismiss_notification_for_panel(
+    state: &SocketAppState,
+    notification_id: &str,
+) -> Option<NotificationItem> {
+    let mut model = state.model.lock().ok()?;
+    let notification = model
+        .list_notifications()
+        .into_iter()
+        .find(|notification| notification.id == notification_id)?;
+    model
+        .dismiss_notification(notification_id)
+        .then_some(notification)
+}
+
+fn clear_notifications_for_panel(state: &SocketAppState) -> Vec<NotificationItem> {
+    let Ok(mut model) = state.model.lock() else {
+        return Vec::new();
+    };
+    let notifications = model.list_notifications();
+    model.clear_notifications();
     notifications
 }
 
-pub(super) fn notification_target_label(
-    state: &SocketAppState,
+fn notification_target_label_from_model(
+    model: &WorkspaceModel,
     notification: &NotificationItem,
 ) -> Option<String> {
-    let model = state.model.lock().ok()?;
     if let Some(surface_id) = notification.surface_id.as_deref() {
         if let Some(surface) = model.surface(surface_id) {
             let workspace = model
@@ -265,7 +318,19 @@ pub(super) fn notification_target_label(
         })
 }
 
-pub(super) fn open_notification_target(
+#[cfg(test)]
+fn notification_target_label(
+    state: &SocketAppState,
+    notification: &NotificationItem,
+) -> Option<String> {
+    state
+        .model
+        .lock()
+        .ok()
+        .and_then(|model| notification_target_label_from_model(&model, notification))
+}
+
+async fn open_notification_target(
     state: &SocketAppState,
     controller: Option<&Rc<RefCell<TerminalController>>>,
     notification: &NotificationItem,
@@ -310,7 +375,7 @@ pub(super) fn open_notification_target(
         }
     }
 
-    match select_workspace_with_terminal(state, &workspace_id) {
+    match select_workspace_with_terminal(state, &workspace_id).await {
         Ok(true) => {}
         Ok(false) => return false,
         Err(err) => {
@@ -444,9 +509,7 @@ fn terminal_notification_activation_report(metadata: &TerminalNotificationMetada
     format!("\x1b]99;i={};\x1b\\", metadata.id)
 }
 
-pub(super) fn terminal_notification_close_report(
-    metadata: &TerminalNotificationMetadata,
-) -> String {
+fn terminal_notification_close_report(metadata: &TerminalNotificationMetadata) -> String {
     format!("\x1b]99;i={}:p=close;\x1b\\", metadata.id)
 }
 
@@ -517,132 +580,85 @@ fn terminal_notification_icon_widget(
     }
 }
 
-pub(super) fn show_notification_panel(
-    parent: &adw::ApplicationWindow,
-    state: &SocketAppState,
+struct NotificationPanel {
+    dialog: gtk::Window,
+    view: Rc<RefCell<NotificationPanelView>>,
+    jump: gtk::Button,
+    clear: gtk::Button,
+}
+
+struct NotificationPanelView {
+    state: SocketAppState,
     controller: Option<Rc<RefCell<TerminalController>>>,
-) {
-    let notifications = state
-        .model
-        .lock()
-        .ok()
-        .map(|mut model| notifications_for_panel_open(&mut model))
-        .unwrap_or_default();
-    let has_notifications = !notifications.is_empty();
+    dialog: glib::WeakRef<gtk::Window>,
+    subtitle: gtk::Label,
+    body: gtk::Box,
+    footer: gtk::Box,
+    jump: gtk::Button,
+    clear: gtk::Button,
+    snapshot: Option<NotificationPanelSnapshot>,
+    refresh_source: Option<glib::SourceId>,
+}
 
-    let dialog = gtk::Window::builder()
-        .title("Notifications")
-        .transient_for(parent)
-        .modal(true)
-        .resizable(true)
-        .default_width(460)
-        .default_height(if has_notifications { 400 } else { 280 })
-        .build();
-    dialog.set_size_request(380, 300);
-    dialog.add_css_class("ft-dialog");
-    dialog.add_css_class("notification-panel");
-    apply_resizable_dialog_chrome(&dialog);
-    install_escape_close(&dialog);
-    restore_focus_after_hide(&dialog, parent);
-
-    let header_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    header_box.add_css_class("ft-dialog-header");
-    let title = gtk::Label::builder()
-        .label("Notifications")
-        .xalign(0.0)
-        .build();
-    title.add_css_class("ft-dialog-title");
-    header_box.append(&title);
-
-    let subtitle = gtk::Label::builder()
-        .label(notification_count_label(notifications.len()))
-        .xalign(0.0)
-        .build();
-    subtitle.add_css_class("ft-dialog-subtitle");
-    header_box.append(&subtitle);
-
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    body.add_css_class("ft-dialog-body");
-    body.set_vexpand(true);
-
-    let list = gtk::ListBox::builder()
-        .selection_mode(gtk::SelectionMode::None)
-        .build();
-    list.add_css_class("notification-list");
-    list.update_property(&[gtk::accessible::Property::Label("Notifications list")]);
-
-    let jump = gtk::Button::with_label("Open Latest");
-    jump.add_css_class("settings-inline-action");
-    jump.add_css_class("subtle");
-    let has_openable_notification = open_latest_button_visible(state);
-    jump.set_sensitive(has_openable_notification);
-    jump.set_visible(has_openable_notification);
-    jump.set_tooltip_text(Some("Open the latest notification with a workspace target"));
-    let clear = gtk::Button::with_label("Clear");
-    clear.add_css_class("settings-inline-action");
-    clear.add_css_class("subtle");
-    clear.set_sensitive(has_notifications);
-    clear.set_tooltip_text(Some("Clear all notifications"));
-
-    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    footer.add_css_class("ft-dialog-footer");
-    footer.add_css_class("notification-panel-footer");
-    footer.set_visible(has_notifications);
-    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    spacer.set_hexpand(true);
-    footer.append(&spacer);
-    footer.append(&jump);
-    footer.append(&clear);
-
-    let show_empty_state = {
-        let body = body.clone();
-        let subtitle = subtitle.clone();
-        let clear = clear.clone();
-        let jump = jump.clone();
-        let footer = footer.clone();
-        Rc::new(move || {
-            while let Some(child) = body.first_child() {
-                body.remove(&child);
+impl NotificationPanelView {
+    fn refresh(&mut self, view: &std::rc::Weak<RefCell<Self>>) {
+        let mut snapshot = notification_panel_snapshot(&self.state);
+        if let Some(current) = self.snapshot.as_ref() {
+            let same_visible_content = current.rows == snapshot.rows
+                && current.count_label == snapshot.count_label
+                && current.clear_enabled == snapshot.clear_enabled
+                && current.footer_visible == snapshot.footer_visible
+                && current.open_latest_visible == snapshot.open_latest_visible;
+            if same_visible_content {
+                // Opening the panel marks rows read. Keep the target chosen from the
+                // pre-mark-read ordering until a visible model change is rendered.
+                snapshot.open_latest.clone_from(&current.open_latest);
             }
-            let empty = compact_status_page(
+        }
+        if self.snapshot.as_ref() == Some(&snapshot) {
+            return;
+        }
+        self.render(&snapshot, view);
+        self.snapshot = Some(snapshot);
+    }
+
+    fn render(
+        &mut self,
+        snapshot: &NotificationPanelSnapshot,
+        view: &std::rc::Weak<RefCell<Self>>,
+    ) {
+        while let Some(child) = self.body.first_child() {
+            self.body.remove(&child);
+        }
+        self.subtitle.set_label(&snapshot.count_label);
+        self.clear.set_sensitive(snapshot.clear_enabled);
+        self.footer.set_visible(snapshot.footer_visible);
+        let open_latest_visible = snapshot.open_latest_visible && snapshot.open_latest.is_some();
+        self.jump.set_sensitive(open_latest_visible);
+        self.jump.set_visible(open_latest_visible);
+
+        if snapshot.rows.is_empty() {
+            self.body.append(&compact_status_page(
                 "forktty-notifications-symbolic",
                 "No Notifications",
                 "New prompts and alerts will appear here.",
-            );
-            body.append(&empty);
-            subtitle.set_label("All clear");
-            clear.set_sensitive(false);
-            jump.set_sensitive(false);
-            jump.set_visible(false);
-            footer.set_visible(false);
-        })
-    };
+            ));
+            return;
+        }
 
-    let refresh_jump_state = {
-        let state = state.clone();
-        let jump = jump.clone();
-        Rc::new(move || {
-            let openable = open_latest_button_visible(&state);
-            jump.set_sensitive(openable);
-            jump.set_visible(openable);
-        })
-    };
-
-    if !has_notifications {
-        show_empty_state();
-    } else {
+        let list = gtk::ListBox::builder()
+            .selection_mode(gtk::SelectionMode::None)
+            .build();
+        list.add_css_class("notification-list");
+        list.update_property(&[gtk::accessible::Property::Label("Notifications list")]);
         let scroll = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vexpand(true)
             .child(&list)
             .build();
-        let rows = notification_panel_rows(state, &notifications);
-        let section_counts = Rc::new(RefCell::new(notification_panel_section_counts(&rows)));
-        let section_headers = Rc::new(RefCell::new(
-            BTreeMap::<&'static str, gtk::ListBoxRow>::new(),
-        ));
+
         let mut previous_section = None;
-        for panel_row in rows {
+        for panel_row in &snapshot.rows {
             if previous_section != Some(panel_row.section_label) {
                 let section_row = gtk::ListBoxRow::new();
                 section_row.set_selectable(false);
@@ -654,16 +670,13 @@ pub(super) fn show_notification_panel(
                 section.add_css_class("notification-section");
                 section_row.set_child(Some(&section));
                 list.append(&section_row);
-                section_headers
-                    .borrow_mut()
-                    .insert(panel_row.section_label, section_row);
                 previous_section = Some(panel_row.section_label);
             }
+
             let notification = &panel_row.notification;
             let row = gtk::ListBoxRow::new();
             row.set_selectable(false);
             row.set_activatable(false);
-
             let card = gtk::Box::builder()
                 .orientation(gtk::Orientation::Vertical)
                 .spacing(4)
@@ -708,26 +721,40 @@ pub(super) fn show_notification_panel(
             top.append(&badge);
             top.append(&title);
             top.append(&age);
+
             if panel_row.openable {
                 let open = gtk::Button::with_label("Open");
                 open.add_css_class("flat");
                 open.add_css_class("notification-open");
                 open.set_tooltip_text(Some("Open the workspace for this notification"));
-                let state_for_open = state.clone();
-                let controller_for_open = controller.clone();
-                let notification_for_open = notification.clone();
-                let dialog_for_open = dialog.clone();
+                let view = view.clone();
+                let notification = notification.clone();
                 open.connect_clicked(move |_| {
-                    if open_notification_target(
-                        &state_for_open,
-                        controller_for_open.as_ref(),
-                        &notification_for_open,
-                    ) {
-                        dialog_for_open.close();
-                    }
+                    let Some(view) = view.upgrade() else {
+                        return;
+                    };
+                    let (state, controller, dialog) = {
+                        let view = view.borrow();
+                        (
+                            view.state.clone(),
+                            view.controller.clone(),
+                            view.dialog.upgrade(),
+                        )
+                    };
+                    let notification = notification.clone();
+                    glib::spawn_future_local(async move {
+                        if open_notification_target(&state, controller.as_ref(), &notification)
+                            .await
+                        {
+                            if let Some(dialog) = dialog {
+                                dialog.close();
+                            }
+                        }
+                    });
                 });
                 top.append(&open);
             }
+
             let dismiss = gtk::Button::builder()
                 .icon_name("forktty-close-symbolic")
                 .tooltip_text("Dismiss notification")
@@ -735,60 +762,22 @@ pub(super) fn show_notification_panel(
             dismiss.add_css_class("flat");
             dismiss.add_css_class("notification-dismiss");
             set_accessible_button_text(&dismiss, "Dismiss notification", None);
-            let state_for_dismiss = state.clone();
-            let controller_for_dismiss = controller.clone();
-            let notification_for_dismiss = notification.clone();
+            let view_for_dismiss = view.clone();
             let notification_id = notification.id.clone();
-            let section_for_dismiss = panel_row.section_label;
-            let section_counts_for_dismiss = section_counts.clone();
-            let section_headers_for_dismiss = section_headers.clone();
-            let row_for_dismiss = row.clone();
-            let subtitle_for_dismiss = subtitle.clone();
-            let show_empty_for_dismiss = show_empty_state.clone();
-            let refresh_jump_for_dismiss = refresh_jump_state.clone();
             dismiss.connect_clicked(move |_| {
-                let mut removed = false;
-                let remaining = state_for_dismiss
-                    .model
-                    .lock()
-                    .ok()
-                    .map(|mut model| {
-                        removed = model.dismiss_notification(&notification_id);
-                        model.list_notifications().len()
-                    })
-                    .unwrap_or(0);
-                if removed {
-                    state_for_dismiss.mark_notification_feed_entries_cleared(std::slice::from_ref(
-                        &notification_for_dismiss,
-                    ));
+                let Some(view) = view_for_dismiss.upgrade() else {
+                    return;
+                };
+                let (state, controller) = {
+                    let view = view.borrow();
+                    (view.state.clone(), view.controller.clone())
+                };
+                if let Some(notification) = dismiss_notification_for_panel(&state, &notification_id)
+                {
                     close_desktop_notification(&notification_id);
-                    send_terminal_notification_close_report(
-                        controller_for_dismiss.as_ref(),
-                        &notification_for_dismiss,
-                    );
-                    let hide_section = {
-                        let mut counts = section_counts_for_dismiss.borrow_mut();
-                        notification_panel_section_should_hide_after_dismiss(
-                            &mut counts,
-                            section_for_dismiss,
-                        )
-                    };
-                    if hide_section {
-                        if let Some(section) = section_headers_for_dismiss
-                            .borrow()
-                            .get(section_for_dismiss)
-                        {
-                            section.set_visible(false);
-                        }
-                    }
+                    send_terminal_notification_close_report(controller.as_ref(), &notification);
                 }
-                row_for_dismiss.set_visible(false);
-                if remaining == 0 {
-                    show_empty_for_dismiss();
-                } else {
-                    subtitle_for_dismiss.set_label(&notification_count_label(remaining));
-                    refresh_jump_for_dismiss();
-                }
+                view.borrow_mut().refresh(&view_for_dismiss);
             });
             top.append(&dismiss);
 
@@ -800,9 +789,9 @@ pub(super) fn show_notification_panel(
                 .selectable(true)
                 .build();
             body_label.add_css_class("notification-body");
-
             card.append(&top);
             card.append(&body_label);
+
             if let Some(metadata) = notification
                 .terminal_metadata
                 .as_ref()
@@ -814,12 +803,12 @@ pub(super) fn show_notification_panel(
                     let button = gtk::Button::with_label(label);
                     button.add_css_class("flat");
                     set_accessible_button_text(&button, label, None);
-                    let controller_for_button = controller.clone();
-                    let notification_for_button = notification.clone();
+                    let controller = self.controller.clone();
+                    let notification = notification.clone();
                     button.connect_clicked(move |_| {
                         send_terminal_notification_button_report(
-                            controller_for_button.as_ref(),
-                            &notification_for_button,
+                            controller.as_ref(),
+                            &notification,
                             index + 1,
                         );
                     });
@@ -827,10 +816,10 @@ pub(super) fn show_notification_panel(
                 }
                 card.append(&actions);
             }
-            if let Some(target) = notification_target_label(state, notification) {
+            if let Some(target) = panel_row.target_label.as_deref() {
                 let target_label = gtk::Label::builder()
-                    .label(&target)
-                    .tooltip_text(&target)
+                    .label(target)
+                    .tooltip_text(target)
                     .xalign(0.0)
                     .ellipsize(gtk::pango::EllipsizeMode::Middle)
                     .max_width_chars(58)
@@ -842,176 +831,220 @@ pub(super) fn show_notification_panel(
             row.set_child(Some(&card));
             list.append(&row);
         }
-        body.append(&scroll);
+        self.body.append(&scroll);
     }
 
-    {
-        let state_for_jump = state.clone();
-        let controller_for_jump = controller.clone();
-        let dialog_for_jump = dialog.clone();
-        let jump_for_click = jump.clone();
-        let notifications_for_jump = notifications.clone();
-        jump.connect_clicked(move |_| {
-            let Some(notification) = latest_openable_notification_for_panel_click(
-                &state_for_jump,
-                &notifications_for_jump,
-            ) else {
-                jump_for_click.set_sensitive(false);
-                return;
+    fn start_refresh(view: &Rc<RefCell<Self>>) {
+        let view_weak = Rc::downgrade(view);
+        let source = glib::timeout_add_local(NOTIFICATION_PANEL_REFRESH_INTERVAL, move || {
+            let Some(view) = view_weak.upgrade() else {
+                return glib::ControlFlow::Break;
             };
-            if open_notification_target(
-                &state_for_jump,
-                controller_for_jump.as_ref(),
-                &notification,
-            ) {
-                dialog_for_jump.close();
+            let visible = view
+                .borrow()
+                .dialog
+                .upgrade()
+                .is_some_and(|dialog| dialog.is_visible());
+            if !visible {
+                view.borrow_mut().refresh_source.take();
+                return glib::ControlFlow::Break;
+            }
+            view.borrow_mut().refresh(&view_weak);
+            glib::ControlFlow::Continue
+        });
+        view.borrow_mut().refresh_source = Some(source);
+    }
+
+    fn stop_refresh(&mut self) {
+        if let Some(source) = self.refresh_source.take() {
+            source.remove();
+        }
+    }
+}
+
+impl Drop for NotificationPanelView {
+    fn drop(&mut self) {
+        self.stop_refresh();
+    }
+}
+
+impl NotificationPanel {
+    fn new(
+        parent: &adw::ApplicationWindow,
+        state: &SocketAppState,
+        controller: Option<Rc<RefCell<TerminalController>>>,
+    ) -> Self {
+        let initial_snapshot = notification_panel_snapshot(state);
+        let dialog = gtk::Window::builder()
+            .title("Notifications")
+            .transient_for(parent)
+            .modal(true)
+            .resizable(true)
+            .default_width(460)
+            .default_height(if initial_snapshot.rows.is_empty() {
+                280
+            } else {
+                400
+            })
+            .build();
+        dialog.set_size_request(380, 300);
+        dialog.add_css_class("ft-dialog");
+        dialog.add_css_class("notification-panel");
+        apply_resizable_dialog_chrome(&dialog);
+        install_escape_close(&dialog);
+        restore_focus_after_hide(&dialog, parent);
+
+        let header_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        header_box.add_css_class("ft-dialog-header");
+        let title = gtk::Label::builder()
+            .label("Notifications")
+            .xalign(0.0)
+            .build();
+        title.add_css_class("ft-dialog-title");
+        header_box.append(&title);
+        let subtitle = gtk::Label::builder().xalign(0.0).build();
+        subtitle.add_css_class("ft-dialog-subtitle");
+        header_box.append(&subtitle);
+
+        let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        body.add_css_class("ft-dialog-body");
+        body.set_vexpand(true);
+
+        let jump = gtk::Button::with_label("Open Latest");
+        jump.add_css_class("settings-inline-action");
+        jump.add_css_class("subtle");
+        jump.set_tooltip_text(Some("Open the latest notification with a workspace target"));
+        let clear = gtk::Button::with_label("Clear");
+        clear.add_css_class("settings-inline-action");
+        clear.add_css_class("subtle");
+        clear.set_tooltip_text(Some("Clear all notifications"));
+
+        let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        footer.add_css_class("ft-dialog-footer");
+        footer.add_css_class("notification-panel-footer");
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        footer.append(&spacer);
+        footer.append(&jump);
+        footer.append(&clear);
+
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        content.append(&header_box);
+        content.append(&body);
+        content.append(&footer);
+        dialog.set_child(Some(&content));
+
+        let view = Rc::new(RefCell::new(NotificationPanelView {
+            state: state.clone(),
+            controller,
+            dialog: dialog.downgrade(),
+            subtitle,
+            body,
+            footer,
+            jump: jump.clone(),
+            clear: clear.clone(),
+            snapshot: None,
+            refresh_source: None,
+        }));
+        let view_weak = Rc::downgrade(&view);
+        {
+            let mut view = view.borrow_mut();
+            view.render(&initial_snapshot, &view_weak);
+            view.snapshot = Some(initial_snapshot);
+        }
+
+        jump.connect_clicked({
+            let view_weak = view_weak.clone();
+            move |_| {
+                let Some(view) = view_weak.upgrade() else {
+                    return;
+                };
+                view.borrow_mut().refresh(&view_weak);
+                let (state, controller, cached_open_latest, dialog) = {
+                    let view = view.borrow();
+                    (
+                        view.state.clone(),
+                        view.controller.clone(),
+                        view.snapshot
+                            .as_ref()
+                            .and_then(|snapshot| snapshot.open_latest.clone()),
+                        view.dialog.upgrade(),
+                    )
+                };
+                let cached_open_latest = cached_open_latest.as_slice();
+                let Some(notification) =
+                    select_open_latest_notification_for_panel_click(&state, cached_open_latest)
+                else {
+                    view.borrow_mut().refresh(&view_weak);
+                    return;
+                };
+                let view_weak_for_open = view_weak.clone();
+                glib::spawn_future_local(async move {
+                    if open_notification_target(&state, controller.as_ref(), &notification).await {
+                        if let Some(dialog) = dialog {
+                            dialog.close();
+                        }
+                    } else if let Some(view) = view_weak_for_open.upgrade() {
+                        view.borrow_mut().refresh(&view_weak_for_open);
+                    }
+                });
             }
         });
-    }
 
-    let state_for_clear = state.clone();
-    let controller_for_clear = controller.clone();
-    let show_empty_for_clear = show_empty_state.clone();
-    clear.connect_clicked(move |_| {
-        let notifications = if let Ok(mut model) = state_for_clear.model.lock() {
-            let notifications = model.list_notifications();
-            model.clear_notifications();
-            notifications
-        } else {
-            Vec::new()
-        };
-        state_for_clear.mark_notification_feed_entries_cleared(&notifications);
-        for notification in notifications {
-            close_desktop_notification(&notification.id);
-            send_terminal_notification_close_report(controller_for_clear.as_ref(), &notification);
+        clear.connect_clicked({
+            let view_weak = view_weak.clone();
+            move |_| {
+                let Some(view) = view_weak.upgrade() else {
+                    return;
+                };
+                let (state, controller) = {
+                    let view = view.borrow();
+                    (view.state.clone(), view.controller.clone())
+                };
+                for notification in clear_notifications_for_panel(&state) {
+                    close_desktop_notification(&notification.id);
+                    send_terminal_notification_close_report(controller.as_ref(), &notification);
+                }
+                view.borrow_mut().refresh(&view_weak);
+            }
+        });
+
+        dialog.connect_close_request({
+            let view_owner = Rc::new(RefCell::new(Some(view.clone())));
+            move |_| {
+                if let Some(view) = view_owner.borrow_mut().take() {
+                    view.borrow_mut().stop_refresh();
+                }
+                glib::Propagation::Proceed
+            }
+        });
+
+        Self {
+            dialog,
+            view,
+            jump,
+            clear,
         }
-        show_empty_for_clear();
-    });
-
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    content.append(&header_box);
-    content.append(&body);
-    content.append(&footer);
-    dialog.set_child(Some(&content));
-    dialog.present();
-    if jump.is_visible() && jump.is_sensitive() {
-        jump.grab_focus();
-    } else if clear.is_visible() && clear.is_sensitive() {
-        clear.grab_focus();
     }
+
+    fn present(&self) {
+        self.dialog.present();
+        NotificationPanelView::start_refresh(&self.view);
+        if self.jump.is_visible() && self.jump.is_sensitive() {
+            self.jump.grab_focus();
+        } else if self.clear.is_visible() && self.clear.is_sensitive() {
+            self.clear.grab_focus();
+        }
+    }
+}
+
+pub(super) fn show_notification_panel(
+    parent: &adw::ApplicationWindow,
+    state: &SocketAppState,
+    controller: Option<Rc<RefCell<TerminalController>>>,
+) {
+    NotificationPanel::new(parent, state, controller).present();
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use base64::Engine;
-
-    #[test]
-    fn panel_open_snapshot_marks_rows_read_after_model_update() {
-        let mut model = WorkspaceModel::new();
-        let workspace = model.create_workspace("main", "/tmp");
-        model.create_notification(
-            "Prompt",
-            "Ready",
-            NotificationKind::Prompt,
-            Some(workspace.id),
-            None,
-        );
-
-        let notifications = notifications_for_panel_open(&mut model);
-
-        assert_eq!(model.unread_notification_count(), 0);
-        assert!(model.list_notifications().iter().all(|item| item.read));
-        assert!(notifications.iter().all(|item| item.read));
-    }
-
-    #[test]
-    fn terminal_notification_reports_use_osc99_reply_sequences() {
-        let metadata = TerminalNotificationMetadata {
-            id: "build".to_string(),
-            report_activation: true,
-            report_close: true,
-            buttons: vec!["Retry".to_string(), "Open logs".to_string()],
-            icon_names: vec!["warning".to_string()],
-            icon_data: None,
-            icon_cache_id: None,
-            urgency: None,
-            sound_name: None,
-            expires_after_ms: None,
-            app_name: None,
-            notification_types: Vec::new(),
-        };
-
-        assert_eq!(
-            terminal_notification_icon_name(&metadata),
-            Some("dialog-warning")
-        );
-        assert_eq!(
-            terminal_notification_activation_report(&metadata),
-            "\x1b]99;i=build;\x1b\\"
-        );
-        assert_eq!(
-            terminal_notification_close_report(&metadata),
-            "\x1b]99;i=build:p=close;\x1b\\"
-        );
-        assert_eq!(
-            terminal_notification_button_report(&metadata, 2),
-            "\x1b]99;i=build;2\x1b\\"
-        );
-    }
-
-    #[test]
-    fn terminal_notification_app_name_falls_back_to_in_app_icon() {
-        let metadata = TerminalNotificationMetadata {
-            id: "build".to_string(),
-            report_activation: false,
-            report_close: false,
-            buttons: Vec::new(),
-            icon_names: Vec::new(),
-            icon_data: None,
-            icon_cache_id: None,
-            urgency: None,
-            sound_name: None,
-            expires_after_ms: None,
-            app_name: Some("make".to_string()),
-            notification_types: Vec::new(),
-        };
-
-        assert_eq!(terminal_notification_icon_name(&metadata), Some("make"));
-    }
-
-    #[test]
-    fn terminal_notification_icon_name_takes_precedence_over_icon_data() {
-        let metadata = TerminalNotificationMetadata {
-            id: "build".to_string(),
-            report_activation: false,
-            report_close: false,
-            buttons: Vec::new(),
-            icon_names: vec!["warning".to_string()],
-            icon_data: Some(b"PNG".to_vec()),
-            icon_cache_id: Some("icon-1".to_string()),
-            urgency: None,
-            sound_name: None,
-            expires_after_ms: None,
-            app_name: None,
-            notification_types: Vec::new(),
-        };
-
-        assert_eq!(
-            terminal_notification_icon_source(&metadata),
-            Some(TerminalNotificationIconSource::Name("dialog-warning"))
-        );
-    }
-
-    #[test]
-    fn terminal_notification_icon_data_decodes_png_pixbuf() {
-        let png = base64::engine::general_purpose::STANDARD
-            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQMAAAAl21bKAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGUExURf8AAP///0EdNBEAAAABYktHRAH/Ai3eAAAAB3RJTUUH6gYQFTsXAd47HwAAACV0RVh0ZGF0ZTpjcmVhdGUAMjAyNi0wNi0xNlQyMTo1OToyMyswMDowMPXxEoYAAAAldEVYdGRhdGU6bW9kaWZ5ADIwMjYtMDYtMTZUMjE6NTk6MjMrMDA6MDCErKo6AAAAKHRFWHRkYXRlOnRpbWVzdGFtcAAyMDI2LTA2LTE2VDIxOjU5OjIzKzAwOjAw07mL5QAAAApJREFUCNdjYAAAAAIAAeIhvDMAAAAASUVORK5CYII=")
-            .unwrap();
-
-        let pixbuf = terminal_notification_icon_pixbuf(&png).unwrap();
-
-        assert_eq!(pixbuf.width(), 1);
-        assert_eq!(pixbuf.height(), 1);
-    }
-}
+mod tests;

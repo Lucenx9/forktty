@@ -1,6 +1,8 @@
 use crate::{
     close_replacement_terminal_surface_if_present, close_terminal_surfaces_or_restore,
-    ensure_terminal_for_active_workspace, evict_hook_session_targets_for_surfaces,
+    current_model_surfaces, ensure_terminal_for_active_workspace,
+    evict_hook_session_targets_for_surfaces,
+    hook_session::{hook_target_gates_for_surfaces, lock_hook_target_gates},
     rollback_replacement_if_redundant, rollback_workspace_creation, spawn_workspace_terminal,
     topology_params::{
         WorkspaceCreateRequest, WorkspaceCreateSshRequest, WorkspaceSelectorRequest,
@@ -10,8 +12,9 @@ use crate::{
 use forktty_core::WorkspaceSelector;
 use serde_json::{json, Value};
 
-pub(crate) fn create(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+pub(crate) async fn create(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = WorkspaceCreateRequest::decode(params)?;
+    let _surface_set_guard = state.surface_set_guard().await;
     let (workspace, previous_active_id) = {
         let mut model = state
             .model
@@ -31,8 +34,12 @@ pub(crate) fn create(state: &SocketAppState, params: &Value) -> Result<Value, Di
     Ok(json!(workspace))
 }
 
-pub(crate) fn create_ssh(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
+pub(crate) async fn create_ssh(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<Value, DispatchError> {
     let request = WorkspaceCreateSshRequest::decode(params)?;
+    let _surface_set_guard = state.surface_set_guard().await;
     let (workspace, previous_active_id) = {
         let mut model = state
             .model
@@ -54,6 +61,7 @@ pub(crate) fn create_ssh(state: &SocketAppState, params: &Value) -> Result<Value
 
 pub(crate) async fn select(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = WorkspaceSelectorRequest::decode(params)?;
+    let _surface_set_guard = state.surface_set_guard().await;
     let (workspace, previous_active_id) = {
         let mut model = state
             .model
@@ -91,7 +99,7 @@ pub(crate) async fn select(state: &SocketAppState, params: &Value) -> Result<Val
 
 pub(crate) async fn close(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = WorkspaceSelectorRequest::decode(params)?;
-    let _surface_set_guard = state.coordinator.surface_set.lock().await;
+    let _surface_set_guard = state.surface_set_guard().await;
     let (workspace_id, workspace, surfaces, is_last_workspace) = {
         let model = state
             .model
@@ -113,6 +121,10 @@ pub(crate) async fn close(state: &SocketAppState, params: &Value) -> Result<Valu
         .iter()
         .map(|surface| surface.id.clone())
         .collect::<Vec<_>>();
+    let target_gates = hook_target_gates_for_surfaces(state, &surface_ids)?;
+    let target_guards = lock_hook_target_gates(&target_gates)?;
+    let surfaces = current_model_surfaces(state, &surface_ids)?;
+    let _auto_spawn_suppression = state.suppress_surface_auto_spawn(surface_ids.iter().cloned());
     if is_last_workspace {
         let (replacement, previous_active_id) = {
             let mut model = state
@@ -171,6 +183,7 @@ pub(crate) async fn close(state: &SocketAppState, params: &Value) -> Result<Valu
             }
             return Err(DispatchError::NotFound("workspace".to_string()));
         }
+        drop(target_guards);
         evict_hook_session_targets_for_surfaces(state, &surface_ids)?;
         return Ok(json!(workspace));
     }
@@ -184,6 +197,7 @@ pub(crate) async fn close(state: &SocketAppState, params: &Value) -> Result<Valu
             .close_workspace(WorkspaceSelector::Id(&workspace_id))
             .ok_or(DispatchError::NotFound("workspace".to_string()))?;
     }
+    drop(target_guards);
     evict_hook_session_targets_for_surfaces(state, &surface_ids)?;
     ensure_terminal_for_active_workspace(state).await?;
     Ok(json!(workspace))

@@ -53,9 +53,10 @@ The AppImage target is the primary portable Linux package for alpha
 releases. `scripts/build-appimage.sh` installs the vendored libghostty-vt,
 embedded Ghostty GTK library, and gtk4-layer-shell into `AppDir/usr/lib`,
 and resolves the `forktty` binary's `ldd` graph into
-`AppDir/usr/lib/bundled` for GTK/libadwaita portability. AppRun always adds
-that bundled directory to the library path so terminal panes do not depend on
-host GTK packages. Per the canonical AppImage excludelist it never bundles
+`AppDir/usr/lib/bundled` for GTK/libadwaita portability. AppRun prefers a
+compatible host GTK stack and adds that bundled directory when forced or when
+the auto-mode loader probe fails. Per the canonical AppImage excludelist it
+never bundles
 glibc, fontconfig/freetype/harfbuzz, Wayland/X11 client libraries, the
 OpenGL/Vulkan/Mesa driver stack, GSettings schemas, GIO modules, or desktop
 session services, so the AppImage relies on those parts of the host system.
@@ -98,16 +99,21 @@ Arch-style names:
 ForkTTY currently requires libadwaita 1.4+, matching Ubuntu 24.04 LTS and newer
 distro packages. It does not require a system Ghostty package; terminal widgets
 come from the pinned vendored Ghostty GTK embedding library.
-The `.deb` package depends on `libgtk4-layer-shell0`, and AppImages bundle the
-matching small runtime library because the embedded Ghostty GTK library links
-against it.
+Both the `.deb` package and the AppImage bundle the small `libgtk4-layer-shell.so`
+runtime library privately, because the embedded Ghostty GTK library links against
+its *unversioned* soname — which distro runtime packages (e.g. Debian's
+`libgtk4-layer-shell0`) do not provide, and which Ubuntu 24.04 does not package at
+all. Packaging copies the sibling produced by the same pinned Ghostty Zig build;
+it never substitutes a library discovered from the build host.
 
 ## Runtime Notes
 
 - Embedded Ghostty owns the child PTY and terminal widget; ForkTTY drives panes through the Ghostty GTK embedding ABI.
 - The embedded Ghostty surface starts in the ForkTTY surface cwd and exposes child PID, title, child-exit state, text input/readback, actions, and scrollback restore through the embedding ABI.
 - Linux release artifacts bundle Ghostty shell-integration resources and terminfo alongside the required embedded GTK library.
-- Prompt/metadata detection uses ForkTTY hooks and terminal events and a bounded visible-tail prompt fallback.
+- Prompt/metadata detection uses ForkTTY hooks and terminal events plus a
+  bounded full-scrollback tail when the limited text ABI is available (visible
+  fallback on older embedding libraries).
 - Native session data is written to `~/.local/share/forktty/session-v2.json`.
 - The legacy `session.json` import path exists only for migration; native saves do not overwrite that file.
 - Source-only browser panes store per-profile WebKit data under `~/.local/share/forktty/browser_profiles/<id>/`.

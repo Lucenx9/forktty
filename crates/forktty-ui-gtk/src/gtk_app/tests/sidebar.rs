@@ -80,6 +80,19 @@ fn closed_terminal_status_blocks_auto_spawn() {
 }
 
 #[test]
+fn rollback_spawn_failure_status_blocks_auto_spawn() {
+    let status = StatusEntry {
+        key: surface_status_key("surface-1"),
+        label: "Terminal".to_string(),
+        value: "Spawn failed: backend unavailable".to_string(),
+        color: Some("red".to_string()),
+    };
+
+    assert!(status_entry_suggests_error(&status));
+    assert!(surface_status_blocks_auto_spawn(&[status], "surface-1"));
+}
+
+#[test]
 fn sidebar_badge_ignores_stale_surface_exit_status() {
     let mut model = WorkspaceModel::new();
     model.create_workspace("main", "/tmp");
@@ -145,6 +158,144 @@ fn workspace_meta_line_keeps_workspace_root_without_agent_resume_cwd() {
 }
 
 #[test]
+fn workspace_meta_line_formats_ssh_readiness() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_ssh_workspace("remote", "/tmp", "user@example.com".to_string());
+
+    assert_eq!(
+        workspace_meta_line(&workspace, Some(("user@example.com", true)), None,),
+        "ssh:user@example.com · connected · /tmp"
+    );
+    assert_eq!(
+        workspace_meta_line(&workspace, Some(("user@example.com", false)), None,),
+        "ssh:user@example.com · disconnected · /tmp"
+    );
+}
+
+#[test]
+fn sidebar_snapshot_tracks_ssh_child_exit_and_restart_lifecycle() {
+    crate::test_env::with_isolated_user_dirs(|| {
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let (tx, rx) = mpsc::channel();
+        let terminal = Arc::new(GtkTerminalBackend::new(tx));
+        let socket_path =
+            PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap()).join("forktty.sock");
+        let state = SocketAppState::new(model.clone(), terminal.clone(), "/bin/sh", socket_path)
+            .with_notification_dispatch(false);
+        let (workspace_id, surface) = {
+            let mut model = model.lock().unwrap();
+            let workspace =
+                model.create_ssh_workspace("remote", "/tmp", "user@example.com".to_string());
+            let surface = model
+                .surface(&workspace.focused_surface_id)
+                .unwrap()
+                .clone();
+            (workspace.id, surface)
+        };
+
+        spawn_surface_gtk(&state, &surface).unwrap();
+        let first_generation = match rx.recv().unwrap() {
+            GtkTerminalCommand::Spawn {
+                request,
+                generation,
+            } => {
+                assert_eq!(request.surface_id, surface.id);
+                assert_eq!(
+                    Path::new(&request.shell)
+                        .file_name()
+                        .and_then(|name| name.to_str()),
+                    Some("ssh")
+                );
+                assert_eq!(request.args, ["user@example.com"]);
+                generation
+            }
+            _ => panic!("expected initial SSH spawn command"),
+        };
+        assert_eq!(first_generation, 1);
+        terminal
+            .mark_surface_ready_for_generation(&surface.id, first_generation)
+            .unwrap();
+
+        let connected = sidebar_snapshot(&state);
+        assert_eq!(
+            connected.rows[0].meta,
+            "ssh:user@example.com · connected · /tmp"
+        );
+
+        let pid_removal_called = Cell::new(false);
+        assert!(commit_embedded_child_exit_for_generation(
+            &terminal,
+            &model,
+            &workspace_id,
+            &surface.id,
+            first_generation,
+            Some(0),
+            || pid_removal_called.set(true),
+        )
+        .unwrap()
+        .is_none());
+        assert!(pid_removal_called.get());
+        let (_, _, ready_after_exit) = terminal.runtime_entry_for_test(&surface.id).unwrap();
+        assert!(!ready_after_exit);
+        let exited = sidebar_snapshot(&state);
+        assert_eq!(
+            exited.rows[0].meta,
+            "ssh:user@example.com · disconnected · /tmp"
+        );
+        assert_ne!(exited.signature, connected.signature);
+
+        assert!(glib::MainContext::new().block_on(restart_surface_transaction(&state, &surface.id)));
+        match rx.recv().unwrap() {
+            GtkTerminalCommand::Close {
+                surface_id,
+                generation,
+            } => {
+                assert_eq!(surface_id, surface.id);
+                assert_eq!(generation, first_generation);
+            }
+            _ => panic!("expected SSH close command before restart"),
+        }
+        let restarted_generation = match rx.recv().unwrap() {
+            GtkTerminalCommand::Spawn {
+                request,
+                generation,
+            } => {
+                assert_eq!(request.surface_id, surface.id);
+                assert_eq!(
+                    Path::new(&request.shell)
+                        .file_name()
+                        .and_then(|name| name.to_str()),
+                    Some("ssh")
+                );
+                assert_eq!(request.args, ["user@example.com"]);
+                generation
+            }
+            _ => panic!("expected replacement SSH spawn command"),
+        };
+        assert!(restarted_generation > first_generation);
+        assert!(matches!(
+            terminal.mark_surface_ready_for_generation(&surface.id, first_generation),
+            Err(TerminalError::NotReady(_))
+        ));
+        let restarting = sidebar_snapshot(&state);
+        assert_eq!(
+            restarting.rows[0].meta,
+            "ssh:user@example.com · disconnected · /tmp"
+        );
+
+        terminal
+            .mark_surface_ready_for_generation(&surface.id, restarted_generation)
+            .unwrap();
+        let reconnected = sidebar_snapshot(&state);
+        assert_eq!(
+            reconnected.rows[0].meta,
+            "ssh:user@example.com · connected · /tmp"
+        );
+        assert_ne!(reconnected.signature, restarting.signature);
+    });
+}
+
+#[test]
 fn sidebar_snapshot_hides_launch_cwd_title_when_effective_cwd_differs() {
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
@@ -174,6 +325,66 @@ fn sidebar_snapshot_hides_launch_cwd_title_when_effective_cwd_differs() {
 
     assert_eq!(snapshot.active_full_path.as_deref(), Some("/tmp/forktty"));
     assert_eq!(snapshot.active_pane_label, None);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn session_autosave_updates_sidebar_and_persists_live_terminal_cwd() {
+    crate::test_env::with_isolated_user_dirs(|| {
+        let launch_dir = tempfile::tempdir().unwrap();
+        let live_dir = tempfile::tempdir().unwrap();
+        let runtime_dir = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
+        let socket_path = runtime_dir.join("forktty.sock");
+        let (tx, _rx) = mpsc::channel();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(GtkTerminalBackend::new(tx));
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal.clone(),
+            "/bin/sh",
+            socket_path.clone(),
+        )
+        .with_notification_dispatch(false);
+        let (workspace_id, surface_id) = {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("main", launch_dir.path());
+            (workspace.id, workspace.focused_surface_id)
+        };
+        terminal
+            .spawn(SpawnRequest {
+                surface_id: surface_id.clone(),
+                workspace_id,
+                shell: "/bin/sh".to_string(),
+                args: Vec::new(),
+                cwd: launch_dir.path().to_path_buf(),
+                socket_path,
+                extra_env: Vec::new(),
+                eligible_for_pty_persistence: false,
+            })
+            .unwrap();
+        let child = SleepingTestChild::spawn_in(live_dir.path());
+        terminal.mark_surface_pid(&surface_id, child.id()).unwrap();
+
+        let mut last_saved = None;
+        autosave_session_from_state(&state, &mut last_saved);
+        let snapshot = sidebar_snapshot(&state);
+        let saved = forktty_core::session::load_session()
+            .unwrap()
+            .expect("session should be saved");
+
+        assert_eq!(
+            snapshot.active_full_path.as_deref(),
+            Some(live_dir.path().to_string_lossy().as_ref())
+        );
+        assert_eq!(
+            saved
+                .surfaces
+                .iter()
+                .find(|surface| surface.id == surface_id)
+                .map(|surface| surface.cwd.as_path()),
+            Some(live_dir.path())
+        );
+    });
 }
 
 #[test]
@@ -300,6 +511,142 @@ fn sidebar_activity_summary_ignores_inactive_agent_metadata() {
         format_workspace_activity_summary(&statuses, &progress, None, None),
         "Codex: Working"
     );
+}
+
+#[test]
+fn sidebar_uses_running_session_fallback_for_every_supported_harness() {
+    let harnesses = [
+        (forktty_core::AgentKind::Codex, "Codex"),
+        (forktty_core::AgentKind::ClaudeCode, "Claude"),
+        (forktty_core::AgentKind::Pi, "Pi"),
+        (forktty_core::AgentKind::OpenCode, "OpenCode"),
+        (forktty_core::AgentKind::Antigravity, "Antigravity"),
+        (forktty_core::AgentKind::Grok, "Grok"),
+    ];
+
+    for (index, (agent, label)) in harnesses.into_iter().enumerate() {
+        let mut model = WorkspaceModel::new();
+        let workspace = model.create_workspace(format!("harness-{index}"), "/tmp");
+        let workspace_id = workspace.id.clone();
+        assert!(model.set_surface_agent_session(
+            &workspace.focused_surface_id,
+            agent,
+            format!("session-{index}"),
+        ));
+        let workspace = model
+            .list_workspaces()
+            .into_iter()
+            .find(|candidate| candidate.id == workspace_id)
+            .unwrap();
+
+        let (statuses, progress) = sidebar_visible_metadata(&model, &workspace, &[], &[]);
+        assert_eq!(statuses.len(), 1, "missing {label} lifecycle status");
+        assert_eq!(statuses[0].label, label);
+        assert_eq!(statuses[0].value, "Running");
+        assert!(progress.is_empty());
+
+        let badge = workspace_status_badge(&workspace, &statuses, &progress, None).unwrap();
+        assert_eq!(badge.label, "Working", "wrong {label} badge");
+        assert_eq!(
+            format_workspace_activity_summary(&statuses, &progress, None, None),
+            format!("{label}: Working"),
+        );
+    }
+}
+
+#[test]
+fn sidebar_lifecycle_fallback_yields_to_primary_hook_status() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let workspace_id = workspace.id.clone();
+    assert!(model.set_surface_agent_session(
+        &workspace.focused_surface_id,
+        forktty_core::AgentKind::Codex,
+        "codex-session",
+    ));
+    model
+        .set_status(
+            &workspace_id,
+            "agent:codex:permission",
+            "Codex mode",
+            "full-auto",
+            Some("red".to_string()),
+        )
+        .unwrap();
+    let workspace = model.list_workspaces().remove(0);
+
+    let (statuses, _) =
+        sidebar_visible_metadata(&model, &workspace, &model.list_status(&workspace_id), &[]);
+    assert_eq!(statuses.len(), 2);
+    assert!(statuses.iter().any(|status| {
+        status.key == "agent:codex" && status.label == "Codex" && status.value == "Running"
+    }));
+
+    model
+        .set_status(
+            &workspace_id,
+            "agent:codex",
+            "Codex",
+            "Running tool",
+            Some("blue".to_string()),
+        )
+        .unwrap();
+    let (statuses, _) =
+        sidebar_visible_metadata(&model, &workspace, &model.list_status(&workspace_id), &[]);
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| status.key == "agent:codex")
+            .count(),
+        1
+    );
+    assert!(statuses
+        .iter()
+        .any(|status| status.key == "agent:codex" && status.value == "Running tool"));
+}
+
+#[test]
+fn sidebar_lifecycle_fallback_only_badges_actionable_sessions() {
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", "/tmp");
+    let workspace_id = workspace.id.clone();
+    let surface_id = workspace.focused_surface_id.clone();
+    assert!(model.set_surface_agent_session(
+        &surface_id,
+        forktty_core::AgentKind::Codex,
+        "codex-session",
+    ));
+    let workspace = model.list_workspaces().remove(0);
+
+    assert!(model.set_surface_agent_session_lifecycle(
+        &surface_id,
+        forktty_core::AgentSessionLifecycle::NeedsInput,
+    ));
+    let (statuses, progress) = sidebar_visible_metadata(&model, &workspace, &[], &[]);
+    assert_eq!(statuses[0].value, "Needs input");
+    assert_eq!(
+        workspace_status_badge(&workspace, &statuses, &progress, None)
+            .unwrap()
+            .label,
+        "Input"
+    );
+
+    assert!(model.set_surface_agent_session_lifecycle(
+        &surface_id,
+        forktty_core::AgentSessionLifecycle::Idle,
+    ));
+    let (statuses, progress) = sidebar_visible_metadata(&model, &workspace, &[], &[]);
+    assert!(statuses.is_empty());
+    assert!(workspace_status_badge(&workspace, &statuses, &progress, None).is_none());
+
+    assert!(model.set_surface_agent_session_lifecycle(
+        &surface_id,
+        forktty_core::AgentSessionLifecycle::Ended,
+    ));
+    let (statuses, progress) = sidebar_visible_metadata(&model, &workspace, &[], &[]);
+    assert!(statuses.is_empty());
+    assert!(workspace_status_badge(&workspace, &statuses, &progress, None).is_none());
+    assert!(model.list_status(&workspace_id).is_empty());
 }
 
 #[test]

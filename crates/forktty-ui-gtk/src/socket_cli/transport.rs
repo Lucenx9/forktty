@@ -2,161 +2,8 @@ use super::{next_request_id, CliError, CliResult, MAX_SOCKET_RESPONSE_BYTES, SOC
 use forktty_core::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use serde_json::{json, Value};
 use std::io::{self, BufRead, BufReader, Write};
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
-use std::os::unix::ffi::OsStrExt;
-use std::os::unix::net::UnixStream;
 use std::path::Path;
-use std::time::{Duration, Instant};
-
-/// Connect to a Unix socket with a hard upper bound. `UnixStream::connect`
-/// blocks indefinitely while the server's accept backlog is full (a wedged
-/// GTK app used to hang agent hooks forever): connect non-blocking, wait
-/// within `timeout`, then restore blocking mode for the caller.
-pub(super) fn connect_unix_stream_with_timeout(
-    socket_path: &Path,
-    timeout: Duration,
-) -> io::Result<UnixStream> {
-    let (addr, addr_len) = unix_socket_address(socket_path)?;
-    let deadline = Instant::now() + timeout;
-    // SAFETY: plain socket(2) call; the result is checked before use.
-    let fd = unsafe {
-        libc::socket(
-            libc::AF_UNIX,
-            libc::SOCK_STREAM | libc::SOCK_CLOEXEC | libc::SOCK_NONBLOCK,
-            0,
-        )
-    };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: `fd` is a freshly created socket owned by no one else.
-    let fd = unsafe { OwnedFd::from_raw_fd(fd) };
-    loop {
-        // SAFETY: `addr` is a valid sockaddr_un of `addr_len` bytes.
-        let rc = unsafe {
-            libc::connect(
-                fd.as_raw_fd(),
-                &addr as *const libc::sockaddr_un as *const libc::sockaddr,
-                addr_len,
-            )
-        };
-        if rc == 0 {
-            break;
-        }
-        let err = io::Error::last_os_error();
-        match err.raw_os_error() {
-            Some(libc::EINTR) => continue,
-            Some(libc::EISCONN) => break,
-            Some(libc::EINPROGRESS) => {
-                poll_writable_until(fd.as_raw_fd(), deadline)?;
-                let so_error = take_socket_error(fd.as_raw_fd())?;
-                if so_error != 0 {
-                    return Err(io::Error::from_raw_os_error(so_error));
-                }
-                break;
-            }
-            // AF_UNIX returns EAGAIN when the accept backlog is full; no
-            // pending connection exists, so polling cannot report progress —
-            // retry until the deadline instead of blocking forever.
-            Some(libc::EAGAIN) => {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining.is_zero() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "timed out waiting for the socket accept backlog to drain",
-                    ));
-                }
-                std::thread::sleep(remaining.min(Duration::from_millis(20)));
-            }
-            _ => return Err(err),
-        }
-    }
-    set_blocking(fd.as_raw_fd())?;
-    Ok(UnixStream::from(fd))
-}
-
-pub(super) fn unix_socket_address(path: &Path) -> io::Result<(libc::sockaddr_un, libc::socklen_t)> {
-    let bytes = path.as_os_str().as_bytes();
-    // SAFETY: all-zero is a valid bit pattern for sockaddr_un.
-    let mut addr: libc::sockaddr_un = unsafe { std::mem::zeroed() };
-    if bytes.is_empty() || bytes.contains(&0) || bytes.len() >= addr.sun_path.len() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "socket path is empty, contains NUL, or is too long for sun_path",
-        ));
-    }
-    addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
-    for (dst, src) in addr.sun_path.iter_mut().zip(bytes) {
-        *dst = *src as libc::c_char;
-    }
-    let len = std::mem::size_of::<libc::sa_family_t>() + bytes.len() + 1;
-    Ok((addr, len as libc::socklen_t))
-}
-
-fn poll_writable_until(fd: RawFd, deadline: Instant) -> io::Result<()> {
-    loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "timed out connecting to the socket",
-            ));
-        }
-        let mut poll_fd = libc::pollfd {
-            fd,
-            events: libc::POLLOUT,
-            revents: 0,
-        };
-        let millis = remaining.as_millis().clamp(1, i32::MAX as u128) as libc::c_int;
-        // SAFETY: `poll_fd` is a valid pollfd for the duration of the call.
-        let rc = unsafe { libc::poll(&mut poll_fd, 1, millis) };
-        if rc > 0 {
-            return Ok(());
-        }
-        if rc == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "timed out connecting to the socket",
-            ));
-        }
-        let err = io::Error::last_os_error();
-        if err.kind() != io::ErrorKind::Interrupted {
-            return Err(err);
-        }
-    }
-}
-
-fn take_socket_error(fd: RawFd) -> io::Result<libc::c_int> {
-    let mut so_error: libc::c_int = 0;
-    let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
-    // SAFETY: `so_error`/`len` are valid out-pointers for SO_ERROR.
-    let rc = unsafe {
-        libc::getsockopt(
-            fd,
-            libc::SOL_SOCKET,
-            libc::SO_ERROR,
-            &mut so_error as *mut _ as *mut libc::c_void,
-            &mut len,
-        )
-    };
-    if rc != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(so_error)
-}
-
-fn set_blocking(fd: RawFd) -> io::Result<()> {
-    // SAFETY: fcntl(2) on a descriptor we own.
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if flags < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: see above; clears O_NONBLOCK only.
-    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK) } < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
+use std::time::Duration;
 
 pub(crate) fn send_socket_request_with_timeout(
     socket_path: &Path,
@@ -170,7 +17,7 @@ pub(crate) fn send_socket_request_with_timeout(
         method: method.to_string(),
         params,
     };
-    let mut stream = connect_unix_stream_with_timeout(socket_path, timeout)
+    let mut stream = forktty_socket::connect_unix_stream_with_timeout(socket_path, timeout)
         .map_err(|err| format_socket_connect_error(err, socket_path))?;
     stream.set_read_timeout(Some(timeout)).ok();
     stream.set_write_timeout(Some(timeout)).ok();
@@ -301,7 +148,7 @@ pub(super) fn stream_events(socket_path: &Path, replay: bool) -> CliResult<()> {
         method: "events.subscribe".to_string(),
         params: json!({ "replay": replay }),
     };
-    let mut stream = connect_unix_stream_with_timeout(socket_path, SOCKET_TIMEOUT)
+    let mut stream = forktty_socket::connect_unix_stream_with_timeout(socket_path, SOCKET_TIMEOUT)
         .map_err(|err| format_socket_connect_error(err, socket_path))?;
     // Bound the subscribe round-trip so a wedged server cannot hang the CLI
     // forever; the timeout is lifted once the stream is established because

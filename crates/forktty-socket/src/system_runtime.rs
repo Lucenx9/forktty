@@ -1,11 +1,12 @@
 use crate::{
     agent_session_identify_row, ensure_max_text_size, env_var_os, optional_non_blank_string_param,
-    optional_surface_id_param, provider_runtime, surface_effective_project_cwd,
-    workspace_effective_project_cwd, workspace_selector_from_params, DispatchError, SocketAppState,
+    optional_surface_id_param, surface_effective_project_cwd, workspace_effective_project_cwd,
+    workspace_selector_from_params, DispatchError, SocketAppState,
 };
 use forktty_terminal::TerminalSurfaceState;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::ffi::OsStr;
 
 pub(crate) fn ping() -> Value {
     json!("pong")
@@ -17,12 +18,27 @@ pub(crate) fn capabilities() -> Value {
     json!({
         "version": env!("CARGO_PKG_VERSION"),
         "methods": crate::methods::capability_method_names(),
-        "provider_capabilities": provider_runtime::capabilities(path.as_deref(), &config.team),
-        "team_provider_policy": provider_runtime::team_policy(&config.team),
-        "pty_persistence": provider_runtime::pty_persistence(
+        "pty_persistence": pty_persistence_capability(
             path.as_deref(),
             config.general.persist_terminal_processes,
         ),
+    })
+}
+
+fn pty_persistence_capability(path: Option<&OsStr>, config_enabled: bool) -> Value {
+    let detected = forktty_core::pty_persistence::detect_with_path(path);
+    let broker = detected.as_ref().map(|persistence| persistence.broker);
+    let broker_executable = detected
+        .as_ref()
+        .map(|persistence| persistence.broker_path.to_string_lossy().into_owned());
+    json!({
+        "config_enabled": config_enabled,
+        "active": config_enabled && detected.is_some(),
+        "available": detected.is_some(),
+        "broker": broker.map(|broker| broker.program_name()),
+        "broker_executable": broker_executable,
+        "scope": "plain_terminal_surfaces",
+        "unavailable_reason": if detected.is_none() { Some("broker_not_found") } else { None },
     })
 }
 
@@ -30,6 +46,7 @@ pub(crate) fn identify(state: &SocketAppState, params: &Value) -> Result<Value, 
     let requested_surface_id = optional_surface_id_param(params)?.map(str::to_string);
     let caller_workspace_id = optional_caller_id(params, "caller_workspace_id")?;
     let caller_surface_id = optional_caller_id(params, "caller_surface_id")?;
+    crate::sync_live_surface_cwds(state)?;
     let terminal_surfaces = state.terminal.surfaces().map_err(DispatchError::from)?;
     let terminal_by_id = terminal_surfaces
         .iter()

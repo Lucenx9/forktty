@@ -1,13 +1,14 @@
+use super::system::handle_help;
 use super::{
     build_target_params, format_option_names, format_terminal_safe_json_scalar,
-    insert_optional_cli_bool_param, insert_optional_cli_string_param,
-    insert_optional_cli_u64_param, is_supported_status_color, non_blank_string_option,
-    parse_finite_number, parse_flags, parse_u64_option, print_json, print_result_or_json,
-    read_stdin_text, reject_unknown_options, require_no_args, safe_string_field,
-    sanitize_for_terminal, send_socket_request, should_read_stdin, string_field, string_option,
-    target_selector_values, trimmed_env, write_stdout_line, CliContext, CliError, CliResult,
-    FlagValue,
+    insert_optional_cli_string_param, insert_optional_cli_u64_param, is_supported_status_color,
+    non_blank_string_option, parse_finite_number, parse_flags, parse_u64_option, print_json,
+    print_result_or_json, read_stdin_text, reject_unknown_options, require_no_args,
+    safe_string_field, sanitize_for_terminal, send_socket_request, should_read_stdin,
+    string_option, target_selector_values, trimmed_env, write_stdout_line, CliContext, CliError,
+    CliResult, FlagValue,
 };
+use forktty_core::protocol_limits;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -37,6 +38,7 @@ pub(super) fn handle_status(context: &CliContext, mut args: Vec<String>) -> CliR
     }
     let subcommand = args.remove(0);
     match subcommand.as_str() {
+        "help" | "--help" | "-h" => handle_help(context, vec!["status".to_string()]),
         "summary" | "line" => handle_statusline(context, args),
         "explain" => handle_status_explain(context, args),
         "watch" => handle_status_watch(context, args),
@@ -129,9 +131,6 @@ pub(super) fn context_snapshot_params(
             "surface-id",
             "tail-lines",
             "tail-max-bytes",
-            "include-team-details",
-            "include-workflow-details",
-            "include-feed-trace",
         ],
         command,
     )?;
@@ -166,24 +165,6 @@ fn context_snapshot_params_from_options(
     insert_optional_cli_string_param(&mut params, options, "surface-id", "surface_id")?;
     insert_optional_cli_u64_param(&mut params, options, "tail-lines", "tail_lines")?;
     insert_optional_cli_u64_param(&mut params, options, "tail-max-bytes", "tail_max_bytes")?;
-    insert_optional_cli_bool_param(
-        &mut params,
-        options,
-        "include-team-details",
-        "include_team_details",
-    )?;
-    insert_optional_cli_bool_param(
-        &mut params,
-        options,
-        "include-workflow-details",
-        "include_workflow_details",
-    )?;
-    insert_optional_cli_bool_param(
-        &mut params,
-        options,
-        "include-feed-trace",
-        "include_feed_trace",
-    )?;
     Ok(params)
 }
 
@@ -698,15 +679,35 @@ pub(super) fn format_progress_line(progress: &Value) -> String {
     }
 }
 
-fn format_log_line(log: &Value) -> String {
-    let level = string_field(log, "level").unwrap_or("info");
-    let message = string_field(log, "message").unwrap_or("");
+pub(super) fn format_log_line(log: &Value) -> String {
+    // Sanitize both fields: log values originate from arbitrary agent/socket
+    // input and must not smuggle terminal escapes (ESC/OSC/newline/BEL) into the
+    // CLI output stream, matching the status/progress formatters above.
+    let level = safe_string_field(log, "level").unwrap_or_else(|| "info".to_string());
+    let message = safe_string_field(log, "message").unwrap_or_default();
     format!("[{level}] {message}")
 }
 
 pub(super) fn handle_notifications(context: &CliContext, args: Vec<String>) -> CliResult<()> {
-    require_no_args(&args, "notifications")?;
-    let result = send_socket_request(&context.socket_path, "notification.list", json!({}))?;
+    let parsed = parse_flags(args, &[]);
+    require_no_args(&parsed.positionals, "notifications")?;
+    reject_unknown_options(&parsed.options, &["limit", "before-id"], "notifications")?;
+    let mut params = Map::new();
+    if let Some(limit) = parse_u64_option(&parsed.options, "limit", "--limit")? {
+        if !(1..=protocol_limits::SOCKET_NOTIFICATION_PAGE_MAX_ITEMS as u64).contains(&limit) {
+            return Err(CliError::new(format!(
+                "notifications: --limit must be from 1 to {}",
+                protocol_limits::SOCKET_NOTIFICATION_PAGE_MAX_ITEMS
+            )));
+        }
+        params.insert("limit".to_string(), json!(limit));
+    }
+    insert_optional_cli_string_param(&mut params, &parsed.options, "before-id", "before_id")?;
+    let result = send_socket_request(
+        &context.socket_path,
+        "notification.list",
+        Value::Object(params),
+    )?;
     if context.json {
         return print_json(&result);
     }

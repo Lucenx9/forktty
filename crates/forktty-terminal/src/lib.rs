@@ -36,7 +36,7 @@ pub struct SpawnRequest {
     pub extra_env: Vec<(String, String)>,
     /// Whether this spawn is an explicitly plain interactive terminal shell
     /// eligible for opt-in PTY process persistence. Command launches that are
-    /// not ordinary shells (project actions, team workers, SSH, and agent
+    /// not ordinary shells (project actions, remote commands, SSH, and agent
     /// resumes) must keep this false so their process trees do not survive the
     /// visible pane lifecycle unexpectedly.
     #[serde(default)]
@@ -447,6 +447,30 @@ impl TerminalBackend for HeadlessTerminalBackend {
             .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
         surface.state.cols = cols;
         surface.state.rows = rows;
+        Ok(())
+    }
+
+    fn mark_surface_pid(&self, surface_id: &str, pid: u32) -> Result<(), TerminalError> {
+        let mut surfaces = self
+            .surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        let surface = surfaces
+            .get_mut(surface_id)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        surface.state.pid = Some(pid);
+        Ok(())
+    }
+
+    fn clear_surface_pid(&self, surface_id: &str) -> Result<(), TerminalError> {
+        let mut surfaces = self
+            .surfaces
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
+        let surface = surfaces
+            .get_mut(surface_id)
+            .ok_or_else(|| TerminalError::NotFound(surface_id.to_string()))?;
+        surface.state.pid = None;
         Ok(())
     }
 

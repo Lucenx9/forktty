@@ -1,6 +1,5 @@
 mod agent_guide;
 mod cli;
-mod mcp_server;
 mod panic_log;
 mod socket_cli;
 mod telemetry;

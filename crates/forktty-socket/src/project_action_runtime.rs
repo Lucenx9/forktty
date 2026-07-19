@@ -24,8 +24,8 @@ pub(crate) async fn run(state: &SocketAppState, params: &Value) -> Result<Value,
         let action = action.clone();
         run_project_action_blocking(move || forktty_core::action_cwd(project_root, &action)).await?
     };
+    let _surface_set_guard = state.surface_set_guard().await;
     let source_surface_id = project_action_source_surface_id(state, &project_root)?;
-    let _surface_set_guard = state.coordinator.surface_set.lock().await;
     let surface = {
         let mut model = state
             .model
@@ -39,7 +39,16 @@ pub(crate) async fn run(state: &SocketAppState, params: &Value) -> Result<Value,
         model.surface(&surface.id).cloned().unwrap_or(surface)
     };
     let mut argv = action.argv.clone();
-    let program = resolve_project_action_program(&action_cwd, &argv.remove(0))?;
+    let program = match resolve_project_action_program(&action_cwd, &argv.remove(0)) {
+        Ok(program) => program,
+        Err(err) => {
+            // The modeled tab was already added above; without this rollback it
+            // survives as an orphan surface that GTK reconciliation later fills
+            // with the default interactive shell.
+            rollback_surface_creation(state, &surface.id)?;
+            return Err(err);
+        }
+    };
     let request = SpawnRequest::for_surface(&surface, program.clone(), state.socket_path.clone())
         .with_args(argv.clone());
     if let Err(err) = state.terminal.spawn(request) {

@@ -559,13 +559,7 @@ fn restart_from_appimage(parent: &adw::ApplicationWindow, target: &AppImageTarge
         .stderr(Stdio::null())
         .spawn()
     {
-        Ok(_) => {
-            if let Some(app) = parent.application() {
-                app.quit();
-            } else {
-                parent.close();
-            }
-        }
+        Ok(_) => shutdown_after_appimage_restart(parent),
         Err(err) => {
             let dialog = adw::MessageDialog::builder()
                 .transient_for(parent)
@@ -580,6 +574,10 @@ fn restart_from_appimage(parent: &adw::ApplicationWindow, target: &AppImageTarge
             dialog.present();
         }
     }
+}
+
+fn shutdown_after_appimage_restart(parent: &adw::ApplicationWindow) {
+    parent.close();
 }
 
 pub(super) fn appimage_target_from_env(
@@ -772,6 +770,34 @@ pub(super) fn sha256_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "gtk-ghostty")]
+    #[test]
+    fn appimage_restart_runs_window_close_request_cleanup() {
+        let _ = crate::test_env::with_gtk_test(|| {
+            use std::cell::Cell;
+            use std::rc::Rc;
+
+            let app = adw::Application::builder()
+                .application_id("dev.forktty.forktty.UpdaterTest")
+                .build();
+            app.register(None::<&gtk::gio::Cancellable>).unwrap();
+            let parent = adw::ApplicationWindow::builder().application(&app).build();
+            let close_requested = Rc::new(Cell::new(false));
+            let close_requested_for_signal = Rc::clone(&close_requested);
+            parent.connect_close_request(move |_| {
+                close_requested_for_signal.set(true);
+                glib::Propagation::Proceed
+            });
+            parent.present();
+            while glib::MainContext::default().iteration(false) {}
+
+            shutdown_after_appimage_restart(&parent);
+            while glib::MainContext::default().iteration(false) {}
+
+            assert!(close_requested.get());
+        });
+    }
 
     #[test]
     fn rate_limit_retry_after_accepts_http_date() {

@@ -73,17 +73,6 @@ pub(crate) fn required_string_param<'a>(
         .ok_or_else(|| format!("Invalid parameter {key}: expected string").into())
 }
 
-pub(crate) fn optional_string_param<'a>(
-    params: &'a Value,
-    key: &'static str,
-) -> Result<Option<&'a str>, DispatchError> {
-    match params.get(key) {
-        Some(Value::String(value)) => Ok(Some(value.as_str())),
-        Some(Value::Null) | None => Ok(None),
-        Some(_) => Err(format!("Invalid parameter {key}: expected string").into()),
-    }
-}
-
 pub(crate) fn optional_bool_param(
     params: &Value,
     key: &'static str,
@@ -92,30 +81,6 @@ pub(crate) fn optional_bool_param(
         Some(Value::Bool(value)) => Ok(Some(*value)),
         Some(Value::Null) | None => Ok(None),
         Some(_) => Err(format!("Invalid parameter {key}: expected boolean").into()),
-    }
-}
-
-pub(crate) fn optional_string_array_param(
-    params: &Value,
-    key: &'static str,
-) -> Result<Option<Vec<String>>, DispatchError> {
-    match params.get(key) {
-        Some(Value::Array(items)) => items
-            .iter()
-            .map(|item| {
-                item.as_str()
-                    .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty())
-                    .ok_or_else(|| {
-                        DispatchError::InvalidParam(format!(
-                            "Invalid parameter {key}: expected array of non-empty strings"
-                        ))
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map(Some),
-        Some(Value::Null) | None => Ok(None),
-        Some(_) => Err(format!("Invalid parameter {key}: expected array").into()),
     }
 }
 
@@ -145,22 +110,6 @@ pub(crate) fn split_axis_from_params(params: &Value) -> Result<SplitAxis, Dispat
         Some(_) => Err("Invalid parameter axis: expected horizontal or vertical".into()),
         None => Err("Invalid parameter axis: expected string".into()),
     }
-}
-
-/// Maximum number of items an explicit `limit` parameter may request on list
-/// methods that otherwise return every match. Mirrors the cap applied to
-/// browser history (`history_limit_from_params`) so no single request can ask
-/// for an unbounded result set.
-const MAX_LIST_LIMIT: u64 = 10_000;
-
-/// Read an optional `limit` parameter, clamping any explicit value to
-/// [`MAX_LIST_LIMIT`]. Returns `None` when the caller omits `limit`, preserving
-/// the "no limit" semantics of the underlying list stores.
-pub(crate) fn optional_limit_param(
-    params: &Value,
-    key: &'static str,
-) -> Result<Option<usize>, DispatchError> {
-    Ok(optional_u64_param(params, key)?.map(|limit| limit.min(MAX_LIST_LIMIT) as usize))
 }
 
 pub(crate) fn optional_u64_param(

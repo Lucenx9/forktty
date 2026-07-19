@@ -10,11 +10,37 @@ use std::{
 };
 
 pub const APPIMAGE_CHILD_EXEC_SUBCOMMAND: &str = "appimage-child-exec";
-const APPIMAGE_CHILD_EXEC_TARGET_ENV_KEYS: [&str; 3] = [
-    "FORKTTY_WORKSPACE_ID",
-    "FORKTTY_SURFACE_ID",
-    "FORKTTY_SOCKET_PATH",
-];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EnvironmentDelta {
+    unset: Vec<String>,
+    set: Vec<(String, String)>,
+}
+
+fn environment_delta(
+    intended: &BTreeMap<String, String>,
+    current: &BTreeMap<String, String>,
+) -> EnvironmentDelta {
+    let unset = current
+        .keys()
+        .filter(|key| !intended.contains_key(*key))
+        .cloned()
+        .collect();
+    let set = intended
+        .iter()
+        .filter(|(key, value)| current.get(*key) != Some(*value))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    EnvironmentDelta { unset, set }
+}
+
+fn current_environment() -> BTreeMap<String, String> {
+    // Linux permits non-UTF-8 environment entries. Embedded Ghostty's command
+    // transport accepts UTF-8 strings, so skip entries it cannot represent.
+    std::env::vars_os()
+        .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+        .collect()
+}
 
 pub fn child_environment(request: &SpawnRequest) -> Vec<String> {
     let ghostty_resources = ghostty_resources_dir();
@@ -25,24 +51,25 @@ fn child_environment_with_ghostty_resources(
     request: &SpawnRequest,
     ghostty_resources: Option<&Path>,
 ) -> Vec<String> {
+    intended_child_environment(request, ghostty_resources)
+        .into_iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect()
+}
+
+fn intended_child_environment(
+    request: &SpawnRequest,
+    ghostty_resources: Option<&Path>,
+) -> BTreeMap<String, String> {
     let appimage_dirs = appimage_runtime_dirs();
-    // `vars_os` rather than `vars`: a single non-UTF-8 environment variable
-    // (legal on Linux) makes `vars` panic, which would crash the app while
-    // spawning a terminal. Such vars can't be passed to child APIs as UTF-8
-    // strings anyway, so skip the ones that aren't valid UTF-8.
-    let mut env = std::env::vars_os()
-        .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
-        .filter(|(key, _)| !is_appimage_runtime_env(key))
-        .filter(|(key, _)| !is_inherited_ghostty_env(key))
-        .collect::<BTreeMap<_, _>>();
+    let mut env = current_environment();
+    env.retain(|key, _| !is_appimage_runtime_env(key) && !is_inherited_ghostty_env(key));
     sanitize_appimage_child_environment(&mut env, &appimage_dirs);
     for (key, value) in request.forktty_env() {
         env.insert(key, value);
     }
     apply_ghostty_shell_integration_env(&mut env, request, ghostty_resources);
-    env.into_iter()
-        .map(|(key, value)| format!("{key}={value}"))
-        .collect()
+    env
 }
 
 pub fn child_argv(request: &SpawnRequest, unset_env_keys: Vec<String>) -> Vec<String> {
@@ -85,35 +112,34 @@ pub fn embedded_ghostty_command_argv(request: &SpawnRequest) -> Result<Vec<Strin
 }
 
 /// Like [`embedded_ghostty_command_argv`], but when `persistence` is `Some` the
-/// resolved command is wrapped to run under a detach/reattach broker so the
-/// child process tree survives a GTK UI restart (see
-/// [`forktty_core::pty_persistence`]). The wrap is inserted *after* the resolved
-/// program but *before* the `/usr/bin/env` environment atoms, so the broker and
-/// the child both inherit the same sanitized environment. In AppImage launches,
-/// pane-targeting `FORKTTY_*` values are passed through the ForkTTY helper so
-/// they are re-applied immediately before `exec`.
+/// shell-integrated, resolved command is wrapped to run under a detach/reattach
+/// broker so the child process tree survives a GTK UI restart (see
+/// [`forktty_core::pty_persistence`]). The broker and child receive the same
+/// deterministic environment delta. AppImage launches route that complete delta
+/// through ForkTTY's trusted child-exec helper before the command is executed.
 pub fn embedded_ghostty_command_argv_with_persistence(
     request: &SpawnRequest,
     persistence: Option<&PtyPersistencePlan>,
 ) -> Result<Vec<String>, String> {
-    let Some(env_command) = env_command_path() else {
-        return Err("no trusted env executable found at /usr/bin/env or /bin/env".to_string());
-    };
-    let child_env = child_environment(request);
-    let path = child_env
-        .iter()
-        .find_map(|entry| entry.strip_prefix("PATH=").map(OsStr::new));
-    let mut argv = request
-        .argv()
-        .into_iter()
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
+    build_embedded_ghostty_command_argv(request, persistence, appimage_child_exec_helper)
+}
+
+fn build_embedded_ghostty_command_argv(
+    request: &SpawnRequest,
+    persistence: Option<&PtyPersistencePlan>,
+    resolve_appimage_helper: impl FnOnce() -> Result<Option<String>, String>,
+) -> Result<Vec<String>, String> {
+    let ghostty_resources = ghostty_resources_dir();
+    let mut argv = ghostty_shell_integration_argv(request, ghostty_resources.as_deref())
+        .unwrap_or_else(|| request.argv().into_iter().map(ToOwned::to_owned).collect());
     let Some(program) = argv.first().cloned() else {
         return Err("empty embedded Ghostty terminal argv".to_string());
     };
-    let resolved = resolve_child_program(&program, path).ok_or_else(|| {
-        format!("terminal child program not found on absolute PATH entries: {program}")
-    })?;
+    let intended_path = intended_child_path(request);
+    let resolved = resolve_child_program(&program, intended_path.as_deref().map(OsStr::new))
+        .ok_or_else(|| {
+            format!("terminal child program not found on absolute PATH entries: {program}")
+        })?;
     argv[0] = resolved.to_string_lossy().into_owned();
 
     if let Some(plan) = persistence {
@@ -121,63 +147,84 @@ pub fn embedded_ghostty_command_argv_with_persistence(
             .wrap_command(argv)
             .map_err(|err| format!("cannot persist embedded Ghostty command: {err}"))?;
     }
-    let forktty_env = request.forktty_env();
-    let appimage_helper = appimage_child_exec_helper();
-    let route_targets_via_appimage_helper = appimage_helper.is_some();
-    if let Some(helper) = appimage_helper {
-        let helper_env = forktty_env
-            .iter()
-            .filter(|(key, _)| is_appimage_child_exec_target_env(key))
-            .map(|(key, value)| format!("{key}={value}"))
-            .collect::<Vec<_>>();
-        let mut wrapped = Vec::with_capacity(argv.len() + 3 + helper_env.len() * 2);
-        wrapped.push(helper);
-        wrapped.push(APPIMAGE_CHILD_EXEC_SUBCOMMAND.to_string());
-        for env in helper_env {
-            wrapped.push("--env".to_string());
-            wrapped.push(env);
-        }
-        wrapped.push("--".to_string());
-        wrapped.extend(argv);
-        argv = wrapped;
-    }
 
-    let env = embedded_ghostty_appimage_env_atoms()
-        .into_iter()
-        .chain(
-            forktty_env
-                .into_iter()
-                .filter(|(key, _)| {
-                    !(route_targets_via_appimage_helper && is_appimage_child_exec_target_env(key))
-                })
-                .map(|(key, value)| format!("{key}={value}")),
-        )
-        .map(|value| embedded_ghostty_command_atom(&value))
-        .collect::<Result<Vec<_>, _>>()?;
+    let intended_environment = intended_child_environment(request, ghostty_resources.as_deref());
+    let delta = environment_delta(&intended_environment, &current_environment());
     let argv = argv
         .into_iter()
         .map(|value| embedded_ghostty_command_atom(&value))
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(std::iter::once(env_command)
-        .chain(env)
-        .chain(argv)
-        .collect())
+    if let Some(helper) = resolve_appimage_helper()? {
+        let mut command =
+            Vec::with_capacity(argv.len() + 3 + delta.unset.len() * 2 + delta.set.len() * 2);
+        command.push(embedded_ghostty_command_atom(&helper)?);
+        command.push(APPIMAGE_CHILD_EXEC_SUBCOMMAND.to_string());
+        for key in delta.unset {
+            command.push("--unset".to_string());
+            command.push(embedded_ghostty_command_atom(&key)?);
+        }
+        for (key, value) in delta.set {
+            command.push("--env".to_string());
+            command.push(embedded_ghostty_command_atom(&format!("{key}={value}"))?);
+        }
+        command.push("--".to_string());
+        command.extend(argv);
+        return Ok(command);
+    }
+
+    let Some(env_command) = env_command_path() else {
+        return Err("no trusted env executable found at /usr/bin/env or /bin/env".to_string());
+    };
+    let mut command = Vec::with_capacity(argv.len() + 1 + delta.unset.len() * 2 + delta.set.len());
+    command.push(env_command);
+    for key in delta.unset {
+        command.push("-u".to_string());
+        command.push(embedded_ghostty_command_atom(&key)?);
+    }
+    for (key, value) in delta.set {
+        command.push(embedded_ghostty_command_atom(&format!("{key}={value}"))?);
+    }
+    command.extend(argv);
+    Ok(command)
 }
 
-fn is_appimage_child_exec_target_env(key: &str) -> bool {
-    APPIMAGE_CHILD_EXEC_TARGET_ENV_KEYS.contains(&key)
+fn intended_child_path(request: &SpawnRequest) -> Option<String> {
+    request
+        .forktty_env()
+        .into_iter()
+        .filter_map(|(key, value)| (key == "PATH").then_some(value))
+        .next_back()
+        .or_else(|| std::env::var_os("PATH")?.into_string().ok())
 }
 
-fn appimage_child_exec_helper() -> Option<String> {
-    if appimage_runtime_dirs().is_empty() {
-        return None;
+fn appimage_child_exec_helper() -> Result<Option<String>, String> {
+    let appimage_dirs = appimage_runtime_dirs();
+    if appimage_dirs.is_empty() {
+        return Ok(None);
     }
-    let current_exe = std::env::current_exe().ok()?;
-    if !current_exe.is_absolute() || !is_executable_file(&current_exe) {
-        return None;
+    let current_exe = std::env::current_exe()
+        .map_err(|err| format!("cannot resolve trusted AppImage child helper: {err}"))?;
+    appimage_child_exec_helper_for(&appimage_dirs, &current_exe)
+}
+
+fn appimage_child_exec_helper_for(
+    appimage_dirs: &[String],
+    current_exe: &Path,
+) -> Result<Option<String>, String> {
+    if appimage_dirs.is_empty() {
+        return Ok(None);
     }
-    current_exe.to_str().map(ToOwned::to_owned)
+    if !current_exe.is_absolute() || !is_executable_file(current_exe) {
+        return Err(format!(
+            "trusted AppImage child helper is not an executable file: {}",
+            current_exe.display()
+        ));
+    }
+    let helper = current_exe
+        .to_str()
+        .ok_or_else(|| "trusted AppImage child helper path is not valid UTF-8".to_string())?;
+    Ok(Some(helper.to_string()))
 }
 
 fn embedded_ghostty_command_atom(value: &str) -> Result<String, String> {
@@ -187,79 +234,6 @@ fn embedded_ghostty_command_atom(value: &str) -> Result<String, String> {
         );
     }
     Ok(value.to_string())
-}
-
-/// `/usr/bin/env` atoms that neutralize AppImage runtime environment pollution
-/// for embedded Ghostty children. Empty when not running inside an AppImage.
-///
-/// Embedded Ghostty starts each terminal child from the inherited GTK-process
-/// environment (`defaultTermioEnv` -> `getEnvMap`) and strips only a handful of
-/// GTK/D-Bus vars. Unlike the legacy `child_environment` path, none of
-/// ForkTTY's AppImage sanitization runs, so without this the AppImage's
-/// `LD_LIBRARY_PATH`, `APPDIR`/`APPIMAGE`/`OWD`, and GTK/GObject module search
-/// paths leak into every spawned process and can make a child (git, an editor,
-/// an agent) load the AppImage's bundled libraries instead of the host's.
-///
-/// `XDG_DATA_DIRS` is deliberately left untouched: Ghostty prepends its own
-/// shell-integration directory, which lives inside the AppImage mount, to
-/// `XDG_DATA_DIRS`, so stripping AppImage entries here would break shell
-/// integration.
-fn embedded_ghostty_appimage_env_atoms() -> Vec<String> {
-    let appimage_dirs = appimage_runtime_dirs();
-    if appimage_dirs.is_empty() {
-        return Vec::new();
-    }
-
-    let mut atoms = Vec::new();
-    // Drop the pure AppImage runtime markers entirely (APPDIR, APPIMAGE, OWD, etc.).
-    for key in appimage_runtime_env_keys() {
-        atoms.push("-u".to_string());
-        atoms.push(key);
-    }
-
-    // Loader/module search paths that Ghostty never manages itself, cleaned the
-    // same way `sanitize_appimage_child_environment` cleans them on the legacy
-    // path. `XDG_DATA_DIRS` is intentionally excluded (see the doc comment).
-    const SEARCH_PATH_KEYS: [&str; 9] = [
-        "GIO_EXTRA_MODULES",
-        "GI_TYPELIB_PATH",
-        "GTK_PATH",
-        "LD_LIBRARY_PATH",
-        "GST_PLUGIN_PATH",
-        "GST_PLUGIN_SYSTEM_PATH_1_0",
-        "GDK_PIXBUF_MODULE_FILE",
-        "GSETTINGS_SCHEMA_DIR",
-        "GST_PLUGIN_SCANNER",
-    ];
-    let mut env = SEARCH_PATH_KEYS
-        .iter()
-        .filter_map(|key| {
-            let value = std::env::var_os(key)?.into_string().ok()?;
-            Some(((*key).to_string(), value))
-        })
-        .collect::<BTreeMap<_, _>>();
-    let original = env.clone();
-    sanitize_appimage_child_environment(&mut env, &appimage_dirs);
-    let mut assignments = Vec::new();
-    for key in SEARCH_PATH_KEYS {
-        match (original.contains_key(key), env.get(key)) {
-            // Cleaning removed the var (it pointed only inside the AppImage).
-            (true, None) => {
-                atoms.push("-u".to_string());
-                atoms.push(key.to_string());
-            }
-            // Cleaning changed the value: re-set the AppImage-free version.
-            (_, Some(cleaned)) if original.get(key) != Some(cleaned) => {
-                assignments.push(format!("{key}={cleaned}"));
-            }
-            _ => {}
-        }
-    }
-    // GNU env parses `-u VAR` only before the first KEY=value assignment; after
-    // that point, a later `-u` is the command name. Keep all unset option pairs
-    // before any assignment so the intended child argv remains the command.
-    atoms.extend(assignments);
-    atoms
 }
 
 fn apply_ghostty_shell_integration_env(
@@ -676,11 +650,24 @@ mod tests {
 
     fn with_env<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
         let _guard = ENV_LOCK.lock().unwrap();
-        let saved = vars
-            .iter()
-            .map(|(key, _)| ((*key).to_string(), std::env::var_os(key)))
+        // Tests may themselves run inside a ForkTTY AppImage pane. Clear its
+        // runtime and request-scoped values by default so environment-delta
+        // assertions do not depend on the parent terminal.
+        let mut updates = BTreeMap::from([
+            ("APPDIR", None),
+            ("APPIMAGE", None),
+            ("FORKTTY_APPIMAGE", None),
+            ("FORKTTY_APPIMAGE_DIR", None),
+            ("FORKTTY_SOCKET_PATH", None),
+            ("FORKTTY_SURFACE_ID", None),
+            ("FORKTTY_WORKSPACE_ID", None),
+        ]);
+        updates.extend(vars.iter().copied());
+        let saved = updates
+            .keys()
+            .map(|key| ((*key).to_string(), std::env::var_os(key)))
             .collect::<Vec<_>>();
-        for (key, value) in vars {
+        for (key, value) in updates {
             match value {
                 Some(value) => std::env::set_var(key, value),
                 None => std::env::remove_var(key),
@@ -693,6 +680,7 @@ mod tests {
                 None => std::env::remove_var(key),
             }
         }
+        drop(_guard);
         match result {
             Ok(value) => value,
             Err(payload) => resume_unwind(payload),
@@ -762,6 +750,49 @@ mod tests {
 
     fn ghostty_resource_path(dir: &TestDir) -> PathBuf {
         dir.path().join("share/ghostty")
+    }
+
+    #[test]
+    fn environment_delta_sorts_unsets_and_changed_assignments() {
+        let intended = BTreeMap::from([
+            ("zeta".to_string(), "new".to_string()),
+            ("beta".to_string(), "new".to_string()),
+            ("same".to_string(), "value".to_string()),
+        ]);
+        let current = BTreeMap::from([
+            ("same".to_string(), "value".to_string()),
+            ("omega".to_string(), "old".to_string()),
+            ("beta".to_string(), "old".to_string()),
+            ("alpha".to_string(), "old".to_string()),
+        ]);
+
+        assert_eq!(
+            environment_delta(&intended, &current),
+            EnvironmentDelta {
+                unset: strings(&["alpha", "omega"]),
+                set: vec![
+                    ("beta".to_string(), "new".to_string()),
+                    ("zeta".to_string(), "new".to_string()),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn current_environment_skips_non_utf8_entries() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let current = with_env(&[("FORKTTY_TEST_NON_UTF8", None)], || {
+            std::env::set_var(
+                "FORKTTY_TEST_NON_UTF8",
+                OsString::from_vec(vec![b'v', 0xff]),
+            );
+            current_environment()
+        });
+
+        assert!(!current.contains_key("FORKTTY_TEST_NON_UTF8"));
     }
 
     #[test]
@@ -864,25 +895,297 @@ mod tests {
     }
 
     #[test]
-    fn embedded_ghostty_command_argv_preserves_argv_and_forktty_env_without_shell_text() {
-        let mut request = spawn_request();
-        request.shell = "/usr/bin/ssh".to_string();
-        request.args = vec!["user@example.test".to_string(), "echo 'ready'".to_string()];
-        request.extra_env = vec![("CUSTOM_VALUE".to_string(), "it's here".to_string())];
+    #[cfg(unix)]
+    fn embedded_appimage_argv_starts_with_helper_before_environment_cleanup() {
+        let trusted = TestDir::new("appimage-helper-first-bin");
+        let tool = trusted.path().join("claude");
+        fs::write(&tool, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
 
-        let argv = embedded_ghostty_command_argv(&request).expect("command argv");
+        let appimage_dir = "/run/user/1000/.mount_forktty";
+        let ld_library_path = format!("{appimage_dir}/usr/lib:/usr/lib");
+        let argv = with_env(
+            &[
+                ("PATH", Some(trusted.path().to_str().unwrap())),
+                ("GHOSTTY_RESOURCES_DIR", None),
+                ("APPDIR", Some(appimage_dir)),
+                ("APPIMAGE", Some("/opt/ForkTTY.AppImage")),
+                ("FORKTTY_APPIMAGE", Some("/opt/ForkTTY.AppImage")),
+                ("FORKTTY_APPIMAGE_DIR", Some(appimage_dir)),
+                ("LD_LIBRARY_PATH", Some(ld_library_path.as_str())),
+            ],
+            || {
+                let mut request = spawn_request();
+                request.shell = "claude".to_string();
+                request.args = strings(&["resume"]);
+                embedded_ghostty_command_argv(&request).expect("command argv")
+            },
+        );
 
-        let env_command = env_command_path().unwrap();
-        assert_eq!(argv.first(), Some(&env_command));
-        assert!(argv.contains(&"CUSTOM_VALUE=it's here".to_string()));
-        assert!(argv.contains(&"FORKTTY_WORKSPACE_ID=workspace-1".to_string()));
-        assert!(argv.contains(&"FORKTTY_SURFACE_ID=surface-1".to_string()));
-        assert!(argv.contains(&"FORKTTY_SOCKET_PATH=/run/user/1000/forktty.sock".to_string()));
+        let helper = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(argv.first(), Some(&helper));
+        assert_eq!(
+            argv.get(1).map(String::as_str),
+            Some(APPIMAGE_CHILD_EXEC_SUBCOMMAND)
+        );
+        let separator = argv
+            .iter()
+            .position(|atom| atom == "--")
+            .expect("AppImage helper separator");
+        let helper_options = &argv[2..separator];
+        let mut unset_keys = Vec::new();
+        let mut set_keys = Vec::new();
+        let mut saw_set = false;
+        let mut options = helper_options.chunks_exact(2);
+        for option in &mut options {
+            match option[0].as_str() {
+                "--unset" => {
+                    assert!(!saw_set, "unsets must precede assignments");
+                    unset_keys.push(option[1].clone());
+                }
+                "--env" => {
+                    saw_set = true;
+                    set_keys.push(option[1].split_once('=').unwrap().0.to_string());
+                }
+                other => panic!("unexpected AppImage helper option {other}"),
+            }
+        }
+        assert!(options.remainder().is_empty());
+        let mut sorted_unset_keys = unset_keys.clone();
+        sorted_unset_keys.sort();
+        assert_eq!(unset_keys, sorted_unset_keys);
+        let mut sorted_set_keys = set_keys.clone();
+        sorted_set_keys.sort();
+        assert_eq!(set_keys, sorted_set_keys);
+        assert!(helper_options
+            .windows(2)
+            .any(|window| window == ["--unset", "APPDIR"]));
+        assert!(helper_options
+            .windows(2)
+            .any(|window| window == ["--unset", "APPIMAGE"]));
+        assert!(helper_options
+            .windows(2)
+            .any(|window| window == ["--env", "LD_LIBRARY_PATH=/usr/lib"]));
+        assert!(!helper_options.windows(2).any(|window| {
+            window[0] == "--unset"
+                && matches!(
+                    window[1].as_str(),
+                    "FORKTTY_APPIMAGE" | "FORKTTY_APPIMAGE_DIR"
+                )
+        }));
+        assert_eq!(
+            &argv[separator + 1..],
+            &[tool.to_string_lossy().into_owned(), "resume".to_string()]
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn embedded_bash_command_applies_shell_integration_before_persistence() {
+        use forktty_core::pty_persistence::{PtyBroker, PtyPersistence, PtyPersistencePlan};
+
+        let trusted = TestDir::new("embedded-bash-integration-bin");
+        let shell = trusted.path().join("bash");
+        fs::write(&shell, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&shell, fs::Permissions::from_mode(0o755)).unwrap();
+        let resources = ghostty_resources();
+        let resources_path = ghostty_resource_path(&resources);
+        let plan = PtyPersistencePlan::new(
+            &PtyPersistence {
+                broker: PtyBroker::Dtach,
+                broker_path: PathBuf::from("/usr/bin/dtach"),
+            },
+            PathBuf::from("/run/user/1000/forktty-pty/surface-1.sock"),
+        )
+        .unwrap();
+
+        let argv = with_env(
+            &[
+                ("PATH", Some(trusted.path().to_str().unwrap())),
+                (
+                    "GHOSTTY_RESOURCES_DIR",
+                    Some(resources_path.to_str().unwrap()),
+                ),
+                ("APPDIR", None),
+                ("FORKTTY_APPIMAGE_DIR", None),
+            ],
+            || {
+                let mut request = spawn_request();
+                request.shell = "bash".to_string();
+                request.args = strings(&["--noprofile"]);
+                embedded_ghostty_command_argv_with_persistence(&request, Some(&plan))
+                    .expect("command argv")
+            },
+        );
+
+        assert!(argv.contains(&format!(
+            "ENV={}",
+            resources_path
+                .join("shell-integration/bash/ghostty.bash")
+                .display()
+        )));
+        assert!(argv.contains(&"GHOSTTY_BASH_INJECT=1 --noprofile".to_string()));
         assert!(argv.ends_with(&[
-            "/usr/bin/ssh".to_string(),
-            "user@example.test".to_string(),
-            "echo 'ready'".to_string()
+            "/usr/bin/dtach".to_string(),
+            "-A".to_string(),
+            "/run/user/1000/forktty-pty/surface-1.sock".to_string(),
+            "-E".to_string(),
+            "-z".to_string(),
+            shell.to_string_lossy().into_owned(),
+            "--posix".to_string(),
         ]));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn embedded_packaged_shell_uses_xterm_ghostty_and_packaged_terminfo() {
+        let trusted = TestDir::new("embedded-packaged-shell-bin");
+        let shell = trusted.path().join("bash");
+        fs::write(&shell, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&shell, fs::Permissions::from_mode(0o755)).unwrap();
+        let package = TestDir::new("embedded-packaged-resources");
+        let resources_path = package.path().join("usr/share/ghostty");
+        let terminfo_path = package.path().join("usr/share/terminfo");
+        fs::create_dir_all(resources_path.join("shell-integration/bash")).unwrap();
+        fs::create_dir_all(terminfo_path.join("x")).unwrap();
+        fs::write(
+            resources_path.join("shell-integration/bash/ghostty.bash"),
+            "",
+        )
+        .unwrap();
+        fs::write(terminfo_path.join("x/xterm-ghostty"), "").unwrap();
+
+        let argv = with_env(
+            &[
+                ("PATH", Some(trusted.path().to_str().unwrap())),
+                ("GHOSTTY_RESOURCES_DIR", None),
+                ("APPDIR", Some(package.path().to_str().unwrap())),
+                (
+                    "FORKTTY_APPIMAGE_DIR",
+                    Some(package.path().to_str().unwrap()),
+                ),
+                ("TERM", Some("xterm-256color")),
+                ("TERMINFO", None),
+            ],
+            || {
+                let mut request = spawn_request();
+                request.shell = "bash".to_string();
+                request.args.clear();
+                embedded_ghostty_command_argv(&request).expect("command argv")
+            },
+        );
+
+        assert!(argv.contains(&"TERM=xterm-ghostty".to_string()));
+        assert!(argv.contains(&format!("TERMINFO={}", terminfo_path.display())));
+        assert!(argv.contains(&format!(
+            "GHOSTTY_RESOURCES_DIR={}",
+            resources_path.display()
+        )));
+        assert!(!argv.contains(&"TERM=xterm-256color".to_string()));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn embedded_non_shell_command_preserves_argv() {
+        let trusted = TestDir::new("embedded-non-shell-bin");
+        let command = trusted.path().join("ssh");
+        fs::write(&command, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&command, fs::Permissions::from_mode(0o755)).unwrap();
+        let appimage_dir = "/run/user/1000/.mount_forktty";
+
+        let argv = with_env(
+            &[
+                ("PATH", Some(trusted.path().to_str().unwrap())),
+                ("GHOSTTY_RESOURCES_DIR", None),
+                ("APPDIR", Some(appimage_dir)),
+                ("FORKTTY_APPIMAGE_DIR", Some(appimage_dir)),
+            ],
+            || {
+                let mut request = spawn_request();
+                request.shell = "ssh".to_string();
+                request.args = strings(&["user@example.test", "echo 'ready'"]);
+                embedded_ghostty_command_argv(&request).expect("command argv")
+            },
+        );
+
+        let helper = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(argv.first(), Some(&helper));
+        let separator = argv
+            .iter()
+            .position(|atom| atom == "--")
+            .expect("AppImage helper separator");
+        assert_eq!(
+            &argv[separator + 1..],
+            &[
+                command.to_string_lossy().into_owned(),
+                "user@example.test".to_string(),
+                "echo 'ready'".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn embedded_appimage_without_trusted_helper_is_error() {
+        let dir = TestDir::new("missing-appimage-helper");
+        let missing = dir.path().join("forktty");
+        let appimage_dir = "/run/user/1000/.mount_forktty";
+        let result = with_env(
+            &[
+                ("APPDIR", Some(appimage_dir)),
+                ("FORKTTY_APPIMAGE_DIR", Some(appimage_dir)),
+            ],
+            || {
+                let mut request = spawn_request();
+                request.shell = "/bin/sh".to_string();
+                request.args.clear();
+                build_embedded_ghostty_command_argv(&request, None, || {
+                    appimage_child_exec_helper_for(&[appimage_dir.to_string()], &missing)
+                })
+            },
+        );
+
+        let error = result.expect_err("AppImage spawn must require a trusted helper");
+        assert!(error.contains("trusted AppImage child helper"), "{error}");
+    }
+
+    #[test]
+    fn embedded_ghostty_command_argv_preserves_argv_and_forktty_env_without_shell_text() {
+        with_env(
+            &[
+                ("APPDIR", None),
+                ("APPIMAGE", None),
+                ("FORKTTY_APPIMAGE", None),
+                ("FORKTTY_APPIMAGE_DIR", None),
+            ],
+            || {
+                let mut request = spawn_request();
+                request.shell = "/usr/bin/ssh".to_string();
+                request.args = vec!["user@example.test".to_string(), "echo 'ready'".to_string()];
+                request.extra_env = vec![("CUSTOM_VALUE".to_string(), "it's here".to_string())];
+
+                let argv = embedded_ghostty_command_argv(&request).expect("command argv");
+
+                let env_command = env_command_path().unwrap();
+                assert_eq!(argv.first(), Some(&env_command));
+                assert!(argv.contains(&"CUSTOM_VALUE=it's here".to_string()));
+                assert!(argv.contains(&"FORKTTY_WORKSPACE_ID=workspace-1".to_string()));
+                assert!(argv.contains(&"FORKTTY_SURFACE_ID=surface-1".to_string()));
+                assert!(
+                    argv.contains(&"FORKTTY_SOCKET_PATH=/run/user/1000/forktty.sock".to_string())
+                );
+                assert!(argv.ends_with(&[
+                    "/usr/bin/ssh".to_string(),
+                    "user@example.test".to_string(),
+                    "echo 'ready'".to_string()
+                ]));
+            },
+        );
     }
 
     #[test]
@@ -915,35 +1218,41 @@ mod tests {
             },
         );
 
-        let has_unset = |key: &str| argv.windows(2).any(|w| w[0] == "-u" && w[1] == key);
+        let helper = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(argv.first(), Some(&helper));
+        let separator = argv
+            .iter()
+            .position(|atom| atom == "--")
+            .expect("AppImage helper separator");
+        let helper_options = &argv[2..separator];
+        let has_unset = |key: &str| {
+            helper_options
+                .windows(2)
+                .any(|w| w[0] == "--unset" && w[1] == key)
+        };
+        let has_set = |assignment: &str| {
+            helper_options
+                .windows(2)
+                .any(|w| w[0] == "--env" && w[1] == assignment)
+        };
 
         // Pure AppImage runtime markers are unset for the child.
         assert!(has_unset("APPDIR"));
         assert!(has_unset("APPIMAGE"));
         assert!(has_unset("OWD"));
-        // LD_LIBRARY_PATH is re-set with the AppImage entry stripped, so the
-        // child links against host libraries rather than the bundled ones.
-        assert!(argv.contains(&"LD_LIBRARY_PATH=/usr/lib".to_string()));
-        // A module-file var pointing into the AppImage is dropped entirely.
+        // Runtime paths are cleaned to the intended host-facing environment.
+        assert!(has_set("LD_LIBRARY_PATH=/usr/lib"));
         assert!(has_unset("GDK_PIXBUF_MODULE_FILE"));
-        let first_assignment = argv
-            .iter()
-            .position(|atom| atom.contains('='))
-            .expect("at least one env assignment");
-        let command_index = argv.len() - 1;
-        assert!(
-            !argv[first_assignment..command_index]
-                .iter()
-                .any(|atom| atom == "-u"),
-            "`/usr/bin/env` unset options must stay before assignments"
-        );
-        // XDG_DATA_DIRS is left to Ghostty (its shell-integration dir lives
-        // inside the AppImage mount), so it is neither unset nor re-set here.
-        assert!(!has_unset("XDG_DATA_DIRS"));
-        assert!(!argv.iter().any(|atom| atom.starts_with("XDG_DATA_DIRS=")));
+        assert!(has_set("XDG_DATA_DIRS=/usr/share"));
         // ForkTTY env and the resolved program still survive.
-        assert!(argv.contains(&"FORKTTY_WORKSPACE_ID=workspace-1".to_string()));
-        assert!(argv.ends_with(&[tool.to_string_lossy().into_owned()]));
+        assert!(has_set("FORKTTY_WORKSPACE_ID=workspace-1"));
+        assert_eq!(
+            &argv[separator + 1..],
+            &[tool.to_string_lossy().into_owned()]
+        );
     }
 
     #[test]
@@ -966,8 +1275,12 @@ mod tests {
             },
         );
 
-        // No AppImage context => no `-u` atoms and no path rewrites are emitted.
-        assert!(!argv.iter().any(|atom| atom == "-u"));
+        // Outside AppImage the trusted env carrier remains first, and an
+        // unchanged host loader path needs neither an unset nor an assignment.
+        assert_eq!(argv.first(), env_command_path().as_ref());
+        assert!(!argv
+            .windows(2)
+            .any(|window| window == ["-u", "LD_LIBRARY_PATH"]));
         assert!(!argv.iter().any(|atom| atom.starts_with("LD_LIBRARY_PATH=")));
     }
 
@@ -992,7 +1305,7 @@ mod tests {
         use forktty_core::pty_persistence::{PtyBroker, PtyPersistence, PtyPersistencePlan};
 
         let trusted = TestDir::new("persist-bin");
-        let shell = trusted.path().join("bash");
+        let shell = trusted.path().join("test-shell");
         fs::write(&shell, "#!/bin/sh\n").unwrap();
         fs::set_permissions(&shell, fs::Permissions::from_mode(0o755)).unwrap();
 
@@ -1007,7 +1320,7 @@ mod tests {
 
         let argv = with_env(&[("PATH", Some(trusted.path().to_str().unwrap()))], || {
             let mut request = spawn_request();
-            request.shell = "bash".to_string();
+            request.shell = "test-shell".to_string();
             request.args.clear();
             embedded_ghostty_command_argv_with_persistence(&request, Some(&plan))
                 .expect("command argv")
@@ -1040,7 +1353,7 @@ mod tests {
         use forktty_core::pty_persistence::{PtyBroker, PtyPersistence, PtyPersistencePlan};
 
         let trusted = TestDir::new("appimage-persist-bin");
-        let shell = trusted.path().join("bash");
+        let shell = trusted.path().join("test-shell");
         fs::write(&shell, "#!/bin/sh\n").unwrap();
         fs::set_permissions(&shell, fs::Permissions::from_mode(0o755)).unwrap();
 
@@ -1063,7 +1376,7 @@ mod tests {
             ],
             || {
                 let mut request = spawn_request();
-                request.shell = "bash".to_string();
+                request.shell = "test-shell".to_string();
                 request.args.clear();
                 embedded_ghostty_command_argv_with_persistence(&request, Some(&plan))
                     .expect("command argv")
@@ -1098,7 +1411,7 @@ mod tests {
     #[cfg(unix)]
     fn embedded_ghostty_command_argv_routes_forktty_targets_through_appimage_child_exec() {
         let trusted = TestDir::new("appimage-env-bin");
-        let shell = trusted.path().join("bash");
+        let shell = trusted.path().join("agent");
         fs::write(&shell, "#!/bin/sh\n").unwrap();
         fs::set_permissions(&shell, fs::Permissions::from_mode(0o755)).unwrap();
 
@@ -1112,7 +1425,7 @@ mod tests {
             ],
             || {
                 let mut request = spawn_request();
-                request.shell = "bash".to_string();
+                request.shell = "agent".to_string();
                 request.args.clear();
                 embedded_ghostty_command_argv(&request).expect("command argv")
             },
@@ -1122,30 +1435,25 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .into_owned();
-        let helper_index = argv
+        assert_eq!(argv.first(), Some(&helper));
+        let separator = argv
             .iter()
-            .position(|atom| atom == &helper)
-            .expect("AppImage child fd-cleaner helper is inserted");
-        let target_env = &argv[helper_index + 2..helper_index + 8];
+            .position(|atom| atom == "--")
+            .expect("AppImage child separator");
+        let helper_options = &argv[2..separator];
+        for assignment in [
+            "FORKTTY_WORKSPACE_ID=workspace-1",
+            "FORKTTY_SURFACE_ID=surface-1",
+            "FORKTTY_SOCKET_PATH=/run/user/1000/forktty.sock",
+        ] {
+            assert!(helper_options
+                .windows(2)
+                .any(|window| window[0] == "--env" && window[1] == assignment));
+        }
         assert_eq!(
-            target_env,
-            [
-                "--env",
-                "FORKTTY_WORKSPACE_ID=workspace-1",
-                "--env",
-                "FORKTTY_SURFACE_ID=surface-1",
-                "--env",
-                "FORKTTY_SOCKET_PATH=/run/user/1000/forktty.sock"
-            ]
+            &argv[separator + 1..],
+            &[shell.to_string_lossy().into_owned()]
         );
-        assert_eq!(argv.get(helper_index + 8).map(String::as_str), Some("--"));
-        assert_eq!(
-            argv.get(helper_index + 9).map(String::as_str),
-            Some(shell.to_string_lossy().as_ref())
-        );
-        assert!(!argv[..helper_index]
-            .iter()
-            .any(|atom| atom.starts_with("FORKTTY_WORKSPACE_ID=")));
     }
 
     #[test]

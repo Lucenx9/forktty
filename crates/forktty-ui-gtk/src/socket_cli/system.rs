@@ -2,8 +2,6 @@
 
 use super::hooks::AGENTS;
 use super::integration_files::stable_hook_launcher_path;
-use super::mcp::MCP_AGENTS;
-use super::skills::{inspect_skill_target, SKILL_TARGETS};
 use super::{
     build_target_params, format_doctor_path, format_option_names, insert_optional_cli_string_param,
     inspect_path, non_blank_string_option, parse_flags, parse_u64_option, print_help, print_json,
@@ -11,9 +9,9 @@ use super::{
     safe_string_field, sanitize_for_terminal, send_socket_request, should_read_stdin,
     socket_path_from_env, string_field, string_option, target_selector_values, trimmed_env,
     write_stdout_line, write_stdout_text, CliContext, CliError, CliResult, FlagValue,
-    AGENT_HELP_TEXT, EXAMPLES_TEXT, STATUS_HELP_TEXT, TEAM_HELP_TEXT, WORKFLOW_HELP_TEXT,
+    AGENT_HELP_TEXT, EXAMPLES_TEXT, HOOKS_HELP_TEXT, STATUS_HELP_TEXT,
 };
-use super::{COMPLETION_COMMANDS, STATUS_SUBCOMMANDS, TEAM_SUBCOMMANDS};
+use super::{COMPLETION_COMMANDS, NOTIFICATION_OPTIONS, STATUS_SUBCOMMANDS};
 use super::{DEFAULT_AGENT_WAIT_INTERVAL_MS, DEFAULT_AGENT_WAIT_TIMEOUT_MS};
 use super::{MAX_AGENT_WAIT_INTERVAL_MS, MAX_AGENT_WAIT_TIMEOUT_MS};
 use serde_json::{json, Map, Value};
@@ -32,10 +30,9 @@ pub(super) fn handle_help(_context: &CliContext, args: Vec<String>) -> CliResult
         )));
     }
     match args[0].as_str() {
-        "team" | "teams" => write_stdout_text(TEAM_HELP_TEXT),
         "status" | "context" | "context-snapshot" => write_stdout_text(STATUS_HELP_TEXT),
         "agent" | "agents" => write_stdout_text(AGENT_HELP_TEXT),
-        "workflow" | "workflows" => write_stdout_text(WORKFLOW_HELP_TEXT),
+        "hook" | "hooks" => write_stdout_text(HOOKS_HELP_TEXT),
         "examples" => write_stdout_text(EXAMPLES_TEXT),
         other => Err(CliError::new(format!("help: unknown topic {other}"))),
     }
@@ -55,19 +52,42 @@ pub(super) fn handle_completions(_context: &CliContext, args: Vec<String>) -> Cl
 }
 
 fn completion_script(shell: &str) -> CliResult<String> {
+    completion_script_with_notification_options(shell, NOTIFICATION_OPTIONS)
+}
+
+fn completion_script_with_notification_options(
+    shell: &str,
+    notification_options: &[&str],
+) -> CliResult<String> {
     let commands = COMPLETION_COMMANDS.join(" ");
-    let team_subcommands = TEAM_SUBCOMMANDS.join(" ");
+    let notification_options_words = notification_options.join(" ");
+    let fish_notification_options = notification_options
+        .iter()
+        .map(|option| {
+            let long = option.strip_prefix("--").ok_or_else(|| {
+                CliError::new(format!("invalid notification completion option {option}"))
+            })?;
+            Ok(format!(
+                "complete -c forktty -n \"__fish_seen_subcommand_from notifications\" -f -l {long} -r"
+            ))
+        })
+        .collect::<CliResult<Vec<_>>>()?
+        .join("\n");
     let status_subcommands = STATUS_SUBCOMMANDS.join(" ");
     Ok(match shell {
         "bash" => format!(
             r#"_forktty()
 {{
-    local cur prev
+    local cur prev command
     COMPREPLY=()
     cur="${{COMP_WORDS[COMP_CWORD]}}"
     prev="${{COMP_WORDS[COMP_CWORD-1]}}"
+    command="${{COMP_WORDS[1]}}"
+    if [[ "$command" == notifications && $COMP_CWORD -ge 2 ]]; then
+        COMPREPLY=( $(compgen -W "{notification_options_words}" -- "$cur") )
+        return 0
+    fi
     case "$prev" in
-        team) COMPREPLY=( $(compgen -W "{team_subcommands}" -- "$cur") ); return 0 ;;
         status) COMPREPLY=( $(compgen -W "{status_subcommands}" -- "$cur") ); return 0 ;;
         completions) COMPREPLY=( $(compgen -W "bash zsh fish" -- "$cur") ); return 0 ;;
     esac
@@ -81,16 +101,16 @@ complete -F _forktty forktty
             r#"#compdef forktty
 # Source this file directly, or install it as an fpath/autoloaded _forktty completion.
 _forktty() {{
-  local -a commands team_subcommands status_subcommands
+  local -a commands notification_options status_subcommands
   commands=({commands})
-  team_subcommands=({team_subcommands})
+  notification_options=({notification_options_words})
   status_subcommands=({status_subcommands})
   if [[ $CURRENT -eq 2 ]]; then
     _describe 'forktty command' commands
-  elif [[ $words[2] == team ]]; then
-    _describe 'team subcommand' team_subcommands
   elif [[ $words[2] == status ]]; then
     _describe 'status subcommand' status_subcommands
+  elif [[ $words[2] == notifications ]]; then
+    _describe 'notification option' notification_options
   fi
 }}
 _forktty "$@"
@@ -98,8 +118,8 @@ _forktty "$@"
         ),
         "fish" => format!(
             r#"complete -c forktty -f -a "{commands}"
-complete -c forktty -n "__fish_seen_subcommand_from team" -f -a "{team_subcommands}"
 complete -c forktty -n "__fish_seen_subcommand_from status" -f -a "{status_subcommands}"
+{fish_notification_options}
 complete -c forktty -n "__fish_seen_subcommand_from completions" -f -a "bash zsh fish"
 "#
         ),
@@ -114,6 +134,14 @@ complete -c forktty -n "__fish_seen_subcommand_from completions" -f -a "bash zsh
 #[cfg(test)]
 pub(super) fn completion_script_for_test(shell: &str) -> CliResult<String> {
     completion_script(shell)
+}
+
+#[cfg(test)]
+pub(super) fn completion_script_with_notification_options_for_test(
+    shell: &str,
+    notification_options: &[&str],
+) -> CliResult<String> {
+    completion_script_with_notification_options(shell, notification_options)
 }
 
 pub(super) fn handle_ping(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -150,89 +178,6 @@ pub(super) fn format_capabilities_lines(result: &Value) -> Vec<String> {
             }
         }
     }
-    if let Some(policy) = result.get("team_provider_policy") {
-        let default = safe_string_field(policy, "default_agent").unwrap_or_else(|| "auto".into());
-        let order = string_array_field(policy, "provider_order").join(", ");
-        let disabled = string_array_field(policy, "disabled_agents");
-        let disabled = if disabled.is_empty() {
-            "none".to_string()
-        } else {
-            disabled.join(", ")
-        };
-        let fallback = if policy
-            .get("auto_fallback")
-            .and_then(Value::as_bool)
-            .unwrap_or(true)
-        {
-            "on"
-        } else {
-            "off"
-        };
-        lines.push(format!(
-            "team providers default {default} fallback {fallback} order {order} disabled {disabled}"
-        ));
-    }
-    if let Some(providers) = result
-        .get("provider_capabilities")
-        .and_then(Value::as_object)
-    {
-        let mut names = Vec::new();
-        for name in ["codex", "claude", "pi", "opencode", "antigravity", "grok"] {
-            if providers.contains_key(name) {
-                names.push(name.to_string());
-            }
-        }
-        for name in providers.keys() {
-            if !names.iter().any(|known| known == name) {
-                names.push(name.to_string());
-            }
-        }
-        for name in names {
-            let Some(provider) = providers.get(&name) else {
-                continue;
-            };
-            let disabled = provider
-                .get("disabled_by_config")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let available = provider
-                .get("available_on_path")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let launchable = provider
-                .get("launchable")
-                .and_then(Value::as_bool)
-                .unwrap_or(available);
-            let configured = provider
-                .get("configured_command")
-                .and_then(Value::as_str)
-                .is_some();
-            let status = if disabled {
-                "disabled"
-            } else if launchable && configured {
-                "configured"
-            } else if launchable || available {
-                "found"
-            } else {
-                "missing"
-            };
-            let detail = if disabled {
-                safe_string_field(provider, "unavailable_reason")
-                    .or_else(|| safe_string_field(provider, "program"))
-            } else if launchable || available {
-                safe_string_field(provider, "executable")
-                    .or_else(|| safe_string_field(provider, "program"))
-            } else {
-                safe_string_field(provider, "unavailable_reason")
-                    .or_else(|| safe_string_field(provider, "program"))
-            };
-            if let Some(detail) = detail.filter(|detail| !detail.is_empty()) {
-                lines.push(format!("provider {name} {status} {detail}"));
-            } else {
-                lines.push(format!("provider {name} {status}"));
-            }
-        }
-    }
     if let Some(pty) = result.get("pty_persistence") {
         let config_enabled = pty
             .get("config_enabled")
@@ -264,17 +209,6 @@ pub(super) fn format_capabilities_lines(result: &Value) -> Vec<String> {
         lines.push(format!("pty persistence {status} {detail}"));
     }
     lines
-}
-
-fn string_array_field(value: &Value, key: &str) -> Vec<String> {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(sanitize_for_terminal)
-        .collect()
 }
 
 pub(super) fn handle_identify(context: &CliContext, args: Vec<String>) -> CliResult<()> {
@@ -715,18 +649,6 @@ pub(super) fn format_socket_doctor_text(report: &Value) -> String {
             lines.push(format!("  {}", format_doctor_path(agent, info)));
         }
     }
-    lines.push("mcp configs:".to_string());
-    if let Some(configs) = report["mcpConfigs"].as_object() {
-        for (agent, info) in configs {
-            lines.push(format!("  {}", format_doctor_path(agent, info)));
-        }
-    }
-    lines.push("skill dirs:".to_string());
-    if let Some(dirs) = report["skillDirs"].as_object() {
-        for (target, info) in dirs {
-            lines.push(format!("  {}", format_doctor_path(target, info)));
-        }
-    }
     let mut text = lines.join("\n");
     text.push('\n');
     text
@@ -739,14 +661,6 @@ pub(super) fn build_socket_doctor_report(context: &CliContext) -> Value {
     let mut hook_configs = Map::new();
     for spec in AGENTS {
         hook_configs.insert(spec.key.to_string(), inspect_path(&(spec.config_path)()));
-    }
-    let mut mcp_configs = Map::new();
-    for spec in MCP_AGENTS {
-        mcp_configs.insert(spec.key.to_string(), inspect_path(&(spec.config_path)()));
-    }
-    let mut skill_dirs = Map::new();
-    for spec in SKILL_TARGETS {
-        skill_dirs.insert(spec.key.to_string(), inspect_skill_target(spec));
     }
     json!({
         "socket": {
@@ -767,7 +681,5 @@ pub(super) fn build_socket_doctor_report(context: &CliContext) -> Value {
             "forktty": launcher_info,
         },
         "hookConfigs": hook_configs,
-        "mcpConfigs": mcp_configs,
-        "skillDirs": skill_dirs,
     })
 }

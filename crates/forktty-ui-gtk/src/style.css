@@ -19,9 +19,11 @@
  * @define-color is the ONLY token mechanism that survives; reference as @ft_*.
  * Spacing / radius / typography have no GTK variable equivalent and stay
  * consistent by convention, not tokens. Radius scale: 4px (xs controls) /
- * 6px (sm: buttons, badges) / 8px (md: cards, rows, dialogs) / 999px (pill) /
- * 50% (dot). Accent uses libadwaita's @accent_color.
- * Migration of raw literals onto these names is progressive and pixel-neutral.
+ * 6px (controls) / 8px (cards, rows, dialogs) / 999px (intrinsically round
+ * controls, thumbs, and true circular dots only).
+ * Avoid full pills for status — use quiet text and compact state cues.
+ * Accent uses libadwaita's @accent_color.
+ * Functional colors below reference these names instead of parallel literals.
  * -------------------------------------------------------------------------- */
 
 /* Surfaces: deepest window ground → raised hover */
@@ -29,6 +31,11 @@
 @define-color ft_bg_1 #202020;
 @define-color ft_bg_2 #232323;
 @define-color ft_bg_3 #292929;
+@define-color ft_bg_recessed #101010;
+@define-color ft_bg_workbench #121212;
+@define-color ft_bg_stage #141414;
+@define-color ft_bg_control #1b1b1b;
+@define-color ft_bg_selected #1f1f1f;
 
 /* Hairlines & separators */
 @define-color ft_line #242424;
@@ -38,14 +45,22 @@
 @define-color ft_text_0 #ededed;
 @define-color ft_text_1 #d7d7d7;
 @define-color ft_text_2 #b7b7b7;
-@define-color ft_text_3 #929292;
-@define-color ft_text_4 #6c6c6c;
+@define-color ft_text_3 #a0a0a0;
+@define-color ft_text_4 #909090;
 
 /* Semantic hues, independent of the accent */
 @define-color ft_success #8fcf7f;
 @define-color ft_warning #eaa06a;
 @define-color ft_danger #d36b6b;
 @define-color ft_info #7fa6d9;
+@define-color ft_success_bg #1f2a22;
+@define-color ft_warning_bg #241a11;
+@define-color ft_warning_bg_soft #2f2a26;
+@define-color ft_warning_bg_hover #30251d;
+@define-color ft_warning_border #7a553b;
+@define-color ft_danger_bg #2f1f1f;
+@define-color ft_accent_hover #f09a58;
+@define-color ft_shadow #000000;
 
 /* --------------------------------------------------------------------------
  * Base
@@ -114,9 +129,9 @@ headerbar.app-header windowhandle,
 }
 
 .app-brand-name {
-  color: #9a9a9a;
+  color: @ft_text_3;
   font-size: 0.80em;
-  font-weight: 560;
+  font-weight: 500;
 }
 
 .app-header-title-spacer {
@@ -128,10 +143,10 @@ headerbar.app-header windowhandle,
   padding: 0 10px;
   background: transparent;
   border: 0;
-  border-radius: 999px;
-  color: @ft_text_3;
-  font-size: 0.84em;
-  font-weight: 560;
+  border-radius: 6px;
+  color: @ft_text_2;
+  font-size: 0.86em;
+  font-weight: 500;
   transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
@@ -151,7 +166,7 @@ headerbar.app-header windowhandle,
   min-height: 26px;
   margin: 0;
   padding: 0;
-  color: @ft_text_3;
+  color: @ft_text_2;
   border-radius: 6px;
   background: transparent;
   border: 0;
@@ -172,7 +187,8 @@ headerbar.app-header windowhandle,
 
 .app-header .header-action:active,
 .app-header menubutton.header-action > button:active {
-  background: #26211d;
+  /* Neutral, not warm accent-tinted (quieter Linear/Cursor interaction) */
+  background: @ft_bg_selected;
   color: @ft_text_1;
 }
 
@@ -190,16 +206,15 @@ headerbar.app-header windowhandle,
 
 .app-header .header-action.needs-attention {
   color: @ft_warning;
-  background: alpha(@accent_color, 0.10);
+  /* No background tint — attention via text color only (quiet, matches dot+text pattern). */
 }
 
 .app-header .header-action.needs-attention:hover {
   color: @ft_warning;
-  background: alpha(@accent_color, 0.22);
 }
 
 .app-header .header-action.needs-attention:focus-visible {
-  background: alpha(@accent_color, 0.18);
+  /* Rely on focus ring for visibility. */
 }
 
 .app-header .header-action-separator {
@@ -226,7 +241,7 @@ headerbar.app-header windowhandle,
   border: 0;
   border-radius: 999px;
   background: transparent;
-  color: @ft_text_3;
+  color: @ft_text_2;
   box-shadow: none;
   transition: background-color 90ms ease-out, color 90ms ease-out;
 }
@@ -246,7 +261,7 @@ headerbar.app-header windowhandle,
 }
 
 .app-header .app-window-control.close:hover {
-  background: #2f1f1f;
+  background: @ft_danger_bg;
   color: @ft_danger;
 }
 
@@ -264,7 +279,7 @@ headerbar.app-header windowhandle,
   border: 0;
   border-radius: 999px;
   background: transparent;
-  color: @ft_text_3;
+  color: @ft_text_2;
   box-shadow: none;
   transition: background-color 90ms ease-out, color 90ms ease-out;
 }
@@ -289,7 +304,7 @@ headerbar.app-header windowhandle,
 /* Close keeps the destructive red tint — convention beats coherence. */
 .app-header button.titlebutton.close:hover,
 .app-header windowcontrols button.close:hover {
-  background: #2f1f1f;
+  background: @ft_danger_bg;
   color: @ft_danger;
 }
 
@@ -310,7 +325,8 @@ popover.ft-workspace-popover contents {
   background: @ft_bg_0;
   border: 1px solid @ft_bg_3;
   border-radius: 8px;
-  box-shadow: 0 14px 32px alpha(#000000, 0.38);
+  /* Much quieter elevation — Linear/Cursor style relies on border + subtle shadow */
+  box-shadow: 0 2px 10px alpha(@ft_shadow, 0.22);
 }
 
 popover.ft-app-menu contents {
@@ -331,13 +347,13 @@ popover.ft-context-menu contents {
 
 .ft-menu-header-title {
   color: @ft_text_1;
-  font-size: 0.90em;
-  font-weight: 680;
+  font-size: 0.92em;
+  font-weight: 700;
 }
 
 .ft-menu-header-subtitle {
   color: @ft_text_4;
-  font-size: 0.78em;
+  font-size: 0.80em;
 }
 
 .ft-menu-item {
@@ -362,7 +378,7 @@ popover.ft-context-menu contents {
 
 .ft-menu-shortcut {
   color: @ft_text_3;
-  font-size: 0.78em;
+  font-size: 0.80em;
   margin-left: 14px;
 }
 
@@ -390,7 +406,7 @@ popover.ft-context-menu contents {
 }
 
 .ft-menu-item.destructive-action:hover {
-  background: #2f1f1f;
+  background: @ft_danger_bg;
   color: @ft_danger;
 }
 
@@ -432,54 +448,31 @@ popover.ft-context-menu contents {
 }
 
 .terminal-workbench {
-  background: #121212;
+  background: @ft_bg_workbench;
 }
 
 /* --------------------------------------------------------------------------
- * Header Router cluster (breadcrumb, workspace selector, Plan / Apply)
+ * Header location path
  * -------------------------------------------------------------------------- */
 
-.header-router-cluster {
-  margin-left: 2px;
-}
-
-button.flat.header-router-crumb {
-  min-height: 26px;
-  padding: 0 10px;
-  border-radius: 6px;
-  color: #c8c8c8;
-  background: #1d1d1d;
-  border: 1px solid #2a2a2a;
-  font-size: 0.82em;
-  font-weight: 620;
-}
-
-button.flat.header-router-crumb:hover,
-button.flat.header-router-crumb:focus-visible {
-  background: @ft_line;
-  border-color: @ft_line_strong;
-  color: @ft_text_0;
-}
-
-.header-router-chevron {
-  color: #777777;
+.header-location-cluster {
+  margin-left: 0;
 }
 
 button.flat.header-workspace-chip {
-  min-height: 26px;
-  padding: 0 10px;
+  min-height: 24px;
+  padding: 0 6px;
   border-radius: 6px;
   color: @ft_text_2;
-  background: #1b1b1b;
-  border: 1px solid @ft_line;
-  font-size: 0.82em;
-  font-weight: 620;
+  background: transparent;
+  border: 0;
+  font-size: 0.80em;
+  font-weight: 600;
 }
 
 button.flat.header-workspace-chip:hover,
 button.flat.header-workspace-chip:focus-visible {
-  background: @ft_line;
-  border-color: @ft_line_strong;
+  background: @ft_bg_selected;
 }
 
 button.flat.header-workspace-chip:disabled {
@@ -487,98 +480,14 @@ button.flat.header-workspace-chip:disabled {
 }
 
 .header-workspace-caret {
-  color: #777777;
-  font-size: 0.8em;
+  color: @ft_text_4;
+  font-size: 0.80em;
 }
 
-button.flat.header-apply-button {
-  min-height: 26px;
-  padding: 0 14px;
-  border-radius: 6px;
-  color: #f3b37c;
-  background: #30251d;
-  border: 1px solid alpha(@accent_color, 0.34);
-  font-size: 0.82em;
-  font-weight: 680;
-}
-
-button.flat.header-apply-button:hover,
-button.flat.header-apply-button:focus-visible {
-  color: #f4bd8d;
-  background: #37291f;
-  border-color: alpha(@accent_color, 0.50);
-}
-
-button.flat.header-apply-button:active {
-  background: #2a211b;
-  border-color: alpha(@accent_color, 0.42);
-}
-
-.header-team-chips {
-  margin-right: 4px;
-}
-
-button.flat.header-team-chip {
-  min-height: 26px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: #1d1d1d;
-  border: 1px solid @ft_line_strong;
-}
-
-button.flat.header-team-chip:hover,
-button.flat.header-team-chip:focus-visible {
-  background: #222222;
-  border-color: @ft_line_strong;
-}
-
-.header-team-chip-name {
-  color: @ft_text_1;
-  font-size: 0.78em;
-  font-weight: 680;
-}
-
-.header-team-chip-count {
-  min-width: 15px;
-  padding: 0 5px;
-  border-radius: 999px;
-  color: @ft_bg_0;
-  background: #c8c8c8;
-  font-size: 0.72em;
-  font-weight: 760;
-}
-
-/* Shared status dots: workers, notifications, feed, pane footers. */
-
-.rail-dot {
-  min-width: 6px;
-  min-height: 6px;
-  border-radius: 999px;
-  background: #4a4a4a;
-}
-
-.rail-dot.ok {
-  background: @ft_success;
-}
-
-.rail-dot.warn {
-  background: alpha(@ft_warning, 0.7);
-}
-
-.rail-dot.err {
-  background: @ft_danger;
-}
-
-.rail-dot.info {
-  background: @ft_info;
-}
-
-.rail-dot.idle {
-  background: #5a5a5a;
-}
-
+/* Sidebar and status bar share one recessed ground so the workbench reads as
+ * terminal content plus one chrome tone. */
 .sidebar-shell {
-  background: #151515;
+  background: @ft_bg_recessed;
   color: @ft_text_2;
 }
 
@@ -599,8 +508,8 @@ button.flat.header-team-chip:focus-visible {
 .sidebar-section-label {
   color: @ft_text_3;
   font-weight: 600;
-  font-size: 0.72em;
-  letter-spacing: 0.04em;
+  font-size: 0.68em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
 }
 
@@ -628,7 +537,8 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .sidebar-add:active {
-  background: #26211d;
+  /* Neutral gray instead of warm accent tint for routine active state */
+  background: @ft_bg_selected;
   color: @ft_text_1;
 }
 
@@ -637,7 +547,7 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .navigation-sidebar {
-  padding: 7px 0;
+  padding: 6px 0;
   background: transparent;
   color: @ft_text_2;
 }
@@ -659,7 +569,7 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .navigation-sidebar row:selected .workspace-card {
-  border-color: transparent;
+  background: @ft_bg_2;
 }
 
 .navigation-sidebar row:drop(active),
@@ -667,24 +577,32 @@ button.flat.sidebar-add:focus-visible {
   background: transparent;
   background-image: none;
   color: @ft_text_2;
-  outline-color: alpha(@accent_color, 0.58);
-  box-shadow: none;
+  outline-color: alpha(@accent_color, 0.4);
+}
+
+.navigation-sidebar row:focus-visible {
+  outline: none;
 }
 
 .navigation-sidebar row:focus-visible .workspace-card {
-  border-color: @accent_color;
+  border-color: alpha(@accent_color, 0.56);
+  border-left-color: @accent_color;
 }
 
-/* Workspace cards */
+/* Workspace rows are inset navigation items, not edge-to-edge cards. A small
+ * warm rail marks context while the surface and hairline keep the list calm. */
 
 .workspace-card {
-  min-height: 42px;
-  padding: 7px 10px 7px 12px;
-  margin: 0 5px 2px 5px;
-  border-radius: 6px;
-  background: transparent;
+  min-height: 54px;
+  /* Match the intrinsic three-line variant so rows without activity summary
+   * keep the same click target and visual rhythm. */
+  padding: 6px 6px 6px 12px;
+  margin: 0 6px;
   border: 1px solid transparent;
   border-left: 2px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
   transition: background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
@@ -692,71 +610,71 @@ button.flat.sidebar-add:focus-visible {
   color: @ft_text_4;
   min-width: 14px;
   -gtk-icon-size: 14px;
-  transition: color 90ms ease-out;
+  opacity: 0;
+  transition: color 90ms ease-out, opacity 90ms ease-out;
 }
 
 .navigation-sidebar row:hover .workspace-drag-grip {
   color: @ft_text_3;
+  opacity: 0.78;
+}
+
+.workspace-row.active .workspace-drag-grip {
+  opacity: 0.34;
 }
 
 .navigation-sidebar row:hover .workspace-card {
-  background: #1d1d1d;
-  border-color: @ft_line;
+  background: @ft_bg_0;
 }
 
 .workspace-row.active .workspace-card {
-  background: #1d1d1d;
-  border-color: @ft_line_strong;
-  border-left-color: alpha(@accent_color, 0.42);
-  box-shadow: none;
+  background: @ft_bg_2;
+  border-color: alpha(@window_fg_color, 0.055);
+  border-left-color: alpha(@accent_color, 0.62);
+  box-shadow: inset 0 1px 0 alpha(@window_fg_color, 0.025);
 }
 
 .workspace-row.active:hover .workspace-card {
   background: @ft_bg_2;
-  border-color: @ft_line_strong;
+  border-left-color: alpha(@accent_color, 0.76);
 }
 
 .workspace-row:drop(active) .workspace-card,
 .workspace-card:drop(active) {
-  background: @ft_bg_2;
+  background: @ft_bg_1;
   background-image: none;
   border-left-color: @accent_color;
-  box-shadow: inset 2px 0 0 @accent_color;
-}
-
-.workspace-card.drop-before {
-  background: @ft_bg_2;
-  border-left-color: @accent_color;
-  box-shadow: inset 0 2px 0 @accent_color, inset 2px 0 0 @accent_color;
-}
-
-.workspace-card.drop-after {
-  background: @ft_bg_2;
-  border-left-color: @accent_color;
-  box-shadow: inset 0 -2px 0 @accent_color, inset 2px 0 0 @accent_color;
 }
 
 .workspace-row.needs-attention .workspace-card {
   border-left-color: alpha(@accent_color, 0.62);
-  box-shadow: none;
 }
 
-/* Active + needs-attention: keep active selection subtle and swap the rail to
- * warning so urgency is visible without a full warning fill. */
 .workspace-row.active.needs-attention .workspace-card {
-  background: #1f1f1f;
-  border-left-color: alpha(@accent_color, 0.68);
-  box-shadow: none;
+  background: @ft_bg_2;
+  border-left-color: alpha(@accent_color, 0.82);
 }
 
 .workspace-row.active.needs-attention:hover .workspace-card {
   background: @ft_bg_2;
 }
 
+.workspace-row .workspace-card.drop-before {
+  background: @ft_bg_2;
+  border-left-color: @accent_color;
+  box-shadow: inset 0 2px 0 @accent_color;
+}
+
+.workspace-row .workspace-card.drop-after {
+  background: @ft_bg_2;
+  border-left-color: @accent_color;
+  box-shadow: inset 0 -2px 0 @accent_color;
+}
+
 .workspace-name {
   color: @ft_text_2;
-  font-weight: 540;
-  font-size: 0.88em;
+  font-weight: 500;
+  font-size: 0.86em;
 }
 
 .workspace-name-line {
@@ -765,49 +683,39 @@ button.flat.sidebar-add:focus-visible {
 
 .workspace-row.active .workspace-name {
   color: @ft_text_1;
-  font-weight: 560;
+  font-weight: 500;
 }
 
+/* Status reads as quiet colored text, not a bordered pill. */
 .workspace-status-badge {
-  padding: 2px 7px;
-  border-radius: 6px;
-  font-size: 0.64em;
+  font-size: 0.68em;
   font-weight: 600;
   letter-spacing: 0;
-  border: 1px solid transparent;
 }
 
-/* Running/working = live: sober green over a dark tint. */
+/* Running/working = live: sober green. */
 .workspace-status-badge.running,
 .workspace-status-badge.working {
-  color: #63d67c;
-  background: #16211b;
-  border-color: alpha(#3fb950, 0.26);
+  color: @ft_success;
 }
 
 /* Needs-input/attention = warm orange, in the ForkTTY accent family. */
 .workspace-status-badge.needs-input,
 .workspace-status-badge.attention {
   color: @ft_warning;
-  background: #241a11;
-  border-color: alpha(@accent_color, 0.30);
 }
 
 .workspace-status-badge.exited {
-  color: #9a9a9a;
-  background: #1c1c1e;
-  border-color: @ft_line_strong;
+  color: @ft_text_3;
 }
 
 .workspace-status-badge.error {
   color: @ft_danger;
-  background: #241818;
-  border-color: alpha(@ft_danger, 0.28);
 }
 
 .workspace-meta {
   color: @ft_text_3;
-  font-size: 0.76em;
+  font-size: 0.74em;
 }
 
 .workspace-summary {
@@ -824,7 +732,8 @@ button.flat.sidebar-add:focus-visible {
 .workspace-count-badge {
   padding: 1px 5px;
   min-width: 0;
-  border-radius: 999px;
+  /* Small radius for the compact count control; full rounding stays on intrinsically round shapes. */
+  border-radius: 6px;
   background: @ft_bg_0;
   color: @ft_text_3;
   border: 1px solid @ft_line;
@@ -845,12 +754,12 @@ button.flat.sidebar-add:focus-visible {
 .sidebar-empty {
   padding: 28px 18px;
   color: @ft_text_3;
-  font-size: 0.84em;
+  font-size: 0.86em;
 }
 
 .sidebar-empty-title {
   color: @ft_text_1;
-  font-weight: 700;
+  font-weight: 600;
   font-size: 0.92em;
   margin-bottom: 3px;
 }
@@ -860,16 +769,18 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .keycap {
-  padding: 1px 6px;
-  border-radius: 6px;
+  /* Subtle, premium treatment. Less visual weight than a full pill or bordered badge.
+   * Matches the quiet Linear/Cursor aesthetic. */
+  padding: 1px 5px;
+  border-radius: 4px;
   color: @ft_text_3;
-  background: #1c1c1c;
-  border: 1px solid @ft_line;
-  font-size: 0.72em;
-  font-weight: 600;
+  background: @ft_bg_0;
+  border: 1px solid alpha(@ft_line, 0.8);
+  font-size: 0.68em;
+  font-weight: 500;
 }
 
-/* Fixed sidebar sections: TEAM, RESOURCES, and the Settings/About footer. */
+/* Fixed sidebar sections: Resources and the Settings/About footer. */
 
 .sidebar-fixed-section {
   padding: 6px 5px 8px 5px;
@@ -895,7 +806,7 @@ button.flat.sidebar-nav-row {
 
 button.flat.sidebar-nav-row:hover,
 button.flat.sidebar-nav-row:focus-visible {
-  background: #1d1d1d;
+  background: @ft_bg_selected;
   color: @ft_text_1;
 }
 
@@ -905,52 +816,46 @@ button.flat.sidebar-nav-row:focus-visible {
 }
 
 .sidebar-nav-label {
-  font-size: 0.82em;
-  font-weight: 560;
+  font-size: 0.80em;
+  font-weight: 500;
 }
 
 .sidebar-nav-count {
   color: @ft_text_3;
   font-size: 0.74em;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .app-status-bar {
   min-height: 24px;
   padding: 0 10px 0 12px;
-  background: #151515;
+  background: @ft_bg_recessed;
   border-top: 1px solid @ft_bg_1;
   box-shadow: none;
   color: @ft_text_3;
-  font-size: 0.76em;
-}
-
-.status-router {
-  color: #9d9d9d;
-  font-size: 0.9em;
-  font-weight: 620;
 }
 
 .status-location {
   padding: 0 7px;
   background: transparent;
   border: 0;
-  color: #9a9a9a;
-  font-size: 0.82em;
-  font-weight: 620;
+  color: @ft_text_2;
+  font-size: 0.80em;
+  font-weight: 600;
   letter-spacing: 0;
-  border-radius: 999px;
+  /* Small radius — avoids pill feel. Clean and modern. */
+  border-radius: 4px;
 }
 
 .app-status-bar .keycap {
   min-height: 17px;
-  padding: 0 6px;
-  font-size: 0.72em;
+  padding: 0 5px;
+  font-size: 0.68em;
 }
 
 .status-shortcut {
   border-color: @ft_line;
-  background: #1c1c1c;
+  background: @ft_bg_control;
   color: @ft_text_3;
   transition: background-color 90ms ease-out, color 90ms ease-out, border-color 90ms ease-out;
 }
@@ -970,8 +875,8 @@ button.flat.status-shortcut:focus-visible {
 }
 
 .pane-status {
-  color: @ft_text_3;
-  font-size: 0.78em;
+  color: @ft_text_2;
+  font-size: 0.80em;
   margin-left: 12px;
 }
 
@@ -983,472 +888,6 @@ button.flat.status-shortcut:focus-visible {
 .status-location:disabled {
   color: @ft_text_4;
   background: transparent;
-}
-
-/* --------------------------------------------------------------------------
- * Orchestration rail
- * -------------------------------------------------------------------------- */
-
-.orchestration-rail {
-  background: #101010;
-  color: @ft_text_2;
-  border-left: 1px solid @ft_bg_1;
-}
-
-.orchestration-rail-scroll {
-  background: #101010;
-}
-
-.orchestration-rail-body {
-  background: #101010;
-}
-
-button.flat.orchestration-rail-collapsed-strip {
-  min-width: 48px;
-  padding: 0;
-  border-radius: 0;
-  background: #101010;
-  color: @ft_text_3;
-  border-left: 1px solid @ft_bg_1;
-}
-
-button.flat.orchestration-rail-collapsed-strip:hover,
-button.flat.orchestration-rail-collapsed-strip:focus-visible {
-  background: @ft_bg_0;
-  color: @ft_text_0;
-}
-
-.orchestration-rail-strip-content {
-  margin-top: 14px;
-}
-
-.orchestration-rail-strip-badge {
-  min-width: 22px;
-  min-height: 18px;
-  padding: 0 4px;
-  border-radius: 4px;
-  font-size: 0.70em;
-  font-weight: 720;
-}
-
-.orchestration-rail-strip-badge.warn {
-  color: @ft_warning;
-  background: alpha(@ft_warning, 0.14);
-  border: 1px solid alpha(@ft_warning, 0.26);
-}
-
-.orchestration-rail-strip-badge.info {
-  color: @ft_info;
-  background: alpha(@ft_info, 0.14);
-  border: 1px solid alpha(@ft_info, 0.26);
-}
-
-.orchestration-panel-header {
-  min-height: 48px;
-  padding: 0 14px;
-  border-bottom: 1px solid @ft_bg_1;
-}
-
-.orchestration-panel-title {
-  color: @ft_text_0;
-  font-size: 0.95em;
-  font-weight: 720;
-}
-
-.orchestration-status-chip {
-  min-height: 18px;
-  padding: 0 6px;
-  border-radius: 6px;
-  color: @ft_text_3;
-  background: transparent;
-  border: 1px solid transparent;
-  font-size: 0.70em;
-  font-weight: 720;
-  letter-spacing: 0;
-}
-
-.orchestration-status-chip.ok,
-.orchestration-status-chip.run {
-  color: @ft_success;
-  background: alpha(@ft_success, 0.10);
-  border-color: alpha(@ft_success, 0.24);
-}
-
-.orchestration-status-chip.warn {
-  color: @ft_warning;
-  background: alpha(@ft_warning, 0.10);
-  border-color: alpha(@ft_warning, 0.24);
-}
-
-.orchestration-status-chip.err {
-  color: @ft_danger;
-  background: alpha(@ft_danger, 0.12);
-  border-color: alpha(@ft_danger, 0.26);
-}
-
-button.flat.orchestration-collapse-button {
-  min-width: 24px;
-  min-height: 24px;
-  padding: 0;
-  border-radius: 6px;
-  color: @ft_text_3;
-  font-size: 0.72em;
-  font-weight: 720;
-}
-
-button.flat.orchestration-collapse-button:hover,
-button.flat.orchestration-collapse-button:focus-visible {
-  color: @ft_text_1;
-  background: @ft_bg_1;
-}
-
-.orchestration-section {
-  padding: 12px 14px;
-  border-bottom: 1px solid @ft_bg_1;
-}
-
-.orchestration-attention-section {
-  padding-top: 10px;
-  padding-bottom: 10px;
-}
-
-.orchestration-attention-summary {
-  color: @ft_text_1;
-  font-size: 0.82em;
-  font-weight: 720;
-}
-
-.orchestration-attention-summary.attention {
-  color: @ft_warning;
-}
-
-.orchestration-section-header {
-  min-height: 22px;
-}
-
-.orchestration-section-title {
-  color: @ft_text_3;
-  font-size: 0.70em;
-  font-weight: 720;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.orchestration-strategy-value {
-  color: @ft_text_1;
-  font-size: 1.10em;
-  font-weight: 700;
-}
-
-.orchestration-strategy-detail {
-  color: @ft_text_2;
-  font-size: 0.80em;
-  line-height: 1.38;
-}
-
-.orchestration-meta-grid {
-  margin-top: 1px;
-}
-
-.orchestration-meta {
-  min-height: 42px;
-}
-
-.orchestration-meta-key,
-.orchestration-inline-key {
-  color: #727272;
-  font-size: 0.72em;
-}
-
-.orchestration-meta-value,
-.orchestration-inline-value {
-  color: @ft_text_0;
-  font-size: 0.78em;
-  font-weight: 680;
-}
-
-.orchestration-loop-value {
-  color: @ft_text_0;
-  font-size: 0.88em;
-  font-weight: 650;
-}
-
-.orchestration-loop-progress {
-  min-height: 6px;
-  margin: 2px 0 1px 0;
-}
-
-progressbar.orchestration-loop-progress trough {
-  min-height: 5px;
-  border-radius: 999px;
-  background: @ft_line;
-}
-
-progressbar.orchestration-loop-progress progress {
-  min-height: 5px;
-  border-radius: 999px;
-  background: @accent_color;
-}
-
-.orchestration-muted-caption {
-  color: @ft_text_3;
-  font-size: 0.76em;
-}
-
-.orchestration-section-count {
-  color: #c8c8c8;
-  font-size: 0.76em;
-  font-weight: 720;
-}
-
-.orchestration-section-count.attention {
-  color: @accent_color;
-}
-
-.orchestration-list-value {
-  color: @ft_text_2;
-  font-size: 0.78em;
-  line-height: 1.42;
-}
-
-.orchestration-section-actions {
-  margin-top: 1px;
-}
-
-button.flat.orchestration-outline-button {
-  min-height: 25px;
-  padding: 0 12px;
-  border-radius: 6px;
-  color: @ft_text_1;
-  background: #1b1b1b;
-  border: 1px solid @ft_line_strong;
-  font-size: 0.76em;
-  font-weight: 640;
-}
-
-button.flat.orchestration-outline-button:hover,
-button.flat.orchestration-outline-button:focus-visible {
-  background: @ft_line;
-  border-color: @ft_line_strong;
-}
-
-button.flat.orchestration-deny-button {
-  color: #e08a80;
-  border-color: alpha(#e06c5f, 0.34);
-}
-
-button.flat.orchestration-deny-button:hover,
-button.flat.orchestration-deny-button:focus-visible {
-  color: #f0a89f;
-  background: alpha(#e06c5f, 0.12);
-  border-color: alpha(#e06c5f, 0.48);
-}
-
-button.flat.orchestration-link-button {
-  min-height: 24px;
-  padding: 0 2px;
-  border-radius: 6px;
-  color: #9d9d9d;
-  font-size: 0.78em;
-  font-weight: 600;
-}
-
-button.flat.orchestration-link-button:hover,
-button.flat.orchestration-link-button:focus-visible {
-  color: @ft_text_1;
-  background: #1b1b1b;
-}
-
-.orchestration-approval-row {
-  min-height: 34px;
-}
-
-.orchestration-approval-title {
-  color: @ft_text_1;
-  font-size: 0.8em;
-  font-weight: 620;
-}
-
-.orchestration-list-row {
-  min-height: 24px;
-}
-
-.orchestration-list-primary {
-  color: @ft_text_1;
-  font-size: 0.81em;
-  font-weight: 640;
-}
-
-.orchestration-list-secondary {
-  color: @ft_text_3;
-  font-size: 0.74em;
-  font-weight: 680;
-}
-
-.orchestration-list-secondary.ok {
-  color: @ft_success;
-}
-
-.orchestration-list-secondary.warn {
-  color: @ft_warning;
-}
-
-.orchestration-list-secondary.err {
-  color: @ft_danger;
-}
-
-.orchestration-list-secondary.info {
-  color: @ft_info;
-}
-
-/* --------------------------------------------------------------------------
- * Orchestration feed dock
- * -------------------------------------------------------------------------- */
-
-.orchestration-feed {
-  background: #121212;
-  border-top: 1px solid @ft_bg_1;
-}
-
-.orchestration-feed-header {
-  min-height: 34px;
-  padding: 0 12px;
-  border-bottom: 1px solid @ft_bg_1;
-}
-
-button.flat.orchestration-feed-tab {
-  min-height: 34px;
-  padding: 0 10px;
-  border-radius: 0;
-  background: transparent;
-  color: #777777;
-  font-size: 0.72em;
-  font-weight: 720;
-}
-
-button.flat.orchestration-feed-tab:hover,
-button.flat.orchestration-feed-tab:focus-visible {
-  color: @ft_text_2;
-}
-
-button.flat.orchestration-feed-tab.active {
-  color: @ft_text_0;
-  box-shadow: inset 0 -1px 0 alpha(@accent_color, 0.72);
-}
-
-button.flat.orchestration-feed-clear {
-  min-height: 22px;
-  padding: 0 10px;
-  border-radius: 6px;
-  color: #9d9d9d;
-  font-size: 0.74em;
-  font-weight: 620;
-}
-
-button.flat.orchestration-feed-clear:hover,
-button.flat.orchestration-feed-clear:focus-visible {
-  color: @ft_text_1;
-  background: @ft_bg_1;
-}
-
-button.flat.orchestration-feed-collapse {
-  min-width: 24px;
-  min-height: 22px;
-  padding: 0 7px;
-  border-radius: 6px;
-  color: @ft_text_3;
-  font-size: 0.74em;
-  font-weight: 720;
-}
-
-button.flat.orchestration-feed-collapse:hover,
-button.flat.orchestration-feed-collapse:focus-visible {
-  color: @ft_text_1;
-  background: @ft_bg_1;
-}
-
-.orchestration-feed-live {
-  padding: 0 2px;
-}
-
-.orchestration-feed-live-label {
-  color: @ft_text_3;
-  font-size: 0.68em;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-
-.orchestration-feed-rows {
-  background: #131313;
-}
-
-.orchestration-feed-rows-shell {
-  background: #131313;
-}
-
-.orchestration-feed-row {
-  min-height: 23px;
-  padding: 0 12px;
-  border-bottom: 1px solid alpha(@ft_line, 0.55);
-}
-
-.orchestration-feed-row.empty {
-  min-height: 42px;
-  padding: 10px 16px 0 16px;
-  border-bottom: 0;
-}
-
-.orchestration-feed-time {
-  color: #777777;
-  font-size: 0.74em;
-  font-weight: 560;
-}
-
-.orchestration-feed-body {
-  color: @ft_text_2;
-  font-size: 0.78em;
-  font-weight: 540;
-}
-
-.orchestration-feed-row.empty .orchestration-feed-body {
-  color: @ft_text_3;
-  font-weight: 520;
-}
-
-.orchestration-feed-status {
-  min-height: 18px;
-  padding: 0 6px;
-  border-radius: 4px;
-  color: @ft_text_3;
-  background: #1d1d1d;
-  font-size: 0.66em;
-  font-weight: 690;
-}
-
-.orchestration-feed-status.ok,
-.orchestration-feed-status.run {
-  color: @ft_success;
-  background: alpha(@ft_success, 0.08);
-}
-
-.orchestration-feed-status.warn {
-  color: @ft_warning;
-  background: alpha(@ft_warning, 0.08);
-}
-
-.orchestration-feed-status.err {
-  color: @ft_danger;
-  background: alpha(@ft_danger, 0.10);
-}
-
-.orchestration-feed-status.info {
-  color: #9d9d9d;
-  background: #1a1a1a;
-}
-
-.orchestration-feed-status.idle {
-  color: #777777;
-  background: #1a1a1a;
 }
 
 /* Workspace popover */
@@ -1475,7 +914,7 @@ button.flat.orchestration-feed-collapse:focus-visible {
 }
 
 .ft-workspace-popover-row.active {
-  background: #1b1b1b;
+  background: @ft_bg_control;
 }
 
 .ft-workspace-popover-row.active:hover {
@@ -1496,12 +935,12 @@ button.flat.orchestration-feed-collapse:focus-visible {
 .ft-workspace-popover-name {
   color: @ft_text_1;
   font-weight: 600;
-  font-size: 0.90em;
+  font-size: 0.92em;
 }
 
 .ft-workspace-popover-path {
   color: @ft_text_4;
-  font-size: 0.76em;
+  font-size: 0.74em;
 }
 
 .ft-workspace-popover-separator {
@@ -1531,7 +970,7 @@ button.flat.orchestration-feed-collapse:focus-visible {
 
 .terminal-stage {
   padding: 0;
-  background: #141416;
+  background: @ft_bg_stage;
 }
 
 .terminal-stage paned > separator {
@@ -1553,21 +992,24 @@ button.flat.orchestration-feed-collapse:focus-visible {
 
 .terminal-pane {
   background: @ft_bg_0;
-  border: 1px solid @ft_bg_1;
-  transition: border-color 90ms ease-out, background-color 90ms ease-out, box-shadow 90ms ease-out;
+  /* No outer border — reduces "framed terminal" look. Splits are separated by the paned divider.
+     Matches quieter Cursor/Linear/Vercel panel philosophy. */
+  border: none;
+  transition: background-color 90ms ease-out;
 }
 
 .terminal-pane.active {
-  border-color: #34302d;
-  box-shadow: inset 0 0 0 1px alpha(@accent_color, 0.08);
+  /* No inset glow or border change — active is conveyed by header and focus */
 }
 
 .terminal-pane:focus-visible {
   outline-offset: -2px;
 }
 
+/* Attention uses the small dot in the header (see pane_chrome) + subtle header treatment.
+   Avoid strong border framing on the whole pane. */
 .terminal-pane.needs-attention {
-  border-color: alpha(@accent_color, 0.70);
+  /* no border change on the pane container */
 }
 
 .terminal-pane-header {
@@ -1591,48 +1033,56 @@ button.flat.orchestration-feed-collapse:focus-visible {
 }
 
 .terminal-pane.active .terminal-pane-header {
-  background: #1d1d1d;
   color: @ft_text_1;
   border-bottom-color: @ft_line;
+  box-shadow: inset 0 1px 0 alpha(@accent_color, 0.72);
+  /* No extra background shift — active conveyed by top accent hairline (Cursor-style) + text.
+   * Keeps multi-pane chrome minimal so terminals remain primary. */
 }
 
 .terminal-pane.needs-attention .terminal-pane-header {
-  border-bottom-color: alpha(@accent_color, 0.36);
+  /* Attention signaled only by the small dot in header (see pane_chrome.rs) + quiet text.
+   * No border color change — keeps pane chrome calm per Linear/Vercel/Cursor pattern. */
 }
 
 .terminal-pane-header:drop(active),
 .browser-toolbar:drop(active) {
   background: @ft_bg_2;
   background-image: none;
-  outline: 1px solid alpha(@accent_color, 0.58);
+  outline: 1px solid alpha(@accent_color, 0.3);
   outline-offset: -1px;
-  box-shadow: inset 2px 0 0 @accent_color;
+  /* Very subtle hairline feedback only. No heavy inset for calm chrome. */
 }
 
 /* Per-pane tab strip, shown when a leaf has >1 tab. Kept deliberately
  * smaller than Adwaita's app-level TabBar because it lives inside pane chrome. */
+.pane-tabstrip-scroll {
+  background: @ft_bg_0;
+  border-bottom: 1px solid @ft_line;
+}
+
 .pane-tabstrip {
-  background: #151515;
-  border-bottom: 1px solid #222222;
-  min-height: 28px;
-  padding: 2px 6px 2px 7px;
+  background: @ft_bg_0;
+  min-height: 24px;
+  padding: 6px 6px 0;
   transition: background-color 90ms ease-out, border-color 90ms ease-out;
 }
 
 .pane-tabstrip:drop(active) {
-  background: #1b1b1b;
+  background: @ft_bg_2;
   background-image: none;
-  border-bottom-color: alpha(@accent_color, 0.58);
-  box-shadow: inset 0 -1px 0 alpha(@accent_color, 0.58);
+  box-shadow: inset 0 -1px 0 alpha(@accent_color, 0.3);
+  /* Very subtle hairline for DnD feedback. */
 }
 
 .pane-tab {
-  min-width: 72px;
-  min-height: 22px;
-  margin: 0 2px 0 0;
-  padding: 0 2px 0 7px;
+  min-width: 96px;
+  min-height: 24px;
+  margin: 0;
+  padding: 0 6px 0 12px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
   background: transparent;
   color: @ft_text_3;
   transition: background-color 90ms ease-out, border-color 90ms ease-out, color 90ms ease-out;
@@ -1640,19 +1090,19 @@ button.flat.orchestration-feed-collapse:focus-visible {
 
 .pane-tab:hover {
   background: @ft_bg_1;
-  border-color: @ft_line;
+  border-color: transparent;
   color: @ft_text_2;
 }
 
-/* Cursor-style: active tab bg matches the terminal body below so the tab
- * reads as connected to its content, marked by a thin accent on the TOP edge
- * rather than a bottom underline. */
+/* The selected tab is a compact raised surface with one warm top hairline.
+ * It stays independent from the user-owned terminal palette below. */
 .pane-tab.active {
-  background: @ft_bg_1;
-  border-color: @ft_line_strong;
+  background: @ft_bg_2;
+  border-color: @ft_line;
+  border-bottom: 0;
   border-top-color: alpha(@accent_color, 0.72);
   color: @ft_text_1;
-  box-shadow: inset 0 1px 0 alpha(@accent_color, 0.72);
+  box-shadow: inset 0 1px 0 alpha(@accent_color, 0.36);
 }
 
 .pane-tab:drop(active),
@@ -1660,8 +1110,8 @@ button.flat.orchestration-feed-collapse:focus-visible {
 .pane-tab-close:drop(active) {
   background: @ft_bg_2;
   background-image: none;
-  border-color: alpha(@accent_color, 0.58);
-  outline-color: alpha(@accent_color, 0.58);
+  border-color: alpha(@accent_color, 0.5);
+  /* Subtle hairline feedback, reduced intensity for premium calm. */
 }
 
 .pane-tab.drop-before,
@@ -1671,27 +1121,28 @@ button.flat.orchestration-feed-collapse:focus-visible {
   border-color: alpha(@accent_color, 0.62);
 }
 
+/* DnD on tabs: subtle hairline only. Clean and premium, no thick colored insets. */
 .pane-tab.drop-before {
-  box-shadow: inset 3px 0 0 @accent_color;
+  border-left: 2px solid @accent_color;
 }
 
 .pane-tab.drop-after {
-  box-shadow: inset -3px 0 0 @accent_color;
+  border-right: 2px solid @accent_color;
 }
 
 .pane-tab.active.drop-before {
-  box-shadow: inset 3px 0 0 @accent_color, inset 0 1px 0 #c9793f;
+  border-left: 2px solid @accent_color;
 }
 
 .pane-tab.active.drop-after {
-  box-shadow: inset -3px 0 0 @accent_color, inset 0 1px 0 #c9793f;
+  border-right: 2px solid @accent_color;
 }
 
 .pane-tab-select {
-  min-height: 20px;
-  padding: 0 4px 0 0;
+  min-height: 18px;
+  padding: 0 6px 0 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
   box-shadow: none;
   color: inherit;
@@ -1709,17 +1160,21 @@ button.flat.orchestration-feed-collapse:focus-visible {
   -gtk-icon-size: 11px;
   min-width: 14px;
   color: @ft_text_4;
-  opacity: 0.46;
+  opacity: 0.24;
+  transition: opacity 90ms ease-out, color 90ms ease-out;
 }
 
-.pane-tab:hover .pane-tab-grip,
-.pane-tab.active .pane-tab-grip {
+.pane-tab:hover .pane-tab-grip {
   opacity: 0.78;
+}
+
+.pane-tab.active .pane-tab-grip {
+  opacity: 0.42;
 }
 
 .pane-tab-label {
   color: @ft_text_3;
-  font-size: 0.77em;
+  font-size: 0.74em;
   font-weight: 500;
 }
 
@@ -1767,9 +1222,8 @@ button.flat.pane-tab-close:active {
 }
 
 /* Keyboard focus only: `:focus-visible` never matches mouse clicks, so the ring
- * can't get stuck after clicking a tab. The select button is hexpand, so its
- * ring spans the whole tab interior instead of hugging the label. The generic
- * button focus border is cleared so it doesn't draw a second tight box. */
+ * can't get stuck after clicking a tab. The generic button focus border is
+ * cleared so it doesn't draw a second tight box. */
 .pane-tab-select:focus-visible {
   outline: 2px solid @accent_color;
   outline-offset: -2px;
@@ -1791,80 +1245,46 @@ button.flat.pane-tab-close:active {
 
 .terminal-pane-title {
   color: @ft_text_3;
-  font-size: 0.78em;
-  font-weight: 560;
+  font-size: 0.80em;
+  font-weight: 500;
 }
 
 .terminal-pane.active .terminal-pane-title {
   color: @ft_text_1;
-  font-weight: 620;
+  font-weight: 600;
 }
 
+/* Agent lifecycle reads as quiet colored text, matching the sidebar and rail
+ * status treatment. */
 .pane-agent-badge {
   min-height: 17px;
-  padding: 2px 7px;
-  border-radius: 6px;
-  color: #9a9a9a;
-  background: #1c1c1e;
-  border: 1px solid #2a2a2a;
+  padding: 2px 2px;
+  color: @ft_text_3;
   font-size: 0.68em;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .pane-agent-badge.running {
-  color: #63d67c;
-  background: #16211b;
-  border-color: alpha(#3fb950, 0.26);
+  color: @ft_success;
 }
 
 .pane-agent-badge.needs-input {
   color: @ft_warning;
-  background: #241a11;
-  border-color: alpha(@accent_color, 0.30);
 }
 
 .pane-agent-badge.ended {
   color: @ft_text_3;
-  background: #1b1b1b;
-  border-color: @ft_line;
 }
 
 .pane-agent-badge.idle,
 .pane-agent-badge.suspended,
 .pane-agent-badge.unknown {
-  color: #9a9a9a;
-  background: #1c1c1e;
-  border-color: @ft_line_strong;
+  color: @ft_text_3;
 }
 
 .terminal-pane-cwd {
-  color: #777777;
-  font-size: 0.72em;
-}
-
-/* Slim pane footer mirroring the header chrome: shell name on the left,
- * agent lifecycle on the right. Hidden with the header for single panes. */
-.terminal-pane-footer {
-  min-height: 20px;
-  padding: 0 10px;
-  background: @ft_bg_0;
-  border-top: 1px solid #222222;
-}
-
-.terminal-pane.active .terminal-pane-footer {
-  background: #1b1b1b;
-}
-
-.terminal-pane-footer-shell {
-  color: #777777;
-  font-size: 0.7em;
-  font-weight: 560;
-}
-
-.terminal-pane-footer-state {
-  color: @ft_text_3;
-  font-size: 0.7em;
-  font-weight: 600;
+  color: @ft_text_4;
+  font-size: 0.74em;
 }
 
 /* Inactive attention panes already carry a 2px warning border on top.
@@ -1873,16 +1293,9 @@ button.flat.pane-tab-close:active {
 .pane-attention-dot {
   min-width: 4px;
   min-height: 4px;
-  border-radius: 50%;
+  border-radius: 999px;
   background: alpha(@accent_color, 0.55);
   margin-right: 4px;
-}
-
-.pane-focus-marker {
-  min-width: 0;
-  min-height: 0;
-  border: 0;
-  margin: 0;
 }
 
 .terminal-pane-actions {
@@ -1939,12 +1352,12 @@ button.flat.terminal-pane-action:focus-visible {
 
 .pane-close-action:hover {
   color: @ft_danger;
-  background: #2f1f1f;
+  background: @ft_danger_bg;
 }
 
 button.flat.pane-close-action:hover {
   color: @ft_danger;
-  background: #2f1f1f;
+  background: @ft_danger_bg;
 }
 
 .pane-close-action:active {
@@ -1964,7 +1377,7 @@ button.flat.pane-close-action:active {
   border-radius: 8px;
   background: transparent;
   box-shadow: none;
-  opacity: 0.36;
+  opacity: 0.56;
   transition: opacity 90ms ease-out, background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
@@ -1987,7 +1400,8 @@ button.flat.pane-close-action:active {
   border: 1px solid @ft_line_strong;
   border-radius: 6px;
   background: @ft_bg_2;
-  box-shadow: 0 2px 8px alpha(#000000, 0.35);
+  /* Reduced shadow for calmer search UI */
+  box-shadow: 0 1px 4px alpha(@ft_shadow, 0.18);
 }
 
 .pane-search-bar entry {
@@ -2001,19 +1415,19 @@ button.flat.pane-close-action:active {
 .pane-search-bar entry.error:focus,
 .pane-search-bar entry.error:focus-within {
   border-color: @ft_danger;
-  box-shadow: inset 0 1px 2px alpha(#000000, 0.20), 0 0 0 2px alpha(@ft_danger, 0.25);
+  box-shadow: inset 0 1px 2px alpha(@ft_shadow, 0.20), 0 0 0 2px alpha(@ft_danger, 0.25);
 }
 
 .pane-search-count {
   margin: 0 2px;
   color: @ft_text_2;
-  font-size: 0.85em;
+  font-size: 0.86em;
 }
 
 /* Browser panes reuse the terminal surface tokens so mixed terminal/browser
  * layouts keep one visual rhythm. */
 .browser-pane {
-  background: #1c1c1c;
+  background: @ft_bg_control;
   border: 1px solid transparent;
   transition: border-color 90ms ease-out, box-shadow 90ms ease-out;
 }
@@ -2026,7 +1440,7 @@ button.flat.pane-close-action:active {
 .browser-toolbar {
   min-height: 30px;
   padding: 3px 6px;
-  background: #1b1b1b;
+  background: @ft_bg_control;
   border-bottom: 1px solid @ft_line;
   color: @ft_text_3;
 }
@@ -2054,17 +1468,17 @@ button.flat.pane-close-action:active {
 
 .browser-action:hover {
   color: @ft_text_1;
-  background: #262626;
+  background: @ft_bg_3;
 }
 
 .browser-action:focus-visible {
   color: @ft_text_1;
-  background: #262626;
+  background: @ft_bg_3;
 }
 
 .browser-action.pane-close-action:hover {
   color: @ft_danger;
-  background: #2f1f1f;
+  background: @ft_danger_bg;
 }
 
 .browser-action.pane-close-action:active {
@@ -2082,7 +1496,7 @@ button.flat.pane-close-action:active {
   min-height: 24px;
   padding: 2px 8px;
   border-radius: 6px;
-  font-size: 0.82em;
+  font-size: 0.80em;
   background: @ft_bg_0;
   border: 1px solid @ft_line;
   color: @ft_text_3;
@@ -2098,17 +1512,17 @@ button.flat.pane-close-action:active {
 .browser-address:focus-within {
   border-color: @accent_color;
   color: @ft_text_1;
-  box-shadow: inset 0 1px 2px alpha(#000000, 0.24), 0 0 0 1px alpha(@accent_color, 0.42);
+  box-shadow: inset 0 1px 2px alpha(@ft_shadow, 0.24), 0 0 0 1px alpha(@accent_color, 0.42);
 }
 
 .ghostty-terminal {
   padding: 10px 12px;
-  background: #1c1c1c;
+  background: @ft_bg_control;
 }
 
 .terminal-placeholder {
   padding: 28px 22px;
-  background: #1c1c1c;
+  background: @ft_bg_control;
 }
 
 .terminal-placeholder-actions {
@@ -2117,7 +1531,7 @@ button.flat.pane-close-action:active {
 
 .terminal-empty-stage {
   padding: 34px 22px;
-  background: radial-gradient(circle at 50% 0%, alpha(@accent_color, 0.08), transparent 34%), #141414;
+  background: radial-gradient(circle at 50% 0%, alpha(@accent_color, 0.08), transparent 34%), @ft_bg_stage;
 }
 
 .terminal-empty-stage statuspage.compact > scrolledwindow > viewport > box {
@@ -2126,15 +1540,15 @@ button.flat.pane-close-action:active {
 
 .terminal-empty-stage statuspage.compact .icon {
   -gtk-icon-size: 38px;
-  color: #777777;
+  color: @ft_text_4;
 }
 
 .terminal-empty-stage statuspage.compact .title {
-  font-size: 1.08em;
+  font-size: 1.00em;
 }
 
 .terminal-empty-stage statuspage.compact .description {
-  color: #9d9d9d;
+  color: @ft_text_3;
 }
 
 .terminal-empty-actions {
@@ -2156,7 +1570,7 @@ button.flat.pane-close-action:active {
 
 .shortcut-hint {
   color: @ft_text_3;
-  font-size: 0.84em;
+  font-size: 0.86em;
 }
 
 .focused-terminal {
@@ -2176,12 +1590,12 @@ spinbutton,
 combobox,
 textview {
   color: @ft_text_2;
-  background: #1b1b1b;
+  background: @ft_bg_control;
   border: 1px solid @ft_line_strong;
   border-radius: 8px;
   padding: 6px 8px;
   min-height: 30px;
-  box-shadow: inset 0 1px 2px alpha(#000000, 0.20), 0 0 0 0 transparent;
+  box-shadow: inset 0 1px 2px alpha(@ft_shadow, 0.20), 0 0 0 0 transparent;
   transition: border-color 90ms ease-out, background-color 90ms ease-out, box-shadow 90ms ease-out;
 }
 
@@ -2189,7 +1603,7 @@ entry:hover,
 spinbutton:hover,
 combobox:hover button {
   border-color: @ft_line_strong;
-  box-shadow: inset 0 1px 2px alpha(#000000, 0.32), 0 0 0 0 transparent;
+  box-shadow: inset 0 1px 2px alpha(@ft_shadow, 0.32), 0 0 0 0 transparent;
 }
 
 entry:focus,
@@ -2199,8 +1613,8 @@ combobox:focus button,
 textview:focus,
 textview:focus-within {
   border-color: @accent_color;
-  background: #1b1b1b;
-  box-shadow: inset 0 1px 2px alpha(#000000, 0.20), 0 0 0 2px alpha(@accent_color, 0.25);
+  background: @ft_bg_control;
+  box-shadow: inset 0 1px 2px alpha(@ft_shadow, 0.20), 0 0 0 2px alpha(@accent_color, 0.25);
 }
 
 entry:disabled,
@@ -2240,21 +1654,21 @@ checkbutton:focus-visible {
 /* Switches and checks adopt ForkTTY's warm accent instead of libadwaita's
  * default blue/purple, so every toggle matches the rest of the chrome. */
 switch {
-  background: #282828;
+  background: @ft_bg_3;
   border: 1px solid @ft_line_strong;
   border-radius: 999px;
   box-shadow: none;
 }
 
 switch:checked {
-  background: #2f2a26;
-  border-color: #7a553b;
+  background: @ft_warning_bg_soft;
+  border-color: @ft_warning_border;
 }
 
 switch slider {
   background: @ft_text_1;
   border-radius: 999px;
-  box-shadow: 0 1px 2px alpha(#000000, 0.35);
+  box-shadow: 0 1px 2px alpha(@ft_shadow, 0.35);
 }
 
 switch:checked slider {
@@ -2273,7 +1687,7 @@ check:indeterminate,
 radio:checked {
   background: @accent_color;
   border-color: transparent;
-  color: #17110c;
+  color: @accent_fg_color;
 }
 
 /* --------------------------------------------------------------------------
@@ -2285,9 +1699,9 @@ button {
   padding: 4px 12px;
   border-radius: 8px;
   color: @ft_text_2;
-  background: #1b1b1b;
+  background: @ft_bg_control;
   border: 1px solid @ft_line_strong;
-  box-shadow: inset 0 1px 0 alpha(white, 0.04), 0 1px 2px alpha(#000000, 0.20);
+  box-shadow: inset 0 1px 0 alpha(white, 0.04), 0 1px 2px alpha(@ft_shadow, 0.20);
   transition: background-color 90ms ease-out, border-color 90ms ease-out, color 90ms ease-out, box-shadow 90ms ease-out, transform 90ms ease-out;
 }
 
@@ -2298,7 +1712,7 @@ button:hover {
 
 button:active {
   background: @ft_bg_2;
-  box-shadow: inset 0 1px 2px alpha(#000000, 0.40);
+  box-shadow: inset 0 1px 2px alpha(@ft_shadow, 0.40);
 }
 
 button:focus-visible {
@@ -2323,13 +1737,13 @@ button.flat:hover {
 }
 
 button.flat:active {
-  background: alpha(#000000, 0.40);
+  background: alpha(@ft_shadow, 0.40);
   box-shadow: none;
 }
 
 button.suggested-action,
 button.primary {
-  color: #17110c;
+  color: @accent_fg_color;
   background: @accent_color;
   border-color: transparent;
   box-shadow: inset 0 1px 0 alpha(white, 0.12), 0 1px 3px alpha(@accent_color, 0.25);
@@ -2338,30 +1752,30 @@ button.primary {
 
 button.suggested-action:hover,
 button.primary:hover {
-  background: #f09a58;
+  background: @ft_accent_hover;
   box-shadow: inset 0 1px 0 alpha(white, 0.15), 0 2px 4px alpha(@accent_color, 0.35);
 }
 
 button.suggested-action:active,
 button.primary:active {
-  box-shadow: inset 0 2px 4px alpha(#000000, 0.55);
+  box-shadow: inset 0 2px 4px alpha(@ft_shadow, 0.55);
 }
 
 button.suggested-action:disabled,
 button.primary:disabled {
   color: @ft_text_4;
-  background: #1b1b1b;
+  background: @ft_bg_control;
   box-shadow: none;
 }
 
 button.destructive-action {
   color: @ft_danger;
-  border-color: #2f1f1f;
+  border-color: @ft_danger_bg;
   background: transparent;
 }
 
 button.destructive-action:hover {
-  background: #2f1f1f;
+  background: @ft_danger_bg;
 }
 
 /* --------------------------------------------------------------------------
@@ -2416,19 +1830,19 @@ window.ft-dialog,
 .ft-dialog-title {
   color: @ft_text_1;
   font-weight: 700;
-  font-size: 1.0em;
+  font-size: 1.00em;
   letter-spacing: 0;
 }
 
 .ft-dialog-subtitle {
   color: @ft_text_3;
-  font-size: 0.83em;
+  font-size: 0.80em;
 }
 
 /* Body copy for destructive confirmations — readable, not muted-tiny. */
 .ft-dialog-confirm-body {
   color: @ft_text_2;
-  font-size: 0.94em;
+  font-size: 0.92em;
   line-height: 1.45;
 }
 
@@ -2466,32 +1880,32 @@ window.ft-dialog,
 }
 
 .about-name {
-  color: #e0e0e0;
+  color: @ft_text_1;
   font-size: 1.22em;
-  font-weight: 750;
+  font-weight: 700;
 }
 
 .about-version {
-  color: #777777;
+  color: @ft_text_4;
   font-size: 0.80em;
 }
 
 .about-description {
-  color: #969696;
-  font-size: 0.88em;
+  color: @ft_text_3;
+  font-size: 0.86em;
 }
 
 .about-details {
-  background: #1a1a1a;
-  border: 1px solid #2a2a2a;
+  background: @ft_bg_1;
+  border: 1px solid @ft_line;
   border-radius: 8px;
-  box-shadow: inset 0 1px 0 alpha(white, 0.03);
+  box-shadow: none;
 }
 
 .about-detail-row {
   min-height: 34px;
   padding: 7px 11px;
-  border-bottom: 1px solid #262626;
+  border-bottom: 1px solid @ft_line;
 }
 
 .about-detail-row:last-child {
@@ -2499,8 +1913,8 @@ window.ft-dialog,
 }
 
 .about-detail-label {
-  color: #6c6c6c;
-  font-size: 0.73em;
+  color: @ft_text_4;
+  font-size: 0.74em;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -2519,7 +1933,7 @@ window.ft-dialog,
   min-width: 0;
   padding: 4px 12px;
   border-radius: 8px;
-  font-size: 0.91em;
+  font-size: 0.92em;
 }
 
 .welcome-dialog {
@@ -2543,12 +1957,12 @@ window.ft-dialog,
 .welcome-heading {
   color: @ft_text_1;
   font-size: 1.22em;
-  font-weight: 750;
+  font-weight: 700;
 }
 
 .welcome-subtitle {
   color: @ft_text_3;
-  font-size: 0.88em;
+  font-size: 0.86em;
   margin-top: 0;
 }
 
@@ -2565,20 +1979,20 @@ window.ft-dialog,
 
 .welcome-integration-title {
   color: @ft_text_1;
-  font-size: 0.90em;
-  font-weight: 560;
+  font-size: 0.92em;
+  font-weight: 500;
 }
 
 .welcome-integration-subtitle {
   color: @ft_text_3;
-  font-size: 0.78em;
+  font-size: 0.80em;
 }
 
 .welcome-setup {
   min-height: 26px;
   padding: 1px 10px;
   border-radius: 6px;
-  font-size: 0.82em;
+  font-size: 0.80em;
 }
 
 .welcome-setup-status {
@@ -2598,11 +2012,11 @@ window.ft-dialog,
 
 .welcome-link {
   color: @accent_color;
-  font-size: 0.84em;
+  font-size: 0.86em;
 }
 
 .welcome-link:hover {
-  color: #f09a58;
+  color: @ft_accent_hover;
 }
 
 .welcome-telemetry-status {
@@ -2622,7 +2036,8 @@ window.ft-dialog,
 .welcome-start {
   min-height: 32px;
   padding: 4px 16px;
-  border-radius: 999px;
+  /* Consistent small radius for premium modern look. */
+  border-radius: 8px;
 }
 
 .ft-section-title {
@@ -2634,15 +2049,14 @@ window.ft-dialog,
 }
 
 .settings-group {
-  background: #141414;
-  border: 1px solid @ft_bg_3;
-  border-radius: 8px;
+  background: transparent;
+  border: none;
 }
 
 .settings-row {
   min-height: 56px;
   padding: 12px 16px;
-  border-bottom: 1px solid @ft_bg_3;
+  border-bottom: 1px solid @ft_line;
 }
 
 .settings-row:last-child {
@@ -2654,23 +2068,23 @@ window.ft-dialog,
   min-width: 54px;
   padding: 1px 8px;
   border-radius: 6px;
-  font-size: 0.84em;
-  font-weight: 650;
+  font-size: 0.86em;
+  font-weight: 600;
 }
 
 .settings-inline-action.primary {
-  color: #17110c;
-  background: @accent_color;
-  border-color: @accent_color;
+  color: @ft_text_1;
+  background: @ft_bg_1;
+  border: 1px solid @ft_line;
 }
 
 .settings-inline-action.primary:hover {
-  background: #f09a58;
-  border-color: #f09a58;
+  background: @ft_bg_2;
+  border-color: @ft_line_strong;
 }
 
 .settings-inline-action.subtle {
-  color: #9a9a9a;
+  color: @ft_text_3;
   background: transparent;
   border-color: @ft_line_strong;
   box-shadow: none;
@@ -2683,31 +2097,27 @@ window.ft-dialog,
 }
 
 .settings-status-pill {
-  min-height: 22px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  font-size: 0.75em;
-  font-weight: 650;
+  min-height: 18px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 0.68em;
+  font-weight: 600;
 }
 
 .settings-status-pill.checking {
   color: @ft_text_3;
-  background: @ft_line;
 }
 
 .settings-status-pill.ok {
-  color: #9ac18e;
-  background: #1c2a1b;
+  color: @ft_success;
 }
 
 .settings-status-pill.warning {
-  color: #e6b173;
-  background: #302515;
+  color: @ft_warning;
 }
 
 .settings-status-pill.error {
   color: @ft_danger;
-  background: #321c1c;
 }
 
 .ft-settings-window {
@@ -2725,13 +2135,13 @@ window.ft-dialog,
   background: @ft_bg_0;
   background-color: @ft_bg_0;
   background-image: none;
-  border-bottom: 1px solid @ft_bg_3;
+  border-bottom: 1px solid @ft_line;
   box-shadow: none;
 }
 
 .settings-window-title {
   color: @ft_text_1;
-  font-size: 0.96em;
+  font-size: 0.92em;
   font-weight: 700;
 }
 
@@ -2767,15 +2177,15 @@ window.ft-dialog,
 .settings-nav {
   min-width: 184px;
   padding: 11px 9px 15px 9px;
-  background: #141414;
-  border-right: 1px solid @ft_bg_3;
+  background: @ft_bg_0;
+  border-right: 1px solid @ft_line;
 }
 
 .settings-nav-heading {
   margin: 9px 10px 4px 10px;
   color: @ft_text_4;
-  font-size: 0.66em;
-  font-weight: 750;
+  font-size: 0.68em;
+  font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -2796,10 +2206,13 @@ window.ft-dialog,
 }
 
 .settings-nav-item:checked {
-  background: @ft_bg_2;
-  border-color: @ft_line_strong;
+  background: @ft_bg_1;
+  /* Keep the 1px transparent border: `border: none` resets border-color to
+   * currentColor, and unchecking then flashes a whitish 1px ring while the
+   * inherited border-color transition runs. */
+  border-color: transparent;
+  box-shadow: none;
   color: @ft_text_1;
-  box-shadow: inset 0 1px 0 alpha(@ft_text_1, 0.04), 0 1px 0 alpha(#000000, 0.18);
 }
 
 .settings-nav-icon {
@@ -2817,7 +2230,7 @@ window.ft-dialog,
 
 .settings-nav-label {
   color: inherit;
-  font-size: 0.90em;
+  font-size: 0.92em;
   font-weight: 700;
 }
 
@@ -2844,14 +2257,14 @@ window.ft-dialog,
 
 .settings-page-title {
   color: @ft_text_1;
-  font-size: 1.02em;
-  font-weight: 750;
+  font-size: 1.00em;
+  font-weight: 700;
   letter-spacing: 0;
 }
 
 .settings-page-description {
   color: @ft_text_3;
-  font-size: 0.82em;
+  font-size: 0.80em;
 }
 
 .settings-section-header {
@@ -2861,7 +2274,7 @@ window.ft-dialog,
 .settings-section-title {
   color: @ft_text_1;
   font-weight: 700;
-  font-size: 0.90em;
+  font-size: 0.92em;
   letter-spacing: 0;
 }
 
@@ -2871,10 +2284,9 @@ window.ft-dialog,
 }
 
 .settings-list {
-  background: #1b1b1b;
-  border: 1px solid @ft_line_strong;
-  border-radius: 8px;
-  box-shadow: inset 0 1px 0 alpha(@ft_text_1, 0.03);
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
 .settings-list row,
@@ -2883,7 +2295,7 @@ window.ft-dialog,
   padding: 0 12px;
   background: transparent;
   border-radius: 0;
-  border-bottom: 1px solid @ft_bg_3;
+  border-bottom: 1px solid @ft_line;
 }
 
 .settings-list row:first-child,
@@ -2918,13 +2330,13 @@ window.ft-dialog,
 
 .settings-list row label.title {
   color: @ft_text_1;
-  font-weight: 560;
-  font-size: 0.90em;
+  font-weight: 500;
+  font-size: 0.92em;
 }
 
 .settings-list row label.subtitle {
   color: @ft_text_3;
-  font-size: 0.78em;
+  font-size: 0.80em;
 }
 
 .settings-list row.entry entry,
@@ -2936,9 +2348,12 @@ window.ft-dialog,
   box-shadow: none;
 }
 
-.settings-list row:focus-within {
+/* Only entry rows mark focus-within (useful while typing). Toggle/combo rows
+ * must not: click focus lingers after interacting, and the old whitish inset
+ * ring read as a stray white outline stuck on the previously used row.
+ * Keyboard navigation keeps the accent :focus-visible outline. */
+.settings-list row.entry:focus-within {
   background: @ft_bg_1;
-  box-shadow: inset 0 0 0 1px alpha(@ft_text_1, 0.06);
 }
 
 .settings-list row image {
@@ -2958,7 +2373,7 @@ window.ft-dialog,
 }
 
 .settings-list row.combo popover > contents {
-  background: #1f1f1f;
+  background: @ft_bg_selected;
   border: 1px solid @ft_line_strong;
   border-radius: 8px;
   padding: 4px;
@@ -2978,7 +2393,7 @@ window.ft-dialog,
 }
 
 .settings-list row.combo popover listview row:selected {
-  background: #2a2a2a;
+  background: @ft_bg_3;
   color: @ft_text_1;
 }
 
@@ -3011,13 +2426,14 @@ window.ft-dialog,
 }
 
 .settings-list row.spin spinbutton button label.ft-spin-glyph {
-  font-size: 1.05em;
+  font-size: 1.00em;
   font-weight: 700;
 }
 
 .settings-list row.spin spinbutton button:hover {
   background: @ft_bg_2;
-  border-color: @ft_line_strong;
+  /* Same flash hazard as the nav items: never `border: none` on a state. */
+  border-color: transparent;
   color: @ft_text_1;
 }
 
@@ -3025,13 +2441,13 @@ window.ft-dialog,
   min-width: 36px;
   min-height: 20px;
   padding: 2px;
-  background: #252525;
+  background: @ft_bg_2;
   border-color: @ft_line_strong;
 }
 
 .settings-list switch:checked {
-  background: #2f2a26;
-  border-color: #7a553b;
+  background: @ft_warning_bg_soft;
+  border-color: @ft_warning_border;
 }
 
 .settings-list switch slider {
@@ -3056,38 +2472,38 @@ window.ft-dialog,
 .ft-form-label {
   color: @ft_text_2;
   font-weight: 600;
-  font-size: 0.94em;
+  font-size: 0.92em;
 }
 
 .ft-form-hint {
   color: @ft_text_4;
-  font-size: 0.82em;
+  font-size: 0.80em;
 }
 
 .ft-inline-status {
   padding: 8px 10px;
   border-radius: 8px;
-  background: #1b1b1b;
+  background: @ft_bg_control;
   border: 1px solid @ft_bg_3;
   color: @ft_text_3;
   font-size: 0.86em;
 }
 
 .ft-inline-status.success {
-  color: #7ca982;
-  background: #1f2a22;
+  color: @ft_success;
+  background: @ft_success_bg;
   border-color: transparent;
 }
 
 .ft-inline-status.error {
   color: @ft_danger;
-  background: #2f1f1f;
+  background: @ft_danger_bg;
   border-color: transparent;
 }
 
 .ft-inline-status.warning {
   color: @ft_warning;
-  background: #241a11;
+  background: @ft_warning_bg;
   border-color: transparent;
 }
 
@@ -3095,9 +2511,9 @@ window.ft-dialog,
   padding: 6px 9px;
   border-radius: 8px;
   color: @ft_text_3;
-  background: #141414;
+  background: @ft_bg_stage;
   border: 1px solid @ft_bg_3;
-  font-size: 0.82em;
+  font-size: 0.80em;
 }
 
 .worktree-mode-selector {
@@ -3116,8 +2532,8 @@ window.ft-dialog,
 
 /* Selected mode uses the app accent, matching active states elsewhere. */
 .worktree-mode-button:checked {
-  background: #30251d;
-  color: #f09a58;
+  background: @ft_warning_bg_hover;
+  color: @ft_accent_hover;
 }
 
 .worktree-mode-button:checked:hover {
@@ -3151,9 +2567,9 @@ combobox.worktree-existing button {
 }
 
 .command-palette-dialog .ft-dialog-title {
-  color: #9a9a9a;
+  color: @ft_text_3;
   font-size: 0.86em;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 .command-palette-dialog .ft-dialog-body {
@@ -3166,7 +2582,7 @@ combobox.worktree-existing button {
   border-color: @ft_line_strong;
   border-radius: 8px;
   background: @ft_bg_0;
-  box-shadow: inset 0 1px 2px alpha(#000000, 0.24), 0 0 0 0 transparent;
+  box-shadow: inset 0 1px 2px alpha(@ft_shadow, 0.24), 0 0 0 0 transparent;
 }
 
 entry.search.command-search:focus,
@@ -3175,7 +2591,7 @@ entry.search.command-search:focus-within,
 .command-search:focus-within {
   border-color: @accent_color;
   background: @ft_bg_0;
-  box-shadow: inset 0 1px 2px alpha(#000000, 0.24), 0 0 0 1px alpha(@accent_color, 0.42);
+  box-shadow: inset 0 1px 2px alpha(@ft_shadow, 0.24), 0 0 0 1px alpha(@accent_color, 0.42);
   outline: none;
 }
 
@@ -3202,12 +2618,13 @@ entry.search.command-search:focus-within,
 }
 
 .command-list row:selected {
-  background: #242424;
-  box-shadow: inset 0 0 0 1px #303030;
+  /* Premium clean selected state: subtle surface shift only.
+   * No inset shadow — Linear-style quiet selection. */
+  background: @ft_bg_selected;
 }
 
 .command-list row:selected:hover {
-  background: #262626;
+  background: @ft_bg_1;
 }
 
 .command-list row:selected button.flat {
@@ -3220,17 +2637,17 @@ entry.search.command-search:focus-within,
 
 .command-item-label {
   color: @ft_text_2;
-  font-weight: 580;
-  font-size: 0.90em;
+  font-weight: 500;
+  font-size: 0.92em;
 }
 
 .command-item .keycap {
-  padding: 1px 5px;
+  padding: 1px 4px;
   color: @ft_text_3;
-  background: #1b1b1b;
-  border-color: @ft_bg_3;
-  font-size: 0.70em;
-  font-weight: 600;
+  background: @ft_bg_0;
+  border-color: alpha(@ft_line, 0.8);
+  font-size: 0.68em;
+  font-weight: 500;
 }
 
 .command-list row:disabled,
@@ -3256,73 +2673,6 @@ entry.search.command-search:focus-within,
   color: @ft_text_3;
   background: @ft_bg_0;
   border-color: @ft_line_strong;
-}
-
-/* --------------------------------------------------------------------------
- * Task router dialog
- * -------------------------------------------------------------------------- */
-
-.task-router-dialog .ft-dialog-body {
-  padding-top: 14px;
-}
-
-.task-router-body {
-  background: #151515;
-}
-
-entry.task-router-goal {
-  min-height: 36px;
-  border-radius: 8px;
-  background: @ft_bg_1;
-  border: 1px solid @ft_line_strong;
-  color: @ft_text_1;
-}
-
-entry.task-router-goal:focus,
-entry.task-router-goal:focus-within {
-  border-color: alpha(@accent_color, 0.72);
-  box-shadow: 0 0 0 2px alpha(@accent_color, 0.18);
-}
-
-.task-router-hints checkbutton {
-  color: @ft_text_2;
-  font-size: 0.82em;
-}
-
-.task-router-result {
-  border-radius: 8px;
-  background: @ft_bg_0;
-  border: 1px solid @ft_line_strong;
-}
-
-.task-router-result-row {
-  min-height: 31px;
-  padding: 0 10px;
-  border-bottom: 1px solid @ft_bg_1;
-}
-
-.task-router-result-row:last-child {
-  border-bottom: 0;
-}
-
-.task-router-result-key {
-  min-width: 92px;
-  color: @ft_text_3;
-  font-size: 0.72em;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-}
-
-.task-router-result-value {
-  color: @ft_text_1;
-  font-size: 0.8em;
-  font-weight: 600;
-}
-
-.task-router-status {
-  color: @ft_text_3;
-  font-size: 0.8em;
 }
 
 .command-item-hint {
@@ -3354,7 +2704,7 @@ entry.task-router-goal:focus-within {
 .shortcut-label {
   color: @ft_text_2;
   font-weight: 600;
-  font-size: 0.88em;
+  font-size: 0.86em;
 }
 
 /* --------------------------------------------------------------------------
@@ -3390,22 +2740,22 @@ entry.task-router-goal:focus-within {
 
 .notification-list row:hover .notification-row {
   border-color: @ft_line_strong;
-  background: #1f1f1f;
+  background: @ft_bg_selected;
 }
 
 .notification-list row:hover .notification-row.actionable {
   border-color: transparent;
-  background: #1e1a17;
+  background: @ft_bg_selected;
 }
 
 .notification-list row:hover .notification-row.current {
-  background: #1c1b18;
+  background: @ft_bg_selected;
 }
 
 .notification-list row:hover .notification-row.actionable.current,
 .notification-list row:hover .notification-row.actionable.unread,
 .notification-list row:hover .notification-row.current.actionable.unread {
-  background: #1e1a17;
+  background: @ft_bg_selected;
 }
 
 .notification-list row:focus-visible {
@@ -3413,26 +2763,26 @@ entry.task-router-goal:focus-within {
 }
 
 .notification-list row:focus-visible .notification-row {
-  border-color: alpha(@accent_color, 0.62);
-  box-shadow: inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(@accent_color, 0.18);
+  border-color: alpha(@accent_color, 0.5);
+  box-shadow: inset 0 1px 0 alpha(white, 0.03), 0 0 0 1px alpha(@accent_color, 0.12);
 }
 
 .notification-list row:focus-visible .notification-row.current {
-  box-shadow: inset 3px 0 0 alpha(#c8a75d, 0.58), inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(@accent_color, 0.18);
+  box-shadow: inset 0 1px 0 alpha(white, 0.03), 0 0 0 1px alpha(@accent_color, 0.12);
 }
 
 .notification-list row:focus-visible .notification-row.unread {
-  box-shadow: inset 3px 0 0 alpha(@accent_color, 0.82), inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(@accent_color, 0.18);
+  box-shadow: inset 0 1px 0 alpha(white, 0.03), 0 0 0 1px alpha(@accent_color, 0.12);
 }
 
 .notification-list row:focus-visible .notification-row.current.unread,
 .notification-list row:focus-visible .notification-row.current.actionable.unread {
-  box-shadow: inset 3px 0 0 alpha(@accent_color, 0.82), inset 5px 0 0 #c8a75d, inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(@accent_color, 0.18);
+  box-shadow: inset 0 1px 0 alpha(white, 0.03), 0 0 0 1px alpha(@accent_color, 0.12);
 }
 
 .notification-section {
-  color: #777777;
-  font-size: 0.72em;
+  color: @ft_text_4;
+  font-size: 0.74em;
   font-weight: 700;
   text-transform: uppercase;
   padding: 5px 2px 4px 2px;
@@ -3443,59 +2793,61 @@ entry.task-router-goal:focus-within {
   padding: 8px 9px;
   border: 1px solid transparent;
   border-radius: 8px;
-  background: #1b1b1b;
-  box-shadow: inset 0 1px 0 alpha(white, 0.025);
+  background: @ft_bg_control;
+  box-shadow: inset 0 1px 0 alpha(white, 0.02);
 }
 
+/* Actionable and current states use neutral backgrounds (no heavy colored bars) */
 .notification-row.actionable {
   border-color: transparent;
-  background: #1e1a17;
+  background: @ft_bg_selected;
 }
 
 .notification-row.current {
-  background: #1c1b18;
-  box-shadow: inset 3px 0 0 alpha(#c8a75d, 0.58);
+  background: @ft_bg_selected;
 }
 
+/* Unread uses a very subtle left accent (quiet indicator, not a thick bar) */
 .notification-row.unread {
+  border-left: 2px solid alpha(@accent_color, 0.55);
   border-color: transparent;
-  box-shadow: inset 3px 0 0 alpha(@accent_color, 0.76);
+  border-left-color: alpha(@accent_color, 0.55);
 }
 
 .notification-row.actionable.unread {
   border-color: transparent;
-  background: #1e1a17;
+  background: @ft_bg_selected;
 }
 
 .notification-row.current.unread {
-  border-color: transparent;
-  box-shadow: inset 3px 0 0 alpha(@accent_color, 0.76), inset 5px 0 0 #c8a75d;
+  border-left: 2px solid alpha(@accent_color, 0.55);
+  background: @ft_bg_selected;
 }
 
 .notification-row.current.actionable.unread {
   border-color: transparent;
-  background: #1e1a17;
+  background: @ft_bg_selected;
 }
 
 .notification-title {
   color: @ft_text_1;
   font-weight: 600;
-  font-size: 0.90em;
+  font-size: 0.92em;
 }
 
 .notification-body {
   color: @ft_text_3;
-  font-size: 0.84em;
+  font-size: 0.86em;
 }
 
 .notification-time {
   color: @ft_text_3;
-  font-size: 0.78em;
+  font-size: 0.80em;
 }
 
 .notification-target {
   color: @ft_text_4;
-  font-size: 0.78em;
+  font-size: 0.80em;
 }
 
 .notification-actions {
@@ -3507,8 +2859,8 @@ entry.task-router-goal:focus-within {
 .notification-badge {
   background: @accent_color;
   color: @accent_fg_color;
-  border-radius: 5px;
-  font-size: 0.60em;
+  border-radius: 4px;
+  font-size: 0.68em;
   font-weight: 700;
   padding: 0 3px;
   min-width: 13px;
@@ -3536,34 +2888,29 @@ entry.task-router-goal:focus-within {
 
 .notification-dismiss:hover {
   color: @ft_danger;
-  background: #2f1f1f;
+  background: @ft_danger_bg;
 }
 
 .notification-kind {
-  padding: 1px 8px 2px 8px;
-  border-radius: 999px;
-  font-size: 0.72em;
+  padding: 1px 0 2px 0;
+  font-size: 0.74em;
   font-weight: 600;
 }
 
 .notification-kind.info {
-  color: #9a9a9a;
-  background: #252525;
+  color: @ft_text_3;
 }
 
 .notification-kind.error {
   color: @ft_danger;
-  background: #2f1f1f;
 }
 
 .notification-kind.prompt {
   color: @ft_warning;
-  background: #241a11;
 }
 
 .notification-kind.custom {
   color: @ft_text_3;
-  background: @ft_bg_2;
 }
 
 /* --------------------------------------------------------------------------
@@ -3598,8 +2945,8 @@ entry.task-router-goal:focus-within {
 }
 
 .agent-section {
-  color: #777777;
-  font-size: 0.72em;
+  color: @ft_text_4;
+  font-size: 0.74em;
   font-weight: 700;
   text-transform: uppercase;
   padding: 4px 2px 2px 2px;
@@ -3610,55 +2957,51 @@ entry.task-router-goal:focus-within {
   padding: 12px 12px 12px 14px;
   border: 1px solid transparent;
   border-radius: 8px;
-  background: #1b1b1b;
-  box-shadow: inset 0 1px 0 alpha(white, 0.025);
+  background: @ft_bg_1;
+  box-shadow: none;
 }
 
+/* Quieter hovers and states using hairlines + subtle surface (Linear-style) */
 .agent-list row:hover .agent-row {
-  border-color: @ft_line_strong;
-  background: #1f1f1f;
+  background: @ft_bg_2;
+  border-color: @ft_line;
 }
 
 .agent-list row:hover .agent-row.needs-input {
-  border-color: transparent;
-  background: #1e1a17;
+  background: @ft_bg_2;
+  border-left: 2px solid alpha(@accent_color, 0.4);
 }
 
 .agent-list row:hover .agent-row.current {
-  background: #1c1b18;
-}
-
-.agent-list row:hover .agent-row.needs-input.current {
-  background: #1e1a17;
+  background: @ft_bg_2;
 }
 
 .agent-list row:focus-visible .agent-row {
-  border-color: alpha(@accent_color, 0.62);
-  box-shadow: inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(@accent_color, 0.18);
+  border-color: alpha(@accent_color, 0.4);
 }
 
 .agent-list row:focus-visible .agent-row.current {
-  box-shadow: inset 3px 0 0 alpha(#c8a75d, 0.58), inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(@accent_color, 0.18);
+  border-color: alpha(@accent_color, 0.4);
 }
 
 .agent-list row:focus-visible .agent-row.needs-input {
-  box-shadow: inset 3px 0 0 alpha(@accent_color, 0.82), inset 0 1px 0 alpha(white, 0.04), 0 0 0 1px alpha(@accent_color, 0.18);
+  border-color: alpha(@accent_color, 0.4);
 }
 
 .agent-row.needs-input {
+  border-left: 2px solid alpha(@accent_color, 0.4);
   border-color: transparent;
-  background: #1e1a17;
-  box-shadow: inset 3px 0 0 alpha(@accent_color, 0.76);
+  border-left-color: alpha(@accent_color, 0.4);
+  background: @ft_bg_1;
 }
 
 .agent-row.current {
-  background: #1c1b18;
-  box-shadow: inset 3px 0 0 alpha(#c8a75d, 0.58);
+  background: @ft_bg_1;
 }
 
 .agent-row.needs-input.current {
-  background: #1e1a17;
-  box-shadow: inset 3px 0 0 alpha(@accent_color, 0.82);
+  border-left: 2px solid alpha(@accent_color, 0.4);
+  background: @ft_bg_1;
 }
 
 .agent-row.compact {
@@ -3675,21 +3018,21 @@ entry.task-router-goal:focus-within {
 }
 
 .agent-name {
-  color: #e0e0e0;
+  color: @ft_text_1;
   font-weight: 700;
-  font-size: 0.96em;
+  font-size: 0.92em;
 }
 
-/* Unseen-output dot: leads with the accent so an idle-but-unread agent reads
-   at a glance. Literal color — no CSS custom properties (GTK 4.14). */
+/* Unseen-output dot: leads with the named accent so an idle-but-unread agent
+   reads at a glance without relying on unsupported CSS custom properties. */
 .agent-unread {
   color: @accent_color;
-  font-size: 0.66em;
+  font-size: 0.68em;
 }
 
 .agent-title {
-  color: #adadad;
-  font-size: 0.88em;
+  color: @ft_text_2;
+  font-size: 0.86em;
 }
 
 .agent-title.compact {
@@ -3699,13 +3042,13 @@ entry.task-router-goal:focus-within {
 
 .agent-meta {
   color: @ft_text_3;
-  font-size: 0.8em;
+  font-size: 0.80em;
 }
 
 .agent-tail {
-  color: #9a9a9a;
+  color: @ft_text_3;
   font-family: monospace;
-  font-size: 0.78em;
+  font-size: 0.80em;
   margin-top: 1px;
 }
 
@@ -3716,90 +3059,64 @@ entry.task-router-goal:focus-within {
 }
 
 entry.agent-reply {
-  font-size: 0.85em;
+  font-size: 0.86em;
   min-height: 26px;
   margin-top: 2px;
 }
 
 .agent-lifecycle {
-  padding: 1px 7px 2px 7px;
-  border-radius: 999px;
+  padding: 1px 6px 2px 6px;
+  border-radius: 4px;
   font-size: 0.68em;
   font-weight: 600;
+  color: @ft_text_3;
+  background: transparent;
 }
 
 .agent-lifecycle.needs-input {
   color: @ft_warning;
-  background: #241a11;
 }
 
 .agent-lifecycle.running {
-  color: #8aa9c8;
-  background: #1c2732;
+  color: @ft_success;
 }
 
 .agent-lifecycle.idle {
-  color: #91bd97;
-  background: #1d2a21;
+  color: @ft_success;
 }
 
 .agent-lifecycle.suspended {
-  color: #9aa0a6;
-  background: #202427;
+  color: @ft_text_3;
 }
 
 .agent-lifecycle.unknown {
-  color: #9a9a9a;
-  background: #252525;
+  color: @ft_text_3;
 }
 
 .agent-lifecycle.ended {
-  color: @ft_text_3;
-  background: @ft_bg_2;
+  color: @ft_text_4;
 }
 
 .agent-current,
-.agent-permission,
-.agent-loop {
-  padding: 1px 7px 2px 7px;
-  border-radius: 999px;
+.agent-permission {
+  padding: 1px 6px 2px 6px;
+  border-radius: 4px;
   font-size: 0.68em;
   font-weight: 600;
 }
 
 .agent-current {
-  color: #c8a75d;
-  background: #282318;
+  color: @ft_text_2;
 }
 
 .agent-permission {
-  color: #9a9a9a;
-  background: @ft_line;
+  color: @ft_text_3;
+  background: @ft_bg_2;
 }
 
 .agent-permission.risky {
-  color: #d78f8f;
-  background: #2b1d1d;
-}
-
-.agent-loop {
-  color: #9aa0a6;
-  background: @ft_line;
-}
-
-.agent-loop.running {
-  color: #8eb6d8;
-  background: #1c2630;
-}
-
-.agent-loop.done {
-  color: #91bd97;
-  background: #1d2a21;
-}
-
-.agent-loop.warning {
-  color: #d78f8f;
-  background: #2b1d1d;
+  color: @ft_danger;
+  background: transparent;
 }
 
 button.agent-primary-action,
@@ -3817,16 +3134,16 @@ button.agent-danger-action {
 }
 
 button.agent-primary-action {
-  color: #eeeeee;
-  background: @ft_line;
+  color: @ft_text_1;
+  background: @ft_bg_1;
   border-color: @ft_line_strong;
   box-shadow: none;
-  font-weight: 650;
+  font-weight: 600;
 }
 
 button.agent-primary-action:hover {
-  background: #2a2a2a;
-  border-color: #505050;
+  background: @ft_bg_2;
+  border-color: @ft_line_strong;
 }
 
 button.agent-secondary-action,
@@ -3842,12 +3159,12 @@ button.agent-secondary-action:hover {
 }
 
 button.agent-danger-action {
-  color: #b98585;
+  color: @ft_text_3;
 }
 
 button.agent-danger-action:hover {
   color: @ft_danger;
-  background: #251b1b;
+  background: @ft_bg_1;
   border-color: transparent;
 }
 
@@ -3862,12 +3179,12 @@ button.agent-danger-action:hover {
 .empty-state-title {
   color: @ft_text_1;
   font-weight: 700;
-  font-size: 0.94em;
+  font-size: 0.92em;
 }
 
 .empty-state-body {
   color: @ft_text_3;
-  font-size: 0.84em;
+  font-size: 0.86em;
 }
 
 /* Compact AdwStatusPage used inside dialogs and placeholders. AdwStatusPage
@@ -3886,7 +3203,7 @@ statuspage.compact .icon {
 }
 
 statuspage.compact .title {
-  font-size: 0.98em;
+  font-size: 1.00em;
   font-weight: 700;
   color: @ft_text_1;
   margin-bottom: 2px;
@@ -3894,7 +3211,7 @@ statuspage.compact .title {
 
 statuspage.compact .description {
   color: @ft_text_3;
-  font-size: 0.84em;
+  font-size: 0.86em;
 }
 
 /* --------------------------------------------------------------------------

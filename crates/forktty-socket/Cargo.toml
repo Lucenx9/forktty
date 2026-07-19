@@ -21,6 +21,7 @@ forktty-import = { path = "../forktty-import", features = ["keyring"] }
 forktty-terminal = { path = "../forktty-terminal" }
 git2.workspace = true
 libc.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true

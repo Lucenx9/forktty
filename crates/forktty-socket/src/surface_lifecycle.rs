@@ -1,13 +1,58 @@
 //! Terminal-backed surface lifecycle helpers.
 
-use crate::{agent_runtime::effective_agent_resume_cwd, team_state, DispatchError, SocketAppState};
+use crate::{
+    agent_runtime::effective_agent_resume_cwd, hook_session::hook_target_gate_for_surface,
+    DispatchError, SocketAppState,
+};
 use forktty_core::{
     agent_resume_command_with_cwd_and_permission_mode, command_safety::is_valid_ssh_host,
-    AgentSessionLifecycle, WorkspaceSelector,
+    AgentResumeError, AgentSessionLifecycle, LogLevel, NotificationKind, SurfaceKind,
+    WorkspaceSelector,
 };
 use forktty_terminal::{SpawnRequest, TerminalError};
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+
+/// Failure to safely rebuild a spawn request from persisted surface metadata.
+///
+/// This error wraps rejected persisted agent-resume metadata: an invalid
+/// session ID; a resume CWD that is empty, relative, non-UTF-8, or contains
+/// control characters; or an unsupported provider/agent with no safe resume
+/// command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PersistedSurfaceSpawnError {
+    /// Persisted agent-resume metadata was rejected.
+    AgentResume(AgentResumeError),
+}
+
+impl std::fmt::Display for PersistedSurfaceSpawnError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AgentResume(error) => {
+                write!(
+                    formatter,
+                    "invalid persisted agent resume metadata: {error}"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for PersistedSurfaceSpawnError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::AgentResume(error) => Some(error),
+        }
+    }
+}
+
+impl From<AgentResumeError> for PersistedSurfaceSpawnError {
+    fn from(error: AgentResumeError) -> Self {
+        Self::AgentResume(error)
+    }
+}
 
 pub(crate) fn surface_effective_project_cwd(surface: &forktty_core::Surface) -> PathBuf {
     surface
@@ -15,6 +60,103 @@ pub(crate) fn surface_effective_project_cwd(surface: &forktty_core::Surface) -> 
         .as_ref()
         .and_then(effective_agent_resume_cwd)
         .unwrap_or_else(|| surface.cwd.clone())
+}
+
+pub(crate) fn current_model_surfaces(
+    state: &SocketAppState,
+    surface_ids: &[String],
+) -> Result<Vec<forktty_core::Surface>, DispatchError> {
+    let model = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
+    surface_ids
+        .iter()
+        .map(|surface_id| {
+            model
+                .surface(surface_id)
+                .cloned()
+                .ok_or(DispatchError::NotFound("surface".to_string()))
+        })
+        .collect()
+}
+
+/// Refresh model surface directories from the live terminal child processes.
+///
+/// Shells can change directory after their surface is spawned, while the
+/// terminal backend retains the original spawn directory. Local shells are
+/// resolved through Linux `/proc`; dtach-backed shells use their detached
+/// workload process rather than the attached broker client. SSH surfaces are
+/// intentionally excluded because a local client PID cannot expose a remote
+/// shell directory. Missing or exited processes are left unchanged.
+///
+/// # Errors
+///
+/// Returns an error when terminal or model state cannot be read.
+pub fn sync_live_surface_cwds(state: &SocketAppState) -> Result<bool, TerminalError> {
+    let local_surface_ids = state
+        .model
+        .lock()
+        .map_err(|_| TerminalError::LockPoisoned)?
+        .list_surfaces(None)
+        .into_iter()
+        .filter(|surface| matches!(surface.kind, SurfaceKind::Terminal))
+        .map(|surface| surface.id)
+        .collect::<BTreeSet<_>>();
+    let runtime_dir = state.socket_path.parent();
+    let managed_cwds = runtime_dir
+        .and_then(|runtime_dir| {
+            forktty_core::pty_persistence::managed_session_cwds(runtime_dir).ok()
+        })
+        .unwrap_or_default();
+    let live_cwds = state
+        .terminal
+        .surfaces()?
+        .into_iter()
+        .filter_map(|surface| {
+            if !local_surface_ids.contains(&surface.surface_id) {
+                return None;
+            }
+            let cwd = managed_cwds.get(&surface.surface_id).cloned().or_else(|| {
+                if has_managed_session_socket(runtime_dir, &surface.surface_id) {
+                    return None;
+                }
+                surface.pid.and_then(linux_process_cwd)
+            })?;
+            Some((surface.surface_id, cwd))
+        })
+        .collect::<Vec<_>>();
+    if live_cwds.is_empty() {
+        return Ok(false);
+    }
+
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| TerminalError::LockPoisoned)?;
+    let mut changed = false;
+    for (surface_id, cwd) in live_cwds {
+        let needs_update = model
+            .surface(&surface_id)
+            .is_some_and(|surface| surface.cwd != cwd);
+        if needs_update {
+            changed |= model.set_surface_cwd(&surface_id, cwd);
+        }
+    }
+    Ok(changed)
+}
+
+fn has_managed_session_socket(runtime_dir: Option<&Path>, surface_id: &str) -> bool {
+    runtime_dir
+        .and_then(|runtime_dir| {
+            forktty_core::pty_persistence::session_socket_path(runtime_dir, surface_id).ok()
+        })
+        .is_some_and(|socket| std::fs::symlink_metadata(socket).is_ok())
+}
+
+fn linux_process_cwd(pid: u32) -> Option<PathBuf> {
+    let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).ok()?;
+    (cwd.to_str().is_some() && !cwd.as_os_str().as_bytes().ends_with(b" (deleted)")).then_some(cwd)
 }
 
 pub(crate) fn spawn_workspace_terminal(
@@ -31,10 +173,108 @@ pub(crate) fn spawn_surface_terminal(
     state: &SocketAppState,
     surface: &forktty_core::Surface,
 ) -> Result<(), String> {
-    let Some(request) = spawn_request_for_socket_surface(state, surface) else {
+    let result = match spawn_request_for_socket_surface(state, surface) {
+        Ok(Some(request)) => state
+            .terminal
+            .spawn(request)
+            .map_err(|error| error.to_string()),
+        Ok(None) => return Ok(()),
+        Err(error) => Err(error.to_string()),
+    };
+    let Err(message) = result else {
         return Ok(());
     };
-    state.terminal.spawn(request).map_err(|err| err.to_string())
+    if let Err(record_error) = record_terminal_spawn_failure(state, surface, &message) {
+        return Err(format!(
+            "{message}; failure recording failed: {record_error}"
+        ));
+    }
+    Err(message)
+}
+
+fn record_terminal_spawn_failure(
+    state: &SocketAppState,
+    surface: &forktty_core::Surface,
+    message: &str,
+) -> Result<(), String> {
+    let creation = {
+        let mut model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        model
+            .set_status(
+                &surface.workspace_id,
+                crate::agent_runtime::surface_status_key(&surface.id),
+                "Terminal",
+                terminal_spawn_failure_value(message),
+                Some("red".to_string()),
+            )
+            .ok_or_else(|| format!("workspace {} not found", surface.workspace_id))?;
+        model
+            .append_log(
+                &surface.workspace_id,
+                LogLevel::Error,
+                format!("Terminal {} spawn failed: {message}", surface.id),
+            )
+            .ok_or_else(|| format!("workspace {} not found", surface.workspace_id))?;
+        model.create_notification_with_evictions(
+            "Terminal spawn failed",
+            message,
+            NotificationKind::Error,
+            Some(surface.workspace_id.clone()),
+            Some(surface.id.clone()),
+        )
+    };
+    for notification_id in creation.evicted_desktop_notification_ids {
+        state.close_desktop_notification(&notification_id);
+    }
+    let notification = creation.notification;
+    if state.notification_dispatch {
+        crate::notification_dispatch::dispatch_notification_with_loaded_config(&notification);
+    }
+    Ok(())
+}
+
+/// Record the blocker required when a panic prevents terminal rollback.
+///
+/// Completion recovery must tolerate an already-poisoned model lock and avoid
+/// notification side effects that could themselves interrupt the final
+/// blocker write before auto-spawn suppression is released.
+pub(crate) fn record_terminal_spawn_failure_for_completion(
+    state: &SocketAppState,
+    surface: &forktty_core::Surface,
+    message: &str,
+) -> Result<(), String> {
+    let mut model = match state.model.lock() {
+        Ok(model) => model,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    model
+        .set_status(
+            &surface.workspace_id,
+            crate::agent_runtime::surface_status_key(&surface.id),
+            "Terminal",
+            terminal_spawn_failure_value(message),
+            Some("red".to_string()),
+        )
+        .ok_or_else(|| format!("workspace {} not found", surface.workspace_id))?;
+    model
+        .append_log(
+            &surface.workspace_id,
+            LogLevel::Error,
+            format!("Terminal {} spawn failed: {message}", surface.id),
+        )
+        .ok_or_else(|| format!("workspace {} not found", surface.workspace_id))?;
+    Ok(())
+}
+
+fn terminal_spawn_failure_value(message: &str) -> String {
+    if message.trim().is_empty() {
+        "Spawn failed".to_string()
+    } else {
+        format!("Spawn failed: {message}")
+    }
 }
 
 /// Resolve the absolute path to the `ssh` binary, preferring known locations.
@@ -61,16 +301,23 @@ fn spawn_request_for_workspace(
             .cloned()
             .ok_or_else(|| "Surface not found".to_string())?
     };
-    Ok(spawn_request_for_surface(
+    match spawn_request_for_surface(
         SpawnRequest::for_workspace(workspace, state.shell.clone(), state.socket_path.clone()),
         &surface,
-    ))
+    ) {
+        Ok(request) => Ok(request),
+        Err(error) => {
+            let message = error.to_string();
+            record_terminal_spawn_failure(state, &surface, &message)?;
+            Err(message)
+        }
+    }
 }
 
 fn spawn_request_for_socket_surface(
     state: &SocketAppState,
     surface: &forktty_core::Surface,
-) -> Option<SpawnRequest> {
+) -> Result<Option<SpawnRequest>, PersistedSurfaceSpawnError> {
     spawn_request_for_surface(
         SpawnRequest::for_surface(surface, state.shell.clone(), state.socket_path.clone()),
         surface,
@@ -80,39 +327,51 @@ fn spawn_request_for_socket_surface(
 /// Adapt a base [`SpawnRequest`] for the complete persisted surface metadata.
 ///
 /// This first applies the [`forktty_core::SurfaceKind`] rules (Browser never
-/// spawns a PTY, Ssh launches `ssh <host>`, and Terminal keeps the normal
-/// shell). Restored terminal surfaces that carry an agent session then resume
-/// through the provider's safe argv-only resume command, e.g.
-/// `codex resume <SESSION_ID>`.
+/// spawns a PTY, Ssh with a validated host launches `ssh <host>`, and Terminal
+/// keeps the normal shell). Restored terminal surfaces that carry an agent
+/// session then resume through the provider's safe argv-only resume command,
+/// e.g. `codex resume <SESSION_ID>`.
+///
+/// Browser surfaces, persisted Ssh surfaces whose host fails revalidation, and
+/// terminal surfaces whose persisted agent session is suspended are
+/// intentionally skipped with `Ok(None)`. These no-spawn outcomes are distinct
+/// from [`PersistedSurfaceSpawnError`].
+///
+/// # Errors
+///
+/// Returns [`PersistedSurfaceSpawnError::AgentResume`] when persisted
+/// agent-resume metadata is rejected because its session ID is invalid, its
+/// resume CWD is empty, relative, non-UTF-8, or contains control characters, or
+/// its provider/agent does not support a safe resume command.
 pub fn spawn_request_for_surface(
     request: SpawnRequest,
     surface: &forktty_core::Surface,
-) -> Option<SpawnRequest> {
-    let request = spawn_request_for_surface_kind(request, &surface.kind)?;
+) -> Result<Option<SpawnRequest>, PersistedSurfaceSpawnError> {
+    let Some(request) = spawn_request_for_surface_kind(request, &surface.kind) else {
+        return Ok(None);
+    };
     if !matches!(surface.kind, forktty_core::SurfaceKind::Terminal) {
-        return Some(request);
+        return Ok(Some(request));
     }
     let Some(agent_session) = &surface.agent_session else {
-        return Some(request);
+        return Ok(Some(request));
     };
     if agent_session.lifecycle == AgentSessionLifecycle::Suspended {
-        return None;
+        return Ok(None);
     }
     let resume_cwd = effective_agent_resume_cwd(agent_session);
-    let Ok(command) = agent_resume_command_with_cwd_and_permission_mode(
+    let command = agent_resume_command_with_cwd_and_permission_mode(
         agent_session.agent,
         &agent_session.session_id,
         resume_cwd.as_deref(),
         agent_session.permission_mode.as_deref(),
-    ) else {
-        return Some(request);
-    };
+    )?;
     let mut request = request;
     request.shell = command.program;
     if let Some(resume_cwd) = resume_cwd {
         request.cwd = resume_cwd;
     }
-    Some(request.with_args(command.args))
+    Ok(Some(request.with_args(command.args)))
 }
 
 /// Adapt a base [`SpawnRequest`] for a surface's [`forktty_core::SurfaceKind`].
@@ -164,6 +423,7 @@ pub(crate) fn required_ssh_host_param(params: &Value) -> Result<&str, DispatchEr
     Ok(host)
 }
 
+#[cfg(test)]
 pub(crate) fn spawn_terminal_surfaces(
     state: &SocketAppState,
     surfaces: &[forktty_core::Surface],
@@ -194,6 +454,15 @@ fn forget_terminal_surface_if_present(
     }
 }
 
+/// Close a transaction's replacement terminal, forgetting it if close fails.
+///
+/// The caller must retain the surface-set guard that protected creation of the
+/// replacement until this cleanup finishes.
+///
+/// # Errors
+///
+/// Returns an error when the terminal backend cannot close the surface. If the
+/// fallback forget operation also fails, both backend errors are included.
 pub(crate) fn close_replacement_terminal_surface_if_present(
     state: &SocketAppState,
     surface_id: &str,
@@ -210,30 +479,92 @@ pub(crate) fn close_replacement_terminal_surface_if_present(
     }
 }
 
+/// Close a set of terminal runtimes, restoring earlier closes on failure.
+///
+/// The caller must hold the surface-set guard for the entire surrounding model
+/// transaction. Worktree removal callers must also retain their auto-spawn
+/// suppression through this close and any restoration attempt.
+///
+/// # Errors
+///
+/// Returns the first terminal-close error. If restoring a surface that was
+/// already closed also fails, the returned message includes that restore error.
 pub(crate) fn close_terminal_surfaces_or_restore(
     state: &SocketAppState,
     surfaces: &[forktty_core::Surface],
 ) -> Result<(), String> {
     let mut closed = Vec::new();
     for surface in surfaces {
-        if let Err(err) = close_terminal_surface_if_present(state, &surface.id) {
-            if !closed.is_empty() {
-                if let Err(respawn_err) = spawn_terminal_surfaces(state, &closed) {
-                    return Err(format!("{err}; terminal restore failed: {respawn_err}"));
+        match state.terminal.close(&surface.id) {
+            Ok(()) => closed.push(surface.clone()),
+            Err(TerminalError::NotFound(_)) => {}
+            Err(err) => {
+                let err = err.to_string();
+                if !closed.is_empty() {
+                    if let Err(respawn_err) =
+                        restore_terminal_surfaces_after_failure(state, &closed)
+                    {
+                        return Err(format!("{err}; terminal restore failed: {respawn_err}"));
+                    }
                 }
+                return Err(err);
             }
-            return Err(err);
         }
-        closed.push(surface.clone());
     }
     Ok(())
+}
+
+/// Restore modeled terminal surfaces after a topology operation fails.
+///
+/// Every surface is attempted even when an earlier spawn fails. A failed
+/// runtime restore records a red, surface-scoped status before returning so
+/// controller reconciliation can keep that missing runtime blocked after any
+/// temporary auto-spawn suppression is released.
+///
+/// The caller must retain the surface-set guard for the surrounding rollback.
+/// A worktree-removal rollback must also keep auto-spawn suppressed until this
+/// function has attempted every surface.
+///
+/// # Errors
+///
+/// Returns an error containing every terminal spawn failure. A failure may also
+/// include an error encountered while recording its blocking status, log, and
+/// notification in the model.
+pub(crate) fn restore_terminal_surfaces_after_failure(
+    state: &SocketAppState,
+    surfaces: &[forktty_core::Surface],
+) -> Result<(), String> {
+    let mut failures = Vec::new();
+    for surface in surfaces {
+        if let Err(spawn_error) = spawn_surface_terminal(state, surface) {
+            failures.push(format!("{}: {spawn_error}", surface.id));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn restore_current_terminal_surfaces_after_failure(
+    state: &SocketAppState,
+    surface_ids: &[String],
+) -> Result<(), DispatchError> {
+    let surfaces = current_model_surfaces(state, surface_ids)?;
+    restore_terminal_surfaces_after_failure(state, &surfaces).map_err(DispatchError::from)
 }
 
 pub(crate) async fn close_surface_request(
     state: &SocketAppState,
     surface_id: &str,
 ) -> Result<Value, DispatchError> {
-    let _surface_set_guard = state.coordinator.surface_set.lock().await;
+    let _surface_set_guard = state.surface_set_guard().await;
+    let target_gate = hook_target_gate_for_surface(state, surface_id)?;
+    let target_guard = target_gate
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?;
     let root_replacement = {
         let mut model = state
             .model
@@ -244,6 +575,7 @@ pub(crate) async fn close_surface_request(
         }
         model.prepare_root_surface_replacement(surface_id)
     };
+    let _auto_spawn_suppression = state.suppress_surface_auto_spawn([surface_id]);
     if let Some(replacement) = root_replacement {
         if let Err(err) = spawn_surface_terminal(state, &replacement) {
             return Err(err.into());
@@ -272,6 +604,7 @@ pub(crate) async fn close_surface_request(
             close_replacement_terminal_surface_if_present(state, &replacement.id)?;
         }
         let surface = surface?;
+        drop(target_guard);
         evict_hook_session_targets_for_surface(state, surface_id)?;
         return Ok(json!(surface));
     }
@@ -285,6 +618,7 @@ pub(crate) async fn close_surface_request(
             .close_surface(surface_id)
             .ok_or(DispatchError::NotFound("surface".to_string()))?
     };
+    drop(target_guard);
     evict_hook_session_targets_for_surface(state, surface_id)?;
     ensure_terminal_for_active_workspace(state).await?;
     Ok(json!(surface))
@@ -294,19 +628,32 @@ fn evict_hook_session_targets_for_surface(
     state: &SocketAppState,
     surface_id: &str,
 ) -> Result<(), DispatchError> {
-    state
-        .hook_session_targets
-        .lock()
-        .map_err(|_| "Lock poisoned".to_string())?
-        .remove_surface(surface_id);
-    team_state::forget_team_launch_owned_surface_for_surface(state, surface_id)?;
-    Ok(())
+    evict_hook_session_targets_for_surfaces(state, &[surface_id.to_string()])
 }
 
-pub(crate) fn evict_hook_session_targets_for_surfaces(
+/// Retire prompt correlations and hook-session targets for removed surfaces.
+///
+/// Call this after the model mutation commits, while retaining the surface-set
+/// guard, so a concurrent topology mutation cannot reintroduce stale targets.
+/// Correlated in-app notifications remain as read history and their desktop
+/// notification handles are closed.
+///
+/// # Errors
+///
+/// Returns an error if either the workspace model or hook-session target lock
+/// is poisoned.
+pub fn evict_hook_session_targets_for_surfaces(
     state: &SocketAppState,
     surface_ids: &[String],
 ) -> Result<(), DispatchError> {
+    let desktop_notification_ids = state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?
+        .evict_hook_prompt_correlations_for_surfaces(surface_ids);
+    for notification_id in desktop_notification_ids {
+        state.close_desktop_notification(&notification_id);
+    }
     let mut targets = state
         .hook_session_targets
         .lock()
@@ -314,8 +661,6 @@ pub(crate) fn evict_hook_session_targets_for_surfaces(
     for surface_id in surface_ids {
         targets.remove_surface(surface_id);
     }
-    drop(targets);
-    team_state::forget_team_launch_owned_surfaces_for_surfaces(state, surface_ids)?;
     Ok(())
 }
 
@@ -376,6 +721,12 @@ pub(crate) fn rollback_surface_creation(
 }
 
 pub(crate) async fn ensure_terminal_for_active_workspace(
+    state: &SocketAppState,
+) -> Result<(), String> {
+    ensure_terminal_for_active_workspace_now(state)
+}
+
+pub(crate) fn ensure_terminal_for_active_workspace_now(
     state: &SocketAppState,
 ) -> Result<(), String> {
     let workspace = {

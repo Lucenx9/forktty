@@ -102,6 +102,7 @@ pub fn agent_resume_command_with_cwd_and_permission_mode(
     permission_mode: Option<&str>,
 ) -> Result<AgentResumeCommand, AgentResumeError> {
     let session_id = safe_resume_session_id(session_id)?;
+    let resume_cwd = resume_cwd.map(safe_resume_cwd).transpose()?;
     let (program, args): (&str, Vec<String>) = match agent {
         AgentKind::Codex => {
             let mut args = Vec::new();
@@ -109,9 +110,9 @@ pub fn agent_resume_command_with_cwd_and_permission_mode(
                 args.push("--dangerously-bypass-approvals-and-sandbox".to_string());
             }
             args.push("resume".to_string());
-            if let Some(resume_cwd) = resume_cwd {
+            if let Some(resume_cwd) = &resume_cwd {
                 args.push("-C".to_string());
-                args.push(safe_resume_cwd(resume_cwd)?);
+                args.push(resume_cwd.clone());
             }
             args.push(session_id);
             ("codex", args)
@@ -128,9 +129,9 @@ pub fn agent_resume_command_with_cwd_and_permission_mode(
         AgentKind::Antigravity => ("agy", vec!["--conversation".to_string(), session_id]),
         AgentKind::Grok => {
             let mut args = Vec::new();
-            if let Some(resume_cwd) = resume_cwd {
+            if let Some(resume_cwd) = &resume_cwd {
                 args.push("--cwd".to_string());
-                args.push(safe_resume_cwd(resume_cwd)?);
+                args.push(resume_cwd.clone());
             }
             args.push("--resume".to_string());
             args.push(session_id);
@@ -270,6 +271,9 @@ pub fn normalize_agent_status(raw: &str) -> AgentStatus {
     }
     if lower.contains("done") || lower.contains("complete") || lower.contains("success") {
         return AgentStatus::Done;
+    }
+    if lower.contains("permission denied") || lower.contains("approval denied") {
+        return AgentStatus::Running;
     }
     if lower.contains("permission") || lower.contains("approval") {
         return AgentStatus::PermissionRequest;
@@ -528,6 +532,10 @@ mod tests {
         assert_eq!(
             normalize_agent_status("Permission required"),
             AgentStatus::PermissionRequest
+        );
+        assert_eq!(
+            normalize_agent_status("Permission denied"),
+            AgentStatus::Running
         );
         assert_eq!(
             normalize_agent_status("tests running"),

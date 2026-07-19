@@ -73,7 +73,7 @@ fn agent_session_makes_terminal_surface_persistable() {
         42_000
     );
     let mut restored = WorkspaceModel::new();
-    restored.restore_session(data);
+    restore_model_session(&mut restored, data);
     let restored_session = restored
         .surface(&surface_id)
         .unwrap()
@@ -129,7 +129,7 @@ fn persisted_scrollback_makes_terminal_surface_persistable() {
     );
 
     let mut restored = WorkspaceModel::new();
-    restored.restore_session(data);
+    restore_model_session(&mut restored, data);
     assert_eq!(
         restored
             .surface(&surface_id)
@@ -141,6 +141,26 @@ fn persisted_scrollback_makes_terminal_surface_persistable() {
 
     assert!(model.set_surface_persisted_scrollback(&surface_id, None));
     assert!(model.to_session_data().surfaces.is_empty());
+}
+
+#[test]
+fn terminal_surface_cwd_that_differs_from_workspace_is_persisted() {
+    let workspace_dir = tempfile::tempdir().unwrap();
+    let live_dir = tempfile::tempdir().unwrap();
+    let mut model = WorkspaceModel::new();
+    let workspace = model.create_workspace("main", workspace_dir.path());
+    let surface_id = workspace.focused_surface_id;
+
+    assert!(model.set_surface_cwd(&surface_id, live_dir.path().to_path_buf()));
+
+    let data = model.to_session_data();
+    crate::session::validate_session_data(&data).unwrap();
+    assert_eq!(data.surfaces.len(), 1);
+    assert_eq!(data.surfaces[0].cwd, live_dir.path());
+
+    let mut restored = WorkspaceModel::new();
+    restore_model_session(&mut restored, data);
+    assert_eq!(restored.surface(&surface_id).unwrap().cwd, live_dir.path());
 }
 
 #[test]

@@ -110,7 +110,12 @@ pub(super) fn show_workspace_popover<W: IsA<gtk::Widget>>(
                 if let Some(popover) = popover_for_row.upgrade() {
                     popover.popdown();
                 }
-                select_sidebar_workspace(&state_for_row, &ws_id, &controller_for_row);
+                let state = state_for_row.clone();
+                let workspace_id = ws_id.clone();
+                let controller = controller_for_row.clone();
+                glib::spawn_future_local(async move {
+                    select_sidebar_workspace(&state, &workspace_id, &controller).await;
+                });
             });
             container.append(&row);
         }

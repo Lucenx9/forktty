@@ -78,31 +78,77 @@ fn run_remote_helper_pty_inner(argv: Vec<String>) -> io::Result<i32> {
     // Keep the stdin relay bounded so a child that stops draining its PTY
     // applies backpressure to the helper instead of letting queued input grow
     // without limit.
-    let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(16);
+    enum StdinRelayEvent {
+        Data(Vec<u8>),
+        Eof,
+        Error(io::Error),
+    }
+
+    let (tx, rx) = std::sync::mpsc::sync_channel::<StdinRelayEvent>(16);
     std::thread::spawn(move || {
         let mut stdin = io::stdin().lock();
         let mut buf = [0u8; 8192];
         loop {
             match stdin.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) if tx.send(buf[..n].to_vec()).is_err() => break,
+                Ok(0) => {
+                    let _ = tx.send(StdinRelayEvent::Eof);
+                    break;
+                }
+                Ok(n) if tx.send(StdinRelayEvent::Data(buf[..n].to_vec())).is_err() => break,
                 Ok(_) => {}
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
-                Err(_) => break,
+                Err(err) => {
+                    let _ = tx.send(StdinRelayEvent::Error(err));
+                    break;
+                }
             }
         }
     });
     let mut stdout = io::stdout().lock();
+    let mut stdin_eof_sent = false;
     loop {
-        for bytes in rx.try_iter() {
-            session.write_all(&bytes)?;
+        loop {
+            match rx.try_recv() {
+                Ok(StdinRelayEvent::Data(bytes)) => session.write_all(&bytes)?,
+                Ok(StdinRelayEvent::Eof) => {
+                    session.send_eof()?;
+                    stdin_eof_sent = true;
+                    break;
+                }
+                Ok(StdinRelayEvent::Error(err)) => return Err(err),
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    if !stdin_eof_sent {
+                        return Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "stdin relay disconnected before reporting EOF",
+                        ));
+                    }
+                    break;
+                }
+            }
         }
         write_pty_output(&mut session, &mut stdout)?;
         if let Some(status) = session.try_wait()? {
             write_pty_output(&mut session, &mut stdout)?;
-            return Ok(status.code().unwrap_or(1));
+            return Ok(exit_code_from_status(status));
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// Map a child exit status to a shell-style exit code, preserving
+/// signal terminations as `128 + signal` (e.g. SIGTERM → 143) instead of
+/// collapsing every signal death to a bare `1`.
+#[cfg(feature = "gtk-ghostty")]
+fn exit_code_from_status(status: std::process::ExitStatus) -> i32 {
+    use std::os::unix::process::ExitStatusExt;
+    if let Some(code) = status.code() {
+        code
+    } else if let Some(signal) = status.signal() {
+        128 + signal
+    } else {
+        1
     }
 }
 
@@ -181,4 +227,25 @@ fn local_hostname() -> Option<String> {
 fn non_empty_trimmed(value: String) -> Option<String> {
     let value = value.trim().to_string();
     (!value.is_empty()).then_some(value)
+}
+
+#[cfg(all(test, feature = "gtk-ghostty"))]
+mod tests {
+    use super::exit_code_from_status;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
+
+    #[test]
+    fn preserves_normal_exit_code() {
+        // Raw status with exit code 3 lives in bits 8..15.
+        assert_eq!(exit_code_from_status(ExitStatus::from_raw(3 << 8)), 3);
+        assert_eq!(exit_code_from_status(ExitStatus::from_raw(0)), 0);
+    }
+
+    #[test]
+    fn maps_signal_termination_to_128_plus_signal() {
+        // Raw status where the low 7 bits hold the terminating signal.
+        assert_eq!(exit_code_from_status(ExitStatus::from_raw(15)), 143); // SIGTERM
+        assert_eq!(exit_code_from_status(ExitStatus::from_raw(9)), 137); // SIGKILL
+    }
 }

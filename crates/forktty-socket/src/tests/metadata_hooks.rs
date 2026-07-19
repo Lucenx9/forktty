@@ -2,6 +2,35 @@
 
 use super::*;
 
+#[test]
+fn agent_status_keys_keep_the_exact_alias_contract() {
+    assert_eq!(
+        agent_kind_from_status_key("agent:claude-code"),
+        Some(AgentKind::ClaudeCode)
+    );
+    assert_eq!(agent_kind_from_status_key("agent: CLAUDE "), None);
+}
+
+#[test]
+fn nested_agent_hook_lifecycles_match_the_reported_session() {
+    assert_eq!(
+        agent_session_lifecycle_from_hook("Running", Some("subagent-stop")),
+        AgentSessionLifecycle::Running
+    );
+    assert_eq!(
+        agent_session_lifecycle_from_hook("Ready", Some("teammate-idle")),
+        AgentSessionLifecycle::Idle
+    );
+    assert_eq!(
+        agent_session_lifecycle_from_hook("Error", Some("stop-failure")),
+        AgentSessionLifecycle::Idle
+    );
+    assert_eq!(
+        agent_session_lifecycle_from_hook("Error", Some("post-tool-failure")),
+        AgentSessionLifecycle::Running
+    );
+}
+
 #[tokio::test]
 async fn hook_session_status_learns_and_reuses_explicit_surface_target() {
     let (state, _backend) = test_state();
@@ -411,6 +440,50 @@ async fn hook_status_updates_persisted_agent_session_lifecycle() {
     let agents = dispatch(&state, "agent.list", json!({})).await.unwrap();
     assert_eq!(agents[0]["lifecycle"], "idle");
     assert!(agents[0]["last_activity_ms"].as_u64().unwrap() > 0);
+
+    let stop_failure = dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "workspace_id": workspace_id,
+            "surface_id": surface_id,
+            "key": "agent:codex",
+            "label": "Codex",
+            "value": "Error",
+            "color": "red",
+            "hook_session_id": "codex-session-9",
+            "hook_event_name": "stop-failure",
+            "hook_event_order": 150
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(stop_failure["value"], "Error");
+    assert_eq!(stop_failure["color"], "red");
+    let agents = dispatch(&state, "agent.list", json!({})).await.unwrap();
+    assert_eq!(agents[0]["lifecycle"], "idle");
+
+    let post_tool_failure = dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "workspace_id": workspace_id,
+            "surface_id": surface_id,
+            "key": "agent:codex",
+            "label": "Codex",
+            "value": "Error",
+            "color": "red",
+            "hook_session_id": "codex-session-9",
+            "hook_event_name": "post-tool-failure",
+            "hook_event_order": 175
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(post_tool_failure["value"], "Error");
+    assert_eq!(post_tool_failure["color"], "red");
+    let agents = dispatch(&state, "agent.list", json!({})).await.unwrap();
+    assert_eq!(agents[0]["lifecycle"], "running");
 
     dispatch(
         &state,

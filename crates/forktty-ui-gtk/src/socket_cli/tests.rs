@@ -6,14 +6,12 @@ use std::thread;
 mod browser;
 mod hook_behavior;
 mod hook_config_files;
+mod hook_health;
 mod hook_setup;
-mod mcp_skills;
 mod provider_integrations;
 mod status_workflow;
 mod surface_workspace;
 mod system_agent;
-mod task_strategy;
-mod team;
 
 #[test]
 fn inspect_path_reports_owned_socket_as_accessible() {
@@ -116,51 +114,6 @@ fn with_socket_server(
     handle.join().unwrap()
 }
 
-fn with_socket_server_until_done(
-    responder: impl FnMut(&Value) -> String + Send + 'static,
-    test: impl FnOnce(&Path),
-) -> Vec<Value> {
-    let dir = tempfile::tempdir().unwrap();
-    let socket_path = dir.path().join("forktty.sock");
-    let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
-    listener.set_nonblocking(true).unwrap();
-    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let done_thread = done.clone();
-    let handle = thread::spawn(move || {
-        let mut responder = responder;
-        let mut requests = Vec::new();
-        loop {
-            match listener.accept() {
-                Ok((mut stream, _)) => {
-                    let mut line = String::new();
-                    let mut reader = BufReader::new(stream.try_clone().unwrap());
-                    reader.read_line(&mut line).unwrap();
-                    let request: Value = serde_json::from_str(line.trim()).unwrap();
-                    stream.write_all(responder(&request).as_bytes()).unwrap();
-                    requests.push(request);
-                }
-                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                    if done_thread.load(std::sync::atomic::Ordering::SeqCst) {
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(5));
-                }
-                Err(err) => panic!("socket test server failed: {err}"),
-            }
-        }
-        requests
-    });
-    let test_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        test(&socket_path);
-    }));
-    done.store(true, std::sync::atomic::Ordering::SeqCst);
-    let requests = handle.join().unwrap();
-    if let Err(payload) = test_result {
-        std::panic::resume_unwind(payload);
-    }
-    requests
-}
-
 fn test_context() -> CliContext {
     CliContext {
         json: true,
@@ -188,37 +141,7 @@ fn backup_count(dir: &Path, prefix: &str) -> usize {
 }
 
 #[test]
-fn orchestration_cleanup_cli_forwards_apply_and_workspace_filter() {
-    let request = with_socket_response(
-        |req| {
-            json!({
-                "id": req["id"],
-                "ok": true,
-                "result": {
-                    "dryRun": false,
-                    "applied": true,
-                    "workspaceId": "workspace-1",
-                    "teamActions": [],
-                    "workflowActions": []
-                }
-            })
-            .to_string()
-        },
-        |socket_path| {
-            handle_orchestration_cleanup(
-                &ctx_for(socket_path),
-                strings(&["--apply", "--workspace-id", "workspace-1"]),
-            )
-            .unwrap();
-        },
-    );
-    assert_eq!(request["method"], "orchestration.cleanup");
-    assert_eq!(request["params"]["apply"], true);
-    assert_eq!(request["params"]["workspace_id"], "workspace-1");
-}
-
-#[test]
-fn doctor_report_includes_agent_integration_paths() {
+fn doctor_report_includes_hook_paths_without_removed_integration_sections() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let codex_home = dir.path().join("codex");
@@ -239,43 +162,15 @@ fn doctor_report_includes_agent_integration_paths() {
         || {
             let report = build_socket_doctor_report(&test_context());
 
-            assert_eq!(
-                report["mcpConfigs"]["codex"]["path"],
-                json!(codex_home.join("config.toml").display().to_string())
-            );
-            assert_eq!(
-                report["mcpConfigs"]["claude"]["path"],
-                json!(home.join(".claude.json").display().to_string())
-            );
-            assert_eq!(
-                report["mcpConfigs"]["antigravity"]["path"],
-                json!(home
-                    .join(".gemini/config/mcp_config.json")
-                    .display()
-                    .to_string())
-            );
-            assert_eq!(
-                report["skillDirs"]["agents"]["path"],
-                json!(home
-                    .join(".agents/skills/forktty-agent-orchestration")
-                    .display()
-                    .to_string())
-            );
-            assert_eq!(
-                report["skillDirs"]["claude"]["path"],
-                json!(claude_dir
-                    .join("skills/forktty-agent-orchestration")
-                    .display()
-                    .to_string())
-            );
+            assert!(report.get("mcpConfigs").is_none());
+            assert!(report.get("skillDirs").is_none());
 
             let text = format_socket_doctor_text(&report);
-            assert!(text.contains("mcp configs:\n"));
             assert!(text.contains("  codex:"));
             assert!(text.contains("  claude:"));
             assert!(text.contains("  antigravity:"));
-            assert!(text.contains("skill dirs:\n"));
-            assert!(text.contains("  agents:"));
+            assert!(!text.contains("mcp configs:\n"));
+            assert!(!text.contains("skill dirs:\n"));
         },
     );
 }

@@ -1,6 +1,7 @@
 //! Context snapshot response and risk flag regression tests.
 
 use super::*;
+use forktty_core::{NotificationItem, NotificationKind, TerminalNotificationMetadata};
 
 #[tokio::test]
 async fn dispatches_context_snapshot_with_bounded_terminal_tails() {
@@ -106,82 +107,149 @@ async fn context_snapshot_exposes_effective_project_cwd_from_resume_cwd() {
 }
 
 #[tokio::test]
-async fn context_snapshot_marks_non_loop_workflows_with_missing_surface() {
-    let (mut state, _) = test_state();
-    let dir = tempfile::tempdir().unwrap();
-    state.workflow_store_path = Some(dir.path().join("workflow-v1.json"));
-    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
-    let workspace_id = workspace[0]["id"].as_str().unwrap().to_string();
-    let base_surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
-    let stale_surface = dispatch(
+async fn context_snapshot_includes_workspace_and_global_notifications() {
+    let (state, _) = test_state();
+    let (workspace_id, surface_id) = {
+        let model = state.model.lock().unwrap();
+        let workspace = model.active_workspace().unwrap();
+        (workspace.id.clone(), workspace.focused_surface_id.clone())
+    };
+    let other_workspace_id = dispatch(
         &state,
-        "pane.new_tab",
-        json!({"surface_id": base_surface_id}),
+        "workspace.create",
+        json!({"name": "other", "workingDir": "/tmp"}),
     )
     .await
-    .unwrap();
-    let stale_surface_id = stale_surface["id"].as_str().unwrap().to_string();
-
-    dispatch(
-        &state,
-        "workflow.upsert",
-        json!({
-            "workflow_id": "workflow-1",
-            "workspace_id": workspace_id,
-            "surface_id": stale_surface_id,
-            "mode": "review",
-            "status": "running",
-            "goal": "Audit dashboard"
-        }),
-    )
-    .await
-    .unwrap();
+    .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     {
         let mut model = state.model.lock().unwrap();
-        assert!(model.close_surface(&stale_surface_id).is_some());
+        model.create_notification(
+            "Needs input",
+            "Review the terminal prompt",
+            NotificationKind::Prompt,
+            Some(workspace_id.clone()),
+            Some(surface_id),
+        );
+        model.create_notification(
+            "Global",
+            "Visible in every workspace snapshot",
+            NotificationKind::Info,
+            None,
+            None,
+        );
+        model.create_notification(
+            "Other",
+            "Must stay scoped to the other workspace",
+            NotificationKind::Error,
+            Some(other_workspace_id),
+            None,
+        );
     }
 
     let snapshot = dispatch(
         &state,
         "context.snapshot",
-        json!({
-            "workspace_id": workspace_id,
-            "tail_lines": 0,
-            "include_workflow_details": true
-        }),
+        json!({"workspace_id": workspace_id, "tail_lines": 0}),
     )
     .await
     .unwrap();
 
-    let workflow_summary = snapshot["workflow_summaries"]
-        .as_array()
-        .unwrap()
+    let notifications = snapshot["notifications"].as_array().unwrap();
+    assert_eq!(notifications.len(), 2);
+    assert!(notifications
         .iter()
-        .find(|workflow| workflow["id"] == "workflow-1")
-        .unwrap();
-    assert_eq!(workflow_summary["surface_present"], false);
-    assert_eq!(workflow_summary["stale_binding"], true);
-    assert!(workflow_summary["consistency_warnings"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("active_with_missing_surface")));
+        .any(|notification| notification["title"] == "Needs input"));
+    assert!(notifications
+        .iter()
+        .any(|notification| notification["title"] == "Global"));
     assert!(snapshot["risk_flags"]
         .as_array()
         .unwrap()
-        .contains(&json!("workflow_consistency_warning")));
+        .contains(&json!("notification_needs_input")));
+}
 
-    let workflow_detail = snapshot["workflows"]
-        .as_array()
-        .unwrap()
+#[tokio::test]
+async fn context_snapshot_bounds_notifications_without_hiding_prompt_risk() {
+    let (state, _) = test_state();
+    let (workspace_id, surface_id) = {
+        let model = state.model.lock().unwrap();
+        let workspace = model.active_workspace().unwrap();
+        (workspace.id.clone(), workspace.focused_surface_id.clone())
+    };
+    {
+        let mut model = state.model.lock().unwrap();
+        model.create_notification(
+            "Old prompt",
+            "Still contributes to risk flags",
+            NotificationKind::Prompt,
+            Some(workspace_id.clone()),
+            Some(surface_id.clone()),
+        );
+        for index in 0..=MAX_CONTEXT_SNAPSHOT_NOTIFICATIONS {
+            let notification = model.create_notification(
+                format!("Info {index}"),
+                "Recent notification",
+                NotificationKind::Info,
+                Some(workspace_id.clone()),
+                Some(surface_id.clone()),
+            );
+            if index == MAX_CONTEXT_SNAPSHOT_NOTIFICATIONS {
+                model.set_notification_terminal_metadata(
+                    &notification.id,
+                    Some(TerminalNotificationMetadata {
+                        id: "terminal-notification".to_string(),
+                        report_activation: true,
+                        report_close: true,
+                        buttons: vec!["Open".to_string()],
+                        icon_names: vec!["dialog-information".to_string()],
+                        icon_data: Some(vec![7; 64 * 1024]),
+                        icon_cache_id: Some("cached-icon".to_string()),
+                        urgency: Some(1),
+                        sound_name: None,
+                        expires_after_ms: None,
+                        app_name: Some("test".to_string()),
+                        notification_types: vec!["system".to_string()],
+                    }),
+                );
+            }
+        }
+    }
+
+    let snapshot = dispatch(
+        &state,
+        "context.snapshot",
+        json!({"workspace_id": workspace_id, "tail_lines": 0}),
+    )
+    .await
+    .unwrap();
+
+    let notifications = snapshot["notifications"].as_array().unwrap();
+    assert_eq!(notifications.len(), MAX_CONTEXT_SNAPSHOT_NOTIFICATIONS);
+    assert!(notifications
         .iter()
-        .find(|workflow| workflow["id"] == "workflow-1")
+        .all(|notification| notification["title"] != "Old prompt"));
+    assert!(notifications.last().unwrap()["terminal_metadata"]
+        .get("icon_data")
+        .is_none());
+    assert_eq!(
+        notifications.last().unwrap()["terminal_metadata"]["icon_cache_id"],
+        "cached-icon"
+    );
+    let notification_page = dispatch(&state, "notification.list", json!({}))
+        .await
         .unwrap();
-    assert_eq!(workflow_detail["surface_present"], false);
-    assert_eq!(workflow_detail["stale_binding"], true);
-    assert!(workflow_detail["consistency_warnings"]
+    assert_eq!(
+        notifications.last().unwrap(),
+        notification_page.as_array().unwrap().last().unwrap(),
+        "context snapshots and notification.list must share the socket projection"
+    );
+    assert!(snapshot["risk_flags"]
         .as_array()
         .unwrap()
-        .contains(&json!("active_with_missing_surface")));
+        .contains(&json!("notification_needs_input")));
 }
 
 #[tokio::test]
@@ -373,26 +441,7 @@ async fn context_snapshot_review_gap_tail_lines_zero_skips_terminal_tails() {
 }
 
 #[test]
-fn context_snapshot_review_gap_risk_flags_pin_field_shapes() {
-    let approval = FeedEntry {
-        id: "approval-1".to_string(),
-        entry_type: FeedEntryType::Approval,
-        kind: None,
-        read: false,
-        key: None,
-        value: None,
-        total: None,
-        title: "Approval".to_string(),
-        body: "Run command?".to_string(),
-        workspace_id: Some("workspace-1".to_string()),
-        surface_id: Some("surface-1".to_string()),
-        created_at_ms: 123,
-        approval_state: Some(FeedApprovalState::Pending),
-    };
-    let approval_json = json!(approval);
-    assert_eq!(approval_json["type"], "approval");
-    assert!(approval_json.get("entry_type").is_none());
-
+fn context_snapshot_risk_flags_cover_terminal_remote_and_permission_signals() {
     let truncated_tail = json!(forktty_terminal::TerminalTextSnapshot::from_text(
         "surface-1",
         "alpha\nbeta\n",
@@ -401,367 +450,62 @@ fn context_snapshot_review_gap_risk_flags_pin_field_shapes() {
         TerminalTextCapture::Tail { lines: 2 },
         4,
     ));
-    assert_eq!(truncated_tail["truncated"], true);
-
     let status = json!({
         "status": [{
             "key": "agent:codex:permission",
             "value": "bypassPermissions",
         }],
     });
-    let agent_health = [json!({
-        "surface_id": "surface-1",
-        "permission_mode": "bypassPermissions",
-    })];
-    let feed = [approval_json];
+    let agent_health = [json!({"permission_mode": "bypassPermissions"})];
     let remotes = [json!({"surface_id": "surface-ssh", "kind": "ssh"})];
     let terminal_tails = [truncated_tail];
     let terminal_tail_errors = [json!({"surface_id": "surface-missing", "error": "not ready"})];
-    let workflow_summaries = json!([{"consistency_warnings": ["running_with_completed_plan"]}]);
-    let loop_summaries = json!([
-        {
-            "gates_failed": 1,
-            "stage": "needs_human",
-        },
-        {
-            "stage": "blocked",
-            "stop_reason": "budget_exhausted",
-            "stale_binding": true,
-        }
-    ]);
-    let team_summaries = json!([{"consistency_warnings": ["done_with_active_workers"]}]);
+    let notifications = [NotificationItem {
+        id: "notification-1".to_string(),
+        title: "Needs input".to_string(),
+        body: "Review the prompt".to_string(),
+        kind: NotificationKind::Prompt,
+        created_at_ms: 1,
+        read: false,
+        workspace_id: Some("workspace-1".to_string()),
+        surface_id: Some("surface-1".to_string()),
+        terminal_metadata: None,
+    }];
+
     let flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
         status: &status,
         agent_health: &agent_health,
-        feed: &feed,
+        notifications: &notifications,
         remotes: &remotes,
         terminal_tails: &terminal_tails,
         terminal_tail_errors: &terminal_tail_errors,
-        workflow_summaries: &workflow_summaries,
-        loop_summaries: &loop_summaries,
-        team_summaries: &team_summaries,
     });
 
-    for expected in [
-        "terminal_text_untrusted",
-        "terminal_tail_truncated",
-        "terminal_tail_unavailable",
-        "team_consistency_warning",
-        "workflow_consistency_warning",
-        "loop_gate_failed",
-        "loop_needs_human",
-        "loop_blocked",
-        "loop_stale_binding",
-        "loop_budget_exhausted",
-        "remote_surface",
-        "pending_approval",
-        "permission_bypass",
-    ] {
-        assert!(
-            flags.contains(&expected),
-            "expected risk flag {expected:?} in {flags:?}"
-        );
-    }
+    assert_eq!(
+        flags,
+        vec![
+            "terminal_text_untrusted",
+            "terminal_tail_truncated",
+            "terminal_tail_unavailable",
+            "remote_surface",
+            "notification_needs_input",
+            "permission_bypass",
+        ]
+    );
 }
 
 #[test]
-fn context_snapshot_review_gap_permission_bypass_reads_agent_health() {
+fn context_snapshot_permission_bypass_reads_agent_health() {
     let status = json!({"status": []});
     let agent_health = [json!({"permission_mode": "bypassPermissions"})];
-    let workflow_summaries = json!([]);
-    let loop_summaries = json!([]);
-    let team_summaries = json!([]);
     let flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
         status: &status,
         agent_health: &agent_health,
-        feed: &[],
+        notifications: &[],
         remotes: &[],
         terminal_tails: &[],
         terminal_tail_errors: &[],
-        workflow_summaries: &workflow_summaries,
-        loop_summaries: &loop_summaries,
-        team_summaries: &team_summaries,
     });
 
     assert_eq!(flags, vec!["permission_bypass"]);
-}
-
-#[test]
-fn context_snapshot_risk_flags_only_pending_approvals() {
-    let status = json!({"status": []});
-    let agent_health = [];
-    let remotes = [];
-    let terminal_tails = [];
-    let terminal_tail_errors = [];
-    let workflow_summaries = json!([]);
-    let loop_summaries = json!([]);
-    let team_summaries = json!([]);
-    let non_pending_feed = [
-        json!({"type": "approval", "approval_state": "approved"}),
-        json!({"type": "approval", "approval_state": "denied"}),
-        json!({"type": "approval", "approval_state": "dismissed"}),
-        json!({"type": "approval", "approval_state": "stale"}),
-    ];
-
-    let flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
-        status: &status,
-        agent_health: &agent_health,
-        feed: &non_pending_feed,
-        remotes: &remotes,
-        terminal_tails: &terminal_tails,
-        terminal_tail_errors: &terminal_tail_errors,
-        workflow_summaries: &workflow_summaries,
-        loop_summaries: &loop_summaries,
-        team_summaries: &team_summaries,
-    });
-    assert!(!flags.contains(&"pending_approval"));
-
-    let pending_feed = [json!({"type": "approval", "approval_state": "pending"})];
-    let flags = context_snapshot_risk_flags(ContextSnapshotRiskInputs {
-        status: &status,
-        agent_health: &agent_health,
-        feed: &pending_feed,
-        remotes: &remotes,
-        terminal_tails: &terminal_tails,
-        terminal_tail_errors: &terminal_tail_errors,
-        workflow_summaries: &workflow_summaries,
-        loop_summaries: &loop_summaries,
-        team_summaries: &team_summaries,
-    });
-    assert!(flags.contains(&"pending_approval"));
-}
-
-#[tokio::test]
-async fn context_snapshot_includes_compact_team_summaries() {
-    let (mut state, _backend) = test_state();
-    let dir = tempfile::tempdir().unwrap();
-    state.team_store_path = Some(dir.path().join("team-v1.json"));
-    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
-    let workspace_id = workspace[0]["id"].as_str().unwrap();
-    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
-    let worker_surface = dispatch(
-        &state,
-        "surface.split",
-        json!({"surface_id": surface_id, "axis": "vertical"}),
-    )
-    .await
-    .unwrap();
-    let worker_surface_id = worker_surface["id"].as_str().unwrap();
-
-    dispatch(
-        &state,
-        "team.upsert",
-        json!({
-            "team_id": "team-1",
-            "leader_surface_id": surface_id,
-            "goal": "review state"
-        }),
-    )
-    .await
-    .unwrap();
-    dispatch(
-        &state,
-        "team.worker.upsert",
-        json!({
-            "team_id": "team-1",
-            "worker_id": "worker-1",
-            "agent": "claude",
-            "surface_id": worker_surface_id,
-            "status": "running"
-        }),
-    )
-    .await
-    .unwrap();
-    dispatch(
-        &state,
-        "team.task.upsert",
-        json!({
-            "team_id": "team-1",
-            "task_id": "task-1",
-            "title": "Review"
-        }),
-    )
-    .await
-    .unwrap();
-    dispatch(
-        &state,
-        "team.message.send",
-        json!({
-            "team_id": "team-1",
-            "message_id": "msg-1",
-            "from": "leader",
-            "to_worker_id": "worker-1",
-            "body": "status?"
-        }),
-    )
-    .await
-    .unwrap();
-
-    let snapshot = dispatch(
-        &state,
-        "context.snapshot",
-        json!({"workspace_id": workspace_id, "tail_lines": 0}),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(snapshot["team_summaries"][0]["team_id"], "team-1");
-    assert_eq!(snapshot["team_summaries"][0]["workers_total"], 1);
-    assert_eq!(snapshot["team_summaries"][0]["workers_active"], 1);
-    assert_eq!(snapshot["team_summaries"][0]["tasks_open"], 1);
-    assert_eq!(snapshot["team_summaries"][0]["messages_pending"], 1);
-}
-
-#[tokio::test]
-async fn context_snapshot_omits_team_details_by_default() {
-    let (mut state, _backend) = test_state();
-    let dir = tempfile::tempdir().unwrap();
-    state.team_store_path = Some(dir.path().join("team-v1.json"));
-    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
-    let workspace_id = workspace[0]["id"].as_str().unwrap();
-    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
-
-    dispatch(
-        &state,
-        "team.upsert",
-        json!({
-            "team_id": "team-1",
-            "leader_surface_id": surface_id,
-            "goal": "review state"
-        }),
-    )
-    .await
-    .unwrap();
-    dispatch(
-        &state,
-        "team.worker.upsert",
-        json!({
-            "team_id": "team-1",
-            "worker_id": "worker-1",
-            "agent": "claude",
-            "surface_id": surface_id,
-            "status": "running"
-        }),
-    )
-    .await
-    .unwrap();
-    dispatch(
-        &state,
-        "team.message.send",
-        json!({
-            "team_id": "team-1",
-            "message_id": "msg-1",
-            "from": "leader",
-            "to_worker_id": "worker-1",
-            "body": "large worker prompt that should not ride along by default"
-        }),
-    )
-    .await
-    .unwrap();
-
-    let compact = dispatch(
-        &state,
-        "context.snapshot",
-        json!({"workspace_id": workspace_id, "tail_lines": 0}),
-    )
-    .await
-    .unwrap();
-    assert_eq!(compact["teams"].as_array().unwrap().len(), 0);
-    assert_eq!(compact["team_summaries"][0]["team_id"], "team-1");
-
-    let detailed = dispatch(
-        &state,
-        "context.snapshot",
-        json!({
-            "workspace_id": workspace_id,
-            "tail_lines": 0,
-            "include_team_details": true
-        }),
-    )
-    .await
-    .unwrap();
-    assert_eq!(
-        detailed["teams"][0]["messages"][0]["body"],
-        "large worker prompt that should not ride along by default"
-    );
-}
-
-#[tokio::test]
-async fn context_snapshot_team_summaries_report_done_inconsistencies() {
-    let (mut state, _backend) = test_state();
-    let dir = tempfile::tempdir().unwrap();
-    state.team_store_path = Some(dir.path().join("team-v1.json"));
-    let workspace = dispatch(&state, "workspace.list", json!({})).await.unwrap();
-    let workspace_id = workspace[0]["id"].as_str().unwrap();
-    let surface_id = workspace[0]["focused_surface_id"].as_str().unwrap();
-
-    dispatch(
-        &state,
-        "team.upsert",
-        json!({
-            "team_id": "team-1",
-            "leader_surface_id": surface_id,
-            "status": "done"
-        }),
-    )
-    .await
-    .unwrap();
-    dispatch(
-        &state,
-        "team.worker.upsert",
-        json!({
-            "team_id": "team-1",
-            "worker_id": "worker-1",
-            "agent": "claude",
-            "surface_id": surface_id,
-            "status": "running"
-        }),
-    )
-    .await
-    .unwrap();
-    dispatch(
-        &state,
-        "team.task.upsert",
-        json!({
-            "team_id": "team-1",
-            "task_id": "task-1",
-            "title": "Review"
-        }),
-    )
-    .await
-    .unwrap();
-    dispatch(
-        &state,
-        "team.message.send",
-        json!({
-            "team_id": "team-1",
-            "message_id": "msg-1",
-            "from": "leader",
-            "to_worker_id": "worker-1",
-            "body": "status?"
-        }),
-    )
-    .await
-    .unwrap();
-
-    let snapshot = dispatch(
-        &state,
-        "context.snapshot",
-        json!({"workspace_id": workspace_id, "tail_lines": 0}),
-    )
-    .await
-    .unwrap();
-    assert_eq!(snapshot["team_summaries"][0]["status"], "done");
-    assert_eq!(
-        snapshot["team_summaries"][0]["consistency_warnings"],
-        json!([
-            "done_with_active_workers",
-            "done_with_open_tasks",
-            "done_with_pending_messages"
-        ])
-    );
-    assert!(snapshot["risk_flags"]
-        .as_array()
-        .unwrap()
-        .contains(&json!("team_consistency_warning")));
 }

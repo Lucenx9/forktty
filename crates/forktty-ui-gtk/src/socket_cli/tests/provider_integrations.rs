@@ -102,6 +102,7 @@ fn antigravity_setup_preserves_foreign_groups_and_is_idempotent() {
         for (script_path, content) in &plan.scripts {
             fs::create_dir_all(script_path.parent().unwrap()).unwrap();
             fs::write(script_path, content).unwrap();
+            fs::set_permissions(script_path, fs::Permissions::from_mode(0o700)).unwrap();
         }
         let replanned = build_hook_setup_plan(spec, Path::new("/usr/bin/forktty")).unwrap();
         assert!(!replanned.changed);
@@ -255,6 +256,8 @@ fn codex_trust_report_classifies_recorded_and_unrecorded_events() {
     .unwrap();
     let report = codex_hook_trust_report(config_toml, hooks_json, CODEX_HOOK_ENTRIES, Some(&state));
     assert_eq!(report["status"], json!("partial"));
+    assert_eq!(report["currentHashesVerified"], json!(false));
+    assert!(report["hint"].as_str().unwrap().contains("current hash"));
     assert_eq!(report["recordedEvents"], json!(["PreToolUse"]));
     assert!(report["unrecordedEvents"]
         .as_array()
@@ -266,21 +269,20 @@ fn codex_trust_report_classifies_recorded_and_unrecorded_events() {
 }
 
 #[test]
-fn hook_setup_reminder_only_prompts_when_all_missing_or_stale() {
-    assert!(
-        hook_setup_reminder_message_for_statuses(["not_installed", "not_installed"])
-            .unwrap()
-            .contains("Install ForkTTY agent hooks")
-    );
-    assert!(hook_setup_reminder_message_for_statuses(["ok", "not_installed"]).is_none());
-    assert!(hook_setup_reminder_message_for_statuses(["ok", "stale"])
-        .unwrap()
-        .contains("Refresh ForkTTY agent hooks"));
-    assert!(
-        hook_setup_reminder_message_for_statuses(["current_launcher_unknown"])
-            .unwrap()
-            .contains("Refresh ForkTTY agent hooks")
-    );
+fn codex_trust_summary_never_claims_current_hashes_are_verified() {
+    let report = json!({
+        "status": "all_recorded",
+        "recordedEvents": CODEX_HOOK_ENTRIES
+            .iter()
+            .map(|entry| entry.event_name)
+            .collect::<Vec<_>>(),
+        "unrecordedEvents": [],
+        "currentHashesVerified": false,
+    });
+
+    let summary = format_codex_trust_check(&report).unwrap();
+    assert!(summary.contains("cannot verify"));
+    assert!(summary.contains("/hooks"));
 }
 
 #[test]
@@ -318,6 +320,92 @@ fn merge_hook_config_strips_legacy_script_entry() {
     assert!(command.contains("'/usr/bin/forktty' hooks codex session-start"));
     assert!(!command.contains("forktty.mjs"));
     assert_eq!(merged["custom"], Value::Bool(true));
+}
+
+#[test]
+fn claude_hook_setup_removes_retired_worktree_hooks_without_touching_user_hooks() {
+    let spec = agent_spec("claude").unwrap();
+    let user_entry = json!({
+        "hooks": [{
+            "type": "command",
+            "command": "user-worktree-provider"
+        }]
+    });
+    let existing = json!({
+        "hooks": {
+            "WorktreeCreate": [
+                {
+                    "hooks": [{
+                        "type": "command",
+                        "command": "stale-tagged-command"
+                    }],
+                    "forkttySource": FORKTTY_HOOK_TAG
+                },
+                {
+                    "hooks": [{
+                        "type": "command",
+                        "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '/old/forktty' hooks claude worktree-create || echo '{}'"
+                    }]
+                },
+                user_entry.clone()
+            ]
+        }
+    });
+
+    let (changed, merged) = merge_hook_config_with_profile(
+        &existing,
+        spec,
+        Path::new("/usr/bin/forktty"),
+        HookSetupProfile::Lifecycle,
+    )
+    .unwrap();
+
+    assert!(changed);
+    assert_eq!(merged["hooks"]["WorktreeCreate"], json!([user_entry]));
+}
+
+#[test]
+fn claude_hook_remove_cleans_retired_worktree_hooks() {
+    let spec = agent_spec("claude").unwrap();
+    let existing = json!({
+        "hooks": {
+            "WorktreeCreate": [
+                {
+                    "hooks": [{
+                        "type": "command",
+                        "command": "stale-tagged-command"
+                    }],
+                    "forkttySource": FORKTTY_HOOK_TAG
+                },
+                {
+                    "hooks": [{
+                        "type": "command",
+                        "command": "[ \"${FORKTTY_CLAUDE_HOOKS_DISABLED:-}\" != \"1\" ] && '/old/forktty' hooks claude worktree-create || echo '{}'"
+                    }]
+                },
+                {
+                    "hooks": [{
+                        "type": "command",
+                        "command": "user-worktree-provider"
+                    }]
+                }
+            ]
+        }
+    });
+
+    let (changed, removed) =
+        remove_hook_config(&existing, spec, Some(Path::new("/usr/bin/forktty"))).unwrap();
+
+    assert!(changed);
+    assert_eq!(
+        removed["hooks"]["WorktreeCreate"],
+        json!([{
+            "hooks": [{
+                "type": "command",
+                "command": "user-worktree-provider"
+            }]
+        }])
+    );
 }
 
 #[test]
