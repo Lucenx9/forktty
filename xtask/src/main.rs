@@ -56,7 +56,11 @@ const CLAUDE_ENTRIES: &[(&str, &str, u64)] = &[
     ("InstructionsLoaded", "instructions-loaded", 30),
     ("CwdChanged", "cwd-changed", 30),
     ("FileChanged", "file-changed", 30),
-    ("WorktreeCreate", "worktree-create", 30),
+    // WorktreeCreate is intentionally not registered: Claude Code treats it as a
+    // provider hook that REPLACES default git worktree creation and must print a
+    // worktree path on stdout, so registering an observational hook here breaks
+    // `claude --worktree` and `isolation: "worktree"` subagents. WorktreeRemove
+    // is advisory (its output is ignored) and stays.
     ("WorktreeRemove", "worktree-remove", 30),
     ("SessionEnd", "session-end", 30),
 ];
@@ -117,9 +121,11 @@ const GHOSTTY_VENDOR_PATH: &str = "vendor/ghostty";
 const GHOSTTY_VENDOR_URL: &str = "https://github.com/Lucenx9/ghostty.git";
 const GHOSTTY_VENDOR_REV: &str = "24bd566a5d52bc338032e5582f423472afe094ad";
 const GHOSTTY_GTK_LIB_PROBE_SCRIPT: &str = "scripts/ghostty-gtk-lib-probe.sh";
+const PACKAGING_GHOSTTY_HELPER: &str = "scripts/packaging-ghostty.sh";
 const PACKAGING_SCRIPTS: &[&str] = &["scripts/build-deb.sh", "scripts/build-appimage.sh"];
 const GTK_GHOSTTY_SMOKE_SCRIPT: &str = "scripts/gtk-ghostty-smoke.sh";
 const APPIMAGE_BUNDLED_CHECK_SCRIPT: &str = "scripts/check-appimage-bundled-container.sh";
+const PACKAGE_LEGAL_SCRIPT: &str = "scripts/write-package-legal-docs.sh";
 const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 // Mirrors the probe script's packaging ABI. GhosttyGtkEmbedder::load is the
 // source of truth for the first five symbols, which it loads unconditionally.
@@ -166,10 +172,12 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<()> {
-    let command = env::args().nth(1).unwrap_or_else(|| "check".to_string());
+    let mut args = env::args().skip(1);
+    let command = args.next().unwrap_or_else(|| "check".to_string());
     match command.as_str() {
         "check" => check_all(),
         "check-hooks" | "hooks" => check_hook_templates(),
+        "check-release-tag" => check_release_tag(args.next().as_deref()),
         "help" | "--help" | "-h" => {
             print_help();
             Ok(())
@@ -186,10 +194,53 @@ fn print_help() {
 ForkTTY repository tasks
 
 Usage:
-  cargo run -p xtask -- check        Run all repository consistency checks
-  cargo run -p xtask -- check-hooks  Validate agent hook templates
+  cargo run -p xtask -- check                Run all repository consistency checks
+  cargo run -p xtask -- check-hooks          Validate agent hook templates
+  cargo run -p xtask -- check-release-tag TAG  Verify TAG is v<workspace-version>
 "
     );
+}
+
+fn check_release_tag(tag: Option<&str>) -> Result<()> {
+    let manifest_path = repo_root().join("Cargo.toml");
+    let manifest = fs::read_to_string(&manifest_path)
+        .map_err(|err| format!("failed to read {}: {err}", manifest_path.display()))?;
+    let version = workspace_version(&manifest)?;
+    validate_release_tag(&version, tag)?;
+    println!("release tag matches Cargo version: v{version}");
+    Ok(())
+}
+
+fn workspace_version(manifest: &str) -> Result<String> {
+    let manifest = manifest
+        .parse::<toml::Table>()
+        .map_err(|err| format!("failed to parse Cargo.toml: {err}"))?;
+    manifest
+        .get("workspace")
+        .and_then(toml::Value::as_table)
+        .and_then(|workspace| workspace.get("package"))
+        .and_then(toml::Value::as_table)
+        .and_then(|package| package.get("version"))
+        .and_then(toml::Value::as_str)
+        .filter(|version| !version.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "Cargo.toml is missing [workspace.package].version".to_string())
+}
+
+fn validate_release_tag(version: &str, tag: Option<&str>) -> Result<()> {
+    let tag = tag.ok_or_else(|| "check-release-tag requires a tag argument".to_string())?;
+    if !tag.starts_with('v') || tag.len() == 1 || tag.chars().any(char::is_whitespace) {
+        return Err(format!(
+            "malformed release tag `{tag}`; expected `v{version}`"
+        ));
+    }
+    let expected = format!("v{version}");
+    if tag != expected {
+        return Err(format!(
+            "release tag `{tag}` does not match Cargo version (expected `{expected}`)"
+        ));
+    }
+    Ok(())
 }
 
 fn check_all() -> Result<()> {
@@ -390,6 +441,21 @@ fn check_packaging_ghostty_gtk_lib_guard() -> Result<()> {
             ));
         }
     }
+    let helper_path = root.join(PACKAGING_GHOSTTY_HELPER);
+    let helper = fs::read_to_string(&helper_path)
+        .map_err(|err| format!("failed to read {}: {err}", helper_path.display()))?;
+    for needle in [
+        "--message-format=json-render-diagnostics",
+        "build-script-executed",
+        "/vendor/libghostty-rs/crates/libghostty-vt-sys#",
+        "expected exactly one vendored libghostty-vt-sys OUT_DIR",
+        "$(dirname \"$ghostty_gtk_lib\")/libgtk4-layer-shell.so",
+        "Shared library: \\[libgtk4-layer-shell\\.so\\]",
+    ] {
+        if !helper.contains(needle) {
+            return Err(format!("{PACKAGING_GHOSTTY_HELPER} is missing `{needle}`"));
+        }
+    }
     for script in PACKAGING_SCRIPTS {
         let path = root.join(script);
         let raw = fs::read_to_string(&path)
@@ -403,10 +469,35 @@ fn check_packaging_ghostty_gtk_lib_guard() -> Result<()> {
             "Catppuccin Mocha",
             "ghostty_iterm2_themes_field",
             "zig fetch",
+            PACKAGING_GHOSTTY_HELPER,
+            "forktty_build_release_and_print_ghostty_out_dir",
+            "GHOSTTY_BUILD_OUT_DIR/ghostty-install/lib/libghostty-vt.so.0.1.0",
         ] {
             if !raw.contains(needle) {
                 return Err(format!("{script} is missing `{needle}`"));
             }
+        }
+        for obsolete in ["find_newest_build_output", "ldconfig -p"] {
+            if raw.contains(obsolete) {
+                return Err(format!(
+                    "{script} must not select Ghostty packaging artifacts through `{obsolete}`"
+                ));
+            }
+        }
+    }
+    let legal_script_path = root.join(PACKAGE_LEGAL_SCRIPT);
+    let legal_script = fs::read_to_string(&legal_script_path)
+        .map_err(|err| format!("failed to read {}: {err}", legal_script_path.display()))?;
+    for license in [
+        "packaging/licenses/GPL-3.0-or-later.txt",
+        "packaging/licenses/bash-preexec-0.6.0-MIT.txt",
+        "packaging/licenses/gtk4-layer-shell-1.1.0-MIT.txt",
+    ] {
+        if !root.join(license).is_file() {
+            return Err(format!("missing package license text `{license}`"));
+        }
+        if !legal_script.contains(license) {
+            return Err(format!("{PACKAGE_LEGAL_SCRIPT} must include `{license}`"));
         }
     }
     let gtk_smoke_path = root.join(GTK_GHOSTTY_SMOKE_SCRIPT);
@@ -479,9 +570,22 @@ host_gtk_stack_compatible() {
     }
     let deb = fs::read_to_string(root.join("scripts/build-deb.sh"))
         .map_err(|err| format!("failed to read scripts/build-deb.sh: {err}"))?;
-    if !deb.contains("libgtk4-layer-shell0") {
+    if !deb.contains("forktty_copy_ghostty_layer_shell_lib") {
         return Err(
-            "scripts/build-deb.sh must depend on `libgtk4-layer-shell0` for Ghostty GTK"
+            "scripts/build-deb.sh must bundle the private libgtk4-layer-shell.so via \
+             `forktty_copy_ghostty_layer_shell_lib` for the embedded Ghostty GTK library"
+                .to_string(),
+        );
+    }
+    if deb.contains("libgtk4-layer-shell0") {
+        // ghostty-gtk-embed.so records DT_NEEDED libgtk4-layer-shell.so (unversioned),
+        // which the Debian/Ubuntu runtime package does not provide (the unversioned
+        // symlink is -dev only, and Ubuntu 24.04 lacks the package entirely). Depending
+        // on the runtime package ships a .deb whose terminal panes cannot start; the
+        // library must be bundled privately instead.
+        return Err(
+            "scripts/build-deb.sh must not depend on `libgtk4-layer-shell0`: bundle the \
+             unversioned libgtk4-layer-shell.so privately instead"
                 .to_string(),
         );
     }
@@ -1249,6 +1353,33 @@ printf '%s\n' 'libgtk-4.so.1 => /host/libgtk-4.so.1' 'libadwaita-1.so.0 => /host
     }
 
     #[test]
+    fn package_legal_output_contains_complete_pinned_license_material() {
+        let temp = TestDir::new("package-licenses");
+        let package_root = temp.path().join("package-root");
+        let output = Command::new("/bin/bash")
+            .arg(repo_root().join(PACKAGE_LEGAL_SCRIPT))
+            .arg(&package_root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "legal generator failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let copyright =
+            fs::read_to_string(package_root.join("usr/share/doc/forktty/copyright")).unwrap();
+        for needle in [
+            "GNU GENERAL PUBLIC LICENSE",
+            "Copyright (c) 2017 Ryan Caloras and contributors",
+            "Copyright (c) 2023 Sophie Winter",
+            "License: MIT (libghostty-rs)",
+        ] {
+            assert!(copyright.contains(needle), "missing `{needle}`");
+        }
+    }
+
+    #[test]
     fn validates_full_ghostty_submodule_manifest() {
         let raw = r#"
 [submodule "vendor/ghostty"]
@@ -1257,5 +1388,41 @@ printf '%s\n' 'libgtk-4.so.1 => /host/libgtk-4.so.1' 'libadwaita-1.so.0 => /host
 "#;
 
         assert!(validate_ghostty_gitmodules(raw).is_ok());
+    }
+
+    #[test]
+    fn release_tag_validation_accepts_workspace_version() {
+        assert!(validate_release_tag("0.2.0-alpha.19", Some("v0.2.0-alpha.19")).is_ok());
+    }
+
+    #[test]
+    fn release_tag_validation_rejects_mismatch_missing_and_malformed_tags() {
+        assert!(
+            validate_release_tag("0.2.0-alpha.19", Some("v0.2.0-alpha.18"))
+                .unwrap_err()
+                .contains("expected `v0.2.0-alpha.19`")
+        );
+        assert!(validate_release_tag("0.2.0-alpha.19", None)
+            .unwrap_err()
+            .contains("requires a tag argument"));
+        assert!(
+            validate_release_tag("0.2.0-alpha.19", Some("0.2.0-alpha.19"))
+                .unwrap_err()
+                .contains("malformed release tag")
+        );
+    }
+
+    #[test]
+    fn workspace_version_is_read_structurally() {
+        let manifest = r#"
+[package]
+version = "9.9.9"
+
+[workspace.package]
+version = "0.2.0-alpha.19"
+"#;
+        assert_eq!(workspace_version(manifest).unwrap(), "0.2.0-alpha.19");
+        assert!(workspace_version("[workspace]\nmembers = []\n").is_err());
+        assert!(workspace_version("not = [valid").is_err());
     }
 }

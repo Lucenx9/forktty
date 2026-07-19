@@ -131,9 +131,24 @@ fn run_remote_helper_pty_inner(argv: Vec<String>) -> io::Result<i32> {
         write_pty_output(&mut session, &mut stdout)?;
         if let Some(status) = session.try_wait()? {
             write_pty_output(&mut session, &mut stdout)?;
-            return Ok(status.code().unwrap_or(1));
+            return Ok(exit_code_from_status(status));
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+/// Map a child exit status to a shell-style exit code, preserving
+/// signal terminations as `128 + signal` (e.g. SIGTERM → 143) instead of
+/// collapsing every signal death to a bare `1`.
+#[cfg(feature = "gtk-ghostty")]
+fn exit_code_from_status(status: std::process::ExitStatus) -> i32 {
+    use std::os::unix::process::ExitStatusExt;
+    if let Some(code) = status.code() {
+        code
+    } else if let Some(signal) = status.signal() {
+        128 + signal
+    } else {
+        1
     }
 }
 
@@ -212,4 +227,25 @@ fn local_hostname() -> Option<String> {
 fn non_empty_trimmed(value: String) -> Option<String> {
     let value = value.trim().to_string();
     (!value.is_empty()).then_some(value)
+}
+
+#[cfg(all(test, feature = "gtk-ghostty"))]
+mod tests {
+    use super::exit_code_from_status;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::ExitStatus;
+
+    #[test]
+    fn preserves_normal_exit_code() {
+        // Raw status with exit code 3 lives in bits 8..15.
+        assert_eq!(exit_code_from_status(ExitStatus::from_raw(3 << 8)), 3);
+        assert_eq!(exit_code_from_status(ExitStatus::from_raw(0)), 0);
+    }
+
+    #[test]
+    fn maps_signal_termination_to_128_plus_signal() {
+        // Raw status where the low 7 bits hold the terminating signal.
+        assert_eq!(exit_code_from_status(ExitStatus::from_raw(15)), 143); // SIGTERM
+        assert_eq!(exit_code_from_status(ExitStatus::from_raw(9)), 137); // SIGKILL
+    }
 }

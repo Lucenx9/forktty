@@ -48,6 +48,7 @@ pub(in crate::socket_cli) struct AgentSpec {
     pub(in crate::socket_cli) disabled_env: &'static str,
     pub(in crate::socket_cli) config_path: fn() -> PathBuf,
     pub(in crate::socket_cli) hook_entries: &'static [HookEntrySpec],
+    pub(in crate::socket_cli) retired_hook_entries: &'static [HookEntrySpec],
     pub(in crate::socket_cli) matcher: Option<&'static str>,
     pub(in crate::socket_cli) install_kind: HookInstallKind,
 }
@@ -252,11 +253,11 @@ pub(in crate::socket_cli) const CLAUDE_HOOK_ENTRIES: &[HookEntrySpec] = &[
         hook_event_name: "file-changed",
         timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
-    HookEntrySpec {
-        event_name: "WorktreeCreate",
-        hook_event_name: "worktree-create",
-        timeout: HOOK_ENTRY_TIMEOUT_SECS,
-    },
+    // WorktreeCreate is deliberately omitted: Claude Code treats it as a
+    // provider hook that replaces default git worktree creation and requires the
+    // hook to print a worktree path on stdout (missing path fails creation).
+    // Registering an observational hook there breaks `claude --worktree` and
+    // `isolation: "worktree"` subagents. WorktreeRemove is advisory only.
     HookEntrySpec {
         event_name: "WorktreeRemove",
         hook_event_name: "worktree-remove",
@@ -268,6 +269,14 @@ pub(in crate::socket_cli) const CLAUDE_HOOK_ENTRIES: &[HookEntrySpec] = &[
         timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
 ];
+
+// Retired entries are cleanup-only metadata: setup and remove delete prior
+// ForkTTY-owned registrations without installing or reporting them as supported.
+pub(in crate::socket_cli) const CLAUDE_RETIRED_HOOK_ENTRIES: &[HookEntrySpec] = &[HookEntrySpec {
+    event_name: "WorktreeCreate",
+    hook_event_name: "worktree-create",
+    timeout: HOOK_ENTRY_TIMEOUT_SECS,
+}];
 
 pub(in crate::socket_cli) const CLAUDE_PER_TOOL_HOOK_ENTRIES: &[&str] =
     &["PreToolUse", "PostToolUse", "PostToolUseFailure"];
@@ -418,6 +427,7 @@ pub(in crate::socket_cli) const AGENTS: &[AgentSpec] = &[
         disabled_env: "FORKTTY_CODEX_HOOKS_DISABLED",
         config_path: codex_config_path,
         hook_entries: CODEX_HOOK_ENTRIES,
+        retired_hook_entries: &[],
         matcher: None,
         install_kind: HookInstallKind::JsonConfig,
     },
@@ -427,6 +437,7 @@ pub(in crate::socket_cli) const AGENTS: &[AgentSpec] = &[
         disabled_env: "FORKTTY_CLAUDE_HOOKS_DISABLED",
         config_path: claude_config_path,
         hook_entries: CLAUDE_HOOK_ENTRIES,
+        retired_hook_entries: CLAUDE_RETIRED_HOOK_ENTRIES,
         matcher: Some("*"),
         install_kind: HookInstallKind::JsonConfig,
     },
@@ -438,6 +449,7 @@ pub(in crate::socket_cli) const AGENTS: &[AgentSpec] = &[
         // Matcher is applied to tool events only; PreInvocation takes none.
         matcher: Some("*"),
         hook_entries: ANTIGRAVITY_HOOK_ENTRIES,
+        retired_hook_entries: &[],
         install_kind: HookInstallKind::AntigravityConfig,
     },
     AgentSpec {
@@ -446,6 +458,7 @@ pub(in crate::socket_cli) const AGENTS: &[AgentSpec] = &[
         disabled_env: "FORKTTY_OPENCODE_HOOKS_DISABLED",
         config_path: opencode_plugin_path,
         hook_entries: OPENCODE_HOOK_ENTRIES,
+        retired_hook_entries: &[],
         matcher: None,
         install_kind: HookInstallKind::OpenCodePlugin,
     },
@@ -460,6 +473,7 @@ pub(in crate::socket_cli) static LEGACY_GEMINI_HOOK_AGENT: AgentSpec = AgentSpec
     disabled_env: "FORKTTY_GEMINI_HOOKS_DISABLED",
     config_path: legacy_gemini_config_path,
     hook_entries: LEGACY_GEMINI_HOOK_ENTRIES,
+    retired_hook_entries: &[],
     matcher: None,
     install_kind: HookInstallKind::JsonConfig,
 };

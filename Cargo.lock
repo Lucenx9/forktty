@@ -3167,6 +3167,7 @@ name = "xtask"
 version = "0.2.0-alpha.19"
 dependencies = [
  "serde_json",
+ "toml",
 ]
 
 [[package]]

@@ -661,6 +661,15 @@ fn human_formatters_escape_socket_payload_control_sequences() {
     assert!(notification_line.contains("Needs\\rinput"));
     assert!(notification_line.contains("Run\\ttool"));
     assert!(!notification_line.contains('\u{1b}'));
+
+    let log_line = format_log_line(&json!({
+        "level": "warn\u{1b}]0;pwned\u{7}",
+        "message": "done\r\nrm -rf",
+    }));
+    assert_eq!(log_line, "[warn\\x1b]0;pwned\\x07] done\\r\\nrm -rf");
+    assert!(!log_line.contains('\u{1b}'));
+    assert!(!log_line.contains('\u{7}'));
+    assert!(!log_line.contains('\n'));
 }
 
 #[test]
@@ -1786,11 +1795,24 @@ fn doctor_supported_events_track_installed_entries_per_provider() {
             "InstructionsLoaded",
             "CwdChanged",
             "FileChanged",
-            "WorktreeCreate",
             "WorktreeRemove",
             "SessionEnd",
         ]
     );
+    assert_eq!(claude_events.len(), 28);
+    assert!(!claude_events.contains(&"WorktreeCreate"));
+    assert_eq!(
+        agent_spec("claude")
+            .unwrap()
+            .retired_hook_entries
+            .iter()
+            .map(|entry| (entry.event_name, entry.hook_event_name, entry.timeout))
+            .collect::<Vec<_>>(),
+        vec![("WorktreeCreate", "worktree-create", 30)]
+    );
+    for key in ["codex", "antigravity", "opencode"] {
+        assert!(agent_spec(key).unwrap().retired_hook_entries.is_empty());
+    }
     // Codex docs do not list Notification or SessionEnd, so the Codex
     // installer must never target them.
     assert!(!codex_events.contains(&"Notification"));

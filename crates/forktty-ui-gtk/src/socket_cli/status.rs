@@ -4,7 +4,7 @@ use super::{
     insert_optional_cli_string_param, insert_optional_cli_u64_param, is_supported_status_color,
     non_blank_string_option, parse_finite_number, parse_flags, parse_u64_option, print_json,
     print_result_or_json, read_stdin_text, reject_unknown_options, require_no_args,
-    safe_string_field, sanitize_for_terminal, send_socket_request, should_read_stdin, string_field,
+    safe_string_field, sanitize_for_terminal, send_socket_request, should_read_stdin,
     string_option, target_selector_values, trimmed_env, write_stdout_line, CliContext, CliError,
     CliResult, FlagValue,
 };
@@ -679,9 +679,12 @@ pub(super) fn format_progress_line(progress: &Value) -> String {
     }
 }
 
-fn format_log_line(log: &Value) -> String {
-    let level = string_field(log, "level").unwrap_or("info");
-    let message = string_field(log, "message").unwrap_or("");
+pub(super) fn format_log_line(log: &Value) -> String {
+    // Sanitize both fields: log values originate from arbitrary agent/socket
+    // input and must not smuggle terminal escapes (ESC/OSC/newline/BEL) into the
+    // CLI output stream, matching the status/progress formatters above.
+    let level = safe_string_field(log, "level").unwrap_or_else(|| "info".to_string());
+    let message = safe_string_field(log, "message").unwrap_or_default();
     format!("[{level}] {message}")
 }
 

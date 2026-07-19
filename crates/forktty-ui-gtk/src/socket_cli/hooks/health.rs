@@ -701,6 +701,40 @@ mod tests {
     }
 
     #[test]
+    fn installation_check_reports_retired_claude_hook_as_managed_drift() {
+        let root = tempfile::tempdir().unwrap();
+        let launcher = executable_launcher(root.path());
+        let claude_home = root.path().join("claude");
+        let claude_home_s = claude_home.display().to_string();
+        with_env(&[("CLAUDE_CONFIG_DIR", Some(&claude_home_s))], || {
+            let spec = agent_spec("claude").unwrap();
+            let plan = build_hook_setup_plan(spec, &launcher).unwrap();
+            install_setup_plan(&plan);
+
+            let mut config: Value = serde_json::from_str(&plan.content).unwrap();
+            config["hooks"]["WorktreeCreate"] = json!([{
+                "hooks": [{
+                    "type": "command",
+                    "command": "stale-tagged-command"
+                }],
+                "forkttySource": "forktty"
+            }]);
+            fs::write(
+                &plan.config_path,
+                format!("{}\n", serde_json::to_string_pretty(&config).unwrap()),
+            )
+            .unwrap();
+
+            let stale_plan = build_hook_setup_plan(spec, &launcher).unwrap();
+            assert!(stale_plan.changed);
+
+            let check = describe_installation_check(spec, &plan.config_path, Some(&launcher));
+            assert!(issue_codes(&check)
+                .contains(&InstallationIssueCode::ManagedAssetsIncompleteOrModified));
+        });
+    }
+
+    #[test]
     fn installation_check_rejects_incomplete_claude_codex_and_opencode_assets() {
         let root = tempfile::tempdir().unwrap();
         let launcher = executable_launcher(root.path());

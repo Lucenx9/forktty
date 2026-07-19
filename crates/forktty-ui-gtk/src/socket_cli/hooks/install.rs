@@ -464,37 +464,10 @@ pub(in crate::socket_cli) fn merge_hook_config_with_profile(
         .hook_entries
         .iter()
         .filter(|entry| hook_entry_removed_by_setup(spec, profile, entry))
+        .chain(spec.retired_hook_entries)
     {
-        let Some(existing_entries) = hooks
-            .get(entry_spec.event_name)
-            .and_then(Value::as_array)
-            .cloned()
-        else {
-            continue;
-        };
-        let command = build_hook_shell_command(launcher, spec, entry_spec.hook_event_name);
-        let filtered = existing_entries
-            .iter()
-            .filter(|entry| {
-                !is_forktty_managed_entry(entry)
-                    && !is_legacy_forktty_hook_command(
-                        entry,
-                        spec,
-                        entry_spec.hook_event_name,
-                        &command,
-                    )
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        if filtered == existing_entries {
-            continue;
-        }
-        changed = true;
-        if filtered.is_empty() {
-            hooks.remove(entry_spec.event_name);
-        } else {
-            hooks.insert(entry_spec.event_name.to_string(), Value::Array(filtered));
-        }
+        changed |=
+            remove_managed_hook_entries_for_event(&mut hooks, spec, entry_spec, Some(launcher));
     }
 
     config.insert("hooks".to_string(), Value::Object(hooks));
@@ -532,6 +505,46 @@ pub(in crate::socket_cli) fn hook_setup_profile_name(profile: HookSetupProfile) 
     }
 }
 
+fn remove_managed_hook_entries_for_event(
+    hooks: &mut Map<String, Value>,
+    spec: &AgentSpec,
+    entry_spec: &HookEntrySpec,
+    current_launcher: Option<&Path>,
+) -> bool {
+    let Some(existing_entries) = hooks
+        .get(entry_spec.event_name)
+        .and_then(Value::as_array)
+        .cloned()
+    else {
+        return false;
+    };
+    let next_command = current_launcher
+        .map(|launcher| build_hook_shell_command(launcher, spec, entry_spec.hook_event_name))
+        .unwrap_or_default();
+    let filtered = existing_entries
+        .iter()
+        .filter(|entry| {
+            !is_forktty_managed_entry(entry)
+                && !is_legacy_forktty_hook_command(
+                    entry,
+                    spec,
+                    entry_spec.hook_event_name,
+                    &next_command,
+                )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if filtered == existing_entries {
+        return false;
+    }
+    if filtered.is_empty() {
+        hooks.remove(entry_spec.event_name);
+    } else {
+        hooks.insert(entry_spec.event_name.to_string(), Value::Array(filtered));
+    }
+    true
+}
+
 pub(in crate::socket_cli) fn remove_hook_config(
     existing: &Value,
     spec: &AgentSpec,
@@ -544,39 +557,13 @@ pub(in crate::socket_cli) fn remove_hook_config(
     let mut next_hooks = hooks.clone();
     let mut changed = false;
 
-    for entry_spec in spec.hook_entries {
-        let Some(existing_entries) = hooks
-            .get(entry_spec.event_name)
-            .and_then(Value::as_array)
-            .cloned()
-        else {
-            continue;
-        };
-        let next_command = current_launcher
-            .map(|launcher| build_hook_shell_command(launcher, spec, entry_spec.hook_event_name))
-            .unwrap_or_default();
-        let filtered = existing_entries
-            .iter()
-            .filter(|entry| {
-                !is_forktty_managed_entry(entry)
-                    && !is_legacy_forktty_hook_command(
-                        entry,
-                        spec,
-                        entry_spec.hook_event_name,
-                        &next_command,
-                    )
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        if filtered == existing_entries {
-            continue;
-        }
-        changed = true;
-        if filtered.is_empty() {
-            next_hooks.remove(entry_spec.event_name);
-        } else {
-            next_hooks.insert(entry_spec.event_name.to_string(), Value::Array(filtered));
-        }
+    for entry_spec in spec.hook_entries.iter().chain(spec.retired_hook_entries) {
+        changed |= remove_managed_hook_entries_for_event(
+            &mut next_hooks,
+            spec,
+            entry_spec,
+            current_launcher,
+        );
     }
 
     if changed {
