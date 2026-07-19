@@ -821,15 +821,15 @@ fn workspace_id_for_resolves_each_selector_variant() {
 
     assert_eq!(
         model.workspace_id_for(WorkspaceSelector::Id(&main.id)),
-        Some(main.id.clone())
+        Some(main.id.as_str())
     );
     assert_eq!(
         model.workspace_id_for(WorkspaceSelector::Name("feature")),
-        Some(feature.id.clone())
+        Some(feature.id.as_str())
     );
     assert_eq!(
         model.workspace_id_for(WorkspaceSelector::WorktreeName("feature-wt")),
-        Some(feature.id)
+        Some(feature.id.as_str())
     );
     assert_eq!(
         model.workspace_id_for(WorkspaceSelector::Id("workspace-missing")),
@@ -857,11 +857,11 @@ fn workspace_id_for_prefers_first_workspace_in_list_order_for_duplicate_names() 
 
     assert_eq!(
         model.workspace_id_for(WorkspaceSelector::Name("dup")),
-        Some(first_dup.id),
+        Some(first_dup.id.as_str()),
     );
     assert_ne!(
         model.workspace_id_for(WorkspaceSelector::Name("dup")),
-        Some(second_dup.id),
+        Some(second_dup.id.as_str()),
     );
 }
 

@@ -907,7 +907,7 @@ impl WorkspaceModel {
     }
 
     pub fn select_workspace(&mut self, selector: WorkspaceSelector<'_>) -> Option<Workspace> {
-        let id = self.workspace_id_for(selector)?.to_string();
+        let id = self.workspace_id_for(selector)?;
         for workspace in self.workspaces.values_mut() {
             workspace.active = workspace.id == id;
         }
@@ -919,7 +919,7 @@ impl WorkspaceModel {
         selector: WorkspaceSelector<'_>,
         name: impl Into<String>,
     ) -> Option<Workspace> {
-        let id = self.workspace_id_for(selector)?.to_string();
+        let id = self.workspace_id_for(selector)?;
         let workspace = self.workspaces.get_mut(&id)?;
         workspace.name = name.into();
         Some(workspace.clone())
@@ -956,7 +956,7 @@ impl WorkspaceModel {
     }
 
     pub fn close_workspace(&mut self, selector: WorkspaceSelector<'_>) -> Option<Workspace> {
-        let id = self.workspace_id_for(selector)?.to_string();
+        let id = self.workspace_id_for(selector)?;
         let removed = self.workspaces.remove(&id)?;
         self.workspace_order.retain(|candidate| candidate != &id);
         self.surfaces
@@ -1798,20 +1798,20 @@ impl WorkspaceModel {
 
     /// Resolves a workspace selector to its current id without mutating state.
     /// Returns `None` if no workspace matches.
-    pub fn workspace_id_for(&self, selector: WorkspaceSelector<'_>) -> Option<&str> {
+    pub fn workspace_id_for(&self, selector: WorkspaceSelector<'_>) -> Option<WorkspaceId> {
         match selector {
-            WorkspaceSelector::Id(id) => self.workspaces.get(id).map(|w| w.id.as_str()),
+            WorkspaceSelector::Id(id) => self.workspaces.contains_key(id).then(|| id.to_string()),
             WorkspaceSelector::Name(name) => self.workspace_order.iter().find_map(|id| {
                 self.workspaces
                     .get(id)
                     .filter(|workspace| workspace.name == name)
-                    .map(|workspace| workspace.id.as_str())
+                    .map(|workspace| workspace.id.clone())
             }),
             WorkspaceSelector::WorktreeName(name) => self.workspace_order.iter().find_map(|id| {
                 self.workspaces
                     .get(id)
                     .filter(|workspace| workspace.worktree_name.as_deref() == Some(name))
-                    .map(|workspace| workspace.id.as_str())
+                    .map(|workspace| workspace.id.clone())
             }),
         }
     }
