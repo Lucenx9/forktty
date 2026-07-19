@@ -284,6 +284,57 @@ pub fn discover() -> Vec<SourceBrowser> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn test_parse_ini_basic() {
+        let text = "[General]\nName=Firefox\nPath=xyz.default\n";
+        let sections = parse_ini(text);
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].len(), 3);
+        assert_eq!(sections[0][0], ("".to_string(), "General".to_string()));
+        assert_eq!(sections[0][1], ("Name".to_string(), "Firefox".to_string()));
+        assert_eq!(
+            sections[0][2],
+            ("Path".to_string(), "xyz.default".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_ini_comments_and_whitespace() {
+        let text = "   [General]   \n; A comment\n# Another comment\n  Name  =  Firefox  \n\n\tPath=xyz.default\t\n";
+        let sections = parse_ini(text);
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].len(), 3);
+        assert_eq!(sections[0][0], ("".to_string(), "General".to_string()));
+        assert_eq!(sections[0][1], ("Name".to_string(), "Firefox".to_string()));
+        assert_eq!(
+            sections[0][2],
+            ("Path".to_string(), "xyz.default".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_ini_multiple_sections() {
+        let text = "[Section1]\nKey1=Val1\n[Section2]\nKey2=Val2\n";
+        let sections = parse_ini(text);
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].len(), 2);
+        assert_eq!(sections[0][0], ("".to_string(), "Section1".to_string()));
+        assert_eq!(sections[0][1], ("Key1".to_string(), "Val1".to_string()));
+        assert_eq!(sections[1].len(), 2);
+        assert_eq!(sections[1][0], ("".to_string(), "Section2".to_string()));
+        assert_eq!(sections[1][1], ("Key2".to_string(), "Val2".to_string()));
+    }
+
+    #[test]
+    fn test_parse_ini_no_section() {
+        let text = "Key1=Val1\n[Section1]\nKey2=Val2\n";
+        let sections = parse_ini(text);
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].len(), 2);
+        assert_eq!(sections[0][0], ("".to_string(), "Section1".to_string()));
+        assert_eq!(sections[0][1], ("Key2".to_string(), "Val2".to_string()));
+    }
     use std::sync::Mutex;
     use std::sync::MutexGuard;
 
