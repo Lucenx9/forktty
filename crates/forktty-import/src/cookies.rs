@@ -295,6 +295,13 @@ mod tests {
     }
 
     #[test]
+    fn test_chromium_cookie_keys_v10_only() {
+        let keys = ChromiumCookieKeys::v10_only();
+        assert_eq!(keys.v10, chromium_v10_key());
+        assert_eq!(keys.v11, None);
+    }
+
+    #[test]
     fn decrypt_chromium_value_test_pure_deterministic() {
         let key = chromium_v10_key();
         let plaintext = b"pure_deterministic_test";
