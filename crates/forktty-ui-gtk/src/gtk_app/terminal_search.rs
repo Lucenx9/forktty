@@ -74,20 +74,49 @@ fn for_each_char_match_start(
     if needle.is_empty() {
         return;
     }
+
+    // ⚡ Bolt: Fast path for the first character avoids overhead of setting up slice iterators,
+    // zipping, and full `chars_eq_ignore_case` invocation for the millions of non-matches.
+    let first_char = needle[0];
+    let is_first_ascii = first_char.is_ascii();
+    let first_char_alt = if is_first_ascii {
+        if first_char.is_ascii_lowercase() {
+            first_char.to_ascii_uppercase()
+        } else if first_char.is_ascii_uppercase() {
+            first_char.to_ascii_lowercase()
+        } else {
+            first_char
+        }
+    } else {
+        first_char
+    };
+
     let mut index = 0;
     while index + needle.len() <= haystack.len() {
-        let matched = haystack[index..index + needle.len()]
-            .iter()
-            .zip(needle)
-            .all(|(a, b)| chars_eq_ignore_case(*a, *b));
-        if matched {
-            if !visit(index) {
-                return;
-            }
-            index += needle.len();
+        let hc = haystack[index];
+        let first_match = if is_first_ascii && hc.is_ascii() {
+            hc == first_char || hc == first_char_alt
         } else {
-            index += 1;
+            chars_eq_ignore_case(hc, first_char)
+        };
+
+        if first_match {
+            let mut matched = true;
+            for i in 1..needle.len() {
+                if !chars_eq_ignore_case(haystack[index + i], needle[i]) {
+                    matched = false;
+                    break;
+                }
+            }
+            if matched {
+                if !visit(index) {
+                    return;
+                }
+                index += needle.len();
+                continue;
+            }
         }
+        index += 1;
     }
 }
 

@@ -1,0 +1,3 @@
+## 2025-02-18 - Optimize terminal search hot loop
+**Learning:** In Rust, optimizing text search hot loops (like terminal scrollback searches) can be achieved by extracting the first-character comparison out of the iterator chain and utilizing an ASCII fast-path. This avoids the overhead of setting up slice iterators, zipping, closures, and invoking heavy `chars_eq_ignore_case` functions for the vast majority of non-matches.
+**Action:** When writing or reviewing hot loop string/character search algorithms, consider extracting the first character comparison out of the main matching loop and applying fast-paths (like ASCII checks) to quickly reject non-matches before falling back to more complex, unicode-aware matching logic.
