@@ -34,7 +34,7 @@ ForkTTY does not upload crash reports, terminal contents, project data, socket p
 
 | Component | Current protection |
 | --------- | ------------------ |
-| Unix socket | Defaults to `$XDG_RUNTIME_DIR/forktty.sock`; fallback is `/tmp/forktty-<uid>/forktty.sock`; parent directory and socket permissions are owner-only; request lines are capped at 1 MiB; live ForkTTY sockets are probed before stale cleanup. |
+| Unix socket | Defaults to `$XDG_RUNTIME_DIR/forktty.sock`; fallback is `/tmp/forktty-<uid>/forktty.sock`; parent directory and socket permissions are owner-only, with the parent validated on an `O_NOFOLLOW` descriptor so a symlinked parent is rejected; accepted connections must carry the server's effective uid (or root) in `SO_PEERCRED`; request lines are capped at 1 MiB; live ForkTTY sockets are probed before stale cleanup. |
 | ForkTTY hook spawn | Configured shell must be an absolute executable file. Spawned shells receive controlled terminal identity/color variables (`TERM`, `COLORTERM`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`) plus ForkTTY socket/workspace targeting variables. User-provided extra environment cannot override reserved terminal or `FORKTTY_*` keys. |
 | ForkTTY config | `~/.config/forktty/config.toml` must be a regular file and no larger than 1 MiB before parsing. Saved config validates shell, font size, sidebar position, renderer, window mode, worktree layout, and notification command. |
 | Session restore | `session-v2.json` is size-bounded, regular-file checked, structurally validated, and quarantined on invalid input. |

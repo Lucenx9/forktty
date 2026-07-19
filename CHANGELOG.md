@@ -12,6 +12,14 @@ All notable changes to ForkTTY are documented here.
   and public site with a current workspace screenshot.
 
 ### Fixed
+- `forktty remote-helper pty` no longer stalls (and then kills the session
+  with a write timeout) when a large paste coincides with a child flooding
+  output: PTY input is now relayed with non-blocking partial writes so output
+  draining continues while the child catches up.
+- Embedded terminal panes now refuse to spawn when the requested working
+  directory no longer exists (for example after its worktree was removed),
+  surfacing a visible spawn failure instead of letting Ghostty silently start
+  the shell in an inherited, unrelated directory.
 - The `.deb` package now bundles the private `libgtk4-layer-shell.so` runtime
   library instead of depending on the distro `libgtk4-layer-shell0` package. The
   embedded Ghostty GTK library links against the *unversioned* soname, which the
@@ -43,6 +51,13 @@ All notable changes to ForkTTY are documented here.
   (e.g. `143` for `SIGTERM`) instead of collapsing every signal death to `1`.
 
 ### Security
+- The socket server now verifies each accepted connection's `SO_PEERCRED`
+  credentials and drops peers whose uid is neither the server's effective uid
+  nor root, instead of relying solely on socket file permissions.
+- The socket runtime-directory check now rejects a symlinked parent directory
+  and validates ownership/mode on an opened `O_NOFOLLOW` descriptor, closing a
+  symlink-planting redirect in the world-writable `/tmp/forktty-<uid>` fallback
+  used when `XDG_RUNTIME_DIR` is unset.
 - `forktty logs` now sanitizes log level and message text before printing, so
   agent/socket-supplied ESC/OSC/newline/BEL sequences can no longer inject
   terminal escapes into the CLI output stream, matching the other status

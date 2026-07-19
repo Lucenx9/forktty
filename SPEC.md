@@ -322,8 +322,11 @@ Request lines are capped at 1 MiB. Official clients accept response lines up to
 response, the server measures its compact encoded form; an oversized response
 is replaced with a compact `response_too_large` error carrying the same request
 id. The server validates that the socket and its parent are owned by the current
-user, refuses unsafe existing paths, and applies bounded reads to terminal text
-and event replay. One request yields one response, except `events.subscribe`,
+user (rejecting a symlinked parent directory, validated on an opened
+`O_NOFOLLOW` descriptor), refuses unsafe existing paths, verifies each accepted
+connection's `SO_PEERCRED` uid against the server's effective uid (root is also
+accepted; anything else is dropped before dispatch), and applies bounded reads
+to terminal text and event replay. One request yields one response, except `events.subscribe`,
 which upgrades the connection to a replay-plus-live event stream.
 
 Official socket clients and existing-socket inspection use the same
@@ -584,7 +587,9 @@ notifications and terminal output. The CLI exposes one-page access as `forktty n
   `telemetry.anonymous_ping = false`; optional update checks query GitHub
   Releases at most once per day and can be disabled. Optional browser panes
   and optional PR lookup can make user-directed network requests.
-- Owner-only Unix socket permissions and private runtime directory validation.
+- Owner-only Unix socket permissions and private runtime directory validation;
+  the socket parent must not be a symlink, and accepted connections must carry
+  the server's effective uid (or root) in their `SO_PEERCRED` credentials.
 - 1 MiB bounds for socket requests, config, and session files.
 - Hook session-to-surface routing and prompt-correlation state is local process
   memory only. The routing cache is capped at 256 entries; prompt correlations

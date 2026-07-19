@@ -149,15 +149,34 @@ impl PtySession {
         Ok(())
     }
 
-    /// Deliver the terminal's configured EOF character to a canonical-mode
-    /// child without closing the bidirectional PTY master and losing output.
+    /// Single write attempt to the PTY master without waiting for the child
+    /// to drain its input: returns the number of bytes accepted, `0` when the
+    /// kernel PTY buffer is full. Callers relaying full-duplex traffic must
+    /// use this instead of [`Self::write_all`], which stops draining output
+    /// while it waits and lets both directions back up.
     ///
     /// # Errors
     ///
-    /// Returns an error when the terminal attributes cannot be read, the PTY
-    /// is not in canonical mode, its EOF character is disabled, or writing the
-    /// configured EOF character fails or times out.
-    pub fn send_eof(&mut self) -> io::Result<()> {
+    /// Returns any I/O error from the underlying write other than
+    /// `WouldBlock` (reported as `Ok(0)`) and `Interrupted` (retried).
+    pub fn try_write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        loop {
+            match self.master.write(bytes) {
+                Ok(n) => return Ok(n),
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Ok(0),
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    /// Resolve the terminal's configured EOF sequence without writing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the terminal attributes cannot be read, the PTY is
+    /// not in canonical mode, or its EOF character is disabled.
+    pub fn eof_bytes(&self) -> io::Result<[u8; 2]> {
         use nix::sys::termios::{tcgetattr, LocalFlags, SpecialCharacterIndices, _POSIX_VDISABLE};
 
         let termios = tcgetattr(&self.master).map_err(io_error)?;
@@ -177,7 +196,19 @@ impl PtySession {
         // The first VEOF flushes a pending unterminated canonical line. The
         // second, now at the beginning of a line, makes the slave read return
         // zero without appending a synthetic newline.
-        self.write_all(&[eof, eof])
+        Ok([eof, eof])
+    }
+
+    /// Deliver the terminal's configured EOF character to a canonical-mode
+    /// child without closing the bidirectional PTY master and losing output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when resolving the EOF sequence fails or writing it
+    /// fails or times out.
+    pub fn send_eof(&mut self) -> io::Result<()> {
+        let eof = self.eof_bytes()?;
+        self.write_all(&eof)
     }
 
     pub fn read_available(&mut self) -> io::Result<Vec<u8>> {
@@ -521,6 +552,35 @@ mod tests {
         assert!(
             output.contains(&expected),
             "child saw a truncated paste: wc reported {output:?}, expected {expected} bytes"
+        );
+    }
+
+    #[test]
+    fn pty_try_write_returns_zero_instead_of_blocking_when_buffer_is_full() {
+        // sleep never reads its tty, so the kernel PTY input buffer fills and
+        // stays full: try_write must report 0 promptly, never wait.
+        let request = test_spawn_request_for_shell("/bin/sleep").with_args(["5"]);
+        let mut session = PtySession::spawn(&request, PtySize { cols: 80, rows: 24 }).unwrap();
+
+        // Newline-terminated lines: canonical mode completes each line into
+        // the input queue, so the queue genuinely fills instead of the line
+        // editor absorbing an endless unterminated line.
+        let line = b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd\n";
+        let chunk: Vec<u8> = line.repeat(64);
+        let started = Instant::now();
+        let mut saw_full_buffer = false;
+        // The kernel buffer is far below 4 MiB; without nonblocking behavior
+        // this loop would wedge for write_all's 10s timeout instead.
+        for _ in 0..1024 {
+            if session.try_write(&chunk).unwrap() == 0 {
+                saw_full_buffer = true;
+                break;
+            }
+        }
+        assert!(saw_full_buffer, "PTY buffer never filled");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "try_write blocked instead of returning 0"
         );
     }
 

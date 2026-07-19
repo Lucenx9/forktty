@@ -318,6 +318,47 @@ fn bind_socket_listener_cleans_up_staging_and_stays_connectable() {
 }
 
 #[test]
+fn bind_rejects_symlink_socket_parent_when_enforcing() {
+    use std::os::unix::fs::symlink;
+
+    // A world-writable fallback dir (/tmp) lets any local user pre-plant a
+    // symlink to a victim-owned 0700 directory; following it would redirect
+    // the socket (and its staging files) to an attacker-chosen location that
+    // still passes the uid/mode checks.
+    let dir = runtime_socket_tempdir();
+    let real_parent = dir.path().join("real-parent");
+    fs::create_dir(&real_parent).unwrap();
+    fs::set_permissions(&real_parent, fs::Permissions::from_mode(0o700)).unwrap();
+    let planted_parent = dir.path().join("planted");
+    symlink(&real_parent, &planted_parent).unwrap();
+
+    let error = bind_socket_listener(planted_parent.join("forktty.sock"), true).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert!(error.to_string().contains("must not be a symlink"));
+    assert!(!real_parent.join("forktty.sock").exists());
+}
+
+#[test]
+fn bind_accepts_private_owned_parent_when_enforcing() {
+    let dir = runtime_socket_tempdir();
+    let socket_path = dir.path().join("forktty.sock");
+
+    let listener = bind_socket_listener(&socket_path, true).unwrap();
+
+    let _client = StdUnixStream::connect(&socket_path).unwrap();
+    drop(listener);
+}
+
+#[test]
+fn peer_uid_allowed_accepts_server_effective_uid_and_root_only() {
+    assert!(peer_uid_allowed(1000, 1000));
+    assert!(peer_uid_allowed(0, 1000));
+    assert!(!peer_uid_allowed(1001, 1000));
+    assert!(!peer_uid_allowed(1000, 1001));
+}
+
+#[test]
 fn default_socket_dir_trims_and_requires_absolute_runtime_dir() {
     assert_eq!(
         default_socket_dir_from_env(Some(" /run/user/1000 ")),
