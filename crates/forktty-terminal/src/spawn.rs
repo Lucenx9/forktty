@@ -309,7 +309,7 @@ fn ghostty_shell_integration_argv(
         GhosttyShell::Bash => {
             let (argv, _) = bash_integration_argv_and_inject(request)?;
             bash_integration_script(resources)?;
-            Some(argv)
+            Some(argv.into_iter().map(|s| s.to_string()).collect())
         }
         GhosttyShell::Nushell => {
             let module = nushell_integration_module(resources)?;
@@ -345,8 +345,9 @@ fn detect_ghostty_shell(request: &SpawnRequest) -> Option<GhosttyShell> {
     }
 }
 
-fn bash_integration_argv_and_inject(request: &SpawnRequest) -> Option<(Vec<String>, String)> {
-    let mut argv = vec![request.shell.clone(), "--posix".to_string()];
+fn bash_integration_argv_and_inject(request: &SpawnRequest) -> Option<(Vec<&str>, String)> {
+    // Use `&str` instead of `String` to avoid O(N) redundant allocations for arguments
+    let mut argv = vec![request.shell.as_str(), "--posix"];
     let mut inject = "1".to_string();
     let mut iter = request.args.iter();
     while let Some(arg) = iter.next() {
@@ -360,12 +361,12 @@ fn bash_integration_argv_and_inject(request: &SpawnRequest) -> Option<(Vec<Strin
                 iter.next()?;
             }
             "-" | "--" => {
-                argv.push(arg.clone());
-                argv.extend(iter.cloned());
+                argv.push(arg.as_str());
+                argv.extend(iter.map(|s| s.as_str()));
                 break;
             }
             _ if short_bash_option_contains_command(arg) => return None,
-            _ => argv.push(arg.clone()),
+            _ => argv.push(arg.as_str()),
         }
     }
     Some((argv, inject))
