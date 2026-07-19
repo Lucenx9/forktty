@@ -11,6 +11,15 @@ All notable changes to ForkTTY are documented here.
   moved detailed contracts to their dedicated guides, and refreshed the README
   and public site with a current workspace screenshot.
 
+### Security
+- The socket server now verifies each accepted connection's `SO_PEERCRED`
+  credentials and drops peers whose uid is neither the socket owner nor root,
+  instead of relying solely on socket file permissions.
+- The socket runtime-directory check now rejects a symlinked parent directory
+  and validates ownership/mode on an opened `O_NOFOLLOW` descriptor, closing a
+  symlink-planting redirect in the world-writable `/tmp/forktty-<uid>` fallback
+  used when `XDG_RUNTIME_DIR` is unset.
+
 ### Fixed
 - `forktty remote-helper pty` no longer stalls (and then kills the session
   with a write timeout) when a large paste coincides with a child flooding

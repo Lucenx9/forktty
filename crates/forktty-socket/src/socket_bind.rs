@@ -249,13 +249,60 @@ fn prepare_socket_parent(socket_path: &Path, enforce_private_parent: bool) -> io
 }
 
 fn validate_private_socket_parent(path: &Path) -> io::Result<()> {
-    let metadata = fs::metadata(path)?;
-    if !metadata.is_dir() {
-        return Err(io::Error::new(
+    use std::ffi::CString;
+    use std::os::fd::FromRawFd;
+    use std::os::unix::ffi::OsStrExt;
+
+    // Open with O_NOFOLLOW and validate the resulting fd (fstat) instead of
+    // the path: the fallback parent lives in world-writable /tmp, where any
+    // local user can pre-plant a symlink to some victim-owned 0700 directory
+    // — path-based metadata (which follows symlinks) would approve it and
+    // redirect the socket there. Checking an opened fd also removes the race
+    // between inspecting the metadata and using the directory. The bind then
+    // proceeds by path, which is safe on /tmp because its sticky bit stops
+    // other users from renaming or removing the validated directory.
+    let c_path = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+        io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("socket parent is not a directory: {}", path.display()),
-        ));
+            format!("socket parent path contains NUL: {}", path.display()),
+        )
+    })?;
+    // SAFETY: plain open(2) on a NUL-terminated path; the fd is checked and
+    // immediately wrapped in an owning File.
+    let fd = unsafe {
+        libc::open(
+            c_path.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        let err = io::Error::last_os_error();
+        // Kernels differ on which errno O_NOFOLLOW|O_DIRECTORY reports for a
+        // symlink final component (open(2) documents ELOOP; some kernels
+        // return ENOTDIR from the O_DIRECTORY check instead), so classify
+        // ENOTDIR by looking at the link itself.
+        let symlink_parent = matches!(err.raw_os_error(), Some(libc::ELOOP))
+            || (matches!(err.raw_os_error(), Some(libc::ENOTDIR))
+                && fs::symlink_metadata(path)
+                    .map(|meta| meta.file_type().is_symlink())
+                    .unwrap_or(false));
+        return Err(if symlink_parent {
+            io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("socket parent must not be a symlink: {}", path.display()),
+            )
+        } else if matches!(err.raw_os_error(), Some(libc::ENOTDIR)) {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("socket parent is not a directory: {}", path.display()),
+            )
+        } else {
+            err
+        });
     }
+    // SAFETY: freshly opened descriptor owned by no one else.
+    let parent = unsafe { fs::File::from_raw_fd(fd) };
+    let metadata = parent.metadata()?;
     if metadata.uid() != effective_uid() {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -281,6 +328,28 @@ fn validate_private_socket_parent(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Reject peers that are neither the server's effective uid nor root.
+/// Missing credentials fail closed: every supported transport is a local
+/// AF_UNIX stream, where the kernel always records them at connect time.
+pub(crate) fn verify_peer_credentials(stream: &tokio::net::UnixStream) -> Result<(), String> {
+    let cred = stream
+        .peer_cred()
+        .map_err(|err| format!("peer credentials unavailable: {err}"))?;
+    let server_euid = effective_uid();
+    if peer_uid_allowed(cred.uid(), server_euid) {
+        Ok(())
+    } else {
+        Err(format!(
+            "peer uid {} does not match socket owner uid {server_euid}",
+            cred.uid()
+        ))
+    }
+}
+
+pub(crate) fn peer_uid_allowed(peer_uid: u32, server_euid: u32) -> bool {
+    peer_uid == server_euid || peer_uid == 0
+}
+
 fn default_socket_dir() -> PathBuf {
     default_socket_dir_from_env(env_var("XDG_RUNTIME_DIR").ok().as_deref())
 }
@@ -296,7 +365,6 @@ pub(crate) fn default_socket_dir_from_env(runtime_dir: Option<&str>) -> PathBuf 
     std::env::temp_dir().join(format!("forktty-{}", effective_uid()))
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn effective_uid() -> u32 {
     unsafe { libc::geteuid() as u32 }
 }

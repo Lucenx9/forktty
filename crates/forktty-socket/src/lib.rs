@@ -201,11 +201,12 @@ pub(crate) use param_helpers::{
     workspace_selector_from_params, workspace_selector_params,
 };
 pub use remote::ready_surface_ids;
+use socket_bind::verify_peer_credentials;
 pub use socket_bind::{bind_socket_listener, default_socket_path, socket_path_from_env};
 #[cfg(test)]
 pub(crate) use socket_bind::{
-    default_socket_dir_from_env, effective_uid, probe_forktty_socket_with_timeout,
-    PROBE_RESPONSE_MAX_BYTES,
+    default_socket_dir_from_env, effective_uid, peer_uid_allowed,
+    probe_forktty_socket_with_timeout, PROBE_RESPONSE_MAX_BYTES,
 };
 pub use surface_lifecycle::{
     bootstrap_default_workspace, evict_hook_session_targets_for_surfaces, resolve_ssh_binary,
@@ -575,6 +576,16 @@ async fn serve_until_shutdown_inner(
                 }
             }
         };
+        // The 0600 socket mode is the primary access barrier, but unix(7)
+        // explicitly warns that socket-file permissions are not a portable
+        // security guarantee; SO_PEERCRED (captured at connect time, not
+        // spoofable) keeps foreign-uid peers out even if the path or its
+        // parent directory ever ends up more exposed than intended (e.g. the
+        // world-writable /tmp fallback used without XDG_RUNTIME_DIR).
+        if let Err(reason) = verify_peer_credentials(&stream) {
+            eprintln!("forktty socket: rejected connection: {reason}");
+            continue;
+        }
         let state = state.clone();
         let event_subscription_limit = event_subscription_limit.clone();
         let control = ConnectionControl::new(
