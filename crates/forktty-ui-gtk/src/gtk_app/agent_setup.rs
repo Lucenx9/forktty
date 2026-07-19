@@ -1,5 +1,6 @@
 use super::*;
 use crate::socket_cli::HookSetupProfile;
+use forktty_core::command_safety::is_executable_file;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::ffi::OsStr;
@@ -146,6 +147,12 @@ fn run_setup_subcommand_summaries<S: AsRef<OsStr>>(
     exe: &Path,
     args: &[S],
 ) -> Result<Vec<SetupSummary>, String> {
+    if !exe.is_absolute() || !is_executable_file(exe) {
+        return Err(format!(
+            "executable path is not absolute or not a valid executable file: {}",
+            exe.display()
+        ));
+    }
     let output = Command::new(exe)
         .args(args)
         .stdin(Stdio::null())
