@@ -209,15 +209,9 @@ pub(super) fn install_actions(
     });
     add_action(app, "toggle-sidebar", {
         let workbench_overlay = workbench_overlay.clone();
-        let controller = controller.clone();
         move || {
             let visible = !workbench_overlay.shows_sidebar();
             set_sidebar_visible(&workbench_overlay, visible);
-            controller.borrow().show_toast(if visible {
-                "Sidebar shown"
-            } else {
-                "Sidebar hidden"
-            });
             // Read-modify-write of the config file off the main thread; the
             // toggle itself must not wait on disk.
             std::thread::spawn(move || {

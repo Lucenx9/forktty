@@ -5,6 +5,9 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- Removed the redundant “Sidebar shown/hidden” toast from Ctrl+B/F9 toggles;
+  the overlay itself provides immediate feedback while visibility persistence
+  remains unchanged.
 - Reworked the workspace sidebar as a compact libadwaita overlay: opening it no
   longer resizes terminal panes, workspace rows use a flat navigation treatment,
   routine activity summaries stay out of the primary scan path, and Worktrees,

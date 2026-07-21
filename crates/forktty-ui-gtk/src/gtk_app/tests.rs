@@ -847,6 +847,11 @@ fn sidebar_footer_keeps_secondary_navigation_compact() {
 
 #[test]
 fn workbench_sidebar_overlays_terminal_content_and_preserves_configured_side() {
+    let actions_source = include_str!("actions.rs");
+    assert!(!actions_source.contains("Sidebar shown"));
+    assert!(!actions_source.contains("Sidebar hidden"));
+    assert!(actions_source.contains("next.appearance.sidebar_visible = visible;"));
+
     let _ = crate::test_env::with_gtk_test(|| {
         let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let workspace_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
