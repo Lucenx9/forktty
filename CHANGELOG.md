@@ -12,6 +12,22 @@ All notable changes to ForkTTY are documented here.
   and public site with a current workspace screenshot.
 
 ### Fixed
+- GTK Remove/Merge worktree actions now use the modeled workspace checkout
+  (`working_dir`) instead of the focused surface's live shell CWD, so a pane
+  that has `cd`'d outside the repo (or into another tree) can no longer route
+  destructive git worktree ops against the wrong repository. Create/Attach
+  still prefer the live shell CWD for discovery.
+- Session autosave/save now defers while a process-local worktree or
+  surface-set transaction is held, so the 2s autosave tick cannot run
+  `repair_session_invariants` against a half-removed worktree and persist a
+  corrupted session.
+- Embedded Ghostty panes with persisted scrollback skip the first 2s
+  scrollback snapshot poll even when the library supports restore, closing a
+  race where the poll saw only the new shell prompt and clobbered the saved
+  tail before asynchronous restore finished.
+- Restoring a session whose worktree checkout path no longer exists now clears
+  stale `worktree_name`/`worktree_dir` metadata (in addition to falling back
+  the launch directory), so Remove/Merge cannot rebind to a dead identity.
 - `forktty remote-helper pty` no longer stalls (and then kills the session
   with a write timeout) when a large paste coincides with a child flooding
   output: PTY input is now relayed with non-blocking partial writes so output

@@ -67,6 +67,22 @@ impl SocketCoordinator {
         }
     }
 
+    /// Non-blocking exclusive worktree write attempt.
+    ///
+    /// Returns `None` while another worktree transaction holds the write lock
+    /// (or any readers hold the read lock). GTK autosave uses this so a mid-
+    /// transaction save cannot mutate/repair the model under an open remove.
+    pub(crate) fn try_worktree_write_guard(self: &Arc<Self>) -> Option<WorktreeWriteGuard> {
+        self.worktree
+            .clone()
+            .try_write_owned()
+            .ok()
+            .map(|guard| WorktreeWriteGuard {
+                coordinator: self.clone(),
+                _guard: guard,
+            })
+    }
+
     pub(crate) async fn surface_set_guard(self: &Arc<Self>) -> SurfaceSetGuard {
         SurfaceSetGuard {
             _guard: self.surface_set.clone().lock_owned().await,

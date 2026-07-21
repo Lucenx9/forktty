@@ -32,7 +32,11 @@ pub(super) fn worktree_dialog_choices_from_list(
         .collect()
 }
 
-fn active_worktree_base(state: &SocketAppState) -> Option<(String, PathBuf)> {
+/// Repo discovery base for Create/Attach: prefer the focused surface's live
+/// shell CWD so a pane that has `cd`'d into another checkout can spawn a
+/// worktree there. Destructive Remove/Merge must not use this — see
+/// [`active_workspace_repo_cwd`].
+fn active_worktree_discovery_base(state: &SocketAppState) -> Option<(String, PathBuf)> {
     let _ = forktty_socket::sync_live_surface_cwds(state);
     let (name, surface_cwd, workspace_cwd) = state.model.lock().ok().and_then(|model| {
         let workspace = model.active_workspace()?;
@@ -45,6 +49,19 @@ fn active_worktree_base(state: &SocketAppState) -> Option<(String, PathBuf)> {
         .filter(|cwd| cwd.is_dir())
         .unwrap_or(workspace_cwd);
     Some((name, cwd))
+}
+
+/// Stable workspace checkout path for Remove/Merge (and dialog labeling).
+///
+/// Uses the modeled `working_dir`, never the focused surface's ephemeral shell
+/// CWD. Shell CWD can leave the repo entirely (`cd /tmp`), and routing a
+/// destructive worktree op through that path hits the wrong repository.
+fn active_workspace_repo_cwd(state: &SocketAppState) -> Option<PathBuf> {
+    state.model.lock().ok().and_then(|model| {
+        model
+            .active_workspace()
+            .map(|workspace| workspace.working_dir.clone())
+    })
 }
 
 pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState) {
@@ -73,8 +90,12 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     header.append(&title);
     header.append(&subtitle);
 
-    let base_workspace = active_worktree_base(state);
-    let base_cwd = base_workspace.as_ref().map(|(_, cwd)| cwd.clone());
+    // Create/Attach follow the live shell CWD; Remove/Merge stay on the
+    // modeled workspace checkout so a shell that left the repo cannot point
+    // destructive git ops at an unrelated tree.
+    let base_workspace = active_worktree_discovery_base(state);
+    let discovery_cwd = base_workspace.as_ref().map(|(_, cwd)| cwd.clone());
+    let repo_cwd = active_workspace_repo_cwd(state);
     let context_text = base_workspace
         .as_ref()
         .map(|(name, cwd)| format!("Base: {} · {}", name, compact_path(cwd)))
@@ -206,7 +227,9 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
 
     {
         let socket_state = state.clone();
-        let base_cwd = base_cwd.clone();
+        // Listing existing worktrees follows the Create/Attach discovery base
+        // (live shell CWD), matching the dialog "Base:" label.
+        let base_cwd = discovery_cwd.clone();
         let dialog_state = dialog_state.clone();
         let entry = entry.clone();
         let existing = existing.clone();
@@ -332,7 +355,8 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     let dialog_for_action = dialog.clone();
     let dialog_state_for_action = dialog_state.clone();
     let refresh_for_action = refresh.clone();
-    let base_cwd_for_action = base_cwd.clone();
+    let discovery_cwd_for_action = discovery_cwd.clone();
+    let repo_cwd_for_action = repo_cwd.clone();
     primary.connect_clicked(move |_| {
         let state_snapshot = *dialog_state_for_action.borrow();
         if state_snapshot.running.is_some() {
@@ -353,7 +377,15 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
             set_status_message(&status_for_action, &err, StatusKind::Error);
             return;
         }
-        let Some(base_cwd) = base_cwd_for_action.clone() else {
+        // Create/Attach need a discovery path; Remove/Merge need the stable
+        // workspace checkout. Missing either is "no active workspace".
+        let op_cwd = match mode {
+            WorktreeDialogMode::Create | WorktreeDialogMode::Attach => {
+                discovery_cwd_for_action.clone()
+            }
+            WorktreeDialogMode::Merge | WorktreeDialogMode::Remove => repo_cwd_for_action.clone(),
+        };
+        let Some(op_cwd) = op_cwd else {
             set_status_message(
                 &status_for_action,
                 &no_active_workspace_message(),
@@ -378,7 +410,7 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
                 let dialog = dialog_for_action.clone();
                 let dialog_state = dialog_state_for_action.clone();
                 let refresh = refresh_for_action.clone();
-                let base_cwd = base_cwd.clone();
+                let base_cwd = op_cwd.clone();
                 glib::spawn_future_local(async move {
                     let result = open_worktree_from_gtk_async_at_cwd(
                         &state,
@@ -404,7 +436,7 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
                 let status = status_for_action.clone();
                 let dialog_state = dialog_state_for_action.clone();
                 let refresh = refresh_for_action.clone();
-                let base_cwd = base_cwd.clone();
+                let base_cwd = op_cwd.clone();
                 glib::spawn_future_local(async move {
                     let result = merge_worktree_from_gtk_async_at_cwd(&state, &base_cwd, &name).await;
                     dialog_state.borrow_mut().finish_operation();
@@ -421,7 +453,7 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
                 let dialog_confirm = dialog_for_action.clone();
                 let dialog_state_confirm = dialog_state_for_action.clone();
                 let refresh_confirm = refresh_for_action.clone();
-                let base_cwd_confirm = base_cwd.clone();
+                let base_cwd_confirm = op_cwd.clone();
                 show_destructive_confirmation(
                     &dialog_for_action,
                     "Remove Worktree?",
@@ -979,7 +1011,11 @@ pub(super) async fn open_worktree_from_gtk_async(
     name: &str,
     action: WorktreeAction,
 ) -> Result<(), String> {
-    let cwd = active_workspace_cwd(state).ok_or_else(no_active_workspace_message)?;
+    // Create/Attach intentionally follow the live shell discovery base so a
+    // pane that `cd`'d into another repo can open a worktree there.
+    let cwd = active_worktree_discovery_base(state)
+        .map(|(_, cwd)| cwd)
+        .ok_or_else(no_active_workspace_message)?;
     open_worktree_from_gtk_async_at_cwd(state, &cwd, name, action).await
 }
 
@@ -1030,7 +1066,9 @@ pub(super) async fn remove_worktree_from_gtk_async(
     state: &SocketAppState,
     name: &str,
 ) -> Result<(), String> {
-    let cwd = active_workspace_cwd(state).ok_or_else(no_active_workspace_message)?;
+    // Destructive ops must use the modeled workspace checkout, never the live
+    // shell CWD (which can point outside the repo or at an unrelated tree).
+    let cwd = active_workspace_repo_cwd(state).ok_or_else(no_active_workspace_message)?;
     remove_worktree_from_gtk_async_at_cwd(state, &cwd, name).await
 }
 
@@ -1063,7 +1101,8 @@ pub(super) async fn merge_worktree_from_gtk_async(
     state: &SocketAppState,
     name: &str,
 ) -> Result<String, String> {
-    let cwd = active_workspace_cwd(state).ok_or_else(no_active_workspace_message)?;
+    // Merge into the modeled workspace checkout, not the ephemeral shell CWD.
+    let cwd = active_workspace_repo_cwd(state).ok_or_else(no_active_workspace_message)?;
     merge_worktree_from_gtk_async_at_cwd(state, &cwd, name).await
 }
 
@@ -1118,6 +1157,7 @@ pub(super) fn rollback_workspace_creation_gtk(
 
 #[cfg(test)]
 pub(super) fn active_workspace_cwd_string(state: &SocketAppState) -> Result<String, String> {
+    // Test helper for the Create/Attach discovery base (live shell CWD).
     active_workspace_cwd(state)
         .map(|path| path.to_string_lossy().to_string())
         .ok_or_else(no_active_workspace_message)
@@ -1127,6 +1167,15 @@ pub(super) fn no_active_workspace_message() -> String {
     "No active workspace is available for worktree operations.".to_string()
 }
 
+/// Create/Attach discovery base (live shell CWD preferred). Not for Remove/Merge.
+#[cfg(test)]
 pub(super) fn active_workspace_cwd(state: &SocketAppState) -> Option<PathBuf> {
-    active_worktree_base(state).map(|(_, cwd)| cwd)
+    active_worktree_discovery_base(state).map(|(_, cwd)| cwd)
+}
+
+#[cfg(test)]
+pub(super) fn active_workspace_repo_cwd_string(state: &SocketAppState) -> Result<String, String> {
+    active_workspace_repo_cwd(state)
+        .map(|path| path.to_string_lossy().to_string())
+        .ok_or_else(no_active_workspace_message)
 }

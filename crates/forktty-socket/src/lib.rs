@@ -403,6 +403,16 @@ impl SocketAppState {
         self.coordinator.worktree_write_guard().await
     }
 
+    /// Try to acquire exclusive worktree access without waiting.
+    ///
+    /// Returns `None` while another worktree read or write transaction is
+    /// active. GTK session autosave uses this (with
+    /// [`Self::try_surface_set_guard`]) so a mid-transaction snapshot cannot
+    /// run `repair_session_invariants` against a half-removed worktree.
+    pub fn try_worktree_write_guard(&self) -> Option<WorktreeWriteGuard> {
+        self.coordinator.try_worktree_write_guard()
+    }
+
     /// Serialize changes to the modeled and runtime terminal surface set.
     pub async fn surface_set_guard(&self) -> SurfaceSetGuard {
         self.coordinator.surface_set_guard().await
