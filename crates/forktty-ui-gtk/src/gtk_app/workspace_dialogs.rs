@@ -52,7 +52,7 @@ pub(super) async fn open_workspace_from_path(
         .filter(|name| !name.trim().is_empty())
         .unwrap_or("workspace")
         .to_string();
-    let _surface_set_guard = state.surface_set_guard().await;
+    let surface_set_guard = state.surface_set_guard().await;
     let (workspace, previous_active_id) = {
         let mut model = state
             .model
@@ -69,6 +69,7 @@ pub(super) async fn open_workspace_from_path(
         rollback_workspace_creation_gtk(state, &workspace.id, previous_active_id)?;
         return Err(err.to_string());
     }
+    drop(surface_set_guard);
     save_session_from_state(state);
     Ok(())
 }
@@ -81,7 +82,7 @@ pub(super) fn create_plain_workspace(state: &SocketAppState) {
 }
 
 pub(super) async fn create_plain_workspace_transaction(state: &SocketAppState) -> bool {
-    let _surface_set_guard = state.surface_set_guard().await;
+    let surface_set_guard = state.surface_set_guard().await;
     let cwd = default_startup_workspace_dir();
     let (workspace, previous_active_id) = {
         let mut model = match state.model.lock() {
@@ -106,6 +107,7 @@ pub(super) async fn create_plain_workspace_transaction(state: &SocketAppState) -
         );
         false
     } else {
+        drop(surface_set_guard);
         save_session_from_state(state);
         true
     }
@@ -152,7 +154,7 @@ pub(super) fn close_workspace_by_id(state: &SocketAppState, workspace_id: &str) 
 }
 
 pub(super) async fn close_workspace_by_id_transaction(state: &SocketAppState, workspace_id: &str) {
-    let _surface_set_guard = state.surface_set_guard().await;
+    let surface_set_guard = state.surface_set_guard().await;
     let (workspace, surfaces, is_last_workspace) = {
         let model = match state.model.lock() {
             Ok(model) => model,
@@ -223,6 +225,7 @@ pub(super) async fn close_workspace_by_id_transaction(state: &SocketAppState, wo
         {
             eprintln!("Failed to clean up closed workspace hook state: {err}");
         }
+        drop(surface_set_guard);
         save_session_from_state(state);
         return;
     }
@@ -245,6 +248,7 @@ pub(super) async fn close_workspace_by_id_transaction(state: &SocketAppState, wo
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to keep a workspace terminal alive: {err}");
     }
+    drop(surface_set_guard);
     save_session_from_state(state);
 }
 

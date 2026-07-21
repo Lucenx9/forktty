@@ -388,6 +388,44 @@ fn session_autosave_updates_sidebar_and_persists_live_terminal_cwd() {
 }
 
 #[test]
+fn session_autosave_defers_until_transaction_guards_are_released() {
+    crate::test_env::with_isolated_user_dirs(|| {
+        let project_dir = tempfile::tempdir().unwrap();
+        let runtime_dir = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal,
+            "/bin/sh",
+            runtime_dir.join("forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        model
+            .lock()
+            .unwrap()
+            .create_workspace("main", project_dir.path());
+        let mut last_saved = None;
+
+        let worktree_guard = glib::MainContext::new().block_on(state.worktree_write_guard());
+        autosave_session_from_state(&state, &mut last_saved);
+        assert!(last_saved.is_none());
+        assert!(forktty_core::session::load_session().unwrap().is_none());
+        drop(worktree_guard);
+
+        let surface_set_guard = glib::MainContext::new().block_on(state.surface_set_guard());
+        autosave_session_from_state(&state, &mut last_saved);
+        assert!(last_saved.is_none());
+        assert!(forktty_core::session::load_session().unwrap().is_none());
+        drop(surface_set_guard);
+
+        autosave_session_from_state(&state, &mut last_saved);
+        assert!(last_saved.is_some());
+        assert!(forktty_core::session::load_session().unwrap().is_some());
+    });
+}
+
+#[test]
 fn sidebar_snapshot_counts_panes_not_tabs_for_count_badge() {
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());

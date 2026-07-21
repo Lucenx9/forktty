@@ -586,7 +586,7 @@ fn worktree_dialog_prefers_focused_surface_cwd_over_workspace_launch_dir() {
         model.clone(),
         terminal,
         "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
+        launch_dir.path().join("forktty.sock"),
     )
     .with_notification_dispatch(false);
     {
@@ -595,8 +595,48 @@ fn worktree_dialog_prefers_focused_surface_cwd_over_workspace_launch_dir() {
         assert!(model.set_surface_cwd(&workspace.focused_surface_id, repo_dir.path().to_path_buf()));
     }
 
+    // Create/Attach discovery may follow the live shell CWD.
     assert_eq!(
         active_workspace_cwd_string(&state).unwrap(),
+        repo_dir.path().to_string_lossy()
+    );
+    // Remove/Merge must stay on the modeled workspace checkout.
+    assert_eq!(
+        active_workspace_repo_cwd_string(&state).unwrap(),
+        launch_dir.path().to_string_lossy()
+    );
+}
+
+#[test]
+fn remove_and_merge_use_modeled_workspace_checkout_not_live_shell_cwd() {
+    // Surface CWD left the repo entirely (e.g. `cd /tmp`). Create/Attach may
+    // still discover from that path, but Remove/Merge must not.
+    let repo_dir = make_temp_repo();
+    let outside_dir = tempfile::tempdir().unwrap();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        outside_dir.path().join("forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("main", repo_dir.path());
+        assert!(model.set_surface_cwd(
+            &workspace.focused_surface_id,
+            outside_dir.path().to_path_buf()
+        ));
+    }
+
+    assert_eq!(
+        active_workspace_cwd_string(&state).unwrap(),
+        outside_dir.path().to_string_lossy()
+    );
+    assert_eq!(
+        active_workspace_repo_cwd_string(&state).unwrap(),
         repo_dir.path().to_string_lossy()
     );
 }

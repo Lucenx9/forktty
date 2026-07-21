@@ -221,6 +221,55 @@ fn restored_missing_workspace_dirs_fall_back_to_valid_startup_dir() {
 }
 
 #[test]
+fn restored_missing_worktree_checkout_clears_stale_worktree_identity() {
+    let fallback = tempfile::tempdir().unwrap();
+    let missing = fallback.path().join("deleted-worktree");
+    let mut source = WorkspaceModel::new();
+    let workspace =
+        source.create_worktree_workspace("feature/gone", &missing, "feature/gone", "feature/gone");
+    let mut data = source.to_session_data();
+    assert!(data.workspaces[0].worktree_name.is_some());
+    assert!(data.workspaces[0].worktree_dir.is_some());
+
+    let repaired = repair_restored_workspace_paths(&mut data, fallback.path());
+
+    assert_eq!(repaired, 1);
+    assert_eq!(data.workspaces[0].working_dir, fallback.path());
+    assert_eq!(data.workspaces[0].worktree_name, None);
+    assert_eq!(data.workspaces[0].worktree_dir, None);
+
+    let mut restored = WorkspaceModel::new();
+    restored.restore_session(data, &[]);
+    let restored_workspace = restored.list_workspaces()[0].clone();
+    assert_eq!(restored_workspace.id, workspace.id);
+    assert_eq!(restored_workspace.worktree_name, None);
+    assert_eq!(restored_workspace.worktree_dir, None);
+}
+
+#[test]
+fn restored_orphan_worktree_dir_clears_identity_when_working_dir_still_exists() {
+    let launch = tempfile::tempdir().unwrap();
+    let missing_worktree = launch.path().join("deleted-linked-worktree");
+    let fallback = tempfile::tempdir().unwrap();
+    let mut source = WorkspaceModel::new();
+    let _workspace = source.create_worktree_workspace(
+        "feature/orphan-dir",
+        launch.path(),
+        "feature/orphan-dir",
+        "feature/orphan-dir",
+    );
+    let mut data = source.to_session_data();
+    data.workspaces[0].worktree_dir = Some(missing_worktree);
+
+    let repaired = repair_restored_workspace_paths(&mut data, fallback.path());
+
+    assert_eq!(repaired, 1);
+    assert_eq!(data.workspaces[0].working_dir, launch.path());
+    assert_eq!(data.workspaces[0].worktree_name, None);
+    assert_eq!(data.workspaces[0].worktree_dir, None);
+}
+
+#[test]
 fn restored_surface_path_repair_uses_pane_tree_owner_for_stale_workspace_id() {
     let alpha_dir = tempfile::tempdir().unwrap();
     let beta_dir = tempfile::tempdir().unwrap();
