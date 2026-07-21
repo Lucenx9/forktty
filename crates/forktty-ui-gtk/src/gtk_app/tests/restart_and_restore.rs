@@ -194,9 +194,6 @@ fn restart_surface_respawns_agent_terminal_with_resume_command() {
 
 #[test]
 fn restored_missing_workspace_dirs_fall_back_to_valid_startup_dir() {
-    // Importers: gtk_app tests via super::*; API under test:
-    // repair_restored_workspace_paths on SessionData (working_dir,
-    // worktree_name, worktree_dir, surface.cwd). User: "vai procedi"
     let fallback = tempfile::tempdir().unwrap();
     let missing = fallback.path().join("deleted-workspace");
     let mut source = WorkspaceModel::new();

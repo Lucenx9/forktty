@@ -51,7 +51,7 @@ fn active_worktree_discovery_base(state: &SocketAppState) -> Option<(String, Pat
     Some((name, cwd))
 }
 
-/// Stable workspace checkout path for Remove/Merge (and dialog labeling).
+/// Stable workspace checkout path for Remove/Merge and their chooser.
 ///
 /// Uses the modeled `working_dir`, never the focused surface's ephemeral shell
 /// CWD. Shell CWD can leave the repo entirely (`cd /tmp`), and routing a
@@ -96,7 +96,7 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     let base_workspace = active_worktree_discovery_base(state);
     let discovery_cwd = base_workspace.as_ref().map(|(_, cwd)| cwd.clone());
     let repo_cwd = active_workspace_repo_cwd(state);
-    let context_text = base_workspace
+    let discovery_context_text = base_workspace
         .as_ref()
         .map(|(name, cwd)| format!("Base: {} · {}", name, compact_path(cwd)))
         .unwrap_or_else(|| {
@@ -104,8 +104,13 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
                 .map(|path| format!("Base: {}", compact_path(&path)))
                 .unwrap_or_else(|_| "Base: current directory".to_string())
         });
+    let repo_context_text = base_workspace
+        .as_ref()
+        .zip(repo_cwd.as_ref())
+        .map(|((name, _), cwd)| format!("Base: {} · {}", name, compact_path(cwd)))
+        .unwrap_or_else(|| discovery_context_text.clone());
     let context = gtk::Label::builder()
-        .label(context_text)
+        .label(&discovery_context_text)
         .xalign(0.0)
         .ellipsize(gtk::pango::EllipsizeMode::Middle)
         .build();
@@ -227,9 +232,9 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
 
     {
         let socket_state = state.clone();
-        // Listing existing worktrees follows the Create/Attach discovery base
-        // (live shell CWD), matching the dialog "Base:" label.
-        let base_cwd = discovery_cwd.clone();
+        // The chooser is only used by Remove/Merge, so list from the same
+        // modeled repository those destructive operations target.
+        let base_cwd = repo_cwd.clone();
         let dialog_state = dialog_state.clone();
         let entry = entry.clone();
         let existing = existing.clone();
@@ -316,6 +321,9 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
         let dialog_state = dialog_state.clone();
         let entry = entry.clone();
         let existing = existing.clone();
+        let context = context.clone();
+        let discovery_context_text = discovery_context_text.clone();
+        let repo_context_text = repo_context_text.clone();
         let updating_target = updating_target.clone();
         let refresh = refresh.clone();
         button.connect_toggled(move |button| {
@@ -332,6 +340,13 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
                     entry.set_text(&target);
                     updating_target.set(false);
                 }
+                let context_text = match next_mode {
+                    WorktreeDialogMode::Create | WorktreeDialogMode::Attach => {
+                        &discovery_context_text
+                    }
+                    WorktreeDialogMode::Merge | WorktreeDialogMode::Remove => &repo_context_text,
+                };
+                context.set_label(context_text);
                 refresh(WorktreeDialogStatusRefresh::Clear);
             }
         });

@@ -578,9 +578,6 @@ fn worktree_open_uses_captured_base_cwd_after_active_workspace_changes() {
 
 #[test]
 fn worktree_dialog_prefers_focused_surface_cwd_over_workspace_launch_dir() {
-    // Importers: gtk_app tests via super::*; helpers under test:
-    // active_workspace_cwd_string / active_workspace_repo_cwd_string.
-    // No data-file schema. User: "vai procedi"
     let launch_dir = tempfile::tempdir().unwrap();
     let repo_dir = make_temp_repo();
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
@@ -589,7 +586,7 @@ fn worktree_dialog_prefers_focused_surface_cwd_over_workspace_launch_dir() {
         model.clone(),
         terminal,
         "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
+        launch_dir.path().join("forktty.sock"),
     )
     .with_notification_dispatch(false);
     {
@@ -622,7 +619,7 @@ fn remove_and_merge_use_modeled_workspace_checkout_not_live_shell_cwd() {
         model.clone(),
         terminal,
         "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
+        outside_dir.path().join("forktty.sock"),
     )
     .with_notification_dispatch(false);
     {

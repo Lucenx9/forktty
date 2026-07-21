@@ -1433,8 +1433,8 @@ fn session_data_from_state(state: &SocketAppState) -> Option<session::SessionDat
     // owns. Defer the snapshot when either process-local guard is held so the
     // next 2s tick (or an explicit save after commit) persists a consistent
     // model instead.
-    let _surface_set_guard = state.try_surface_set_guard()?;
     let _worktree_guard = state.try_worktree_write_guard()?;
+    let _surface_set_guard = state.try_surface_set_guard()?;
     let worktree_identity_snapshots = {
         let model = state.model.lock().ok()?;
         model.worktree_identity_snapshots()
