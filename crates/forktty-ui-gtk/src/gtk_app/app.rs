@@ -402,7 +402,6 @@ pub(super) fn build_ui(app: &adw::Application) {
     sidebar.update_property(&[gtk::accessible::Property::Label("Workspaces")]);
 
     let sidebar_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    sidebar_shell.set_width_request(220);
     sidebar_shell.add_css_class("sidebar-shell");
     set_sidebar_position_class(&sidebar_shell, &app_config.appearance.sidebar_position);
 
@@ -436,7 +435,6 @@ pub(super) fn build_ui(app: &adw::Application) {
     sidebar_shell.append(&sidebar_header);
     sidebar_shell.append(&sidebar_scroll);
     let sidebar_sections = build_sidebar_sections();
-    sidebar_shell.append(&sidebar_sections.resources_shell);
     sidebar_shell.append(&sidebar_sections.footer_shell);
 
     let terminal_stack = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -456,25 +454,12 @@ pub(super) fn build_ui(app: &adw::Application) {
     workspace_area.add_css_class("workspace-area");
     workspace_area.append(&terminal_workbench);
 
-    let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
-    paned.add_css_class("workspace-paned");
-    let sidebar_on_right = app_config.appearance.sidebar_position == "right";
-    if sidebar_on_right {
-        paned.set_start_child(Some(&workspace_area));
-        paned.set_resize_start_child(true);
-        paned.set_shrink_start_child(false);
-        paned.set_end_child(Some(&sidebar_shell));
-        paned.set_resize_end_child(false);
-        paned.set_shrink_end_child(false);
-    } else {
-        paned.set_start_child(Some(&sidebar_shell));
-        paned.set_resize_start_child(false);
-        paned.set_shrink_start_child(false);
-        paned.set_end_child(Some(&workspace_area));
-        paned.set_resize_end_child(true);
-        paned.set_shrink_end_child(false);
-    }
-    sidebar_shell.set_visible(app_config.appearance.sidebar_visible);
+    let workbench_overlay = build_workbench_overlay(
+        &sidebar_shell,
+        &workspace_area,
+        &app_config.appearance.sidebar_position,
+        app_config.appearance.sidebar_visible,
+    );
 
     let status_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     status_bar.add_css_class("app-status-bar");
@@ -520,7 +505,7 @@ pub(super) fn build_ui(app: &adw::Application) {
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.add_css_class("app-root");
     content.append(&header);
-    content.append(&paned);
+    content.append(&workbench_overlay);
     content.append(&status_bar);
     let toast_overlay = adw::ToastOverlay::new();
     toast_overlay.set_child(Some(&content));
@@ -721,12 +706,10 @@ pub(super) fn build_ui(app: &adw::Application) {
     });
     install_session_autosave(&state, ui_alive.clone());
 
-    let workspace_area_for_settings = workspace_area.clone();
     let settings_apply = settings_apply_callback(
         &WorkbenchShells {
-            paned: paned.clone(),
+            overlay: workbench_overlay.clone(),
             sidebar: sidebar_shell.clone(),
-            workspace_area: workspace_area_for_settings,
         },
         &controller,
         pr_model.clone(),
@@ -771,7 +754,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         app,
         &window,
         &state,
-        &sidebar_shell,
+        &workbench_overlay,
         &controller,
         settings_apply_for_actions,
         quake_mode,
@@ -1091,9 +1074,8 @@ pub(super) fn default_startup_workspace_dir_from(
 
 /// Top-level workbench containers that live settings changes re-target.
 pub(super) struct WorkbenchShells {
-    pub(super) paned: gtk::Paned,
+    pub(super) overlay: adw::OverlaySplitView,
     pub(super) sidebar: gtk::Box,
-    pub(super) workspace_area: gtk::Box,
 }
 
 pub(super) fn settings_apply_callback(
@@ -1102,21 +1084,19 @@ pub(super) fn settings_apply_callback(
     pr_model: Arc<Mutex<WorkspaceModel>>,
     pr_in_flight: Arc<AtomicBool>,
 ) -> SettingsApplyCallback {
-    let paned = shells.paned.clone();
+    let overlay = shells.overlay.clone();
     let sidebar_shell = shells.sidebar.clone();
-    let workspace_area = shells.workspace_area.clone();
     let controller = controller.clone();
     let pr_model = pr_model.clone();
     let pr_in_flight = pr_in_flight.clone();
     Rc::new(move |config| {
         apply_color_scheme(config);
         apply_sidebar_position(
-            &paned,
+            &overlay,
             &sidebar_shell,
-            &workspace_area,
             &config.appearance.sidebar_position,
         );
-        sidebar_shell.set_visible(config.appearance.sidebar_visible);
+        set_sidebar_visible(&overlay, config.appearance.sidebar_visible);
         let model = {
             let controller = controller.borrow();
             for widget in controller.widgets.values() {
@@ -1133,32 +1113,43 @@ pub(super) fn settings_apply_callback(
 }
 
 pub(super) fn apply_sidebar_position(
-    paned: &gtk::Paned,
+    overlay: &adw::OverlaySplitView,
+    sidebar_shell: &gtk::Box,
+    position: &str,
+) {
+    set_sidebar_position_class(sidebar_shell, position);
+    overlay.set_sidebar_position(if position == "right" {
+        gtk::PackType::End
+    } else {
+        gtk::PackType::Start
+    });
+}
+
+pub(super) fn set_sidebar_visible(overlay: &adw::OverlaySplitView, visible: bool) {
+    overlay.set_show_sidebar(visible);
+}
+
+pub(super) fn build_workbench_overlay(
     sidebar_shell: &gtk::Box,
     workspace_area: &gtk::Box,
     position: &str,
-) {
-    let sidebar_visible = sidebar_shell.is_visible();
-    paned.set_start_child(Option::<&gtk::Widget>::None);
-    paned.set_end_child(Option::<&gtk::Widget>::None);
-    set_sidebar_position_class(sidebar_shell, position);
-
-    if position == "right" {
-        paned.set_start_child(Some(workspace_area));
-        paned.set_resize_start_child(true);
-        paned.set_shrink_start_child(false);
-        paned.set_end_child(Some(sidebar_shell));
-        paned.set_resize_end_child(false);
-        paned.set_shrink_end_child(false);
-    } else {
-        paned.set_start_child(Some(sidebar_shell));
-        paned.set_resize_start_child(false);
-        paned.set_shrink_start_child(false);
-        paned.set_end_child(Some(workspace_area));
-        paned.set_resize_end_child(true);
-        paned.set_shrink_end_child(false);
-    }
-    sidebar_shell.set_visible(sidebar_visible);
+    sidebar_visible: bool,
+) -> adw::OverlaySplitView {
+    let overlay = adw::OverlaySplitView::builder()
+        .collapsed(true)
+        .pin_sidebar(false)
+        .show_sidebar(sidebar_visible)
+        .enable_hide_gesture(false)
+        .enable_show_gesture(false)
+        .min_sidebar_width(204.0)
+        .max_sidebar_width(216.0)
+        .sidebar_width_fraction(0.18)
+        .sidebar(sidebar_shell)
+        .content(workspace_area)
+        .build();
+    overlay.add_css_class("workspace-overlay");
+    apply_sidebar_position(&overlay, sidebar_shell, position);
+    overlay
 }
 
 pub(super) fn set_sidebar_position_class(sidebar_shell: &gtk::Box, position: &str) {

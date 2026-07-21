@@ -411,6 +411,37 @@ fn sidebar_snapshot_counts_panes_not_tabs_for_count_badge() {
 }
 
 #[test]
+fn sidebar_activity_summary_is_visual_only_for_exceptional_state() {
+    let working = WorkspaceStatusBadge {
+        label: "Working",
+        tooltip: "Agent is working",
+        class_name: "working",
+    };
+    let needs_input = WorkspaceStatusBadge {
+        label: "Input",
+        tooltip: "Agent needs input",
+        class_name: "needs-input",
+    };
+    let error = WorkspaceStatusBadge {
+        label: "Error",
+        tooltip: "Terminal failed",
+        class_name: "error",
+    };
+    let exited = WorkspaceStatusBadge {
+        label: "Exited",
+        tooltip: "Terminal exited",
+        class_name: "exited",
+    };
+
+    assert!(!sidebar_shows_activity_summary(false, Some(&working)));
+    assert!(sidebar_shows_activity_summary(true, Some(&working)));
+    assert!(sidebar_shows_activity_summary(false, Some(&needs_input)));
+    assert!(sidebar_shows_activity_summary(false, Some(&error)));
+    assert!(sidebar_shows_activity_summary(false, Some(&exited)));
+    assert!(!sidebar_shows_activity_summary(false, None));
+}
+
+#[test]
 fn sidebar_metadata_keeps_inactive_tab_surface_status() {
     let mut model = WorkspaceModel::new();
     let workspace = model.create_workspace("main", "/tmp");

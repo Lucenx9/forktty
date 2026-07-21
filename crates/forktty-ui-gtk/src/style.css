@@ -417,15 +417,8 @@ popover.ft-context-menu contents {
 }
 
 /* --------------------------------------------------------------------------
- * Workspace paned + sidebar
+ * Workspace splits + sidebar
  * -------------------------------------------------------------------------- */
-
-.workspace-paned > separator {
-  background: alpha(@window_fg_color, 0.075);
-  min-width: 3px;
-  min-height: 3px;
-  transition: background-color 90ms ease-out;
-}
 
 .workspace-area > separator {
   background: @ft_bg_1;
@@ -434,15 +427,12 @@ popover.ft-context-menu contents {
   transition: background-color 90ms ease-out;
 }
 
-.workspace-paned > separator:hover,
-.workspace-paned > separator:focus-visible,
 .workspace-area > separator:hover,
 .workspace-area > separator:focus-visible {
   background: alpha(@accent_color, 0.28);
 }
 
 /* GTK marks the separator `:active` while the divider is being dragged. */
-.workspace-paned > separator:active,
 .workspace-area > separator:active {
   background: alpha(@accent_color, 0.56);
 }
@@ -508,9 +498,8 @@ button.flat.header-workspace-chip:disabled {
 .sidebar-section-label {
   color: @ft_text_3;
   font-weight: 600;
-  font-size: 0.68em;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
+  font-size: 0.74em;
+  letter-spacing: 0;
 }
 
 .sidebar-add {
@@ -589,21 +578,19 @@ button.flat.sidebar-add:focus-visible {
   border-left-color: @accent_color;
 }
 
-/* Workspace rows are inset navigation items, not edge-to-edge cards. A small
- * warm rail marks context while the surface and hairline keep the list calm. */
+/* Workspace rows are quiet navigation items. A small warm rail marks context
+ * without adding a second card/border hierarchy inside the overlay. */
 
 .workspace-card {
-  min-height: 54px;
-  /* Match the intrinsic three-line variant so rows without activity summary
-   * keep the same click target and visual rhythm. */
-  padding: 6px 6px 6px 12px;
-  margin: 0 6px;
-  border: 1px solid transparent;
+  min-height: 44px;
+  padding: 6px 10px 6px 12px;
+  margin: 0;
+  border: 0;
   border-left: 2px solid transparent;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   box-shadow: none;
-  transition: background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
+  transition: background-color 90ms ease-out, border-left-color 90ms ease-out;
 }
 
 .workspace-drag-grip {
@@ -629,9 +616,8 @@ button.flat.sidebar-add:focus-visible {
 
 .workspace-row.active .workspace-card {
   background: @ft_bg_2;
-  border-color: alpha(@window_fg_color, 0.055);
   border-left-color: alpha(@accent_color, 0.62);
-  box-shadow: inset 0 1px 0 alpha(@window_fg_color, 0.025);
+  box-shadow: none;
 }
 
 .workspace-row.active:hover .workspace-card {
@@ -780,19 +766,11 @@ button.flat.sidebar-add:focus-visible {
   font-weight: 500;
 }
 
-/* Fixed sidebar sections: Resources and the Settings/About footer. */
-
-.sidebar-fixed-section {
-  padding: 6px 5px 8px 5px;
-  border-top: 1px solid @ft_bg_1;
-}
-
-.sidebar-fixed-section-label {
-  padding: 2px 9px 5px 9px;
-}
+/* Compact utility footer: project tools and app settings stay available
+ * without creating a second navigation section. */
 
 .sidebar-footer {
-  padding: 5px 5px 6px 5px;
+  padding: 4px 5px 5px 5px;
   border-top: 1px solid @ft_bg_1;
 }
 

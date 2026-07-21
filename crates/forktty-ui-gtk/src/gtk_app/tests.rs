@@ -822,7 +822,7 @@ fn chrome_micro_polish_css_stays_gtk_414_compatible() {
 }
 
 #[test]
-fn sidebar_fixed_sections_cover_resources_and_footer() {
+fn sidebar_footer_keeps_secondary_navigation_compact() {
     let sidebar_source = include_str!("sidebar.rs");
     let app_source = include_str!("app.rs");
     let css = include_str!("../style.css");
@@ -833,16 +833,49 @@ fn sidebar_fixed_sections_cover_resources_and_footer() {
     );
     assert!(!app_source.contains("is not available yet"));
     assert!(app_source.contains("show_about_dialog(&window_for_about)"));
-    assert!(sidebar_source.contains("sidebar_section_label(\"Resources\")"));
     assert!(sidebar_source.contains("sidebar_nav_row(\"forktty-merge-symbolic\", \"Worktrees\")"));
     assert!(!sidebar_source.contains("Knowledge Base"));
     assert!(!sidebar_source.contains("Snippets"));
     assert!(!sidebar_source.contains("Environments"));
     assert!(!sidebar_source.contains("Secrets"));
     assert!(sidebar_source.contains("settings_row.set_action_name(Some(\"app.settings\"));"));
-    assert!(css.contains(".sidebar-fixed-section {"));
+    assert!(!sidebar_source.contains("sidebar_section_label(\"Resources\")"));
+    assert!(!css.contains(".sidebar-fixed-section {"));
     assert!(css.contains("button.flat.sidebar-nav-row {"));
     assert!(css.contains(".sidebar-footer {"));
+}
+
+#[test]
+fn workbench_sidebar_overlays_terminal_content_and_preserves_configured_side() {
+    let _ = crate::test_env::with_gtk_test(|| {
+        let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let workspace_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        let overlay = build_workbench_overlay(&sidebar, &workspace_area, "left", true);
+
+        assert!(overlay.is_collapsed());
+        assert!(!overlay.is_pin_sidebar());
+        assert!(overlay.shows_sidebar());
+        assert!(!overlay.enables_hide_gesture());
+        assert!(!overlay.enables_show_gesture());
+        assert_eq!(overlay.min_sidebar_width(), 204.0);
+        assert_eq!(overlay.max_sidebar_width(), 216.0);
+        assert_eq!(overlay.sidebar_position(), gtk::PackType::Start);
+        assert_eq!(overlay.sidebar().as_ref(), Some(sidebar.upcast_ref()));
+        assert_eq!(
+            overlay.content().as_ref(),
+            Some(workspace_area.upcast_ref())
+        );
+
+        apply_sidebar_position(&overlay, &sidebar, "right");
+        assert_eq!(overlay.sidebar_position(), gtk::PackType::End);
+        assert!(sidebar.has_css_class("right"));
+        assert!(!sidebar.has_css_class("left"));
+
+        set_sidebar_visible(&overlay, false);
+        assert!(!overlay.shows_sidebar());
+        assert!(workspace_area.is_visible());
+    });
 }
 
 #[test]
@@ -918,7 +951,7 @@ fn chrome_micro_polish_quiets_sidebar_badges() {
 }
 
 #[test]
-fn workspace_rows_keep_uniform_height_and_pane_tabs_keep_compact_navigation_rhythm() {
+fn workspace_rows_keep_compact_height_and_pane_tabs_keep_navigation_rhythm() {
     let controller_source = include_str!("controller.rs");
     let css = include_str!("../style.css");
 
@@ -928,7 +961,7 @@ fn workspace_rows_keep_uniform_height_and_pane_tabs_keep_compact_navigation_rhyt
     assert!(controller_source
         .contains("set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);"));
     assert!(controller_source.contains("queue_reveal_tab(&strip.scroller, &strip.tabstrip, tab);"));
-    assert!(css.contains(".workspace-card {\n  min-height: 54px;"));
+    assert!(css.contains(".workspace-card {\n  min-height: 44px;"));
     assert!(css.contains(".workspace-row .workspace-card.drop-before {"));
     assert!(css.contains(".pane-tab {\n  min-width: 96px;"));
     assert!(css.contains(".pane-tab-grip {\n  -gtk-icon-size: 11px;\n  min-width: 14px;\n  color: @ft_text_4;\n  opacity: 0.24;"));

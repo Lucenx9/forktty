@@ -5,6 +5,11 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- Reworked the workspace sidebar as a compact libadwaita overlay: opening it no
+  longer resizes terminal panes, workspace rows use a flat navigation treatment,
+  routine activity summaries stay out of the primary scan path, and Worktrees,
+  Settings, and About share one quiet utility footer. Ctrl+B/F9, left/right
+  placement, and the persisted visibility preference remain unchanged.
 - Sped up terminal scrollback searches by rejecting first-character mismatches
   before running the full case-insensitive substring comparison.
 - Simplified the repository overview around installation and first-use paths,

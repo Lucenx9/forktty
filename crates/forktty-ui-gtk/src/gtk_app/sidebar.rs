@@ -384,7 +384,9 @@ pub(super) fn refresh_sidebar(
         text.append(&name_line);
         text.append(&meta_label);
 
-        if !summary.is_empty() {
+        if !summary.is_empty()
+            && sidebar_shows_activity_summary(workspace.needs_attention, status.as_ref())
+        {
             let summary_label = gtk::Label::builder()
                 .label(&summary)
                 .xalign(0.0)
@@ -536,6 +538,19 @@ pub(super) fn refresh_sidebar(
             ui.sidebar.select_row(Some(&row));
         }
     }
+}
+
+pub(super) fn sidebar_shows_activity_summary(
+    needs_attention: bool,
+    status: Option<&WorkspaceStatusBadge>,
+) -> bool {
+    needs_attention
+        || status.is_some_and(|status| {
+            matches!(
+                status.class_name,
+                "needs-input" | "attention" | "error" | "exited"
+            )
+        })
 }
 
 pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
@@ -1339,21 +1354,17 @@ fn format_status_summary_part(status: &StatusEntry) -> String {
 /// Settings/About footer.
 #[derive(Clone)]
 pub(super) struct SidebarSectionsUi {
-    pub(super) resources_shell: gtk::Box,
     pub(super) git_repos_row: gtk::Button,
     pub(super) footer_shell: gtk::Box,
     pub(super) about_row: gtk::Button,
 }
 
 pub(super) fn build_sidebar_sections() -> SidebarSectionsUi {
-    let resources_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    resources_shell.add_css_class("sidebar-fixed-section");
-    resources_shell.append(&sidebar_section_label("Resources"));
     let git_repos_row = sidebar_nav_row("forktty-merge-symbolic", "Worktrees");
-    resources_shell.append(&git_repos_row);
 
     let footer_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
     footer_shell.add_css_class("sidebar-footer");
+    footer_shell.append(&git_repos_row);
     let settings_row = sidebar_nav_row("forktty-settings-symbolic", "Settings");
     settings_row.set_action_name(Some("app.settings"));
     footer_shell.append(&settings_row);
@@ -1361,22 +1372,10 @@ pub(super) fn build_sidebar_sections() -> SidebarSectionsUi {
     footer_shell.append(&about_row);
 
     SidebarSectionsUi {
-        resources_shell,
         git_repos_row,
         footer_shell,
         about_row,
     }
-}
-
-fn sidebar_section_label(title: &str) -> gtk::Label {
-    let label = gtk::Label::builder()
-        .label(title)
-        .xalign(0.0)
-        .single_line_mode(true)
-        .build();
-    label.add_css_class("sidebar-section-label");
-    label.add_css_class("sidebar-fixed-section-label");
-    label
 }
 
 fn sidebar_nav_row(icon: &str, label: &str) -> gtk::Button {
