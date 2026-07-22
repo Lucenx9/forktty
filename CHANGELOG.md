@@ -5,6 +5,9 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- Simplified the titlebar's leading controls: the ForkTTY logo now owns the
+  main application menu, replacing the duplicated static wordmark, hamburger,
+  and divider while leaving sidebar and workspace navigation adjacent.
 - Removed the redundant “Sidebar shown/hidden” toast from Ctrl+B/F9 toggles;
   the overlay itself provides immediate feedback while visibility persistence
   remains unchanged.

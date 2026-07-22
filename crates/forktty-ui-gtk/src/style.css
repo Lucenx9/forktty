@@ -113,27 +113,6 @@ headerbar.app-header windowhandle,
   color: @ft_text_2;
 }
 
-.app-brand {
-  min-height: 26px;
-  margin: 0 2px 0 0;
-  padding: 0 7px 0 3px;
-  color: @ft_text_2;
-}
-
-.app-brand-logo {
-  opacity: 0.58;
-}
-
-.app-brand-wordmark {
-  color: @ft_text_1;
-}
-
-.app-brand-name {
-  color: @ft_text_3;
-  font-size: 0.80em;
-  font-weight: 500;
-}
-
 .app-header-title-spacer {
   min-width: 1px;
 }
@@ -177,6 +156,15 @@ headerbar.app-header windowhandle,
 .app-header .header-action image,
 .app-header menubutton.header-action > button image {
   -gtk-icon-size: 14px;
+}
+
+.app-header menubutton.app-logo-menu {
+  margin-right: 2px;
+}
+
+.app-header menubutton.app-logo-menu > button image {
+  -gtk-icon-size: 18px;
+  opacity: 0.72;
 }
 
 .app-header .header-action:hover,

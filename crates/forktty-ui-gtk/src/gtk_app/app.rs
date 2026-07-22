@@ -257,35 +257,16 @@ pub(super) fn build_ui(app: &adw::Application) {
     header.set_show_start_title_buttons(false);
     header.set_show_end_title_buttons(false);
     header.add_css_class("app-header");
-    let brand = gtk::Box::new(gtk::Orientation::Horizontal, 7);
-    brand.add_css_class("app-brand");
-    brand.set_tooltip_text(Some("ForkTTY"));
-    let brand_logo = gtk::Image::from_icon_name("forktty");
-    brand_logo.set_pixel_size(18);
-    brand_logo.add_css_class("app-brand-logo");
-    let brand_wordmark = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    brand_wordmark.add_css_class("app-brand-wordmark");
-    brand_wordmark.set_valign(gtk::Align::Center);
-    let brand_name = gtk::Label::builder().label("forktty").xalign(0.0).build();
-    brand_name.add_css_class("app-brand-name");
-    brand_wordmark.append(&brand_name);
-    brand.append(&brand_logo);
-    brand.append(&brand_wordmark);
-
     let app_menu = gtk::MenuButton::builder()
-        .icon_name("forktty-menu-symbolic")
-        .tooltip_text("Main Menu")
+        .icon_name("forktty")
+        .tooltip_text("ForkTTY menu")
         .has_frame(false)
         .build();
     app_menu.add_css_class("flat");
     app_menu.add_css_class("header-action");
-    app_menu.update_property(&[gtk::accessible::Property::Label("Main Menu")]);
-
-    let brand_separator = gtk::Separator::new(gtk::Orientation::Vertical);
-    brand_separator.add_css_class("header-action-separator");
-    header.pack_start(&brand);
+    app_menu.add_css_class("app-logo-menu");
+    app_menu.update_property(&[gtk::accessible::Property::Label("Main menu")]);
     header.pack_start(&app_menu);
-    header.pack_start(&brand_separator);
 
     // Keep workspace orientation on the left and global actions on the right.
     let location_cluster = gtk::Box::new(gtk::Orientation::Horizontal, 2);

@@ -1198,10 +1198,20 @@ fn accessible_shortcut_text_uses_accessibility_key_names() {
 }
 
 #[test]
-fn app_menu_source_uses_packaged_icon_and_guarded_f10_shortcut() {
+fn app_menu_uses_the_logo_without_duplicate_brand_or_hamburger() {
     let source = include_str!("app.rs");
 
-    assert!(source.contains(".icon_name(\"forktty-menu-symbolic\")"));
+    assert!(source
+        .contains("let app_menu = gtk::MenuButton::builder()\n        .icon_name(\"forktty\")"));
+    assert!(!source.contains(".label(\"forktty\")"));
+    assert!(!source.contains("forktty-menu-symbolic"));
+    assert!(!source.contains("brand_separator"));
+    assert!(source.contains("gtk::accessible::Property::Label(\"Main menu\")"));
+    let menu_position = source.find("header.pack_start(&app_menu);").unwrap();
+    let location_position = source
+        .find("header.pack_start(&location_cluster);")
+        .unwrap();
+    assert!(menu_position < location_position);
     assert!(source.contains("gtk::gdk::Key::F10"));
     assert!(source.contains("app_menu.popup()"));
     assert!(source.contains("main_menu_shortcut_should_open"));

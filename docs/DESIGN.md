@@ -17,6 +17,9 @@ Use these rules for GTK UI changes so the app stays quiet, dense, and native.
 - Keep operational UI compact. Avoid marketing-page composition, oversized headings, nested cards, and decorative backgrounds.
 - Use icons for toolbar-style actions when a stock or bundled icon exists.
 - Keep cards only for repeated items, popovers, dialogs, and framed tools.
+- In the titlebar, the ForkTTY logo is the sole main-menu trigger. Keep it next
+  to sidebar/workspace navigation instead of duplicating it with a static
+  wordmark, hamburger, or separator.
 - Keep the workspace sidebar as a narrow Adwaita overlay so opening it does not
   reflow terminal panes. Workspace rows are flat navigation, and routine agent
   summaries stay hidden unless the workspace needs attention or reports an
