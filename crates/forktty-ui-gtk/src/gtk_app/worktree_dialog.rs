@@ -75,20 +75,38 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
 
     let base_workspace = active_worktree_base(state);
     let base_cwd = base_workspace.as_ref().map(|(_, cwd)| cwd.clone());
-    let context_text = base_workspace
+    let context_value_text = base_workspace
         .as_ref()
-        .map(|(name, cwd)| format!("Base: {} · {}", name, compact_path(cwd)))
+        .map(|(name, cwd)| format!("{} · {}", name, compact_path(cwd)))
         .unwrap_or_else(|| {
             std::env::current_dir()
-                .map(|path| format!("Base: {}", compact_path(&path)))
-                .unwrap_or_else(|_| "Base: current directory".to_string())
+                .map(|path| compact_path(&path))
+                .unwrap_or_else(|_| "Current directory".to_string())
         });
-    let context = gtk::Label::builder()
-        .label(context_text)
+    let context = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    context.add_css_class("worktree-context");
+    context.update_property(&[gtk::accessible::Property::Label(&format!(
+        "Starting from {context_value_text}"
+    ))]);
+    let context_icon = gtk::Image::from_icon_name("forktty-folder-symbolic");
+    context_icon.add_css_class("worktree-context-icon");
+    let context_copy = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    context_copy.set_hexpand(true);
+    let context_title = gtk::Label::builder()
+        .label("Starting from")
+        .xalign(0.0)
+        .build();
+    context_title.add_css_class("worktree-context-title");
+    let context_value = gtk::Label::builder()
+        .label(context_value_text)
         .xalign(0.0)
         .ellipsize(gtk::pango::EllipsizeMode::Middle)
         .build();
-    context.add_css_class("worktree-context");
+    context_value.add_css_class("worktree-context-value");
+    context_copy.append(&context_title);
+    context_copy.append(&context_value);
+    context.append(&context_icon);
+    context.append(&context_copy);
 
     let dialog_state = Rc::new(RefCell::new(WorktreeDialogState::new(
         WorktreeDialogMode::Create,
@@ -110,7 +128,7 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     mode_selector.append(&remove_mode);
 
     let entry = gtk::Entry::builder()
-        .placeholder_text("Branch name (e.g. feature/login)")
+        .placeholder_text("feature/login")
         .hexpand(true)
         .build();
     entry.add_css_class("monospace");
@@ -130,6 +148,17 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
         .wrap(true)
         .build();
     hint.add_css_class("ft-form-hint");
+    let target_label = gtk::Label::builder()
+        .label(WorktreeDialogMode::Create.target_label())
+        .xalign(0.0)
+        .build();
+    target_label.add_css_class("worktree-target-label");
+    let target = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    target.add_css_class("worktree-target");
+    target.append(&target_label);
+    target.append(&entry);
+    target.append(&existing);
+    target.append(&hint);
 
     let status = gtk::Label::builder().xalign(0.0).wrap(true).build();
     status.add_css_class("ft-inline-status");
@@ -146,9 +175,7 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     body.add_css_class("ft-dialog-body");
     body.append(&context);
     body.append(&mode_selector);
-    body.append(&entry);
-    body.append(&existing);
-    body.append(&hint);
+    body.append(&target);
     body.append(&status);
 
     let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -186,6 +213,7 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
         mode_selector: mode_selector.clone(),
         title: title.clone(),
         subtitle: subtitle.clone(),
+        target_label: target_label.clone(),
         entry: entry.clone(),
         existing: existing.clone(),
         hint: hint.clone(),
@@ -424,11 +452,11 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
                 let base_cwd_confirm = base_cwd.clone();
                 show_destructive_confirmation(
                     &dialog_for_action,
-                    "Remove Worktree?",
+                    "Remove worktree?",
                     &format!(
                         "Remove worktree '{name}' and close its ForkTTY workspace. The git branch is left intact."
                     ),
-                    "Remove Worktree",
+                    "Remove worktree",
                     move || {
                         let state = state_confirm.clone();
                         let status = status_confirm.clone();
@@ -471,6 +499,7 @@ pub(super) struct WorktreeDialogControls {
     mode_selector: gtk::Box,
     title: gtk::Label,
     subtitle: gtk::Label,
+    target_label: gtk::Label,
     entry: gtk::Entry,
     existing: gtk::ComboBoxText,
     hint: gtk::Label,
@@ -657,10 +686,10 @@ impl WorktreeDialogState {
 impl WorktreeDialogMode {
     fn dialog_title(self) -> &'static str {
         match self {
-            WorktreeDialogMode::Create => "Create Worktree",
-            WorktreeDialogMode::Attach => "Attach Worktree",
-            WorktreeDialogMode::Merge => "Merge Worktree",
-            WorktreeDialogMode::Remove => "Remove Worktree",
+            WorktreeDialogMode::Create => "Create worktree",
+            WorktreeDialogMode::Attach => "Attach worktree",
+            WorktreeDialogMode::Merge => "Merge worktree",
+            WorktreeDialogMode::Remove => "Remove worktree",
         }
     }
 
@@ -682,6 +711,15 @@ impl WorktreeDialogMode {
         }
     }
 
+    fn target_label(self) -> &'static str {
+        match self {
+            WorktreeDialogMode::Create => "New branch",
+            WorktreeDialogMode::Attach => "Existing branch or worktree",
+            WorktreeDialogMode::Merge => "Worktree to merge",
+            WorktreeDialogMode::Remove => "Worktree to remove",
+        }
+    }
+
     fn icon_name(self) -> &'static str {
         match self {
             WorktreeDialogMode::Create => "forktty-add-symbolic",
@@ -693,21 +731,18 @@ impl WorktreeDialogMode {
 
     fn hint(self) -> &'static str {
         match self {
-            WorktreeDialogMode::Create => "New branch name.",
-            WorktreeDialogMode::Attach => "Existing branch or worktree name.",
-            WorktreeDialogMode::Merge => "Worktree to merge.",
-            WorktreeDialogMode::Remove => "Worktree to remove.",
+            WorktreeDialogMode::Create => "Creates a linked checkout and opens it as a workspace.",
+            WorktreeDialogMode::Attach => "Reuses an existing branch without creating a new one.",
+            WorktreeDialogMode::Merge => "The base checkout shown above receives the merge.",
+            WorktreeDialogMode::Remove => "The git branch remains intact.",
         }
     }
 
     fn placeholder(self) -> &'static str {
         match self {
-            WorktreeDialogMode::Create | WorktreeDialogMode::Attach => {
-                "Branch name (e.g. feature/login)"
-            }
-            WorktreeDialogMode::Merge | WorktreeDialogMode::Remove => {
-                "Existing worktree or branch name"
-            }
+            WorktreeDialogMode::Create => "feature/login",
+            WorktreeDialogMode::Attach => "branch or worktree name",
+            WorktreeDialogMode::Merge | WorktreeDialogMode::Remove => "worktree or branch name",
         }
     }
 
@@ -783,6 +818,27 @@ fn worktree_dialog_target_status(
     (valid, status_update)
 }
 
+fn worktree_dialog_hint(mode: WorktreeDialogMode, discovery: WorktreeDiscoveryState) -> String {
+    let discovery_message = if mode.uses_existing_chooser() {
+        match discovery {
+            WorktreeDiscoveryState::Failed => {
+                Some("Could not load linked worktrees. Type a worktree or branch name.")
+            }
+            WorktreeDiscoveryState::Loading => Some("Loading linked worktrees…"),
+            WorktreeDiscoveryState::Ready { has_choices: false } => {
+                Some("No linked worktrees found. Type a worktree or branch name.")
+            }
+            WorktreeDiscoveryState::Ready { has_choices: true } => None,
+        }
+    } else {
+        None
+    };
+
+    discovery_message
+        .map(|message| format!("{message} {}", mode.hint()))
+        .unwrap_or_else(|| mode.hint().to_string())
+}
+
 fn refresh_worktree_dialog(
     state: WorktreeDialogState,
     controls: &WorktreeDialogControls,
@@ -792,6 +848,7 @@ fn refresh_worktree_dialog(
     controls.dialog.set_title(Some(mode.dialog_title()));
     controls.title.set_label(mode.dialog_title());
     controls.subtitle.set_label(mode.dialog_subtitle());
+    controls.target_label.set_label(mode.target_label());
     controls
         .entry
         .set_placeholder_text(Some(mode.placeholder()));
@@ -799,23 +856,9 @@ fn refresh_worktree_dialog(
     let use_existing_chooser = state.uses_existing_chooser();
     controls.entry.set_visible(!use_existing_chooser);
     controls.existing.set_visible(use_existing_chooser);
-    let worktree_list_failed = matches!(state.discovery, WorktreeDiscoveryState::Failed);
-    let worktree_list_loading = matches!(state.discovery, WorktreeDiscoveryState::Loading);
-    let has_existing_worktrees = matches!(
-        state.discovery,
-        WorktreeDiscoveryState::Ready { has_choices: true }
-    );
     controls
         .hint
-        .set_label(if mode.uses_existing_chooser() && worktree_list_failed {
-            "Could not load linked worktrees. Type a worktree or branch name."
-        } else if mode.uses_existing_chooser() && worktree_list_loading {
-            "Loading linked worktrees…"
-        } else if mode.uses_existing_chooser() && !has_existing_worktrees {
-            "No linked worktrees found. Type a worktree or branch name."
-        } else {
-            mode.hint()
-        });
+        .set_label(&worktree_dialog_hint(mode, state.discovery));
     controls.primary_icon.set_icon_name(Some(mode.icon_name()));
     controls.primary_label.set_text(mode.action_label());
     controls.primary.set_tooltip_text(Some(mode.tooltip()));
@@ -861,6 +904,59 @@ fn refresh_worktree_dialog(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mode_copy_keeps_target_and_consequences_explicit() {
+        let cases = [
+            (
+                WorktreeDialogMode::Create,
+                "Create worktree",
+                "New branch",
+                "feature/login",
+                "Creates a linked checkout and opens it as a workspace.",
+            ),
+            (
+                WorktreeDialogMode::Attach,
+                "Attach worktree",
+                "Existing branch or worktree",
+                "branch or worktree name",
+                "Reuses an existing branch without creating a new one.",
+            ),
+            (
+                WorktreeDialogMode::Merge,
+                "Merge worktree",
+                "Worktree to merge",
+                "worktree or branch name",
+                "The base checkout shown above receives the merge.",
+            ),
+            (
+                WorktreeDialogMode::Remove,
+                "Remove worktree",
+                "Worktree to remove",
+                "worktree or branch name",
+                "The git branch remains intact.",
+            ),
+        ];
+
+        for (mode, title, target, placeholder, hint) in cases {
+            assert_eq!(mode.dialog_title(), title);
+            assert_eq!(mode.target_label(), target);
+            assert_eq!(mode.placeholder(), placeholder);
+            assert_eq!(mode.hint(), hint);
+        }
+    }
+
+    #[test]
+    fn discovery_status_preserves_mode_consequences() {
+        assert_eq!(
+            worktree_dialog_hint(WorktreeDialogMode::Remove, WorktreeDiscoveryState::Failed),
+            "Could not load linked worktrees. Type a worktree or branch name. The git branch remains intact."
+        );
+        assert_eq!(
+            worktree_dialog_hint(WorktreeDialogMode::Merge, WorktreeDiscoveryState::Loading),
+            "Loading linked worktrees… The base checkout shown above receives the merge."
+        );
+    }
 
     #[test]
     fn delayed_discovery_preserves_user_typed_target_byte_for_byte() {
@@ -1013,7 +1109,7 @@ pub(super) async fn open_worktree_from_gtk_async_at_cwd(
     if let Some(warning) = &info.setup_warning {
         create_global_notification(
             state,
-            "Worktree Setup Hook Failed",
+            "Worktree setup hook failed",
             warning,
             NotificationKind::Error,
         );

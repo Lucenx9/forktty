@@ -2408,12 +2408,32 @@ window.ft-dialog,
 }
 
 .worktree-context {
-  padding: 6px 9px;
+  padding: 6px 12px;
   border-radius: 8px;
+  background: @ft_bg_1;
+  border: 1px solid @ft_line;
+}
+
+.worktree-context-icon {
+  -gtk-icon-size: 16px;
   color: @ft_text_3;
-  background: @ft_bg_stage;
-  border: 1px solid @ft_bg_3;
+}
+
+.worktree-context-title {
+  color: @ft_text_4;
+  font-size: 0.74em;
+}
+
+.worktree-context-value {
+  color: @ft_text_2;
+  font-size: 0.86em;
+  font-weight: 500;
+}
+
+.worktree-target-label {
+  color: @ft_text_2;
   font-size: 0.80em;
+  font-weight: 600;
 }
 
 .worktree-mode-selector {

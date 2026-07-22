@@ -1358,8 +1358,8 @@ fn worktree_context_failures_use_error_notifications() {
     let source = include_str!("workspace_menu.rs");
 
     assert!(source.contains("create_local_notification_with_kind("));
-    assert!(source.contains("\"Merge Failed\""));
-    assert!(source.contains("\"Remove Failed\""));
+    assert!(source.contains("\"Merge failed\""));
+    assert!(source.contains("\"Remove failed\""));
     assert!(source.contains("NotificationKind::Error"));
 }
 
@@ -1469,8 +1469,37 @@ fn worktree_dialog_reports_mode_and_load_failure_context() {
 
     assert!(source.contains("dialog: gtk::Window"));
     assert!(source.contains("controls.dialog.set_title(Some(mode.dialog_title()))"));
-    assert!(source.contains("worktree_list_failed"));
+    assert!(source.contains("worktree_dialog_hint(mode, state.discovery)"));
     assert!(source.contains("Could not load linked worktrees"));
+}
+
+#[test]
+fn worktree_dialog_keeps_context_and_target_hierarchy_visible() {
+    let source = include_str!("worktree_dialog.rs");
+    let css = include_str!("../style.css");
+
+    assert!(source.contains(".label(\"Starting from\")"));
+    assert!(source.contains("context_icon.add_css_class(\"worktree-context-icon\")"));
+    assert!(source.contains("target_label: gtk::Label"));
+    assert!(source.contains("controls.target_label.set_label(mode.target_label())"));
+    assert!(css.contains(".worktree-context-icon"));
+    assert!(css.contains(".worktree-target-label"));
+}
+
+#[test]
+fn worktree_actions_use_sentence_case() {
+    let palette = include_str!("command_palette.rs");
+    let menu = include_str!("workspace_menu.rs");
+
+    assert!(palette.contains("\"New worktree...\""));
+    assert!(menu.contains("\"New worktree from here...\""));
+    assert!(menu.contains("\"Merge worktree\""));
+    assert!(menu.contains("\"Remove worktree\""));
+    assert!(menu.contains("\"Merge failed\""));
+    assert!(menu.contains("\"Remove failed\""));
+    assert!(!palette.contains("\"New Worktree...\""));
+    assert!(!menu.contains("\"Merge Worktree\""));
+    assert!(!menu.contains("\"Remove Worktree\""));
 }
 
 #[test]

@@ -34,6 +34,11 @@ Use these rules for GTK UI changes so the app stays quiet, dense, and native.
 - Treat external configuration as a trust boundary. Before Settings writes an
   integration, state what ForkTTY owns, require confirmation, and provide a
   nearby removal path that preserves unrelated configuration.
+- Keep the Worktree manager task-first: show the source workspace and path as a
+  compact context row, keep the selected operation in one segmented control,
+  and give the target field a persistent mode-specific label. Helper copy must
+  explain consequences instead of repeating the placeholder; removal must say
+  that the git branch remains intact.
 
 ## Motion
 

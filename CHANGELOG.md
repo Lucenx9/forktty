@@ -5,6 +5,11 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- Refined the Worktree manager around a clearer task hierarchy: the source
+  workspace and path stay visible in a compact context row, every mode keeps a
+  persistent target label, helper copy explains the operation instead of
+  repeating the placeholder, and worktree actions use sentence case
+  consistently.
 - Refined Settings as a quieter native preference surface: reduced the default
   dialog and navigation width, grouped pages under General, Integrations, and
   System, strengthened page hierarchy, and placed controls on subtle raised

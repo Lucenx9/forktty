@@ -44,7 +44,7 @@ or CLI parser tests), so they should be treated as regressions if they fail in C
 - worktree `.forktty/setup` hook failure visibility: failure stays non-fatal but
   is now returned as `WorktreeInfo.setup_warning`, included in the
   `worktree.create`/`worktree.attach` socket responses as `setup_warning`, and
-  surfaced as a `Worktree Setup Hook Failed` error notification (core + socket
+  surfaced as a `Worktree setup hook failed` error notification (core + socket
   tests)
 
 Manual QA below should focus on runtime integration that headless tests cannot
