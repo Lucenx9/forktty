@@ -137,6 +137,9 @@ fn settings_keep_clear_page_and_preference_group_hierarchy() {
 
     let nav_heading = block(".settings-nav-heading {");
     assert!(!nav_heading.contains("text-transform: uppercase;"));
+
+    let info_hover = block(".settings-list row.settings-info-row:hover {");
+    assert!(info_hover.contains("background: transparent;"));
 }
 
 #[test]

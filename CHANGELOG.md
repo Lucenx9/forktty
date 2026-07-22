@@ -9,6 +9,10 @@ All notable changes to ForkTTY are documented here.
   dialog and navigation width, grouped pages under General, Integrations, and
   System, strengthened page hierarchy, and placed controls on subtle raised
   group surfaces.
+- Made the Agent hooks settings flow explicit and reversible: status details
+  name the installed providers, setup and updates require confirmation, the UI
+  explains that hooks never change focus or pane layout, and managed entries
+  can be removed without touching unrelated agent configuration.
 - Refined the terminal chrome around one permanent global titlebar: removed the
   redundant bottom status bar, tightened split-pane headers to 22 px, softened
   their drag and focus cues, strengthened the menu logo, and replaced the

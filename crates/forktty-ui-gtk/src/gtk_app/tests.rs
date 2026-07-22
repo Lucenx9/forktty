@@ -699,8 +699,26 @@ fn settings_agents_nav_uses_agent_semantic_icon() {
     let source = include_str!("settings_dialog.rs");
 
     assert!(source.contains(
-        "settings_nav_button(\"forktty-terminal-symbolic\", \"Agents\", \"Lifecycle hooks\")"
+        "\"forktty-terminal-symbolic\",\n        \"Agent hooks\",\n        \"Lifecycle metadata\""
     ));
+}
+
+#[test]
+fn agent_hook_settings_explain_opt_in_and_offer_managed_removal() {
+    let source = include_str!("settings_dialog.rs");
+    assert!(source.contains("settings_section(\"Lifecycle hooks\", \"\")"));
+    assert!(source.contains("settings_section(\"What hooks do\", \"\")"));
+    assert!(source.contains("ForkTTY never installs or updates hooks in the background."));
+    assert!(source.contains("Hooks report lifecycle and attention state; they never move focus"));
+    assert!(source.contains("run_agent_integrations_remove"));
+    assert!(source.contains("show_agent_hook_setup_confirmation"));
+    assert!(source.contains("set_settings_task_controls_sensitive(&controls, false)"));
+    assert!(source.contains("set_settings_task_controls_sensitive(&controls, true)"));
+    assert!(source.contains("status_kind: AgentSetupStatusKind"));
+    assert!(source.contains("\"Update agent hooks?\""));
+    assert!(source.contains("\"Remove agent hooks?\""));
+    assert!(!source.contains("\"Update Agent Hooks?\""));
+    assert!(!source.contains("\"Remove Agent Hooks?\""));
 }
 
 #[test]
@@ -923,8 +941,8 @@ fn settings_dialog_covers_workbench_layout_and_privacy_sections() {
         .contains("show_worktree_dialog(&parent_for_worktrees, &state_for_worktrees)"));
     assert!(settings_source.contains("model.clear_notifications()"));
     assert!(settings_source.contains("run_agent_integrations_setup"));
-    assert!(settings_source.contains("if !agent_setup_status_kind.get().should_run_setup()"));
-    assert!(settings_source.contains("settings_section(\"Optional\", \"\")"));
+    assert!(settings_source.contains("if !status_kind.should_run_setup()"));
+    assert!(settings_source.contains("settings_section(\"Lifecycle hooks\", \"\")"));
     assert!(settings_source.contains("settings_section(\"Local-first by design\", \"\")"));
     assert!(settings_source.contains(
         "Terminal automation and agent lifecycle metadata use an owner-only local Unix socket."

@@ -91,8 +91,9 @@ ForkTTY derives Antigravity `resume_cwd` from the hook payload's
 `workspacePaths` instead of the wrapper process cwd.
 
 GTK startup does not install, refresh, or create reminders for optional hooks.
-Use the welcome flow, Settings > Agents, or the CLI when you want setup or
-diagnostics.
+Use the welcome flow, Settings > Agent hooks, or the CLI when you want setup or
+diagnostics. The Settings page names installed providers, confirms setup and
+updates before writing, and can remove only ForkTTY-managed entries.
 
 ## Inspect and exercise installed hooks
 

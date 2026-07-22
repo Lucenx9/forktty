@@ -85,7 +85,11 @@ pub(super) fn show_settings_dialog_page(
         "Worktrees",
         "Workspaces and sessions",
     );
-    let agents_nav = settings_nav_button("forktty-terminal-symbolic", "Agents", "Lifecycle hooks");
+    let agents_nav = settings_nav_button(
+        "forktty-terminal-symbolic",
+        "Agent hooks",
+        "Lifecycle metadata",
+    );
     let alerts_nav = settings_nav_button(
         "forktty-notifications-symbolic",
         "Notifications",
@@ -200,21 +204,55 @@ pub(super) fn show_settings_dialog_page(
     });
     stack.add_named(&worktrees_page, Some("worktrees"));
 
-    let (agents_page, agents_content) =
-        settings_page("Agents", "Optional lifecycle metadata for coding agents.");
-    let (agent_setup_section, agent_setup_list) = settings_section("Optional", "");
-    let all_setup_row = settings_action_row(
+    let (agents_page, agents_content) = settings_page(
         "Agent hooks",
-        "Install lifecycle and notification hooks for supported coding agents.",
+        "Optional local signals for coding-agent lifecycle and attention.",
     );
+    let (agent_setup_section, agent_setup_list) = settings_section("Lifecycle hooks", "");
+    let all_setup_row =
+        settings_action_row("Managed hooks", "Checking installed hook configuration...");
     all_setup_row.add_css_class("settings-primary-row");
-    let all_setup_button = settings_setup_button("Set Up");
+    let all_setup_button = settings_setup_button("Set up");
     let all_setup_status = settings_setup_status_label();
     all_setup_row.add_suffix(&all_setup_status);
     all_setup_row.add_suffix(&all_setup_button);
     all_setup_row.set_activatable_widget(Some(&all_setup_button));
     agent_setup_list.append(&all_setup_row);
+
+    let remove_hooks_row = settings_action_row(
+        "Remove managed hooks",
+        "Remove only ForkTTY entries; other agent settings remain unchanged.",
+    );
+    remove_hooks_row.add_css_class("settings-secondary-row");
+    remove_hooks_row.set_visible(false);
+    let remove_hooks_button = settings_setup_button("Remove");
+    remove_hooks_button.add_css_class("subtle");
+    remove_hooks_row.add_suffix(&remove_hooks_button);
+    remove_hooks_row.set_activatable_widget(Some(&remove_hooks_button));
+    agent_setup_list.append(&remove_hooks_row);
     agents_content.append(&agent_setup_section);
+
+    let (agent_scope_section, agent_scope_list) = settings_section("What hooks do", "");
+    for (title, subtitle) in [
+        (
+            "Explicit opt-in",
+            "ForkTTY never installs or updates hooks in the background.",
+        ),
+        (
+            "Managed changes only",
+            "Setup preserves unrelated configuration and backs up changed files.",
+        ),
+        (
+            "Attention, not control",
+            "Hooks report lifecycle and attention state; they never move focus or rearrange panes.",
+        ),
+    ] {
+        let row = settings_action_row(title, subtitle);
+        row.add_css_class("settings-info-row");
+        row.set_activatable(false);
+        agent_scope_list.append(&row);
+    }
+    agents_content.append(&agent_scope_section);
 
     stack.add_named(&agents_page, Some("agents"));
 
@@ -379,30 +417,83 @@ pub(super) fn show_settings_dialog_page(
     let refresh_agent_setup_statuses = {
         let all_setup_status = all_setup_status.clone();
         let all_setup_button = all_setup_button.clone();
+        let all_setup_row = all_setup_row.clone();
+        let remove_hooks_row = remove_hooks_row.clone();
         let agent_setup_status_kind = agent_setup_status_kind.clone();
         Rc::new(move || {
             refresh_settings_setup_statuses(
                 &all_setup_status,
                 &all_setup_button,
+                &all_setup_row,
+                &remove_hooks_row,
                 &agent_setup_status_kind,
             );
         })
     };
     refresh_agent_setup_statuses.as_ref()();
 
+    let hook_task_controls = vec![all_setup_button.clone(), remove_hooks_button.clone()];
     all_setup_button.connect_clicked({
+        let window = window.clone();
         let dialog = dialog.clone();
         let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
         let agent_setup_status_kind = agent_setup_status_kind.clone();
+        let hook_task_controls = hook_task_controls.clone();
         move |button| {
-            if !agent_setup_status_kind.get().should_run_setup() {
+            let status_kind = agent_setup_status_kind.get();
+            if !status_kind.should_run_setup() {
                 refresh_agent_setup_statuses.as_ref()();
                 return;
             }
-            run_settings_setup(button, &dialog, run_agent_integrations_setup, {
-                let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
-                move || refresh_agent_setup_statuses.as_ref()()
+            let button = button.clone();
+            let dialog = dialog.clone();
+            let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
+            let hook_task_controls = hook_task_controls.clone();
+            show_agent_hook_setup_confirmation(&window, status_kind, move || {
+                run_settings_task(
+                    &button,
+                    hook_task_controls.clone(),
+                    &dialog,
+                    "Setup",
+                    run_agent_integrations_setup,
+                    {
+                        let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
+                        move || refresh_agent_setup_statuses.as_ref()()
+                    },
+                );
             });
+        }
+    });
+    remove_hooks_button.connect_clicked({
+        let window = window.clone();
+        let dialog = dialog.clone();
+        let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
+        let hook_task_controls = hook_task_controls.clone();
+        move |button| {
+            let button = button.clone();
+            let dialog = dialog.clone();
+            let refresh_agent_setup_statuses = refresh_agent_setup_statuses.clone();
+            let hook_task_controls = hook_task_controls.clone();
+            show_destructive_confirmation(
+                &window,
+                "Remove agent hooks?",
+                "Remove only ForkTTY-managed hook entries from supported agent configurations. Unrelated settings stay untouched, and changed files are backed up.",
+                "Remove hooks",
+                move || {
+                    run_settings_task(
+                        &button,
+                        hook_task_controls.clone(),
+                        &dialog,
+                        "Removal",
+                        run_agent_integrations_remove,
+                        {
+                            let refresh_agent_setup_statuses =
+                                refresh_agent_setup_statuses.clone();
+                            move || refresh_agent_setup_statuses.as_ref()()
+                        },
+                    );
+                },
+            );
         }
     });
     window_mode.connect_selected_notify({
@@ -899,9 +990,11 @@ fn settings_setup_status_label() -> gtk::Label {
 fn refresh_settings_setup_statuses(
     all_status: &gtk::Label,
     all_button: &gtk::Button,
+    all_row: &adw::ActionRow,
+    remove_row: &adw::ActionRow,
     status_kind: &Rc<Cell<AgentSetupStatusKind>>,
 ) {
-    apply_pending_setup_status(all_status, all_button);
+    apply_pending_setup_status(all_status, all_button, all_row, remove_row);
 
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
@@ -911,11 +1004,13 @@ fn refresh_settings_setup_statuses(
 
     let all_status = all_status.clone();
     let all_button = all_button.clone();
+    let all_row = all_row.clone();
+    let remove_row = remove_row.clone();
     let status_kind = status_kind.clone();
     glib::timeout_add_local(SETTINGS_SETUP_POLL_INTERVAL, move || match rx.try_recv() {
         Ok(all) => {
             status_kind.set(all.kind);
-            apply_setup_status(&all_status, &all_button, &all);
+            apply_setup_status(&all_status, &all_button, &all_row, &remove_row, &all);
             glib::ControlFlow::Break
         }
         Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
@@ -924,26 +1019,42 @@ fn refresh_settings_setup_statuses(
                 kind: AgentSetupStatusKind::CheckFailed,
                 label: "Check failed".to_string(),
                 detail: "Setup status check stopped before completing.".to_string(),
+                installed_agent_labels: Vec::new(),
             };
             status_kind.set(status.kind);
-            apply_setup_status(&all_status, &all_button, &status);
+            apply_setup_status(&all_status, &all_button, &all_row, &remove_row, &status);
             glib::ControlFlow::Break
         }
     });
 }
 
-fn apply_pending_setup_status(label: &gtk::Label, button: &gtk::Button) {
+fn apply_pending_setup_status(
+    label: &gtk::Label,
+    button: &gtk::Button,
+    row: &adw::ActionRow,
+    remove_row: &adw::ActionRow,
+) {
     label.set_text("Checking...");
     label.set_tooltip_text(Some("Checking installed configuration."));
+    row.set_subtitle("Checking installed hook configuration...");
+    remove_row.set_visible(false);
     set_setup_status_class(label, "checking");
     set_setup_button_class(button, "subtle");
     button.set_label("...");
     button.set_sensitive(false);
 }
 
-fn apply_setup_status(label: &gtk::Label, button: &gtk::Button, status: &AgentSetupStatus) {
+fn apply_setup_status(
+    label: &gtk::Label,
+    button: &gtk::Button,
+    row: &adw::ActionRow,
+    remove_row: &adw::ActionRow,
+    status: &AgentSetupStatus,
+) {
     label.set_text(&status.label);
     label.set_tooltip_text(Some(&status.detail));
+    row.set_subtitle(&status.detail);
+    remove_row.set_visible(status.has_managed_hooks());
     set_setup_status_class(
         label,
         match status.kind {
@@ -978,9 +1089,11 @@ fn set_setup_button_class(button: &gtk::Button, class_name: &str) {
     button.add_css_class(class_name);
 }
 
-fn run_settings_setup<F, C>(
+fn run_settings_task<F, C>(
     button: &gtk::Button,
+    controls: Vec<gtk::Button>,
     dialog: &adw::ToastOverlay,
+    operation: &'static str,
     task: F,
     after_complete: C,
 ) where
@@ -991,7 +1104,7 @@ fn run_settings_setup<F, C>(
         .label()
         .map(|label| label.to_string())
         .unwrap_or_default();
-    button.set_sensitive(false);
+    set_settings_task_controls_sensitive(&controls, false);
     button.set_label("Working...");
 
     let (tx, rx) = mpsc::channel();
@@ -1004,27 +1117,71 @@ fn run_settings_setup<F, C>(
     glib::timeout_add_local(SETTINGS_SETUP_POLL_INTERVAL, move || match rx.try_recv() {
         Ok(Ok(success_message)) => {
             button.set_label(&original_label);
-            button.set_sensitive(true);
+            set_settings_task_controls_sensitive(&controls, true);
             dialog.add_toast(adw::Toast::new(&success_message));
             after_complete();
             glib::ControlFlow::Break
         }
         Ok(Err(err)) => {
             button.set_label(&original_label);
-            button.set_sensitive(true);
-            dialog.add_toast(adw::Toast::new(&format!("Setup failed: {err}")));
+            set_settings_task_controls_sensitive(&controls, true);
+            dialog.add_toast(adw::Toast::new(&format!("{operation} failed: {err}")));
             after_complete();
             glib::ControlFlow::Break
         }
         Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
         Err(mpsc::TryRecvError::Disconnected) => {
             button.set_label(&original_label);
-            button.set_sensitive(true);
-            dialog.add_toast(adw::Toast::new("Setup stopped before completing."));
+            set_settings_task_controls_sensitive(&controls, true);
+            dialog.add_toast(adw::Toast::new(&format!(
+                "{operation} stopped before completing."
+            )));
             after_complete();
             glib::ControlFlow::Break
         }
     });
+}
+
+fn set_settings_task_controls_sensitive(controls: &[gtk::Button], sensitive: bool) {
+    for control in controls {
+        control.set_sensitive(sensitive);
+    }
+}
+
+fn show_agent_hook_setup_confirmation<W, F>(
+    parent: &W,
+    status_kind: AgentSetupStatusKind,
+    on_confirm: F,
+) where
+    W: IsA<gtk::Window>,
+    F: Fn() + 'static,
+{
+    let (heading, confirm_label) = match status_kind {
+        AgentSetupStatusKind::UpToDate => ("Repair agent hooks?", "Repair hooks"),
+        AgentSetupStatusKind::UpdateAvailable => ("Update agent hooks?", "Update hooks"),
+        AgentSetupStatusKind::NotInstalled | AgentSetupStatusKind::CheckFailed => {
+            ("Set up agent hooks?", "Set up hooks")
+        }
+    };
+    let dialog = adw::MessageDialog::builder()
+        .transient_for(parent)
+        .modal(true)
+        .heading(heading)
+        .body(
+            "ForkTTY will add only its managed entries for Codex, Claude Code, Antigravity, and OpenCode. Unrelated settings are preserved, changed files are backed up, and hooks are never updated automatically.",
+        )
+        .build();
+    dialog.add_responses(&[("cancel", "Cancel"), ("confirm", confirm_label)]);
+    dialog.set_close_response("cancel");
+    dialog.set_default_response(Some("confirm"));
+    dialog.set_response_appearance("confirm", adw::ResponseAppearance::Suggested);
+    dialog.connect_response(None, move |dialog: &adw::MessageDialog, response| {
+        dialog.close();
+        if response == "confirm" {
+            on_confirm();
+        }
+    });
+    dialog.present();
 }
 
 pub(super) fn normalized_settings_entry_text(row: &adw::EntryRow) -> String {

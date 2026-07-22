@@ -2224,6 +2224,10 @@ window.ft-dialog,
   color: @ft_text_2;
 }
 
+.settings-list row.settings-info-row:hover {
+  background: transparent;
+}
+
 .settings-list row label.title {
   color: @ft_text_1;
   font-weight: 500;

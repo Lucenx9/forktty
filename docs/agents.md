@@ -67,7 +67,9 @@ The public agent socket family is limited to:
 These operations do not select a model, launch a team, assign work, or run an
 autonomous loop. ForkTTY never installs or refreshes hooks automatically at GTK
 startup. All writes require an explicit user action in the welcome flow,
-settings, or the `forktty hooks setup` CLI.
+Settings > Agent hooks, or the `forktty hooks setup` CLI. Settings confirms
+setup and updates, shows which providers have managed entries, and offers
+ownership-safe removal without changing unrelated provider configuration.
 
 ## Safety rules
 

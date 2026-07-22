@@ -298,6 +298,10 @@ lower-frequency lifecycle profile by default; `--full` adds per-tool hooks.
 `hooks remove gemini` exists only for legacy cleanup and does not enable Gemini
 setup.
 
+Settings > Agent hooks shows the installed providers before any action. Setup,
+update, and repair require confirmation; Remove deletes only ForkTTY-managed
+entries and leaves unrelated agent configuration untouched.
+
 Diagnose an installed integration with:
 
 ```bash
