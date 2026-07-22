@@ -442,8 +442,9 @@ impl TerminalController {
                 {
                     return glib::ControlFlow::Break;
                 }
-                let child_pid =
-                    embedded_surface_pid_candidate(unsafe { embedder.surface_child_pid(&widget) });
+                // Only the widget getter can associate a concurrently spawned
+                // child with this surface; a process-wide child list cannot.
+                let child_pid = unsafe { embedder.surface_child_pid(&widget) };
                 if let Some(pid) = child_pid {
                     match commit_embedded_surface_pid_for_generation(
                         &backend,

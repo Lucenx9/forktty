@@ -222,12 +222,6 @@ fn child_exit_pid_removal_ignores_stale_generations() {
 }
 
 #[test]
-fn embedded_pid_poll_does_not_claim_an_unidentified_process_child() {
-    assert_eq!(embedded_surface_pid_candidate(None), None);
-    assert_eq!(embedded_surface_pid_candidate(Some(300)), Some(300));
-}
-
-#[test]
 fn embedded_focus_retry_only_targets_current_model_focus() {
     let mut model = WorkspaceModel::new();
     let first = model.create_workspace("first", "/tmp/first");

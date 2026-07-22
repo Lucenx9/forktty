@@ -285,12 +285,6 @@ pub(super) fn embedded_agent_tail_generation(known: Option<&AgentTailEntry>) -> 
         .unwrap_or(0)
 }
 
-pub(super) fn embedded_surface_pid_candidate(reported_surface_pid: Option<i32>) -> Option<i32> {
-    // A process-wide child list cannot identify which concurrently starting
-    // Ghostty widget owns a PID. Wait for this widget's race-free ABI value.
-    reported_surface_pid
-}
-
 /// Reflect an embedded Ghostty child-process exit into the model: set the pane
 /// status and, on an abnormal exit, build a notification to dispatch. Mirrors
 /// the classic-pane `ChildExit` handling in `terminal_signals.rs`. `exit_code`
