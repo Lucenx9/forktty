@@ -289,10 +289,18 @@ pub fn deferred_surface_creation_failure_handler(
     let state = state.clone();
     let surface_id = surface_id.to_string();
     DeferredSpawnFailureHandler::new(move || {
-        let restored = state
-            .model
-            .lock()
-            .is_ok_and(|mut model| snapshot.rollback_added_surface(&mut model, &surface_id));
+        let restored = match state.model.lock() {
+            Ok(mut model) => snapshot.rollback_added_surface(&mut model, &surface_id),
+            Err(poisoned) => {
+                let mut model = poisoned.into_inner();
+                let restored = snapshot.rollback_added_surface(&mut model, &surface_id);
+                drop(model);
+                if restored {
+                    state.model.clear_poison();
+                }
+                restored
+            }
+        };
         if !restored {
             eprintln!("Failed to restore pane layout after deferred terminal spawn failure");
         }
