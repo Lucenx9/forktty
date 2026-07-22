@@ -180,6 +180,70 @@ fn close_surface_by_id_evicts_hook_prompt_history_for_removed_surface() {
 }
 
 #[test]
+fn close_tab_evicts_hook_prompt_history_for_removed_surface() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (workspace_id, first_surface_id, closed_surface_id, notification_id) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("project", "/tmp");
+        let workspace_id = workspace.id;
+        let first_surface_id = workspace.focused_surface_id;
+        let closed_surface_id = model.add_tab(&first_surface_id).unwrap().id;
+        let notification = model.create_hook_prompt_notification(
+            "Permission",
+            "Approve?",
+            NotificationKind::Prompt,
+            Some(workspace_id.clone()),
+            Some(closed_surface_id.clone()),
+            forktty_core::HookPromptMetadata {
+                id: "claude/session-tab/permission/10".to_string(),
+                provider: "claude".to_string(),
+                session_id: "session-tab".to_string(),
+                kind: forktty_core::HookPromptKind::Permission,
+                event_order: 10,
+                correlation_id: None,
+            },
+        );
+        (
+            workspace_id,
+            first_surface_id,
+            closed_surface_id,
+            notification.id,
+        )
+    };
+    for surface in model.lock().unwrap().list_surfaces(Some(&workspace_id)) {
+        terminal
+            .spawn(SpawnRequest::for_surface(
+                &surface,
+                "/bin/sh",
+                PathBuf::from("/tmp/forktty.sock"),
+            ))
+            .unwrap();
+    }
+
+    assert!(crate::test_env::with_isolated_user_dirs(|| {
+        glib::MainContext::new().block_on(close_tab_surface_transaction(&state, &closed_surface_id))
+    }));
+
+    let model = model.lock().unwrap();
+    assert!(model.surface(&first_surface_id).is_some());
+    assert!(model.surface(&closed_surface_id).is_none());
+    let notification = model
+        .list_notifications()
+        .into_iter()
+        .find(|notification| notification.id == notification_id)
+        .unwrap();
+    assert!(notification.read);
+}
+
+#[test]
 fn add_new_tab_surface_rolls_back_model_when_spawn_fails() {
     let project_dir = tempfile::tempdir().unwrap();
     let project_cwd = project_dir.path().to_path_buf();
@@ -326,12 +390,16 @@ fn new_tabs_and_splits_use_live_terminal_cwd() {
     let spawned_tab = rx.recv_timeout(Duration::from_secs(1)).unwrap();
     let GtkTerminalCommand::Spawn {
         request: tab_request,
+        failure_handler,
         ..
     } = spawned_tab
     else {
         panic!("new tab should enqueue a terminal spawn");
     };
     assert_eq!(tab_request.cwd, live_dir.path());
+    if let Some(failure_handler) = failure_handler {
+        failure_handler.disarm();
+    }
 
     {
         let mut model = model.lock().unwrap();
@@ -610,11 +678,19 @@ fn split_surface_by_id_targets_background_workspace_without_selecting_it() {
         SplitAxis::Horizontal,
     )));
 
-    let GtkTerminalCommand::Spawn { request, .. } =
-        rx.recv_timeout(Duration::from_secs(1)).unwrap()
+    let GtkTerminalCommand::Spawn {
+        request,
+        failure_handler,
+        ..
+    } = rx.recv_timeout(Duration::from_secs(1)).unwrap()
     else {
         panic!("targeted split should enqueue a terminal spawn");
     };
+    assert!(
+        failure_handler.is_some(),
+        "GTK split should retain rollback until the deferred spawn completes"
+    );
+    failure_handler.unwrap().disarm();
     let model = model.lock().unwrap();
     assert_eq!(model.active_workspace().unwrap().id, active_id);
     assert_eq!(request.workspace_id, background_id);

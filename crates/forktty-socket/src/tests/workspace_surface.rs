@@ -893,6 +893,93 @@ async fn surface_split_rolls_back_model_when_spawn_fails() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
+async fn surface_split_deferred_spawn_failure_restores_target_workspace_layout_and_focus() {
+    let state_dir = tempfile::tempdir().unwrap();
+    let _state_home = EnvGuard::set("XDG_STATE_HOME", state_dir.path().to_str().unwrap());
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let (workspace_id, target_surface_id, focused_surface_id, original_tree) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("project", "/tmp");
+        let target_surface_id = workspace.focused_surface_id;
+        let focused_surface_id = model
+            .split_surface(&target_surface_id, forktty_core::SplitAxis::Horizontal)
+            .unwrap()
+            .id;
+        let workspace = model.active_workspace().unwrap();
+        (
+            workspace.id,
+            target_surface_id,
+            focused_surface_id,
+            workspace.pane_tree,
+        )
+    };
+    let backend = Arc::new(DeferredSpawnFailureBackend::default());
+    let state = SocketAppState::new(
+        model.clone(),
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+
+    let created = dispatch(
+        &state,
+        "surface.split",
+        json!({"surface_id": target_surface_id, "axis": "vertical"}),
+    )
+    .await
+    .unwrap();
+
+    assert!(created["id"].is_string());
+    assert_eq!(backend.pending_failure_count(), 1);
+    assert!(
+        state.try_surface_set_guard().is_none(),
+        "surface guard must remain held until the queued spawn resolves"
+    );
+    forktty_core::session::save_session(&model.lock().unwrap().to_session_data()).unwrap();
+    let pending_saved = forktty_core::session::load_session().unwrap().unwrap();
+    assert_ne!(
+        pending_saved
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .unwrap()
+            .pane_tree,
+        original_tree,
+        "fixture must persist the accepted surface before deferred failure"
+    );
+    backend.fail_next_spawn();
+
+    assert!(state.try_surface_set_guard().is_some());
+    let workspace = model
+        .lock()
+        .unwrap()
+        .list_workspaces()
+        .into_iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .unwrap();
+    assert_eq!(workspace.pane_tree, original_tree);
+    assert_eq!(workspace.focused_surface_id, focused_surface_id);
+    assert_eq!(
+        model
+            .lock()
+            .unwrap()
+            .list_surfaces(Some(&workspace_id))
+            .len(),
+        2
+    );
+    let saved = forktty_core::session::load_session().unwrap().unwrap();
+    let saved_workspace = saved
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .unwrap();
+    assert_eq!(saved_workspace.pane_tree, original_tree);
+    assert_eq!(saved_workspace.focused_surface_id, focused_surface_id);
+}
+
+#[tokio::test]
 async fn surface_close_keeps_model_when_backend_close_fails() {
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let backend = Arc::new(FailingCloseBackend::default());

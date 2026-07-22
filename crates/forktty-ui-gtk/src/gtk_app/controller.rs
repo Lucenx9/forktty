@@ -257,7 +257,8 @@ impl TerminalController {
             GtkTerminalCommand::Spawn {
                 request,
                 generation,
-            } => self.spawn(request, generation),
+                failure_handler,
+            } => self.spawn(request, generation, failure_handler),
             GtkTerminalCommand::ShowSurface {
                 surface_id,
                 generation,
@@ -454,12 +455,22 @@ impl TerminalController {
         }
     }
 
-    fn spawn(&mut self, request: SpawnRequest, generation: u64) {
+    fn spawn(
+        &mut self,
+        request: SpawnRequest,
+        generation: u64,
+        failure_handler: Option<DeferredSpawnFailureHandler>,
+    ) {
         if !self
             .backend
             .surface_generation_is_current(&request.surface_id, generation)
             .unwrap_or(false)
         {
+            // This command no longer owns the surface incarnation. Running its
+            // compensation could remove a newer modeled surface with the same id.
+            if let Some(failure_handler) = failure_handler {
+                failure_handler.disarm();
+            }
             return;
         }
         if self.widgets.contains_key(&request.surface_id)
@@ -467,11 +478,23 @@ impl TerminalController {
                 .embedded_ghostty_panes
                 .contains_key(&request.surface_id)
         {
+            // Reconciliation already materialized this surface; treat the
+            // accepted spawn as complete instead of rolling its model addition back.
+            if let Some(failure_handler) = failure_handler {
+                failure_handler.disarm();
+            }
             return;
         }
         mark_spawn_command_pending(&mut self.pending_spawns, &request.surface_id);
         match self.spawn_embedded_ghostty(request.clone(), generation) {
-            Ok(()) => {}
+            Ok(()) => {
+                if let Some(failure_handler) = failure_handler {
+                    failure_handler.disarm();
+                    if let Some(state) = &self.state {
+                        save_session_from_state(state);
+                    }
+                }
+            }
             Err(err) => {
                 self.pending_spawns.remove(&request.surface_id);
                 record_terminal_spawn_failure(
@@ -486,6 +509,9 @@ impl TerminalController {
                 let _ = self
                     .backend
                     .close_for_generation(&request.surface_id, generation);
+                if let Some(failure_handler) = failure_handler {
+                    failure_handler.run();
+                }
                 self.last_layout_signature = None;
                 self.rebuild_layout();
             }
@@ -1121,21 +1147,35 @@ impl TerminalController {
                     .update_relation(&[gtk::accessible::Relation::Controls(&[page.upcast_ref()])]);
                 let model_for_select = self.model.clone();
                 let state_for_select = self.state.clone();
-                let stack_for_select = stack.clone();
+                let stack_for_select = stack.downgrade();
                 let select_id = surface_id.clone();
-                let tab_widgets_for_select = tab_widgets.clone();
-                let select_areas_for_select = select_areas.clone();
-                let focus_target = self.tab_focus_target_for_surface(surface_id);
+                let tab_widgets_for_select = tab_widgets
+                    .iter()
+                    .map(gtk::prelude::ObjectExt::downgrade)
+                    .collect::<Vec<_>>();
+                let select_areas_for_select = select_areas
+                    .iter()
+                    .map(gtk::prelude::ObjectExt::downgrade)
+                    .collect::<Vec<_>>();
+                let focus_target = self
+                    .tab_focus_target_for_surface(surface_id)
+                    .map(|target| target.downgrade());
                 select.connect_clicked(move |_| {
                     if !select_tab_from_tabstrip(&state_for_select, &model_for_select, &select_id) {
                         return;
                     }
+                    let Some(stack_for_select) = stack_for_select.upgrade() else {
+                        return;
+                    };
                     stack_for_select.set_visible_child_name(select_id.as_str());
                     for (tab_index, (tab, select)) in tab_widgets_for_select
                         .iter()
                         .zip(select_areas_for_select.iter())
                         .enumerate()
                     {
+                        let (Some(tab), Some(select)) = (tab.upgrade(), select.upgrade()) else {
+                            continue;
+                        };
                         let active = tab_index == index;
                         if active {
                             tab.add_css_class("active");
@@ -1144,7 +1184,9 @@ impl TerminalController {
                         }
                         select.update_state(&[gtk::accessible::State::Selected(Some(active))]);
                     }
-                    if let Some(focus_target) = focus_target.clone() {
+                    if let Some(focus_target) =
+                        focus_target.as_ref().and_then(|target| target.upgrade())
+                    {
                         queue_tab_focus_after_selection(
                             focus_target,
                             model_for_select.clone(),
@@ -1366,13 +1408,16 @@ fn install_tab_context_menu(
     let gesture = gtk::GestureClick::new();
     gesture.set_button(gtk::gdk::BUTTON_SECONDARY);
     gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let tab_for_menu = tab.clone();
+    let tab_for_menu = tab.downgrade();
     let state_for_menu = state.clone();
     let parent_for_menu = parent.clone();
     let surface_id_for_menu = surface_id.to_string();
     let current_popover = Rc::new(RefCell::new(None::<gtk::Popover>));
     let current_popover_for_menu = current_popover.clone();
     gesture.connect_pressed(move |gesture, _n_press, x, y| {
+        let Some(tab_for_menu) = tab_for_menu.upgrade() else {
+            return;
+        };
         gesture.set_state(gtk::EventSequenceState::Claimed);
         // Drop the RefMut before popdown(): it emits `closed` synchronously and
         // its handler re-borrows the same cell.
@@ -1515,6 +1560,228 @@ mod tests {
             tab_scroll_target(100.0, 100.0, 0.0, 220.0, 200.0, 40.0),
             Some(120.0)
         );
+    }
+
+    #[test]
+    fn pane_tab_selection_callbacks_do_not_retain_closed_tabstrip() {
+        let _ = crate::test_env::with_gtk_test(|| {
+            let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+            let (first_surface_id, second_surface_id) = {
+                let mut model = model.lock().unwrap();
+                let workspace = model.create_workspace("main", Path::new("/tmp"));
+                let first_surface_id = workspace.focused_surface_id;
+                let second_surface_id = model.add_tab(&first_surface_id).expect("second tab").id;
+                (first_surface_id, second_surface_id)
+            };
+            let (tx, _rx) = mpsc::channel();
+            let backend = Arc::new(GtkTerminalBackend::new(tx));
+            let container = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            let parent = adw::ApplicationWindow::builder().build();
+            let mut controller = TerminalController::new(container, parent.clone(), model, backend);
+
+            let tabs = vec![first_surface_id, second_surface_id];
+            for surface_id in &tabs {
+                let content = gtk::Label::new(Some(surface_id)).upcast::<gtk::Widget>();
+                controller.chromes.insert(
+                    surface_id.clone(),
+                    build_embedded_ghostty_pane_chrome(surface_id, &content, None, &parent),
+                );
+            }
+
+            let tabstrip = controller.leaf_widget_with_tabstrip(&tabs, 0);
+            let (stack, tab, selector) = {
+                let strips = controller.pane_tab_strips.borrow();
+                let strip = strips.first().expect("pane tab strip");
+                (
+                    strip.stack.downgrade(),
+                    strip.tab_widgets[0].downgrade(),
+                    strip.select_areas[0].downgrade(),
+                )
+            };
+
+            controller.pane_tab_strips.borrow_mut().clear();
+            drop(tabstrip);
+            while glib::MainContext::default().iteration(false) {}
+
+            assert!(stack.upgrade().is_none(), "tab callback retained stack");
+            assert!(tab.upgrade().is_none(), "tab callback retained tab widget");
+            assert!(
+                selector.upgrade().is_none(),
+                "tab callback retained selector button"
+            );
+            parent.close();
+        });
+    }
+
+    #[test]
+    fn deferred_tab_spawn_failure_restores_previous_pane_layout() {
+        let _ = crate::test_env::with_gtk_test(|| {
+            crate::test_env::with_isolated_user_dirs(|| {
+                let workspace_dir = tempfile::tempdir().unwrap();
+                let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+                let (near_surface_id, focused_surface_id, original_tree) = {
+                    let mut model = model.lock().unwrap();
+                    let workspace = model.create_workspace("main", workspace_dir.path());
+                    let near_surface_id = workspace.focused_surface_id;
+                    let focused_surface_id = model
+                        .split_surface(&near_surface_id, SplitAxis::Horizontal)
+                        .unwrap()
+                        .id;
+                    let workspace = model.active_workspace().unwrap();
+                    (near_surface_id, focused_surface_id, workspace.pane_tree)
+                };
+                let (tx, rx) = mpsc::channel();
+                let backend = Arc::new(GtkTerminalBackend::new(tx));
+                let state = SocketAppState::new(
+                    model.clone(),
+                    backend.clone(),
+                    "/bin/sh",
+                    PathBuf::from(std::env::var("XDG_RUNTIME_DIR").unwrap()).join("forktty.sock"),
+                )
+                .with_notification_dispatch(false);
+                let container = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                let parent = adw::ApplicationWindow::builder().build();
+                let mut controller =
+                    TerminalController::new(container, parent.clone(), model.clone(), backend);
+                controller.attach_state(state.clone());
+
+                assert!(glib::MainContext::new()
+                    .block_on(add_new_tab_surface_transaction(&state, &near_surface_id),));
+                let spawn = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+                drop(workspace_dir);
+                controller.handle(spawn);
+
+                let workspace = model.lock().unwrap().active_workspace().unwrap();
+                assert_eq!(workspace.pane_tree, original_tree);
+                assert_eq!(workspace.focused_surface_id, focused_surface_id);
+                assert_eq!(model.lock().unwrap().list_surfaces(None).len(), 2);
+                let saved = session::load_session()
+                    .unwrap()
+                    .expect("deferred rollback should persist the restored layout");
+                assert_eq!(saved.workspaces[0].pane_tree, original_tree);
+                assert_eq!(saved.workspaces[0].focused_surface_id, focused_surface_id);
+                parent.close();
+            });
+        });
+    }
+
+    #[test]
+    fn deferred_split_spawn_failure_restores_previous_pane_layout() {
+        let _ = crate::test_env::with_gtk_test(|| {
+            crate::test_env::with_isolated_user_dirs(|| {
+                let workspace_dir = tempfile::tempdir().unwrap();
+                let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+                let (target_surface_id, focused_surface_id, original_tree) = {
+                    let mut model = model.lock().unwrap();
+                    let workspace = model.create_workspace("main", workspace_dir.path());
+                    let target_surface_id = workspace.focused_surface_id;
+                    let focused_surface_id = model
+                        .split_surface(&target_surface_id, SplitAxis::Horizontal)
+                        .unwrap()
+                        .id;
+                    let workspace = model.active_workspace().unwrap();
+                    (target_surface_id, focused_surface_id, workspace.pane_tree)
+                };
+                let (tx, rx) = mpsc::channel();
+                let backend = Arc::new(GtkTerminalBackend::new(tx));
+                let state = SocketAppState::new(
+                    model.clone(),
+                    backend.clone(),
+                    "/bin/sh",
+                    PathBuf::from(std::env::var("XDG_RUNTIME_DIR").unwrap()).join("forktty.sock"),
+                )
+                .with_notification_dispatch(false);
+                let container = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                let parent = adw::ApplicationWindow::builder().build();
+                let mut controller =
+                    TerminalController::new(container, parent.clone(), model.clone(), backend);
+                controller.attach_state(state.clone());
+
+                assert!(glib::MainContext::new().block_on(split_surface_by_id(
+                    &state,
+                    &target_surface_id,
+                    SplitAxis::Vertical,
+                )));
+                let spawn = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+                drop(workspace_dir);
+                controller.handle(spawn);
+
+                let workspace = model.lock().unwrap().active_workspace().unwrap();
+                assert_eq!(workspace.pane_tree, original_tree);
+                assert_eq!(workspace.focused_surface_id, focused_surface_id);
+                assert_eq!(model.lock().unwrap().list_surfaces(None).len(), 2);
+                let saved = session::load_session()
+                    .unwrap()
+                    .expect("deferred rollback should persist the restored layout");
+                assert_eq!(saved.workspaces[0].pane_tree, original_tree);
+                assert_eq!(saved.workspaces[0].focused_surface_id, focused_surface_id);
+                parent.close();
+            });
+        });
+    }
+
+    #[test]
+    fn ignored_deferred_spawn_commands_disarm_their_rollback() {
+        let _ = crate::test_env::with_gtk_test(|| {
+            for existing_widget in [false, true] {
+                let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+                let surface = {
+                    let mut model = model.lock().unwrap();
+                    let workspace = model.create_workspace("main", Path::new("/tmp"));
+                    model
+                        .surface(&workspace.focused_surface_id)
+                        .unwrap()
+                        .clone()
+                };
+                let (tx, rx) = mpsc::channel();
+                let backend = Arc::new(GtkTerminalBackend::new(tx));
+                let container = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                let parent = adw::ApplicationWindow::builder().build();
+                let mut controller =
+                    TerminalController::new(container, parent.clone(), model, backend.clone());
+                let rollback_ran = Arc::new(AtomicBool::new(false));
+                let rollback_observer = rollback_ran.clone();
+                backend
+                    .spawn_with_failure_handler(
+                        SpawnRequest::for_surface(
+                            &surface,
+                            "/bin/sh",
+                            PathBuf::from("/tmp/forktty.sock"),
+                        ),
+                        DeferredSpawnFailureHandler::new(move || {
+                            rollback_observer.store(true, Ordering::SeqCst);
+                        }),
+                    )
+                    .unwrap();
+                let command = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+                let generation = match &command {
+                    GtkTerminalCommand::Spawn { generation, .. } => *generation,
+                    _ => unreachable!("spawn backend must enqueue a spawn command"),
+                };
+
+                if existing_widget {
+                    controller.embedded_ghostty_panes.insert(
+                        surface.id.clone(),
+                        EmbeddedGhosttyPane {
+                            surface: gtk::Label::new(None).upcast(),
+                            generation,
+                        },
+                    );
+                } else {
+                    backend
+                        .close_for_generation(&surface.id, generation)
+                        .unwrap();
+                }
+
+                controller.handle(command);
+
+                assert!(
+                    !rollback_ran.load(Ordering::SeqCst),
+                    "an obsolete spawn command must not compensate a newer or existing surface"
+                );
+                parent.close();
+            }
+        });
     }
 
     #[test]

@@ -30,8 +30,8 @@ fn install_tab_drop_target_on(
     model: Arc<Mutex<WorkspaceModel>>,
     state: Option<SocketAppState>,
 ) {
-    let handle_for_drop = handle.clone();
-    let strip_for_drop = tabstrip.clone();
+    let handle_for_drop = handle.downgrade();
+    let strip_for_drop = tabstrip.downgrade();
     let tab_targets = tab_targets.to_vec();
     let tab_order = tab_targets
         .iter()
@@ -41,10 +41,15 @@ fn install_tab_drop_target_on(
     let tab_order_for_drop = tab_order.clone();
     let tab_targets_for_motion = tab_targets.clone();
     let tab_order_for_motion = tab_order.clone();
-    let handle_for_motion = handle.clone();
-    let strip_for_motion = tabstrip.clone();
+    let handle_for_motion = handle.downgrade();
+    let strip_for_motion = tabstrip.downgrade();
     let target = tab_drop_target(move |source_id, x, y| {
         clear_tab_drop_indicators(&tab_targets_for_drop);
+        let (Some(handle_for_drop), Some(strip_for_drop)) =
+            (handle_for_drop.upgrade(), strip_for_drop.upgrade())
+        else {
+            return false;
+        };
         let Some((strip_x, _)) = handle_for_drop.translate_coordinates(&strip_for_drop, x, y)
         else {
             return false;
@@ -76,6 +81,12 @@ fn install_tab_drop_target_on(
         else {
             clear_tab_drop_indicators(&tab_targets_for_motion);
             return gdk::DragAction::MOVE;
+        };
+        let (Some(handle_for_motion), Some(strip_for_motion)) =
+            (handle_for_motion.upgrade(), strip_for_motion.upgrade())
+        else {
+            clear_tab_drop_indicators(&tab_targets_for_motion);
+            return gdk::DragAction::empty();
         };
         let Some((strip_x, _)) = handle_for_motion.translate_coordinates(&strip_for_motion, x, y)
         else {

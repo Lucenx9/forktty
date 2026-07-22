@@ -82,8 +82,6 @@ impl TerminalController {
         let terminal_appearance = ghostty_terminal_appearance_for_config(&config);
         let scrollback_limit_bytes =
             embedded_ghostty_scrollback_limit_bytes_for_appearance(&terminal_appearance);
-        #[cfg(target_os = "linux")]
-        let child_pids_before_spawn = current_process_child_pids();
         let widget = if embedder.supports_spawn_command() {
             let persistence = self.pty_persistence_plan(&request, &config);
             let argv = forktty_terminal::spawn::embedded_ghostty_command_argv_with_persistence(
@@ -444,11 +442,9 @@ impl TerminalController {
                 {
                     return glib::ControlFlow::Break;
                 }
-                let mut child_pid = unsafe { embedder.surface_child_pid(&widget) };
-                #[cfg(target_os = "linux")]
-                if child_pid.is_none() {
-                    child_pid = new_process_child_pid_since(&child_pids_before_spawn);
-                }
+                // Only the widget getter can associate a concurrently spawned
+                // child with this surface; a process-wide child list cannot.
+                let child_pid = unsafe { embedder.surface_child_pid(&widget) };
                 if let Some(pid) = child_pid {
                     match commit_embedded_surface_pid_for_generation(
                         &backend,

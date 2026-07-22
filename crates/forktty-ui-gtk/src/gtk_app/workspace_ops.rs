@@ -14,44 +14,28 @@ pub(super) enum TabMoveDirection {
     Right,
 }
 
-struct WorkspacePaneLayoutSnapshot {
-    workspace_id: String,
-    pane_tree: PaneNode,
-    focused_surface_id: String,
-}
-
-impl WorkspacePaneLayoutSnapshot {
-    fn capture(model: &WorkspaceModel, surface_id: &str) -> Option<Self> {
-        let workspace_id = model.surface(surface_id)?.workspace_id.clone();
-        let workspace = model
-            .list_workspaces()
-            .into_iter()
-            .find(|workspace| workspace.id == workspace_id)?;
-        Some(Self {
-            workspace_id,
-            pane_tree: workspace.pane_tree,
-            focused_surface_id: workspace.focused_surface_id,
-        })
-    }
-
-    fn rollback_added_surface(self, model: &mut WorkspaceModel, surface_id: &str) -> bool {
-        model.close_surface(surface_id).is_some()
-            && model.restore_workspace_pane_layout(
-                &self.workspace_id,
-                self.pane_tree,
-                self.focused_surface_id,
-            )
-    }
-}
-
 pub(super) fn spawn_surface_gtk(
     state: &SocketAppState,
     surface: &Surface,
 ) -> Result<(), TerminalError> {
+    spawn_surface_gtk_with_failure_handler(state, surface, None)
+}
+
+fn spawn_surface_gtk_with_failure_handler(
+    state: &SocketAppState,
+    surface: &Surface,
+    failure_handler: Option<DeferredSpawnFailureHandler>,
+) -> Result<(), TerminalError> {
+    let failure_lease = failure_handler.clone();
     let base = SpawnRequest::for_surface(surface, state.shell.clone(), state.socket_path.clone());
     let request = match forktty_socket::spawn_request_for_surface(base, surface) {
         Ok(Some(request)) => request,
-        Ok(None) => return Ok(()),
+        Ok(None) => {
+            if let Some(failure_handler) = failure_handler {
+                failure_handler.disarm();
+            }
+            return Ok(());
+        }
         Err(error) => {
             record_terminal_spawn_failure(
                 &state.model,
@@ -63,7 +47,14 @@ pub(super) fn spawn_surface_gtk(
             return Err(TerminalError::Backend(error.to_string()));
         }
     };
-    state.terminal.spawn(request)
+    let result = match failure_handler {
+        Some(failure_handler) => state
+            .terminal
+            .spawn_with_failure_handler(request, failure_handler),
+        None => state.terminal.spawn(request),
+    };
+    drop(failure_lease);
+    result
 }
 
 pub(super) fn add_new_tab_surface(state: &SocketAppState, near_surface_id: &str) {
@@ -88,7 +79,7 @@ pub(super) async fn add_new_tab_surface_transaction(
                 return false;
             }
         };
-        let Some(snapshot) = WorkspacePaneLayoutSnapshot::capture(&model, near_surface_id) else {
+        let Some(snapshot) = SurfaceCreationLayoutSnapshot::capture(&model, near_surface_id) else {
             return false;
         };
         model
@@ -99,12 +90,15 @@ pub(super) async fn add_new_tab_surface_transaction(
     let Some((surface, snapshot)) = added else {
         return false;
     };
-    if let Err(err) = spawn_surface_gtk(state, &surface) {
-        if let Ok(mut model) = state.model.lock() {
-            if !snapshot.rollback_added_surface(&mut model, &surface.id) {
-                eprintln!("Failed to restore pane layout after tab spawn failure");
-            }
-        }
+    let failure_handler = deferred_surface_creation_failure_handler(
+        state,
+        &surface.id,
+        snapshot,
+        surface_set_guard,
+        save_session_from_state,
+    );
+    if let Err(err) = spawn_surface_gtk_with_failure_handler(state, &surface, Some(failure_handler))
+    {
         eprintln!("Failed to spawn new tab terminal: {err}");
         create_global_notification(
             state,
@@ -114,7 +108,9 @@ pub(super) async fn add_new_tab_surface_transaction(
         );
         false
     } else {
-        drop(surface_set_guard);
+        // Synchronous backends disarm before returning, so persist their commit
+        // now. GTK still owns the surface guard here; this snapshot is skipped
+        // and controller materialization performs the authoritative save.
         save_session_from_state(state);
         true
     }
@@ -167,7 +163,7 @@ pub(super) async fn split_surface_by_id(
     let _ = forktty_socket::sync_live_surface_cwds(state);
     let split = match state.model.lock() {
         Ok(mut model) => {
-            let Some(snapshot) = WorkspacePaneLayoutSnapshot::capture(&model, surface_id) else {
+            let Some(snapshot) = SurfaceCreationLayoutSnapshot::capture(&model, surface_id) else {
                 return false;
             };
             model
@@ -183,12 +179,15 @@ pub(super) async fn split_surface_by_id(
     let Some((surface, snapshot)) = split else {
         return false;
     };
-    if let Err(err) = spawn_surface_gtk(state, &surface) {
-        if let Ok(mut model) = state.model.lock() {
-            if !snapshot.rollback_added_surface(&mut model, &surface.id) {
-                eprintln!("Failed to restore pane layout after split spawn failure");
-            }
-        }
+    let failure_handler = deferred_surface_creation_failure_handler(
+        state,
+        &surface.id,
+        snapshot,
+        surface_set_guard,
+        save_session_from_state,
+    );
+    if let Err(err) = spawn_surface_gtk_with_failure_handler(state, &surface, Some(failure_handler))
+    {
         eprintln!("Failed to spawn split terminal: {err}");
         create_global_notification(
             state,
@@ -198,7 +197,8 @@ pub(super) async fn split_surface_by_id(
         );
         false
     } else {
-        drop(surface_set_guard);
+        // See add_new_tab_surface_transaction: GTK defers this save until
+        // materialization, while synchronous backends can persist immediately.
         save_session_from_state(state);
         true
     }
@@ -537,6 +537,11 @@ pub(super) async fn close_tab_surface_transaction(
         if model.close_surface(surface_id).is_none() {
             return false;
         }
+    }
+    if let Err(err) =
+        forktty_socket::evict_hook_session_targets_for_surfaces(state, &[surface_id.to_string()])
+    {
+        eprintln!("Failed to clean up closed tab surface hook state: {err}");
     }
     drop(surface_set_guard);
     save_session_from_state(state);

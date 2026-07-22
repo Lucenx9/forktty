@@ -4,6 +4,7 @@ pub(super) enum GtkTerminalCommand {
     Spawn {
         request: SpawnRequest,
         generation: u64,
+        failure_handler: Option<DeferredSpawnFailureHandler>,
     },
     ShowSurface {
         surface_id: String,
@@ -714,10 +715,12 @@ impl GtkTerminalBackend {
             _ => wait(),
         }
     }
-}
 
-impl TerminalBackend for GtkTerminalBackend {
-    fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+    fn enqueue_spawn(
+        &self,
+        request: SpawnRequest,
+        failure_handler: Option<DeferredSpawnFailureHandler>,
+    ) -> Result<(), TerminalError> {
         let surface_id = request.surface_id.clone();
         let mut runtime = self
             .runtime
@@ -749,6 +752,7 @@ impl TerminalBackend for GtkTerminalBackend {
         if let Err(err) = self.send_command(GtkTerminalCommand::Spawn {
             request,
             generation,
+            failure_handler,
         }) {
             runtime.surfaces.remove(&surface_id);
             return Err(err);
@@ -756,6 +760,20 @@ impl TerminalBackend for GtkTerminalBackend {
         #[cfg(test)]
         self.run_after_enqueue_hook_for_test();
         Ok(())
+    }
+}
+
+impl TerminalBackend for GtkTerminalBackend {
+    fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError> {
+        self.enqueue_spawn(request, None)
+    }
+
+    fn spawn_with_failure_handler(
+        &self,
+        request: SpawnRequest,
+        failure_handler: DeferredSpawnFailureHandler,
+    ) -> Result<(), TerminalError> {
+        self.enqueue_spawn(request, Some(failure_handler))
     }
 
     fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError> {

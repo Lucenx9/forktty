@@ -194,6 +194,7 @@ fn sidebar_snapshot_tracks_ssh_child_exit_and_restart_lifecycle() {
             GtkTerminalCommand::Spawn {
                 request,
                 generation,
+                ..
             } => {
                 assert_eq!(request.surface_id, surface.id);
                 assert_eq!(
@@ -255,6 +256,7 @@ fn sidebar_snapshot_tracks_ssh_child_exit_and_restart_lifecycle() {
             GtkTerminalCommand::Spawn {
                 request,
                 generation,
+                ..
             } => {
                 assert_eq!(request.surface_id, surface.id);
                 assert_eq!(

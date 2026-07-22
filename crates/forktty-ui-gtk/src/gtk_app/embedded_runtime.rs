@@ -285,43 +285,6 @@ pub(super) fn embedded_agent_tail_generation(known: Option<&AgentTailEntry>) -> 
         .unwrap_or(0)
 }
 
-#[cfg(target_os = "linux")]
-pub(super) fn proc_stat_parent_pid(stat: &str) -> Option<u32> {
-    let (_, rest) = stat.rsplit_once(") ")?;
-    let mut fields = rest.split_whitespace();
-    let _state = fields.next()?;
-    fields.next()?.parse().ok()
-}
-
-#[cfg(target_os = "linux")]
-pub(super) fn current_process_child_pids() -> BTreeSet<i32> {
-    let parent_pid = std::process::id();
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        return BTreeSet::new();
-    };
-    entries
-        .flatten()
-        .filter_map(|entry| {
-            let pid = entry.file_name().to_string_lossy().parse::<i32>().ok()?;
-            let stat = std::fs::read_to_string(entry.path().join("stat")).ok()?;
-            (proc_stat_parent_pid(&stat) == Some(parent_pid)).then_some(pid)
-        })
-        .collect()
-}
-
-#[cfg(target_os = "linux")]
-pub(super) fn new_process_child_pid_since(before: &BTreeSet<i32>) -> Option<i32> {
-    let mut candidates = current_process_child_pids()
-        .difference(before)
-        .copied()
-        .collect::<Vec<_>>();
-    candidates.sort_unstable();
-    match candidates.as_slice() {
-        [pid] => Some(*pid),
-        _ => None,
-    }
-}
-
 /// Reflect an embedded Ghostty child-process exit into the model: set the pane
 /// status and, on an abnormal exit, build a notification to dispatch. Mirrors
 /// the classic-pane `ChildExit` handling in `terminal_signals.rs`. `exit_code`

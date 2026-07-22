@@ -265,3 +265,157 @@ async fn pane_new_tab_rolls_back_model_when_spawn_fails() {
     .unwrap();
     assert_eq!(surfaces.as_array().unwrap().len(), 1);
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn pane_new_tab_deferred_spawn_failure_restores_target_workspace_layout_and_focus() {
+    let state_dir = tempfile::tempdir().unwrap();
+    let _state_home = EnvGuard::set("XDG_STATE_HOME", state_dir.path().to_str().unwrap());
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let (workspace_id, target_surface_id, focused_surface_id, original_tree) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("project", "/tmp");
+        let target_surface_id = workspace.focused_surface_id;
+        let focused_surface_id = model
+            .split_surface(&target_surface_id, forktty_core::SplitAxis::Horizontal)
+            .unwrap()
+            .id;
+        let workspace = model.active_workspace().unwrap();
+        (
+            workspace.id,
+            target_surface_id,
+            focused_surface_id,
+            workspace.pane_tree,
+        )
+    };
+    let backend = Arc::new(DeferredSpawnFailureBackend::default());
+    let state = SocketAppState::new(
+        model.clone(),
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+
+    let created = dispatch(
+        &state,
+        "pane.new_tab",
+        json!({"surface_id": target_surface_id}),
+    )
+    .await
+    .unwrap();
+
+    assert!(created["id"].is_string());
+    assert_eq!(backend.pending_failure_count(), 1);
+    assert!(
+        state.try_surface_set_guard().is_none(),
+        "surface guard must remain held until the queued spawn resolves"
+    );
+    forktty_core::session::save_session(&model.lock().unwrap().to_session_data()).unwrap();
+    let pending_saved = forktty_core::session::load_session().unwrap().unwrap();
+    assert_ne!(
+        pending_saved
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .unwrap()
+            .pane_tree,
+        original_tree,
+        "fixture must persist the accepted surface before deferred failure"
+    );
+    backend.fail_next_spawn();
+
+    assert!(state.try_surface_set_guard().is_some());
+    let workspace = model
+        .lock()
+        .unwrap()
+        .list_workspaces()
+        .into_iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .unwrap();
+    assert_eq!(workspace.pane_tree, original_tree);
+    assert_eq!(workspace.focused_surface_id, focused_surface_id);
+    assert_eq!(
+        model
+            .lock()
+            .unwrap()
+            .list_surfaces(Some(&workspace_id))
+            .len(),
+        2
+    );
+    let saved = forktty_core::session::load_session().unwrap().unwrap();
+    let saved_workspace = saved
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .unwrap();
+    assert_eq!(saved_workspace.pane_tree, original_tree);
+    assert_eq!(saved_workspace.focused_surface_id, focused_surface_id);
+}
+
+#[tokio::test]
+async fn deferred_spawn_failure_recovers_poisoned_model_for_rollback() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let (workspace_id, original_surface_id, added_surface_id, original_tree, snapshot) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("project", "/tmp");
+        let workspace_id = workspace.id;
+        let original_surface_id = workspace.focused_surface_id;
+        let original_tree = model.active_workspace().unwrap().pane_tree;
+        let snapshot =
+            SurfaceCreationLayoutSnapshot::capture(&model, &original_surface_id).unwrap();
+        let added_surface_id = model.add_tab(&original_surface_id).unwrap().id;
+        (
+            workspace_id,
+            original_surface_id,
+            added_surface_id,
+            original_tree,
+            snapshot,
+        )
+    };
+    let state = SocketAppState::new(
+        model.clone(),
+        Arc::new(HeadlessTerminalBackend::new()),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let surface_guard = state.surface_set_guard().await;
+    let after_restore_ran = Arc::new(AtomicBool::new(false));
+    let after_restore_observer = after_restore_ran.clone();
+    let handler = deferred_surface_creation_failure_handler(
+        &state,
+        &added_surface_id,
+        snapshot,
+        surface_guard,
+        move |_| after_restore_observer.store(true, Ordering::SeqCst),
+    );
+
+    let poison_model = model.clone();
+    assert!(std::thread::spawn(move || {
+        let _model = poison_model.lock().unwrap();
+        panic!("poison model before deferred spawn rollback");
+    })
+    .join()
+    .is_err());
+    assert!(model.is_poisoned());
+
+    handler.run();
+
+    assert!(
+        !model.is_poisoned(),
+        "completed rollback must clear the recovered model poison"
+    );
+    let workspace = model
+        .lock()
+        .unwrap()
+        .list_workspaces()
+        .into_iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .unwrap();
+    assert_eq!(workspace.pane_tree, original_tree);
+    assert_eq!(workspace.focused_surface_id, original_surface_id);
+    assert!(model.lock().unwrap().surface(&added_surface_id).is_none());
+    assert!(after_restore_ran.load(Ordering::SeqCst));
+    assert!(state.try_surface_set_guard().is_some());
+}
