@@ -10,11 +10,12 @@ use forktty_core::{
 use forktty_socket::default_socket_path;
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, ready_surface_ids, serve_until_shutdown,
-    socket_path_from_env, SocketAppState,
+    socket_path_from_env, SocketAppState, SurfaceSetGuard,
 };
 use forktty_terminal::{
-    SharedTerminalBackend, SpawnRequest, TerminalBackend, TerminalError, TerminalSurfaceState,
-    TerminalTextCapture, TerminalTextSnapshot, TerminalTextSnapshotParts,
+    DeferredSpawnFailureHandler, SharedTerminalBackend, SpawnRequest, TerminalBackend,
+    TerminalError, TerminalSurfaceState, TerminalTextCapture, TerminalTextSnapshot,
+    TerminalTextSnapshotParts,
 };
 use global_hotkey::{
     hotkey::{Code, HotKey},

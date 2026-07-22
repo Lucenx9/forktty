@@ -24,6 +24,7 @@ fn gtk_backend_generations_are_nonzero_and_monotonic_across_surface_reuse() {
         GtkTerminalCommand::Spawn {
             request,
             generation,
+            ..
         } => {
             assert_eq!(request.surface_id, "surface-1");
             generation
@@ -55,6 +56,7 @@ fn gtk_backend_generations_are_nonzero_and_monotonic_across_surface_reuse() {
         GtkTerminalCommand::Spawn {
             request,
             generation,
+            ..
         } => {
             assert_eq!(request.surface_id, "surface-1");
             generation

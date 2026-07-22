@@ -43,6 +43,32 @@ pub struct SpawnRequest {
     pub eligible_for_pty_persistence: bool,
 }
 
+/// Deferred compensation owned by a terminal backend until an accepted spawn
+/// has either materialized or failed.
+///
+/// Most backends complete [`TerminalBackend::spawn`] synchronously and drop
+/// this handler immediately. UI backends that enqueue the real spawn retain it
+/// with that command and invoke it only if materialization later fails.
+pub struct DeferredSpawnFailureHandler(Option<Box<dyn FnOnce() + Send + 'static>>);
+
+impl DeferredSpawnFailureHandler {
+    pub fn new(handler: impl FnOnce() + Send + 'static) -> Self {
+        Self(Some(Box::new(handler)))
+    }
+
+    pub fn run(mut self) {
+        if let Some(handler) = self.0.take() {
+            handler();
+        }
+    }
+}
+
+impl std::fmt::Debug for DeferredSpawnFailureHandler {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("DeferredSpawnFailureHandler")
+    }
+}
+
 impl SpawnRequest {
     pub fn for_workspace(
         workspace: &Workspace,
@@ -266,6 +292,15 @@ fn truncate_text(text: String, max_bytes: usize, from_end: bool) -> (String, boo
 
 pub trait TerminalBackend: Send + Sync {
     fn spawn(&self, request: SpawnRequest) -> Result<(), TerminalError>;
+    fn spawn_with_failure_handler(
+        &self,
+        request: SpawnRequest,
+        failure_handler: DeferredSpawnFailureHandler,
+    ) -> Result<(), TerminalError> {
+        let result = self.spawn(request);
+        drop(failure_handler);
+        result
+    }
     fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError>;
     fn send_enter(&self, surface_id: &str) -> Result<(), TerminalError> {
         self.send_text(surface_id, "\r")

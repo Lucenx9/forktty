@@ -326,12 +326,14 @@ fn new_tabs_and_splits_use_live_terminal_cwd() {
     let spawned_tab = rx.recv_timeout(Duration::from_secs(1)).unwrap();
     let GtkTerminalCommand::Spawn {
         request: tab_request,
+        failure_handler,
         ..
     } = spawned_tab
     else {
         panic!("new tab should enqueue a terminal spawn");
     };
     assert_eq!(tab_request.cwd, live_dir.path());
+    drop(failure_handler);
 
     {
         let mut model = model.lock().unwrap();
@@ -610,11 +612,18 @@ fn split_surface_by_id_targets_background_workspace_without_selecting_it() {
         SplitAxis::Horizontal,
     )));
 
-    let GtkTerminalCommand::Spawn { request, .. } =
-        rx.recv_timeout(Duration::from_secs(1)).unwrap()
+    let GtkTerminalCommand::Spawn {
+        request,
+        failure_handler,
+        ..
+    } = rx.recv_timeout(Duration::from_secs(1)).unwrap()
     else {
         panic!("targeted split should enqueue a terminal spawn");
     };
+    assert!(
+        failure_handler.is_some(),
+        "GTK split should retain rollback until the deferred spawn completes"
+    );
     let model = model.lock().unwrap();
     assert_eq!(model.active_workspace().unwrap().id, active_id);
     assert_eq!(request.workspace_id, background_id);

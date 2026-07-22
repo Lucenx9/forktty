@@ -45,8 +45,9 @@ All notable changes to ForkTTY are documented here.
   surface has disappeared from the workspace model.
 - Split-pane action hovers now stay inset from the compact header edges instead
   of flashing across the focused pane hairline when the pointer crosses an icon.
-- A failed new-tab terminal spawn now restores the exact previous pane layout
-  and focus instead of moving focus into the pane where the tab was attempted.
+- Failed new-tab and split terminal spawns, including failures discovered only
+  when GTK materializes the embedded pane, now restore the exact previous pane
+  layout, focus, and saved session.
 - GTK Remove/Merge worktree actions now use the modeled workspace checkout
   (`working_dir`) instead of the focused surface's live shell CWD, so a pane
   that has `cd`'d outside the repo (or into another tree) can no longer route

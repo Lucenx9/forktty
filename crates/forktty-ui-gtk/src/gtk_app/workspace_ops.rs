@@ -14,6 +14,7 @@ pub(super) enum TabMoveDirection {
     Right,
 }
 
+#[derive(Clone)]
 struct WorkspacePaneLayoutSnapshot {
     workspace_id: String,
     pane_tree: PaneNode,
@@ -34,12 +35,12 @@ impl WorkspacePaneLayoutSnapshot {
         })
     }
 
-    fn rollback_added_surface(self, model: &mut WorkspaceModel, surface_id: &str) -> bool {
+    fn rollback_added_surface(&self, model: &mut WorkspaceModel, surface_id: &str) -> bool {
         model.close_surface(surface_id).is_some()
             && model.restore_workspace_pane_layout(
                 &self.workspace_id,
-                self.pane_tree,
-                self.focused_surface_id,
+                self.pane_tree.clone(),
+                self.focused_surface_id.clone(),
             )
     }
 }
@@ -47,6 +48,14 @@ impl WorkspacePaneLayoutSnapshot {
 pub(super) fn spawn_surface_gtk(
     state: &SocketAppState,
     surface: &Surface,
+) -> Result<(), TerminalError> {
+    spawn_surface_gtk_with_failure_handler(state, surface, None)
+}
+
+fn spawn_surface_gtk_with_failure_handler(
+    state: &SocketAppState,
+    surface: &Surface,
+    failure_handler: Option<DeferredSpawnFailureHandler>,
 ) -> Result<(), TerminalError> {
     let base = SpawnRequest::for_surface(surface, state.shell.clone(), state.socket_path.clone());
     let request = match forktty_socket::spawn_request_for_surface(base, surface) {
@@ -63,7 +72,35 @@ pub(super) fn spawn_surface_gtk(
             return Err(TerminalError::Backend(error.to_string()));
         }
     };
-    state.terminal.spawn(request)
+    match failure_handler {
+        Some(failure_handler) => state
+            .terminal
+            .spawn_with_failure_handler(request, failure_handler),
+        None => state.terminal.spawn(request),
+    }
+}
+
+fn deferred_layout_rollback(
+    state: &SocketAppState,
+    surface_id: &str,
+    snapshot: WorkspacePaneLayoutSnapshot,
+    surface_set_guard: SurfaceSetGuard,
+) -> DeferredSpawnFailureHandler {
+    let state = state.clone();
+    let surface_id = surface_id.to_string();
+    DeferredSpawnFailureHandler::new(move || {
+        let restored = state
+            .model
+            .lock()
+            .is_ok_and(|mut model| snapshot.rollback_added_surface(&mut model, &surface_id));
+        if !restored {
+            eprintln!("Failed to restore pane layout after deferred terminal spawn failure");
+        }
+        drop(surface_set_guard);
+        if restored {
+            save_session_from_state(&state);
+        }
+    })
 }
 
 pub(super) fn add_new_tab_surface(state: &SocketAppState, near_surface_id: &str) {
@@ -99,7 +136,10 @@ pub(super) async fn add_new_tab_surface_transaction(
     let Some((surface, snapshot)) = added else {
         return false;
     };
-    if let Err(err) = spawn_surface_gtk(state, &surface) {
+    let failure_handler =
+        deferred_layout_rollback(state, &surface.id, snapshot.clone(), surface_set_guard);
+    if let Err(err) = spawn_surface_gtk_with_failure_handler(state, &surface, Some(failure_handler))
+    {
         if let Ok(mut model) = state.model.lock() {
             if !snapshot.rollback_added_surface(&mut model, &surface.id) {
                 eprintln!("Failed to restore pane layout after tab spawn failure");
@@ -114,7 +154,6 @@ pub(super) async fn add_new_tab_surface_transaction(
         );
         false
     } else {
-        drop(surface_set_guard);
         save_session_from_state(state);
         true
     }
@@ -183,7 +222,10 @@ pub(super) async fn split_surface_by_id(
     let Some((surface, snapshot)) = split else {
         return false;
     };
-    if let Err(err) = spawn_surface_gtk(state, &surface) {
+    let failure_handler =
+        deferred_layout_rollback(state, &surface.id, snapshot.clone(), surface_set_guard);
+    if let Err(err) = spawn_surface_gtk_with_failure_handler(state, &surface, Some(failure_handler))
+    {
         if let Ok(mut model) = state.model.lock() {
             if !snapshot.rollback_added_surface(&mut model, &surface.id) {
                 eprintln!("Failed to restore pane layout after split spawn failure");
@@ -198,7 +240,6 @@ pub(super) async fn split_surface_by_id(
         );
         false
     } else {
-        drop(surface_set_guard);
         save_session_from_state(state);
         true
     }
