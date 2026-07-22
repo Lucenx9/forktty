@@ -1216,7 +1216,26 @@ pub(super) fn repair_restored_workspace_paths(
     for workspace in &mut data.workspaces {
         if !workspace.working_dir.is_dir() {
             workspace.working_dir = fallback_dir.clone();
+            // A missing checkout means the saved worktree identity is no longer
+            // trustworthy: keep the workspace as a plain directory rather than
+            // retaining stale `worktree_name`/`worktree_dir` that would rebind
+            // Remove/Merge to a dead path or the wrong repo after fallback.
+            if workspace.worktree_name.is_some() || workspace.worktree_dir.is_some() {
+                workspace.worktree_name = None;
+                workspace.worktree_dir = None;
+            }
             repaired += 1;
+            continue;
+        }
+        // Working dir still exists, but a modeled worktree checkout may have
+        // been deleted out-of-band while the launch path stayed valid (e.g.
+        // only `worktree_dir` vanished). Drop orphan worktree metadata then.
+        if let Some(worktree_dir) = workspace.worktree_dir.as_ref() {
+            if !worktree_dir.is_dir() {
+                workspace.worktree_name = None;
+                workspace.worktree_dir = None;
+                repaired += 1;
+            }
         }
     }
     let surface_dirs = restored_surface_dirs(data);
@@ -1320,6 +1339,14 @@ pub(super) fn save_session_from_state(state: &SocketAppState) {
 }
 
 fn session_data_from_state(state: &SocketAppState) -> Option<session::SessionData> {
+    // Autosave and explicit save share this path. Mutating
+    // `repair_session_invariants` while a worktree/surface-set transaction is
+    // mid-flight can collapse or reassign workspaces that the transaction still
+    // owns. Defer the snapshot when either process-local guard is held so the
+    // next 2s tick (or an explicit save after commit) persists a consistent
+    // model instead.
+    let _worktree_guard = state.try_worktree_write_guard()?;
+    let _surface_set_guard = state.try_surface_set_guard()?;
     let worktree_identity_snapshots = {
         let model = state.model.lock().ok()?;
         model.worktree_identity_snapshots()
@@ -1337,6 +1364,8 @@ pub(super) fn autosave_session_from_state(
 ) {
     let _ = forktty_socket::sync_live_surface_cwds(state);
     let Some(data) = session_data_from_state(state) else {
+        // Guard contention or lock poison: skip this tick; do not clobber
+        // `last_saved` so a later successful snapshot still persists.
         return;
     };
     if last_saved.as_ref() == Some(&data) {

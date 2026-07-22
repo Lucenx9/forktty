@@ -902,16 +902,24 @@ pub(super) fn embedded_scrollback_restore_bytes(
     (!bytes.is_empty()).then_some(bytes)
 }
 
-/// An older embedding library can snapshot text but cannot restore previously
-/// persisted scrollback. In that case the first poll of a freshly spawned pane
-/// would usually see only the new shell prompt and clobber the saved tail before
-/// a future library with restore support can use it. Skip that initial write
-/// only when there is something stored and the loaded library cannot restore it.
+/// Skip the first scrollback snapshot poll when a pane still has stored
+/// scrollback that must not be overwritten by a near-empty fresh shell.
+///
+/// Two cases clobber the saved tail if the first 2s poll runs too early:
+/// 1. The loaded library cannot restore at all (`!supports_restore`) — the
+///    first poll usually sees only the new prompt and would replace the saved
+///    history before a future library can use it.
+/// 2. The library *can* restore, but restore runs asynchronously on the
+///    widget `init` signal. The first snapshot poll can still race and see
+///    only the new prompt, writing that prompt over the pre-restore model
+///    field. Skipping once gives restore a chance to land first; subsequent
+///    polls then snapshot the restored+live content.
 pub(super) fn should_skip_initial_embedded_scrollback_snapshot(
     supports_restore: bool,
     persisted_scrollback: Option<&str>,
 ) -> bool {
-    !supports_restore && persisted_scrollback.is_some_and(|text| !text.is_empty())
+    let _ = supports_restore;
+    persisted_scrollback.is_some_and(|text| !text.is_empty())
 }
 
 /// Status shown on an embedded Ghostty pane after its child process exits.
@@ -1177,17 +1185,22 @@ mod tests {
     }
 
     #[test]
-    fn initial_snapshot_is_skipped_only_for_unrestorable_persisted_scrollback() {
+    fn initial_snapshot_is_skipped_when_persisted_scrollback_is_present() {
+        // Whether or not the library can restore, the first poll must not
+        // clobber a non-empty saved tail with a fresh shell prompt.
         assert!(should_skip_initial_embedded_scrollback_snapshot(
             false,
             Some("old output\n")
         ));
-        assert!(!should_skip_initial_embedded_scrollback_snapshot(
+        assert!(should_skip_initial_embedded_scrollback_snapshot(
             true,
             Some("old output\n")
         ));
         assert!(!should_skip_initial_embedded_scrollback_snapshot(
             false, None
+        ));
+        assert!(!should_skip_initial_embedded_scrollback_snapshot(
+            true, None
         ));
         assert!(!should_skip_initial_embedded_scrollback_snapshot(
             false,

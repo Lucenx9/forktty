@@ -254,6 +254,38 @@ fn add_new_tab_spawn_failure_restores_focus_from_another_pane() {
 }
 
 #[test]
+fn add_new_tab_transaction_saves_committed_surface_immediately() {
+    crate::test_env::with_isolated_user_dirs(|| {
+        let project_dir = tempfile::tempdir().unwrap();
+        let runtime_dir = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal,
+            "/bin/sh",
+            runtime_dir.join("forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let surface_id = model
+            .lock()
+            .unwrap()
+            .create_workspace("project", project_dir.path())
+            .focused_surface_id;
+        spawn_focused_surface_if_needed(&state).unwrap();
+
+        assert!(
+            glib::MainContext::new().block_on(add_new_tab_surface_transaction(&state, &surface_id))
+        );
+
+        let saved = forktty_core::session::load_session()
+            .unwrap()
+            .expect("committed tab transaction should save immediately");
+        assert_eq!(saved.workspaces[0].pane_tree.leaf_tabs().unwrap().len(), 2);
+    });
+}
+
+#[test]
 fn new_tabs_and_splits_use_live_terminal_cwd() {
     let launch_dir = tempfile::tempdir().unwrap();
     let live_dir = tempfile::tempdir().unwrap();

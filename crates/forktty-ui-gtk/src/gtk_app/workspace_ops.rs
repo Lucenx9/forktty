@@ -78,7 +78,7 @@ pub(super) async fn add_new_tab_surface_transaction(
     state: &SocketAppState,
     near_surface_id: &str,
 ) -> bool {
-    let _surface_set_guard = state.surface_set_guard().await;
+    let surface_set_guard = state.surface_set_guard().await;
     let _ = forktty_socket::sync_live_surface_cwds(state);
     let added = {
         let mut model = match state.model.lock() {
@@ -114,6 +114,7 @@ pub(super) async fn add_new_tab_surface_transaction(
         );
         false
     } else {
+        drop(surface_set_guard);
         save_session_from_state(state);
         true
     }
@@ -154,7 +155,7 @@ pub(super) async fn split_surface_by_id(
     surface_id: &str,
     axis: SplitAxis,
 ) -> bool {
-    let _surface_set_guard = state.surface_set_guard().await;
+    let surface_set_guard = state.surface_set_guard().await;
     let target_exists = state
         .model
         .lock()
@@ -197,6 +198,7 @@ pub(super) async fn split_surface_by_id(
         );
         false
     } else {
+        drop(surface_set_guard);
         save_session_from_state(state);
         true
     }
@@ -333,7 +335,7 @@ pub(super) async fn open_browser_by_surface_id_transaction(
     surface_id: &str,
     axis: SplitAxis,
 ) -> bool {
-    let _surface_set_guard = state.surface_set_guard().await;
+    let surface_set_guard = state.surface_set_guard().await;
     let opened = match state.model.lock() {
         Ok(mut model) => model.open_browser_near(
             surface_id,
@@ -347,6 +349,7 @@ pub(super) async fn open_browser_by_surface_id_transaction(
         }
     };
     if opened.is_some() {
+        drop(surface_set_guard);
         save_session_from_state(state);
         true
     } else {
@@ -484,7 +487,7 @@ pub(super) async fn close_tab_surface_transaction(
     state: &SocketAppState,
     surface_id: &str,
 ) -> bool {
-    let _surface_set_guard = state.surface_set_guard().await;
+    let surface_set_guard = state.surface_set_guard().await;
     let workspace = {
         let model = match state.model.lock() {
             Ok(model) => model,
@@ -535,6 +538,7 @@ pub(super) async fn close_tab_surface_transaction(
             return false;
         }
     }
+    drop(surface_set_guard);
     save_session_from_state(state);
     true
 }
@@ -560,15 +564,19 @@ pub(super) async fn close_surface_by_id_transaction(
     state: &SocketAppState,
     surface_id: &str,
 ) -> bool {
-    let _surface_set_guard = state.surface_set_guard().await;
-    close_surface_by_id_with(
-        state,
-        surface_id,
-        &|surface_id| match state.terminal.close(surface_id) {
-            Ok(()) | Err(TerminalError::NotFound(_)) => Ok(()),
-            Err(err) => Err(err),
-        },
-    )
+    let surface_set_guard = state.surface_set_guard().await;
+    let closed = close_surface_by_id_with(state, surface_id, &|surface_id| match state
+        .terminal
+        .close(surface_id)
+    {
+        Ok(()) | Err(TerminalError::NotFound(_)) => Ok(()),
+        Err(err) => Err(err),
+    });
+    drop(surface_set_guard);
+    if closed {
+        save_session_from_state(state);
+    }
+    closed
 }
 
 pub(super) fn close_surface_by_id_for_generation(
@@ -787,7 +795,6 @@ fn close_surface_by_id_with(
         ) {
             eprintln!("Failed to clean up closed surface hook state: {err}");
         }
-        save_session_from_state(state);
         return true;
     }
 
@@ -820,7 +827,6 @@ fn close_surface_by_id_with(
     if let Err(err) = spawn_focused_surface_if_needed(state) {
         eprintln!("Failed to keep focused terminal alive: {err}");
     }
-    save_session_from_state(state);
     true
 }
 
