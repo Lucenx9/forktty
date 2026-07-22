@@ -40,6 +40,8 @@ All notable changes to ForkTTY are documented here.
   and public site with a current workspace screenshot.
 
 ### Fixed
+- Split-pane action hovers now stay inset from the compact header edges instead
+  of flashing across the focused pane hairline when the pointer crosses an icon.
 - A failed new-tab terminal spawn now restores the exact previous pane layout
   and focus instead of moving focus into the pane where the tab was attempted.
 - `forktty remote-helper pty` no longer stalls (and then kills the session

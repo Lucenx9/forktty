@@ -1094,6 +1094,9 @@ fn split_pane_headers_stay_compact_and_reveal_controls_on_demand() {
     assert!(block(".pane-drag-grip {").contains("opacity: 0.18;"));
     assert!(block(".terminal-pane-actions {").contains("opacity: 0;"));
     assert!(block(".terminal-pane-actions.revealed,").contains("opacity: 1;"));
+    let action = block(".terminal-pane-action {");
+    assert!(action.contains("min-height: 18px;"));
+    assert!(action.contains("margin: 2px 1px;"));
 }
 
 #[test]

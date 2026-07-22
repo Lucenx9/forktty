@@ -66,6 +66,8 @@ Use these rules for GTK UI changes so the app stays quiet, dense, and native.
   Keep agent lifecycle in that header and avoid duplicating it in a pane footer.
 - Keep split-pane headers at 22 px, on the recessed stage surface. Drag cues stay
   faint until hover or focus, and pane actions remain hidden until interaction.
+- Keep pane-action hover fills inset from both header edges so they never cover
+  the focused-pane hairline or read as a full-height flash during pointer travel.
 - Visual bell uses the accent color as a short 2px inner border. Do not add sound.
 - The scrollback indicator is a minimal right-edge overlay; avoid permanent chrome.
 

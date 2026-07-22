@@ -1204,9 +1204,9 @@ button.flat.pane-tab-close:active {
 
 .terminal-pane-action {
   min-width: 20px;
-  min-height: 20px;
+  min-height: 18px;
   padding: 0;
-  margin: 0 1px;
+  margin: 2px 1px;
   border-radius: 6px;
   border: 0;
   background: transparent;
