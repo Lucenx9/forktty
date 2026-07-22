@@ -1,10 +1,11 @@
 use crate::{
     close_surface_request, deferred_surface_creation_failure_handler,
-    ensure_terminal_for_active_workspace, spawn_surface_terminal_with_failure_handler,
+    ensure_terminal_for_active_workspace, session_data_from_state,
+    spawn_surface_terminal_with_failure_handler,
     topology_params::{SurfaceIdRequest, SurfaceSplitRequest},
     DispatchError, SocketAppState, SurfaceCreationLayoutSnapshot,
 };
-use forktty_core::WorkspaceSelector;
+use forktty_core::{session, WorkspaceSelector};
 use serde_json::{json, Value};
 
 pub(crate) async fn split(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
@@ -28,7 +29,7 @@ pub(crate) async fn split(state: &SocketAppState, params: &Value) -> Result<Valu
         &surface.id,
         snapshot,
         surface_set_guard,
-        |_| {},
+        save_session_after_deferred_surface_restore,
     );
     if let Err(err) = spawn_surface_terminal_with_failure_handler(state, &surface, failure_handler)
     {
@@ -61,13 +62,22 @@ pub(crate) async fn new_tab(
         &surface.id,
         snapshot,
         surface_set_guard,
-        |_| {},
+        save_session_after_deferred_surface_restore,
     );
     if let Err(err) = spawn_surface_terminal_with_failure_handler(state, &surface, failure_handler)
     {
         return Err(err.into());
     }
     Ok(json!(surface))
+}
+
+fn save_session_after_deferred_surface_restore(state: &SocketAppState) {
+    let Some(data) = session_data_from_state(state) else {
+        return;
+    };
+    if let Err(err) = session::save_session(&data) {
+        eprintln!("Failed to save session after deferred terminal spawn rollback: {err}");
+    }
 }
 
 pub(crate) fn select_tab(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {

@@ -6,8 +6,8 @@ use crate::{
 };
 use forktty_core::{
     agent_resume_command_with_cwd_and_permission_mode, command_safety::is_valid_ssh_host,
-    AgentResumeError, AgentSessionLifecycle, LogLevel, NotificationKind, PaneNode, SurfaceKind,
-    WorkspaceModel, WorkspaceSelector,
+    resolve_worktree_identity_snapshots, session, AgentResumeError, AgentSessionLifecycle,
+    LogLevel, NotificationKind, PaneNode, SurfaceKind, WorkspaceModel, WorkspaceSelector,
 };
 use forktty_terminal::{DeferredSpawnFailureHandler, SpawnRequest, TerminalError};
 use serde_json::{json, Value};
@@ -255,6 +255,24 @@ impl SurfaceCreationLayoutSnapshot {
                 self.focused_surface_id.clone(),
             )
     }
+}
+
+/// Snapshot session data only when no worktree or surface-set transaction is active.
+///
+/// Callers use this shared path for GTK autosave and socket-triggered rollback
+/// persistence so both respect the same lock ordering and invariant repair.
+pub fn session_data_from_state(state: &SocketAppState) -> Option<session::SessionData> {
+    let _worktree_guard = state.try_worktree_write_guard()?;
+    let _surface_set_guard = state.try_surface_set_guard()?;
+    let worktree_identity_snapshots = {
+        let model = state.model.lock().ok()?;
+        model.worktree_identity_snapshots()
+    };
+    let resolved_worktree_identities =
+        resolve_worktree_identity_snapshots(worktree_identity_snapshots);
+    let mut model = state.model.lock().ok()?;
+    let _ = model.repair_session_invariants(&resolved_worktree_identities);
+    Some(model.to_session_data())
 }
 
 /// Build deferred compensation for an accepted terminal-surface spawn.

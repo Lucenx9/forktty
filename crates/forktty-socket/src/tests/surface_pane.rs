@@ -267,7 +267,10 @@ async fn pane_new_tab_rolls_back_model_when_spawn_fails() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn pane_new_tab_deferred_spawn_failure_restores_target_workspace_layout_and_focus() {
+    let state_dir = tempfile::tempdir().unwrap();
+    let _state_home = EnvGuard::set("XDG_STATE_HOME", state_dir.path().to_str().unwrap());
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let (workspace_id, target_surface_id, focused_surface_id, original_tree) = {
         let mut model = model.lock().unwrap();
@@ -308,6 +311,18 @@ async fn pane_new_tab_deferred_spawn_failure_restores_target_workspace_layout_an
         state.try_surface_set_guard().is_none(),
         "surface guard must remain held until the queued spawn resolves"
     );
+    forktty_core::session::save_session(&model.lock().unwrap().to_session_data()).unwrap();
+    let pending_saved = forktty_core::session::load_session().unwrap().unwrap();
+    assert_ne!(
+        pending_saved
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == workspace_id)
+            .unwrap()
+            .pane_tree,
+        original_tree,
+        "fixture must persist the accepted surface before deferred failure"
+    );
     backend.fail_next_spawn();
 
     assert!(state.try_surface_set_guard().is_some());
@@ -328,4 +343,12 @@ async fn pane_new_tab_deferred_spawn_failure_restores_target_workspace_layout_an
             .len(),
         2
     );
+    let saved = forktty_core::session::load_session().unwrap().unwrap();
+    let saved_workspace = saved
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .unwrap();
+    assert_eq!(saved_workspace.pane_tree, original_tree);
+    assert_eq!(saved_workspace.focused_surface_id, focused_surface_id);
 }

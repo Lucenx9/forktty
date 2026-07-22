@@ -370,6 +370,12 @@ lifecycle adapter over sessions discovered through optional hooks.
 | Events | `events.subscribe` |
 | Browser (source-only feature) | `browser.open`, `browser.navigate`, `browser.snapshot`, `browser.click`, `browser.fill`, `browser.back`, `browser.forward`, `browser.reload`, `browser.profile.list`, `browser.profile.create`, `browser.profile.delete`, `browser.history.list`, `browser.history.search`, `browser.history.clear`, `browser.bookmark.add`, `browser.bookmark.list`, `browser.bookmark.remove` |
 
+Surface topology mutations are process-locally serialized. In particular,
+`surface.split` and `pane.new_tab` retain the surface-set guard after a GTK
+backend accepts the request, through either embedded terminal materialization
+or complete rollback of the modeled pane tree, focus, and saved session. Socket
+acceptance alone is therefore not the transaction commit point.
+
 The human-readable `forktty logs` formatter treats socket-provided log levels
 and messages as untrusted terminal text. Newline, carriage return, tab, ESC,
 BEL, and other control characters are rendered as visible escapes before the

@@ -210,9 +210,9 @@ pub(crate) use socket_bind::{
 };
 pub use surface_lifecycle::{
     bootstrap_default_workspace, deferred_surface_creation_failure_handler,
-    evict_hook_session_targets_for_surfaces, resolve_ssh_binary, spawn_request_for_surface,
-    spawn_request_for_surface_kind, sync_live_surface_cwds, PersistedSurfaceSpawnError,
-    SurfaceCreationLayoutSnapshot,
+    evict_hook_session_targets_for_surfaces, resolve_ssh_binary, session_data_from_state,
+    spawn_request_for_surface, spawn_request_for_surface_kind, sync_live_surface_cwds,
+    PersistedSurfaceSpawnError, SurfaceCreationLayoutSnapshot,
 };
 pub(crate) use surface_lifecycle::{
     close_replacement_terminal_surface_if_present, close_surface_request,

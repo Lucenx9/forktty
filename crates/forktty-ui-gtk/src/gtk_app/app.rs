@@ -1338,26 +1338,6 @@ pub(super) fn save_session_from_state(state: &SocketAppState) {
     }
 }
 
-fn session_data_from_state(state: &SocketAppState) -> Option<session::SessionData> {
-    // Autosave and explicit save share this path. Mutating
-    // `repair_session_invariants` while a worktree/surface-set transaction is
-    // mid-flight can collapse or reassign workspaces that the transaction still
-    // owns. Defer the snapshot when either process-local guard is held so the
-    // next 2s tick (or an explicit save after commit) persists a consistent
-    // model instead.
-    let _worktree_guard = state.try_worktree_write_guard()?;
-    let _surface_set_guard = state.try_surface_set_guard()?;
-    let worktree_identity_snapshots = {
-        let model = state.model.lock().ok()?;
-        model.worktree_identity_snapshots()
-    };
-    let resolved_worktree_identities =
-        resolve_worktree_identity_snapshots(worktree_identity_snapshots);
-    let mut model = state.model.lock().ok()?;
-    let _ = model.repair_session_invariants(&resolved_worktree_identities);
-    Some(model.to_session_data())
-}
-
 pub(super) fn autosave_session_from_state(
     state: &SocketAppState,
     last_saved: &mut Option<session::SessionData>,

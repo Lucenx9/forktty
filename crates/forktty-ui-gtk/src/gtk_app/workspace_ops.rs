@@ -108,7 +108,6 @@ pub(super) async fn add_new_tab_surface_transaction(
         );
         false
     } else {
-        save_session_from_state(state);
         true
     }
 }
@@ -194,7 +193,6 @@ pub(super) async fn split_surface_by_id(
         );
         false
     } else {
-        save_session_from_state(state);
         true
     }
 }
