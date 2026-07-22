@@ -46,18 +46,50 @@ pub struct SpawnRequest {
 /// Deferred compensation owned by a terminal backend until an accepted spawn
 /// has either materialized or failed.
 ///
-/// Most backends complete [`TerminalBackend::spawn`] synchronously and drop
-/// this handler immediately. UI backends that enqueue the real spawn retain it
-/// with that command and invoke it only if materialization later fails.
-pub struct DeferredSpawnFailureHandler(Option<Box<dyn FnOnce() + Send + 'static>>);
+/// Clones share one compensation. The final unresolved owner runs it on drop,
+/// so a queued command cannot silently lose its rollback. A backend that has
+/// completed the spawn must call [`Self::disarm`].
+#[derive(Clone)]
+pub struct DeferredSpawnFailureHandler(Arc<DeferredSpawnFailureState>);
+
+struct DeferredSpawnFailureState(Mutex<Option<Box<dyn FnOnce() + Send + 'static>>>);
 
 impl DeferredSpawnFailureHandler {
     pub fn new(handler: impl FnOnce() + Send + 'static) -> Self {
-        Self(Some(Box::new(handler)))
+        Self(Arc::new(DeferredSpawnFailureState(Mutex::new(Some(
+            Box::new(handler),
+        )))))
     }
 
-    pub fn run(mut self) {
-        if let Some(handler) = self.0.take() {
+    pub fn run(self) {
+        if let Some(handler) = take_deferred_spawn_handler(&self.0) {
+            handler();
+        }
+    }
+
+    pub fn disarm(self) {
+        drop(take_deferred_spawn_handler(&self.0));
+    }
+}
+
+fn take_deferred_spawn_handler(
+    state: &DeferredSpawnFailureState,
+) -> Option<Box<dyn FnOnce() + Send + 'static>> {
+    state
+        .0
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
+}
+
+impl Drop for DeferredSpawnFailureState {
+    fn drop(&mut self) {
+        let handler = self
+            .0
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(handler) = handler {
             handler();
         }
     }
@@ -298,7 +330,9 @@ pub trait TerminalBackend: Send + Sync {
         failure_handler: DeferredSpawnFailureHandler,
     ) -> Result<(), TerminalError> {
         let result = self.spawn(request);
-        drop(failure_handler);
+        if result.is_ok() {
+            failure_handler.disarm();
+        }
         result
     }
     fn send_text(&self, surface_id: &str, text: &str) -> Result<(), TerminalError>;
@@ -535,6 +569,35 @@ impl TerminalBackend for HeadlessTerminalBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unresolved_deferred_spawn_failure_runs_after_the_last_owner_drops() {
+        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let ran_for_handler = Arc::clone(&ran);
+        let handler = DeferredSpawnFailureHandler::new(move || {
+            ran_for_handler.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let retained = handler.clone();
+
+        drop(handler);
+        assert!(!ran.load(std::sync::atomic::Ordering::SeqCst));
+        drop(retained);
+        assert!(ran.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn completed_deferred_spawn_disarms_all_handler_owners() {
+        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let ran_for_handler = Arc::clone(&ran);
+        let handler = DeferredSpawnFailureHandler::new(move || {
+            ran_for_handler.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let retained = handler.clone();
+
+        handler.disarm();
+        drop(retained);
+        assert!(!ran.load(std::sync::atomic::Ordering::SeqCst));
+    }
 
     #[test]
     fn headless_backend_injects_forktty_env_and_records_text() {

@@ -479,7 +479,7 @@ impl TerminalController {
         match self.spawn_embedded_ghostty(request.clone(), generation) {
             Ok(()) => {
                 if let Some(failure_handler) = failure_handler {
-                    drop(failure_handler);
+                    failure_handler.disarm();
                     if let Some(state) = &self.state {
                         save_session_from_state(state);
                     }

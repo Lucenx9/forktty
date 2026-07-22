@@ -1,27 +1,37 @@
 use crate::{
-    close_surface_request, ensure_terminal_for_active_workspace, rollback_surface_creation,
-    spawn_surface_terminal,
+    close_surface_request, deferred_surface_creation_failure_handler,
+    ensure_terminal_for_active_workspace, spawn_surface_terminal_with_failure_handler,
     topology_params::{SurfaceIdRequest, SurfaceSplitRequest},
-    DispatchError, SocketAppState,
+    DispatchError, SocketAppState, SurfaceCreationLayoutSnapshot,
 };
 use forktty_core::WorkspaceSelector;
 use serde_json::{json, Value};
 
 pub(crate) async fn split(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = SurfaceSplitRequest::decode(params)?;
-    let _surface_set_guard = state.surface_set_guard().await;
+    let surface_set_guard = state.surface_set_guard().await;
     let _ = crate::sync_live_surface_cwds(state);
-    let surface = {
+    let (surface, snapshot) = {
         let mut model = state
             .model
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
-        model
+        let snapshot = SurfaceCreationLayoutSnapshot::capture(&model, &request.surface_id)
+            .ok_or(DispatchError::NotFound("surface".to_string()))?;
+        let surface = model
             .split_surface(&request.surface_id, request.axis)
-            .ok_or(DispatchError::NotFound("surface".to_string()))?
+            .ok_or(DispatchError::NotFound("surface".to_string()))?;
+        (surface, snapshot)
     };
-    if let Err(err) = spawn_surface_terminal(state, &surface) {
-        rollback_surface_creation(state, &surface.id)?;
+    let failure_handler = deferred_surface_creation_failure_handler(
+        state,
+        &surface.id,
+        snapshot,
+        surface_set_guard,
+        |_| {},
+    );
+    if let Err(err) = spawn_surface_terminal_with_failure_handler(state, &surface, failure_handler)
+    {
         return Err(err.into());
     }
     Ok(json!(surface))
@@ -32,19 +42,29 @@ pub(crate) async fn new_tab(
     params: &Value,
 ) -> Result<Value, DispatchError> {
     let request = SurfaceIdRequest::decode(params)?;
-    let _surface_set_guard = state.surface_set_guard().await;
+    let surface_set_guard = state.surface_set_guard().await;
     let _ = crate::sync_live_surface_cwds(state);
-    let surface = {
+    let (surface, snapshot) = {
         let mut model = state
             .model
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
-        model
+        let snapshot = SurfaceCreationLayoutSnapshot::capture(&model, &request.surface_id)
+            .ok_or(DispatchError::NotFound("surface".to_string()))?;
+        let surface = model
             .add_tab(&request.surface_id)
-            .ok_or(DispatchError::NotFound("surface".to_string()))?
+            .ok_or(DispatchError::NotFound("surface".to_string()))?;
+        (surface, snapshot)
     };
-    if let Err(err) = spawn_surface_terminal(state, &surface) {
-        rollback_surface_creation(state, &surface.id)?;
+    let failure_handler = deferred_surface_creation_failure_handler(
+        state,
+        &surface.id,
+        snapshot,
+        surface_set_guard,
+        |_| {},
+    );
+    if let Err(err) = spawn_surface_terminal_with_failure_handler(state, &surface, failure_handler)
+    {
         return Err(err.into());
     }
     Ok(json!(surface))

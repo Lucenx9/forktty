@@ -2,14 +2,14 @@
 
 use crate::{
     agent_runtime::effective_agent_resume_cwd, hook_session::hook_target_gate_for_surface,
-    DispatchError, SocketAppState,
+    DispatchError, SocketAppState, SurfaceSetGuard,
 };
 use forktty_core::{
     agent_resume_command_with_cwd_and_permission_mode, command_safety::is_valid_ssh_host,
-    AgentResumeError, AgentSessionLifecycle, LogLevel, NotificationKind, SurfaceKind,
-    WorkspaceSelector,
+    AgentResumeError, AgentSessionLifecycle, LogLevel, NotificationKind, PaneNode, SurfaceKind,
+    WorkspaceModel, WorkspaceSelector,
 };
-use forktty_terminal::{SpawnRequest, TerminalError};
+use forktty_terminal::{DeferredSpawnFailureHandler, SpawnRequest, TerminalError};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::os::unix::ffi::OsStrExt;
@@ -173,12 +173,43 @@ pub(crate) fn spawn_surface_terminal(
     state: &SocketAppState,
     surface: &forktty_core::Surface,
 ) -> Result<(), String> {
+    spawn_surface_terminal_inner(state, surface, None)
+}
+
+pub(crate) fn spawn_surface_terminal_with_failure_handler(
+    state: &SocketAppState,
+    surface: &forktty_core::Surface,
+    failure_handler: DeferredSpawnFailureHandler,
+) -> Result<(), String> {
+    spawn_surface_terminal_inner(state, surface, Some(failure_handler))
+}
+
+fn spawn_surface_terminal_inner(
+    state: &SocketAppState,
+    surface: &forktty_core::Surface,
+    failure_handler: Option<DeferredSpawnFailureHandler>,
+) -> Result<(), String> {
+    // Keep a second owner until failure recording and backend cleanup finish.
+    // If the backend rejects synchronously, dropping this final owner performs
+    // the model rollback only after those steps are complete.
+    let failure_lease = failure_handler.clone();
     let result = match spawn_request_for_socket_surface(state, surface) {
-        Ok(Some(request)) => state
-            .terminal
-            .spawn(request)
-            .map_err(|error| error.to_string()),
-        Ok(None) => return Ok(()),
+        Ok(Some(request)) => match failure_handler {
+            Some(failure_handler) => state
+                .terminal
+                .spawn_with_failure_handler(request, failure_handler)
+                .map_err(|error| error.to_string()),
+            None => state
+                .terminal
+                .spawn(request)
+                .map_err(|error| error.to_string()),
+        },
+        Ok(None) => {
+            if let Some(failure_handler) = failure_handler {
+                failure_handler.disarm();
+            }
+            return Ok(());
+        }
         Err(error) => Err(error.to_string()),
     };
     let Err(message) = result else {
@@ -189,7 +220,69 @@ pub(crate) fn spawn_surface_terminal(
             "{message}; failure recording failed: {record_error}"
         ));
     }
+    drop(failure_lease);
     Err(message)
+}
+
+/// Exact pane-tree and focus state captured before adding a terminal surface.
+#[derive(Clone, Debug)]
+pub struct SurfaceCreationLayoutSnapshot {
+    workspace_id: String,
+    pane_tree: PaneNode,
+    focused_surface_id: String,
+}
+
+impl SurfaceCreationLayoutSnapshot {
+    /// Capture the workspace layout containing `surface_id`.
+    pub fn capture(model: &WorkspaceModel, surface_id: &str) -> Option<Self> {
+        let workspace_id = model.surface(surface_id)?.workspace_id.clone();
+        let workspace = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.id == workspace_id)?;
+        Some(Self {
+            workspace_id,
+            pane_tree: workspace.pane_tree,
+            focused_surface_id: workspace.focused_surface_id,
+        })
+    }
+
+    fn rollback_added_surface(&self, model: &mut WorkspaceModel, surface_id: &str) -> bool {
+        model.close_surface(surface_id).is_some()
+            && model.restore_workspace_pane_layout(
+                &self.workspace_id,
+                self.pane_tree.clone(),
+                self.focused_surface_id.clone(),
+            )
+    }
+}
+
+/// Build deferred compensation for an accepted terminal-surface spawn.
+///
+/// The returned handler retains `surface_set_guard` through either successful
+/// materialization (when the backend disarms it) or complete model rollback.
+pub fn deferred_surface_creation_failure_handler(
+    state: &SocketAppState,
+    surface_id: &str,
+    snapshot: SurfaceCreationLayoutSnapshot,
+    surface_set_guard: SurfaceSetGuard,
+    after_restore: impl FnOnce(&SocketAppState) + Send + 'static,
+) -> DeferredSpawnFailureHandler {
+    let state = state.clone();
+    let surface_id = surface_id.to_string();
+    DeferredSpawnFailureHandler::new(move || {
+        let restored = state
+            .model
+            .lock()
+            .is_ok_and(|mut model| snapshot.rollback_added_surface(&mut model, &surface_id));
+        if !restored {
+            eprintln!("Failed to restore pane layout after deferred terminal spawn failure");
+        }
+        drop(surface_set_guard);
+        if restored {
+            after_restore(&state);
+        }
+    })
 }
 
 fn record_terminal_spawn_failure(

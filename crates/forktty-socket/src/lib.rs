@@ -209,9 +209,10 @@ pub(crate) use socket_bind::{
     probe_forktty_socket_with_timeout, PROBE_RESPONSE_MAX_BYTES,
 };
 pub use surface_lifecycle::{
-    bootstrap_default_workspace, evict_hook_session_targets_for_surfaces, resolve_ssh_binary,
-    spawn_request_for_surface, spawn_request_for_surface_kind, sync_live_surface_cwds,
-    PersistedSurfaceSpawnError,
+    bootstrap_default_workspace, deferred_surface_creation_failure_handler,
+    evict_hook_session_targets_for_surfaces, resolve_ssh_binary, spawn_request_for_surface,
+    spawn_request_for_surface_kind, sync_live_surface_cwds, PersistedSurfaceSpawnError,
+    SurfaceCreationLayoutSnapshot,
 };
 pub(crate) use surface_lifecycle::{
     close_replacement_terminal_surface_if_present, close_surface_request,
@@ -220,7 +221,8 @@ pub(crate) use surface_lifecycle::{
     ensure_terminal_for_active_workspace_now, record_terminal_spawn_failure_for_completion,
     required_ssh_host_param, restore_terminal_surfaces_after_failure,
     rollback_replacement_if_redundant, rollback_surface_creation, rollback_workspace_creation,
-    spawn_surface_terminal, spawn_workspace_terminal, surface_effective_project_cwd,
+    spawn_surface_terminal, spawn_surface_terminal_with_failure_handler, spawn_workspace_terminal,
+    surface_effective_project_cwd,
 };
 #[cfg(test)]
 pub(crate) use surface_lifecycle::{
@@ -728,8 +730,8 @@ mod tests {
     use super::*;
     use forktty_core::validate_worktree_name;
     use forktty_terminal::{
-        HeadlessTerminalBackend, TerminalBackend, TerminalError, TerminalSurfaceState,
-        TerminalTextCapture, TerminalTextSnapshot,
+        DeferredSpawnFailureHandler, HeadlessTerminalBackend, TerminalBackend, TerminalError,
+        TerminalSurfaceState, TerminalTextCapture, TerminalTextSnapshot,
     };
     use git2::Repository;
     use std::collections::{BTreeMap, BTreeSet};
@@ -915,6 +917,52 @@ mod tests {
 
         fn close(&self, _surface_id: &str) -> Result<(), TerminalError> {
             Err(TerminalError::Backend("close failed".to_string()))
+        }
+
+        fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct DeferredSpawnFailureBackend {
+        failure_handlers: Mutex<Vec<DeferredSpawnFailureHandler>>,
+    }
+
+    impl DeferredSpawnFailureBackend {
+        fn fail_next_spawn(&self) {
+            self.failure_handlers.lock().unwrap().remove(0).run();
+        }
+
+        fn pending_failure_count(&self) -> usize {
+            self.failure_handlers.lock().unwrap().len()
+        }
+    }
+
+    impl TerminalBackend for DeferredSpawnFailureBackend {
+        fn spawn(&self, _request: SpawnRequest) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn spawn_with_failure_handler(
+            &self,
+            _request: SpawnRequest,
+            failure_handler: DeferredSpawnFailureHandler,
+        ) -> Result<(), TerminalError> {
+            self.failure_handlers.lock().unwrap().push(failure_handler);
+            Ok(())
+        }
+
+        fn send_text(&self, _surface_id: &str, _text: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn resize(&self, _surface_id: &str, _cols: u16, _rows: u16) -> Result<(), TerminalError> {
+            Ok(())
+        }
+
+        fn close(&self, _surface_id: &str) -> Result<(), TerminalError> {
+            Ok(())
         }
 
         fn surfaces(&self) -> Result<Vec<TerminalSurfaceState>, TerminalError> {
