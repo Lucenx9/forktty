@@ -1656,6 +1656,61 @@ mod tests {
     }
 
     #[test]
+    fn deferred_split_spawn_failure_restores_previous_pane_layout() {
+        let _ = crate::test_env::with_gtk_test(|| {
+            crate::test_env::with_isolated_user_dirs(|| {
+                let workspace_dir = tempfile::tempdir().unwrap();
+                let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+                let (target_surface_id, focused_surface_id, original_tree) = {
+                    let mut model = model.lock().unwrap();
+                    let workspace = model.create_workspace("main", workspace_dir.path());
+                    let target_surface_id = workspace.focused_surface_id;
+                    let focused_surface_id = model
+                        .split_surface(&target_surface_id, SplitAxis::Horizontal)
+                        .unwrap()
+                        .id;
+                    let workspace = model.active_workspace().unwrap();
+                    (target_surface_id, focused_surface_id, workspace.pane_tree)
+                };
+                let (tx, rx) = mpsc::channel();
+                let backend = Arc::new(GtkTerminalBackend::new(tx));
+                let state = SocketAppState::new(
+                    model.clone(),
+                    backend.clone(),
+                    "/bin/sh",
+                    PathBuf::from(std::env::var("XDG_RUNTIME_DIR").unwrap()).join("forktty.sock"),
+                )
+                .with_notification_dispatch(false);
+                let container = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                let parent = adw::ApplicationWindow::builder().build();
+                let mut controller =
+                    TerminalController::new(container, parent.clone(), model.clone(), backend);
+                controller.attach_state(state.clone());
+
+                assert!(glib::MainContext::new().block_on(split_surface_by_id(
+                    &state,
+                    &target_surface_id,
+                    SplitAxis::Vertical,
+                )));
+                let spawn = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+                drop(workspace_dir);
+                controller.handle(spawn);
+
+                let workspace = model.lock().unwrap().active_workspace().unwrap();
+                assert_eq!(workspace.pane_tree, original_tree);
+                assert_eq!(workspace.focused_surface_id, focused_surface_id);
+                assert_eq!(model.lock().unwrap().list_surfaces(None).len(), 2);
+                let saved = session::load_session()
+                    .unwrap()
+                    .expect("deferred rollback should persist the restored layout");
+                assert_eq!(saved.workspaces[0].pane_tree, original_tree);
+                assert_eq!(saved.workspaces[0].focused_surface_id, focused_surface_id);
+                parent.close();
+            });
+        });
+    }
+
+    #[test]
     fn controller_surface_reconciliation_defers_while_shared_surface_guard_is_held() {
         let _ = crate::test_env::with_gtk_test(|| {
             let model = Arc::new(Mutex::new(WorkspaceModel::new()));
