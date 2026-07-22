@@ -1032,6 +1032,8 @@ fn active_pane_tab_keeps_accent_out_of_rounded_border() {
         .expect("pane-tab active block");
 
     assert!(active_tab.contains("background-image: linear-gradient("));
+    assert!(active_tab.contains("border-top-color: transparent;"));
+    assert!(active_tab.contains("box-shadow: none;"));
     assert!(!active_tab.contains("border-top-color: alpha(@accent_color"));
     assert!(!active_tab.contains("box-shadow: inset 0 1px 0 alpha(@accent_color"));
 }
