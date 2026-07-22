@@ -108,6 +108,10 @@ pub(super) async fn add_new_tab_surface_transaction(
         );
         false
     } else {
+        // Synchronous backends disarm before returning, so persist their commit
+        // now. GTK still owns the surface guard here; this snapshot is skipped
+        // and controller materialization performs the authoritative save.
+        save_session_from_state(state);
         true
     }
 }
@@ -193,6 +197,9 @@ pub(super) async fn split_surface_by_id(
         );
         false
     } else {
+        // See add_new_tab_surface_transaction: GTK defers this save until
+        // materialization, while synchronous backends can persist immediately.
+        save_session_from_state(state);
         true
     }
 }
