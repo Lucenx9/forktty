@@ -466,6 +466,11 @@ impl TerminalController {
             .surface_generation_is_current(&request.surface_id, generation)
             .unwrap_or(false)
         {
+            // This command no longer owns the surface incarnation. Running its
+            // compensation could remove a newer modeled surface with the same id.
+            if let Some(failure_handler) = failure_handler {
+                failure_handler.disarm();
+            }
             return;
         }
         if self.widgets.contains_key(&request.surface_id)
@@ -473,6 +478,11 @@ impl TerminalController {
                 .embedded_ghostty_panes
                 .contains_key(&request.surface_id)
         {
+            // Reconciliation already materialized this surface; treat the
+            // accepted spawn as complete instead of rolling its model addition back.
+            if let Some(failure_handler) = failure_handler {
+                failure_handler.disarm();
+            }
             return;
         }
         mark_spawn_command_pending(&mut self.pending_spawns, &request.surface_id);
@@ -1707,6 +1717,70 @@ mod tests {
                 assert_eq!(saved.workspaces[0].focused_surface_id, focused_surface_id);
                 parent.close();
             });
+        });
+    }
+
+    #[test]
+    fn ignored_deferred_spawn_commands_disarm_their_rollback() {
+        let _ = crate::test_env::with_gtk_test(|| {
+            for existing_widget in [false, true] {
+                let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+                let surface = {
+                    let mut model = model.lock().unwrap();
+                    let workspace = model.create_workspace("main", Path::new("/tmp"));
+                    model
+                        .surface(&workspace.focused_surface_id)
+                        .unwrap()
+                        .clone()
+                };
+                let (tx, rx) = mpsc::channel();
+                let backend = Arc::new(GtkTerminalBackend::new(tx));
+                let container = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                let parent = adw::ApplicationWindow::builder().build();
+                let mut controller =
+                    TerminalController::new(container, parent.clone(), model, backend.clone());
+                let rollback_ran = Arc::new(AtomicBool::new(false));
+                let rollback_observer = rollback_ran.clone();
+                backend
+                    .spawn_with_failure_handler(
+                        SpawnRequest::for_surface(
+                            &surface,
+                            "/bin/sh",
+                            PathBuf::from("/tmp/forktty.sock"),
+                        ),
+                        DeferredSpawnFailureHandler::new(move || {
+                            rollback_observer.store(true, Ordering::SeqCst);
+                        }),
+                    )
+                    .unwrap();
+                let command = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+                let generation = match &command {
+                    GtkTerminalCommand::Spawn { generation, .. } => *generation,
+                    _ => unreachable!("spawn backend must enqueue a spawn command"),
+                };
+
+                if existing_widget {
+                    controller.embedded_ghostty_panes.insert(
+                        surface.id.clone(),
+                        EmbeddedGhosttyPane {
+                            surface: gtk::Label::new(None).upcast(),
+                            generation,
+                        },
+                    );
+                } else {
+                    backend
+                        .close_for_generation(&surface.id, generation)
+                        .unwrap();
+                }
+
+                controller.handle(command);
+
+                assert!(
+                    !rollback_ran.load(Ordering::SeqCst),
+                    "an obsolete spawn command must not compensate a newer or existing surface"
+                );
+                parent.close();
+            }
         });
     }
 
