@@ -531,6 +531,11 @@ pub(super) async fn close_tab_surface_transaction(
             return false;
         }
     }
+    if let Err(err) =
+        forktty_socket::evict_hook_session_targets_for_surfaces(state, &[surface_id.to_string()])
+    {
+        eprintln!("Failed to clean up closed tab surface hook state: {err}");
+    }
     drop(surface_set_guard);
     save_session_from_state(state);
     true
