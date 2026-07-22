@@ -252,16 +252,18 @@ impl TerminalController {
                     &surface_id,
                     generation,
                     || {
-                        let stored = model.lock().ok().and_then(|model| {
-                            model
+                        // ⚡ Bolt: Avoid eager cloning of the potentially 64KB scrollback buffer by doing all logic under the lock.
+                        let bytes = model.lock().ok().and_then(|model| {
+                            let stored = model
                                 .surface(&surface_id)
-                                .and_then(|surface| surface.persisted_scrollback.clone())
+                                .and_then(|surface| surface.persisted_scrollback.as_deref());
+                            embedded_scrollback_restore_bytes(
+                                persistent_scrollback_lines,
+                                embedder.supports_restore_scrollback(),
+                                stored,
+                            )
                         });
-                        if let Some(bytes) = embedded_scrollback_restore_bytes(
-                            persistent_scrollback_lines,
-                            embedder.supports_restore_scrollback(),
-                            stored.as_deref(),
-                        ) {
+                        if let Some(bytes) = bytes {
                             if let Err(err) =
                                 unsafe { embedder.restore_scrollback(&widget, &bytes) }
                             {
@@ -483,21 +485,16 @@ impl TerminalController {
             let model = self.model.clone();
             let surface_id = request.surface_id.clone();
             let weak_widget = widget.downgrade();
-            let mut skip_initial_snapshot = model
-                .lock()
-                .ok()
-                .and_then(|model| {
-                    model
-                        .surface(&surface_id)
-                        .and_then(|surface| surface.persisted_scrollback.clone())
-                })
-                .as_deref()
-                .is_some_and(|persisted_scrollback| {
-                    should_skip_initial_embedded_scrollback_snapshot(
-                        embedder.supports_restore_scrollback(),
-                        Some(persisted_scrollback),
-                    )
-                });
+            // ⚡ Bolt: Avoid eager cloning of the potentially 64KB scrollback buffer by reading it inside the lock.
+            let mut skip_initial_snapshot = model.lock().ok().is_some_and(|model| {
+                let persisted_scrollback = model
+                    .surface(&surface_id)
+                    .and_then(|surface| surface.persisted_scrollback.as_deref());
+                should_skip_initial_embedded_scrollback_snapshot(
+                    embedder.supports_restore_scrollback(),
+                    persisted_scrollback,
+                )
+            });
             let mut last_snapshot: Option<String> = None;
             glib::timeout_add_local(EMBEDDED_GHOSTTY_SCROLLBACK_SNAPSHOT_INTERVAL, move || {
                 let Some(widget) = weak_widget.upgrade() else {
