@@ -547,12 +547,37 @@ fn method_registry_classifies_socket_exposure() {
 #[test]
 fn advertised_socket_methods_are_classified_in_stability_docs() {
     let stability_docs = include_str!("../../../../docs/socket-api.md");
+    let stable = stability_docs
+        .split_once("## Stable-for-alpha Core")
+        .and_then(|(_, rest)| rest.split_once("## Alpha Mutation and Lifecycle"))
+        .map(|(section, _)| section)
+        .expect("socket stability docs must retain the stable-for-alpha section");
+    let alpha = stability_docs
+        .split_once("## Alpha Mutation and Lifecycle")
+        .and_then(|(_, rest)| rest.split_once("## Response and Projection Contracts"))
+        .map(|(section, _)| section)
+        .expect("socket stability docs must retain the alpha section");
+    let source_only = stability_docs
+        .split_once("## Source-only / Experimental")
+        .and_then(|(_, rest)| rest.split_once("## Removed Orchestration Migration"))
+        .map(|(section, _)| section)
+        .expect("socket stability docs must retain the source-only section");
+    let tiers = [
+        ("stable-for-alpha", stable),
+        ("alpha", alpha),
+        ("source-only", source_only),
+    ];
 
     for method in methods::capability_method_names() {
         let documented_name = format!("`{method}`");
-        assert!(
-            stability_docs.contains(&documented_name),
-            "advertised method {method} is missing from docs/socket-api.md"
+        let matching_tiers = tiers
+            .iter()
+            .filter_map(|(tier, section)| section.contains(&documented_name).then_some(*tier))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching_tiers.len(),
+            1,
+            "advertised method {method} must appear in exactly one stability tier; found {matching_tiers:?}"
         );
     }
 }

@@ -48,6 +48,19 @@ Broader lifecycle/documentation mapping should remain incremental: add a
 declared relationship only when it can model a real one-to-one or
 one-to-many contract without false positives.
 
+### Release-invariant ownership
+
+The repository's default code owner, `@Lucenx9`, owns these release-critical
+rules through `.github/CODEOWNERS`. Their source and gate are explicit so a
+future maintainer can locate both sides of each contract.
+
+| Invariant | Source of truth | Gate |
+| --- | --- | --- |
+| Paired vendored `libghostty-vt` patch paths | Root `Cargo.toml` | `xtask/src/libghostty_release.rs` via `cargo run -p xtask -- check` |
+| `LIBGHOSTTY_VT_SYS_OPTIMIZE=ReleaseSafe` | `.cargo/config.toml` | `xtask/src/libghostty_release.rs` via `cargo run -p xtask -- check` |
+| Native Zig builds use `-Dcpu=baseline` | `vendor/libghostty-rs/crates/libghostty-vt-sys/build.rs` | `xtask/src/libghostty_release.rs` via `cargo run -p xtask -- check` |
+| Advertised socket methods belong to exactly one stability tier | `crates/forktty-socket/src/methods.rs` and `docs/socket-api.md` | `advertised_socket_methods_are_classified_in_stability_docs` |
+
 ## Adopt
 
 ### 1. Make release-critical constraints executable
