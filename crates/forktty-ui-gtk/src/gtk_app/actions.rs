@@ -211,7 +211,7 @@ pub(super) fn install_actions(
         let workbench_overlay = workbench_overlay.clone();
         move || {
             let visible = !workbench_overlay.shows_sidebar();
-            set_sidebar_visible(&workbench_overlay, visible);
+            workbench_overlay.set_show_sidebar(visible);
             // Read-modify-write of the config file off the main thread; the
             // toggle itself must not wait on disk.
             std::thread::spawn(move || {

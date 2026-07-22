@@ -561,7 +561,7 @@ button.flat.sidebar-add:focus-visible {
 
 .workspace-card {
   min-height: 44px;
-  padding: 6px 10px 6px 12px;
+  padding: 6px 12px;
   margin: 0;
   border: 0;
   border-left: 2px solid transparent;
@@ -748,13 +748,13 @@ button.flat.sidebar-add:focus-visible {
  * without creating a second navigation section. */
 
 .sidebar-footer {
-  padding: 4px 5px 5px 5px;
+  padding: 6px;
   border-top: 1px solid @ft_bg_1;
 }
 
 button.flat.sidebar-nav-row {
   min-height: 30px;
-  padding: 0 10px;
+  padding: 0 12px;
   border-radius: 6px;
   background: transparent;
   color: @ft_text_2;
@@ -2068,13 +2068,13 @@ window.ft-dialog,
 
 .settings-nav {
   min-width: 172px;
-  padding: 11px 9px 15px 9px;
+  padding: 12px 6px 18px 6px;
   background: @ft_bg_0;
   border-right: 1px solid @ft_line;
 }
 
 .settings-nav-heading {
-  margin: 10px 10px 4px 10px;
+  margin: 12px 12px 6px 12px;
   color: @ft_text_4;
   font-size: 0.74em;
   font-weight: 600;
@@ -2083,7 +2083,7 @@ window.ft-dialog,
 
 .settings-nav-item {
   min-height: 38px;
-  padding: 0 10px;
+  padding: 0 12px;
   border: 1px solid transparent;
   border-radius: 8px;
   color: @ft_text_3;

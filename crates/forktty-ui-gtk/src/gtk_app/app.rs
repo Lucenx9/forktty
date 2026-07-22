@@ -771,7 +771,7 @@ pub(super) fn build_ui(app: &adw::Application) {
                     &settings_parent,
                     &settings_state,
                     settings_apply.clone(),
-                    SettingsInitialPage::Agents,
+                    SettingsInitialPage::AgentHooks,
                 );
             }),
         );
@@ -1021,7 +1021,7 @@ pub(super) fn settings_apply_callback(
             &sidebar_shell,
             &config.appearance.sidebar_position,
         );
-        set_sidebar_visible(&overlay, config.appearance.sidebar_visible);
+        overlay.set_show_sidebar(config.appearance.sidebar_visible);
         let model = {
             let controller = controller.borrow();
             for widget in controller.widgets.values() {
@@ -1048,10 +1048,6 @@ pub(super) fn apply_sidebar_position(
     } else {
         gtk::PackType::Start
     });
-}
-
-pub(super) fn set_sidebar_visible(overlay: &adw::OverlaySplitView, visible: bool) {
-    overlay.set_show_sidebar(visible);
 }
 
 pub(super) fn build_workbench_overlay(

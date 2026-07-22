@@ -300,7 +300,8 @@ setup.
 
 Settings > Agent hooks shows the installed providers before any action. Setup,
 update, and repair require confirmation; Remove deletes only ForkTTY-managed
-entries and leaves unrelated agent configuration untouched.
+entries and leaves unrelated agent configuration untouched. Hooks report
+lifecycle and attention state; they never move focus or rearrange panes.
 
 Diagnose an installed integration with:
 

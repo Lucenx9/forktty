@@ -689,13 +689,13 @@ fn settings_apply_refreshes_pr_lookup_when_enabled() {
 }
 
 #[test]
-fn settings_agents_initial_page_targets_agents_stack() {
+fn settings_agent_hooks_initial_page_targets_agent_hooks_stack() {
     assert_eq!(SettingsInitialPage::Interface.stack_name(), "interface");
-    assert_eq!(SettingsInitialPage::Agents.stack_name(), "agents");
+    assert_eq!(SettingsInitialPage::AgentHooks.stack_name(), "agent-hooks");
 }
 
 #[test]
-fn settings_agents_nav_uses_agent_semantic_icon() {
+fn settings_agent_hooks_nav_uses_agent_semantic_icon() {
     let source = include_str!("settings_dialog.rs");
 
     assert!(source.contains(
@@ -737,20 +737,20 @@ fn settings_navigation_groups_core_worktrees_before_optional_integrations() {
         .find("settings_nav_heading(\"Integrations\")")
         .unwrap()
         + worktrees;
-    let agents = source[integrations..]
-        .find("nav.append(&agents_nav)")
+    let agent_hooks = source[integrations..]
+        .find("nav.append(&agent_hooks_nav)")
         .unwrap()
         + integrations;
-    let system = source[agents..]
+    let system = source[agent_hooks..]
         .find("settings_nav_heading(\"System\")")
         .unwrap()
-        + agents;
+        + agent_hooks;
 
     assert!(general < interface);
     assert!(interface < worktrees);
     assert!(worktrees < integrations);
-    assert!(integrations < agents);
-    assert!(agents < system);
+    assert!(integrations < agent_hooks);
+    assert!(agent_hooks < system);
 }
 
 #[test]
@@ -927,7 +927,7 @@ fn workbench_sidebar_overlays_terminal_content_and_preserves_configured_side() {
         assert!(sidebar.has_css_class("right"));
         assert!(!sidebar.has_css_class("left"));
 
-        set_sidebar_visible(&overlay, false);
+        overlay.set_show_sidebar(false);
         assert!(!overlay.shows_sidebar());
         assert!(workspace_area.is_visible());
     });
@@ -1511,8 +1511,8 @@ fn settings_initial_focus_tracks_requested_page() {
 
     assert!(source.contains("SettingsInitialPage::Interface =>"));
     assert!(source.contains("interface_nav.grab_focus();"));
-    assert!(source.contains("SettingsInitialPage::Agents =>"));
-    assert!(source.contains("agents_nav.grab_focus();"));
+    assert!(source.contains("SettingsInitialPage::AgentHooks =>"));
+    assert!(source.contains("agent_hooks_nav.grab_focus();"));
     assert!(source.contains("Agent hooks"));
 }
 

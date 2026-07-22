@@ -7,14 +7,14 @@ const SETTINGS_SETUP_POLL_INTERVAL: Duration = Duration::from_millis(150);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SettingsInitialPage {
     Interface,
-    Agents,
+    AgentHooks,
 }
 
 impl SettingsInitialPage {
     pub(super) fn stack_name(self) -> &'static str {
         match self {
             Self::Interface => "interface",
-            Self::Agents => "agents",
+            Self::AgentHooks => "agent-hooks",
         }
     }
 }
@@ -85,7 +85,7 @@ pub(super) fn show_settings_dialog_page(
         "Worktrees",
         "Workspaces and sessions",
     );
-    let agents_nav = settings_nav_button(
+    let agent_hooks_nav = settings_nav_button(
         "forktty-terminal-symbolic",
         "Agent hooks",
         "Lifecycle metadata",
@@ -97,14 +97,14 @@ pub(super) fn show_settings_dialog_page(
     );
     let advanced_nav = settings_nav_button("forktty-info-symbolic", "Privacy", "Telemetry");
     worktrees_nav.set_group(Some(&interface_nav));
-    agents_nav.set_group(Some(&interface_nav));
+    agent_hooks_nav.set_group(Some(&interface_nav));
     alerts_nav.set_group(Some(&interface_nav));
     advanced_nav.set_group(Some(&interface_nav));
     nav.append(&settings_nav_heading("General"));
     nav.append(&interface_nav);
     nav.append(&worktrees_nav);
     nav.append(&settings_nav_heading("Integrations"));
-    nav.append(&agents_nav);
+    nav.append(&agent_hooks_nav);
     #[cfg(feature = "browser")]
     let browser_nav = {
         let button = settings_nav_button(
@@ -204,7 +204,7 @@ pub(super) fn show_settings_dialog_page(
     });
     stack.add_named(&worktrees_page, Some("worktrees"));
 
-    let (agents_page, agents_content) = settings_page(
+    let (agent_hooks_page, agent_hooks_content) = settings_page(
         "Agent hooks",
         "Optional local signals for coding-agent lifecycle and attention.",
     );
@@ -230,7 +230,7 @@ pub(super) fn show_settings_dialog_page(
     remove_hooks_row.add_suffix(&remove_hooks_button);
     remove_hooks_row.set_activatable_widget(Some(&remove_hooks_button));
     agent_setup_list.append(&remove_hooks_row);
-    agents_content.append(&agent_setup_section);
+    agent_hooks_content.append(&agent_setup_section);
 
     let (agent_scope_section, agent_scope_list) = settings_section("What hooks do", "");
     for (title, subtitle) in [
@@ -252,9 +252,9 @@ pub(super) fn show_settings_dialog_page(
         row.set_activatable(false);
         agent_scope_list.append(&row);
     }
-    agents_content.append(&agent_scope_section);
+    agent_hooks_content.append(&agent_scope_section);
 
-    stack.add_named(&agents_page, Some("agents"));
+    stack.add_named(&agent_hooks_page, Some("agent-hooks"));
 
     #[cfg(feature = "browser")]
     {
@@ -401,7 +401,7 @@ pub(super) fn show_settings_dialog_page(
     stack.add_named(&advanced_page, Some("advanced"));
 
     connect_settings_nav(&interface_nav, &stack, "interface");
-    connect_settings_nav(&agents_nav, &stack, "agents");
+    connect_settings_nav(&agent_hooks_nav, &stack, "agent-hooks");
     connect_settings_nav(&worktrees_nav, &stack, "worktrees");
     #[cfg(feature = "browser")]
     connect_settings_nav(&browser_nav, &stack, "browser");
@@ -409,7 +409,7 @@ pub(super) fn show_settings_dialog_page(
     connect_settings_nav(&advanced_nav, &stack, "advanced");
     match initial_page {
         SettingsInitialPage::Interface => interface_nav.set_active(true),
-        SettingsInitialPage::Agents => agents_nav.set_active(true),
+        SettingsInitialPage::AgentHooks => agent_hooks_nav.set_active(true),
     }
     stack.set_visible_child_name(initial_page.stack_name());
 
@@ -791,8 +791,8 @@ pub(super) fn show_settings_dialog_page(
         SettingsInitialPage::Interface => {
             interface_nav.grab_focus();
         }
-        SettingsInitialPage::Agents => {
-            agents_nav.grab_focus();
+        SettingsInitialPage::AgentHooks => {
+            agent_hooks_nav.grab_focus();
         }
     };
 }

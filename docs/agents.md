@@ -70,6 +70,8 @@ startup. All writes require an explicit user action in the welcome flow,
 Settings > Agent hooks, or the `forktty hooks setup` CLI. Settings confirms
 setup and updates, shows which providers have managed entries, and offers
 ownership-safe removal without changing unrelated provider configuration.
+Hooks report lifecycle and attention state; they never move focus or rearrange
+panes.
 
 ## Safety rules
 
