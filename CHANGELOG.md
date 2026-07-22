@@ -40,6 +40,9 @@ All notable changes to ForkTTY are documented here.
   and public site with a current workspace screenshot.
 
 ### Fixed
+- Closing a terminal tab now releases its GTK tab strip and embedded Ghostty
+  widget, so the tab's shell process exits instead of remaining alive after the
+  surface has disappeared from the workspace model.
 - Split-pane action hovers now stay inset from the compact header edges instead
   of flashing across the focused pane hairline when the pointer crosses an icon.
 - A failed new-tab terminal spawn now restores the exact previous pane layout

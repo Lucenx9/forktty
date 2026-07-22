@@ -1121,21 +1121,35 @@ impl TerminalController {
                     .update_relation(&[gtk::accessible::Relation::Controls(&[page.upcast_ref()])]);
                 let model_for_select = self.model.clone();
                 let state_for_select = self.state.clone();
-                let stack_for_select = stack.clone();
+                let stack_for_select = stack.downgrade();
                 let select_id = surface_id.clone();
-                let tab_widgets_for_select = tab_widgets.clone();
-                let select_areas_for_select = select_areas.clone();
-                let focus_target = self.tab_focus_target_for_surface(surface_id);
+                let tab_widgets_for_select = tab_widgets
+                    .iter()
+                    .map(gtk::prelude::ObjectExt::downgrade)
+                    .collect::<Vec<_>>();
+                let select_areas_for_select = select_areas
+                    .iter()
+                    .map(gtk::prelude::ObjectExt::downgrade)
+                    .collect::<Vec<_>>();
+                let focus_target = self
+                    .tab_focus_target_for_surface(surface_id)
+                    .map(|target| target.downgrade());
                 select.connect_clicked(move |_| {
                     if !select_tab_from_tabstrip(&state_for_select, &model_for_select, &select_id) {
                         return;
                     }
+                    let Some(stack_for_select) = stack_for_select.upgrade() else {
+                        return;
+                    };
                     stack_for_select.set_visible_child_name(select_id.as_str());
                     for (tab_index, (tab, select)) in tab_widgets_for_select
                         .iter()
                         .zip(select_areas_for_select.iter())
                         .enumerate()
                     {
+                        let (Some(tab), Some(select)) = (tab.upgrade(), select.upgrade()) else {
+                            continue;
+                        };
                         let active = tab_index == index;
                         if active {
                             tab.add_css_class("active");
@@ -1144,7 +1158,9 @@ impl TerminalController {
                         }
                         select.update_state(&[gtk::accessible::State::Selected(Some(active))]);
                     }
-                    if let Some(focus_target) = focus_target.clone() {
+                    if let Some(focus_target) =
+                        focus_target.as_ref().and_then(|target| target.upgrade())
+                    {
                         queue_tab_focus_after_selection(
                             focus_target,
                             model_for_select.clone(),
@@ -1366,13 +1382,16 @@ fn install_tab_context_menu(
     let gesture = gtk::GestureClick::new();
     gesture.set_button(gtk::gdk::BUTTON_SECONDARY);
     gesture.set_propagation_phase(gtk::PropagationPhase::Capture);
-    let tab_for_menu = tab.clone();
+    let tab_for_menu = tab.downgrade();
     let state_for_menu = state.clone();
     let parent_for_menu = parent.clone();
     let surface_id_for_menu = surface_id.to_string();
     let current_popover = Rc::new(RefCell::new(None::<gtk::Popover>));
     let current_popover_for_menu = current_popover.clone();
     gesture.connect_pressed(move |gesture, _n_press, x, y| {
+        let Some(tab_for_menu) = tab_for_menu.upgrade() else {
+            return;
+        };
         gesture.set_state(gtk::EventSequenceState::Claimed);
         // Drop the RefMut before popdown(): it emits `closed` synchronously and
         // its handler re-borrows the same cell.
@@ -1515,6 +1534,57 @@ mod tests {
             tab_scroll_target(100.0, 100.0, 0.0, 220.0, 200.0, 40.0),
             Some(120.0)
         );
+    }
+
+    #[test]
+    fn pane_tab_selection_callbacks_do_not_retain_closed_tabstrip() {
+        let _ = crate::test_env::with_gtk_test(|| {
+            let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+            let (first_surface_id, second_surface_id) = {
+                let mut model = model.lock().unwrap();
+                let workspace = model.create_workspace("main", Path::new("/tmp"));
+                let first_surface_id = workspace.focused_surface_id;
+                let second_surface_id = model.add_tab(&first_surface_id).expect("second tab").id;
+                (first_surface_id, second_surface_id)
+            };
+            let (tx, _rx) = mpsc::channel();
+            let backend = Arc::new(GtkTerminalBackend::new(tx));
+            let container = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            let parent = adw::ApplicationWindow::builder().build();
+            let mut controller = TerminalController::new(container, parent.clone(), model, backend);
+
+            let tabs = vec![first_surface_id, second_surface_id];
+            for surface_id in &tabs {
+                let content = gtk::Label::new(Some(surface_id)).upcast::<gtk::Widget>();
+                controller.chromes.insert(
+                    surface_id.clone(),
+                    build_embedded_ghostty_pane_chrome(surface_id, &content, None, &parent),
+                );
+            }
+
+            let tabstrip = controller.leaf_widget_with_tabstrip(&tabs, 0);
+            let (stack, tab, selector) = {
+                let strips = controller.pane_tab_strips.borrow();
+                let strip = strips.first().expect("pane tab strip");
+                (
+                    strip.stack.downgrade(),
+                    strip.tab_widgets[0].downgrade(),
+                    strip.select_areas[0].downgrade(),
+                )
+            };
+
+            controller.pane_tab_strips.borrow_mut().clear();
+            drop(tabstrip);
+            while glib::MainContext::default().iteration(false) {}
+
+            assert!(stack.upgrade().is_none(), "tab callback retained stack");
+            assert!(tab.upgrade().is_none(), "tab callback retained tab widget");
+            assert!(
+                selector.upgrade().is_none(),
+                "tab callback retained selector button"
+            );
+            parent.close();
+        });
     }
 
     #[test]
