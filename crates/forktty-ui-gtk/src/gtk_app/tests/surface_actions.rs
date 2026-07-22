@@ -222,6 +222,38 @@ fn add_new_tab_surface_rolls_back_model_when_spawn_fails() {
 }
 
 #[test]
+fn add_new_tab_spawn_failure_restores_focus_from_another_pane() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(SecondSpawnFailsBackend::default());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let (near_surface_id, focused_surface_id, original_tree) = {
+        let mut model = model.lock().unwrap();
+        let workspace = model.create_workspace("project", "/tmp");
+        let near_surface_id = workspace.focused_surface_id;
+        let focused_surface_id = model
+            .split_surface(&near_surface_id, SplitAxis::Horizontal)
+            .unwrap()
+            .id;
+        let workspace = model.active_workspace().unwrap();
+        (near_surface_id, focused_surface_id, workspace.pane_tree)
+    };
+    spawn_focused_surface_if_needed(&state).unwrap();
+
+    assert!(!glib::MainContext::new()
+        .block_on(add_new_tab_surface_transaction(&state, &near_surface_id)));
+
+    let workspace = model.lock().unwrap().active_workspace().unwrap();
+    assert_eq!(workspace.pane_tree, original_tree);
+    assert_eq!(workspace.focused_surface_id, focused_surface_id);
+}
+
+#[test]
 fn new_tabs_and_splits_use_live_terminal_cwd() {
     let launch_dir = tempfile::tempdir().unwrap();
     let live_dir = tempfile::tempdir().unwrap();

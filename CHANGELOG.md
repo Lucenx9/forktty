@@ -27,6 +27,8 @@ All notable changes to ForkTTY are documented here.
   and public site with a current workspace screenshot.
 
 ### Fixed
+- A failed new-tab terminal spawn now restores the exact previous pane layout
+  and focus instead of moving focus into the pane where the tab was attempted.
 - `forktty remote-helper pty` no longer stalls (and then kills the session
   with a write timeout) when a large paste coincides with a child flooding
   output: PTY input is now relayed with non-blocking partial writes so output

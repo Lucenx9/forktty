@@ -14,6 +14,36 @@ pub(super) enum TabMoveDirection {
     Right,
 }
 
+struct WorkspacePaneLayoutSnapshot {
+    workspace_id: String,
+    pane_tree: PaneNode,
+    focused_surface_id: String,
+}
+
+impl WorkspacePaneLayoutSnapshot {
+    fn capture(model: &WorkspaceModel, surface_id: &str) -> Option<Self> {
+        let workspace_id = model.surface(surface_id)?.workspace_id.clone();
+        let workspace = model
+            .list_workspaces()
+            .into_iter()
+            .find(|workspace| workspace.id == workspace_id)?;
+        Some(Self {
+            workspace_id,
+            pane_tree: workspace.pane_tree,
+            focused_surface_id: workspace.focused_surface_id,
+        })
+    }
+
+    fn rollback_added_surface(self, model: &mut WorkspaceModel, surface_id: &str) -> bool {
+        model.close_surface(surface_id).is_some()
+            && model.restore_workspace_pane_layout(
+                &self.workspace_id,
+                self.pane_tree,
+                self.focused_surface_id,
+            )
+    }
+}
+
 pub(super) fn spawn_surface_gtk(
     state: &SocketAppState,
     surface: &Surface,
@@ -50,7 +80,7 @@ pub(super) async fn add_new_tab_surface_transaction(
 ) -> bool {
     let _surface_set_guard = state.surface_set_guard().await;
     let _ = forktty_socket::sync_live_surface_cwds(state);
-    let surface = {
+    let added = {
         let mut model = match state.model.lock() {
             Ok(model) => model,
             Err(_) => {
@@ -58,15 +88,22 @@ pub(super) async fn add_new_tab_surface_transaction(
                 return false;
             }
         };
-        model.add_tab(near_surface_id)
+        let Some(snapshot) = WorkspacePaneLayoutSnapshot::capture(&model, near_surface_id) else {
+            return false;
+        };
+        model
+            .add_tab(near_surface_id)
+            .map(|surface| (surface, snapshot))
     };
 
-    let Some(surface) = surface else {
+    let Some((surface, snapshot)) = added else {
         return false;
     };
     if let Err(err) = spawn_surface_gtk(state, &surface) {
         if let Ok(mut model) = state.model.lock() {
-            let _ = model.close_surface(&surface.id);
+            if !snapshot.rollback_added_surface(&mut model, &surface.id) {
+                eprintln!("Failed to restore pane layout after tab spawn failure");
+            }
         }
         eprintln!("Failed to spawn new tab terminal: {err}");
         create_global_notification(
@@ -129,25 +166,12 @@ pub(super) async fn split_surface_by_id(
     let _ = forktty_socket::sync_live_surface_cwds(state);
     let split = match state.model.lock() {
         Ok(mut model) => {
-            let Some(source) = model.surface(surface_id) else {
+            let Some(snapshot) = WorkspacePaneLayoutSnapshot::capture(&model, surface_id) else {
                 return false;
             };
-            let workspace_id = source.workspace_id.clone();
-            let Some(workspace) = model
-                .list_workspaces()
-                .into_iter()
-                .find(|workspace| workspace.id == workspace_id)
-            else {
-                return false;
-            };
-            model.split_surface(surface_id, axis).map(|surface| {
-                (
-                    surface,
-                    workspace_id,
-                    workspace.pane_tree,
-                    workspace.focused_surface_id,
-                )
-            })
+            model
+                .split_surface(surface_id, axis)
+                .map(|surface| (surface, snapshot))
         }
         Err(_) => {
             eprintln!("Failed to split pane: workspace model lock poisoned");
@@ -155,19 +179,12 @@ pub(super) async fn split_surface_by_id(
         }
     };
 
-    let Some((surface, workspace_id, pane_tree, focused_surface_id)) = split else {
+    let Some((surface, snapshot)) = split else {
         return false;
     };
     if let Err(err) = spawn_surface_gtk(state, &surface) {
         if let Ok(mut model) = state.model.lock() {
-            let removed = model.close_surface(&surface.id).is_some();
-            let restored = removed
-                && model.restore_workspace_pane_layout(
-                    &workspace_id,
-                    pane_tree,
-                    focused_surface_id,
-                );
-            if !restored {
+            if !snapshot.rollback_added_surface(&mut model, &surface.id) {
                 eprintln!("Failed to restore pane layout after split spawn failure");
             }
         }

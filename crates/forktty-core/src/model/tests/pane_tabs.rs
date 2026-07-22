@@ -442,41 +442,244 @@ fn single_leaf_helper_creates_leaf_with_one_tab() {
     assert_eq!(leaf.leaf_active_id(), Some(&"surface-42".to_string()));
 }
 
-fn assert_workspace_model_invariants(model: &WorkspaceModel) {
+fn assert_workspace_model_invariants(model: &WorkspaceModel, context: &str) {
     use std::collections::BTreeSet;
 
-    let workspaces = model.list_workspaces();
-    let workspace_ids: BTreeSet<_> = workspaces.iter().map(|ws| ws.id.clone()).collect();
-    let surface_ids: BTreeSet<_> = model
-        .list_surfaces(None)
-        .iter()
-        .map(|s| s.id.clone())
-        .collect();
-
-    for workspace in &workspaces {
-        assert!(
-            surface_ids.contains(&workspace.focused_surface_id),
-            "focused surface {} must exist",
-            workspace.focused_surface_id
-        );
-        let leaf_ids = leaf_surface_ids(&workspace.pane_tree);
-        assert!(
-            leaf_ids.contains(&workspace.focused_surface_id),
-            "focused surface {} must be in the pane tree",
-            workspace.focused_surface_id
-        );
-        for leaf_id in leaf_ids {
-            assert!(
-                surface_ids.contains(&leaf_id),
-                "pane leaf {} must reference an existing surface",
-                leaf_id
-            );
+    fn collect_tree_surfaces(
+        node: &PaneNode,
+        focused_surface_id: &str,
+        tree_surface_ids: &mut BTreeSet<SurfaceId>,
+        focused_surface_is_active: &mut bool,
+        context: &str,
+    ) {
+        match node {
+            PaneNode::Leaf { tabs, active } => {
+                assert!(!tabs.is_empty(), "{context}: pane leaf must not be empty");
+                assert!(
+                    *active < tabs.len(),
+                    "{context}: active tab index {active} exceeds {} tabs",
+                    tabs.len()
+                );
+                for surface_id in tabs {
+                    assert!(
+                        tree_surface_ids.insert(surface_id.clone()),
+                        "{context}: surface {surface_id} appears in more than one pane leaf"
+                    );
+                }
+                if tabs
+                    .iter()
+                    .any(|surface_id| surface_id == focused_surface_id)
+                {
+                    *focused_surface_is_active =
+                        tabs.get(*active).map(String::as_str) == Some(focused_surface_id);
+                }
+            }
+            PaneNode::Split {
+                children, sizes, ..
+            } => {
+                assert!(
+                    children.len() >= 2,
+                    "{context}: split must contain at least two children"
+                );
+                assert_eq!(
+                    sizes.len(),
+                    children.len(),
+                    "{context}: split sizes must match its children"
+                );
+                assert!(
+                    sizes.iter().all(|size| size.is_finite() && *size > 0.0),
+                    "{context}: split sizes must be finite and positive"
+                );
+                for child in children {
+                    collect_tree_surfaces(
+                        child,
+                        focused_surface_id,
+                        tree_surface_ids,
+                        focused_surface_is_active,
+                        context,
+                    );
+                }
+            }
         }
-        for surface in model.list_surfaces(Some(&workspace.id)) {
-            assert!(
-                workspace_ids.contains(&surface.workspace_id),
-                "surface {} must belong to an existing workspace",
-                surface.id
+    }
+
+    let workspaces = model.list_workspaces();
+    assert!(
+        !workspaces.is_empty(),
+        "{context}: model must have a workspace"
+    );
+    assert_eq!(
+        workspaces
+            .iter()
+            .filter(|workspace| workspace.active)
+            .count(),
+        1,
+        "{context}: model must have exactly one active workspace"
+    );
+    assert_eq!(
+        model.active_workspace_id(),
+        workspaces
+            .iter()
+            .find(|workspace| workspace.active)
+            .map(|workspace| workspace.id.clone()),
+        "{context}: active workspace lookup must match the active flag"
+    );
+
+    let surfaces = model.list_surfaces(None);
+    let mut tree_surface_ids = BTreeSet::new();
+    for workspace in &workspaces {
+        let mut focused_surface_is_active = false;
+        collect_tree_surfaces(
+            &workspace.pane_tree,
+            &workspace.focused_surface_id,
+            &mut tree_surface_ids,
+            &mut focused_surface_is_active,
+            context,
+        );
+        assert!(
+            focused_surface_is_active,
+            "{context}: focused surface {} must be the active tab of its pane",
+            workspace.focused_surface_id
+        );
+    }
+
+    let model_surface_ids = surfaces
+        .iter()
+        .map(|surface| surface.id.clone())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        tree_surface_ids, model_surface_ids,
+        "{context}: pane trees and surface storage must reference the same surfaces"
+    );
+    for surface in surfaces {
+        assert!(
+            workspaces.iter().any(|workspace| {
+                workspace.id == surface.workspace_id
+                    && leaf_surface_ids(&workspace.pane_tree).contains(&surface.id)
+            }),
+            "{context}: surface {} must belong to its pane-tree workspace",
+            surface.id
+        );
+    }
+
+    crate::session::validate_session_data(&model.to_session_data()).unwrap_or_else(|error| {
+        panic!("{context}: model must serialize as a valid session: {error}")
+    });
+}
+
+#[derive(Clone, Copy)]
+struct DeterministicRng(u64);
+
+impl DeterministicRng {
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        self.0
+    }
+
+    fn index(&mut self, len: usize) -> usize {
+        (self.next() as usize) % len
+    }
+}
+
+#[test]
+fn deterministic_pane_lifecycle_sequences_preserve_focus_and_session_round_trip() {
+    const SEEDS: u64 = 32;
+    const STEPS_PER_SEED: usize = 300;
+    const MAX_WORKSPACES: usize = 4;
+    const MAX_SURFACES: usize = 24;
+
+    for seed in 1..=SEEDS {
+        let mut rng = DeterministicRng(seed);
+        let mut model = WorkspaceModel::new();
+        model.create_workspace("one", "/tmp/one");
+        model.create_workspace("two", "/tmp/two");
+
+        for step in 0..STEPS_PER_SEED {
+            let surfaces = model.list_surfaces(None);
+            let workspaces = model.list_workspaces();
+            let operation = rng.index(10);
+
+            match operation {
+                0 if surfaces.len() < MAX_SURFACES => {
+                    let surface = &surfaces[rng.index(surfaces.len())];
+                    let axis = if rng.next().is_multiple_of(2) {
+                        SplitAxis::Horizontal
+                    } else {
+                        SplitAxis::Vertical
+                    };
+                    let _ = model.split_surface(&surface.id, axis);
+                }
+                1 if surfaces.len() < MAX_SURFACES => {
+                    let surface = &surfaces[rng.index(surfaces.len())];
+                    let _ = model.add_tab(&surface.id);
+                }
+                2 => {
+                    let surface = &surfaces[rng.index(surfaces.len())];
+                    assert!(model.focus_surface_and_select_workspace(&surface.id));
+                }
+                3 => {
+                    let surface = &surfaces[rng.index(surfaces.len())];
+                    assert!(model.select_tab(&surface.id));
+                }
+                4 => {
+                    let surface = &surfaces[rng.index(surfaces.len())];
+                    model.close_surface(&surface.id).expect("surface closes");
+                }
+                5 | 6 => {
+                    let workspace = &workspaces[rng.index(workspaces.len())];
+                    let workspace_surfaces = model.list_surfaces(Some(&workspace.id));
+                    if workspace_surfaces.len() >= 2 {
+                        let source = &workspace_surfaces[rng.index(workspace_surfaces.len())];
+                        let target = &workspace_surfaces[rng.index(workspace_surfaces.len())];
+                        let position = if operation == 5 {
+                            MovePosition::Before
+                        } else {
+                            MovePosition::After
+                        };
+                        let _ = model.move_tab(&source.id, &target.id, position);
+                    }
+                }
+                7 => {
+                    let workspace = &workspaces[rng.index(workspaces.len())];
+                    let workspace_surfaces = model.list_surfaces(Some(&workspace.id));
+                    if workspace_surfaces.len() >= 2 {
+                        let source = &workspace_surfaces[rng.index(workspace_surfaces.len())];
+                        let target = &workspace_surfaces[rng.index(workspace_surfaces.len())];
+                        let _ = model.swap_panes(&source.id, &target.id);
+                    }
+                }
+                8 => {
+                    let session = model.to_session_data();
+                    let mut restored = WorkspaceModel::new();
+                    restore_model_session(&mut restored, session.clone());
+                    assert_eq!(
+                        restored.to_session_data(),
+                        session,
+                        "seed {seed}, step {step}: session round trip changed model state"
+                    );
+                    model = restored;
+                }
+                9 if workspaces.len() < MAX_WORKSPACES && rng.next().is_multiple_of(2) => {
+                    model.create_workspace(
+                        format!("seed-{seed}-step-{step}"),
+                        format!("/tmp/{seed}/{step}"),
+                    );
+                }
+                9 if workspaces.len() > 1 => {
+                    let workspace = &workspaces[rng.index(workspaces.len())];
+                    model
+                        .close_workspace(WorkspaceSelector::Id(&workspace.id))
+                        .expect("workspace closes");
+                }
+                _ => {}
+            }
+
+            assert_workspace_model_invariants(
+                &model,
+                &format!("seed {seed}, step {step}, operation {operation}"),
             );
         }
     }
@@ -504,7 +707,7 @@ fn close_workspace_removes_workspace_scoped_metadata() {
     assert!(model.list_status(&second.id).is_empty());
     assert!(model.list_progress(&second.id).is_empty());
     assert!(model.list_logs(&second.id).is_empty());
-    assert_workspace_model_invariants(&model);
+    assert_workspace_model_invariants(&model, "after workspace close");
     assert_eq!(model.list_workspaces().len(), 1);
     assert_eq!(model.list_workspaces()[0].id, first.id);
 }
@@ -517,16 +720,16 @@ fn invariants_hold_after_split_focus_close_and_restore() {
     let right = model
         .split_surface(&initial, SplitAxis::Horizontal)
         .expect("split");
-    assert_workspace_model_invariants(&model);
+    assert_workspace_model_invariants(&model, "after split");
 
     assert!(model.focus_surface(&initial));
-    assert_workspace_model_invariants(&model);
+    assert_workspace_model_invariants(&model, "after focus change");
 
     model.close_surface(&right.id).expect("close split surface");
-    assert_workspace_model_invariants(&model);
+    assert_workspace_model_invariants(&model, "after split close");
 
     let session = model.to_session_data();
     let mut restored = WorkspaceModel::new();
     restore_model_session(&mut restored, session);
-    assert_workspace_model_invariants(&restored);
+    assert_workspace_model_invariants(&restored, "after session restore");
 }
