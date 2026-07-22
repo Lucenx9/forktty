@@ -1023,6 +1023,20 @@ fn workspace_rows_keep_compact_height_and_pane_tabs_keep_navigation_rhythm() {
 }
 
 #[test]
+fn active_pane_tab_keeps_accent_out_of_rounded_border() {
+    let css = include_str!("../style.css");
+    let active_tab = css
+        .split(".pane-tab.active {")
+        .nth(1)
+        .and_then(|rest| rest.split('}').next())
+        .expect("pane-tab active block");
+
+    assert!(active_tab.contains("background-image: linear-gradient("));
+    assert!(!active_tab.contains("border-top-color: alpha(@accent_color"));
+    assert!(!active_tab.contains("box-shadow: inset 0 1px 0 alpha(@accent_color"));
+}
+
+#[test]
 fn pane_tabs_expose_native_accessible_tab_semantics() {
     let controller_source = include_str!("controller.rs");
 
