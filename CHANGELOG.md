@@ -5,6 +5,10 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- Refined the terminal chrome around one permanent global titlebar: removed the
+  redundant bottom status bar, tightened split-pane headers to 22 px, softened
+  their drag and focus cues, strengthened the menu logo, and replaced the
+  titlebar's final vertical separator with spacing.
 - Simplified the titlebar's leading controls: the ForkTTY logo now owns the
   main application menu, replacing the duplicated static wordmark, hamburger,
   and divider while leaving sidebar and workspace navigation adjacent.

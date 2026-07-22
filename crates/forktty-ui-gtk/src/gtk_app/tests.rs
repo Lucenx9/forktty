@@ -1000,7 +1000,6 @@ fn chrome_micro_polish_keyboard_focus_matches_hover() {
     assert!(
         block("button.flat.terminal-pane-action:focus-visible {").contains("background: @ft_bg_1;")
     );
-    assert!(block("button.flat.status-shortcut:focus-visible {").contains("background: @ft_bg_1;"));
     assert!(block("button.flat.sidebar-add:focus-visible {").contains("background: @ft_bg_1;"));
 }
 
@@ -1023,11 +1022,32 @@ fn chrome_micro_polish_unifies_pane_hover_and_hairline_tone() {
     assert!(block(".terminal-pane.active .terminal-pane-header {")
         .contains("border-bottom-color: @ft_line;"));
     assert!(block(".terminal-pane.active .terminal-pane-header {")
-        .contains("box-shadow: inset 0 1px 0 alpha(@accent_color, 0.72);"));
+        .contains("box-shadow: inset 0 1px 0 alpha(@accent_color, 0.62);"));
 }
 
 #[test]
-fn app_chrome_uses_readable_contrast_without_compounding_status_microtext() {
+fn split_pane_headers_stay_compact_and_reveal_controls_on_demand() {
+    let pane_source = include_str!("pane_chrome.rs");
+    let css = include_str!("../style.css");
+    let block = |selector: &str| {
+        css.split(selector)
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .unwrap_or_else(|| panic!("missing CSS block {selector}"))
+    };
+
+    assert!(pane_source.contains("let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);"));
+    let header = block(".terminal-pane-header {");
+    assert!(header.contains("min-height: 22px;"));
+    assert!(header.contains("padding: 0 8px;"));
+    assert!(header.contains("background: @ft_bg_stage;"));
+    assert!(block(".pane-drag-grip {").contains("opacity: 0.18;"));
+    assert!(block(".terminal-pane-actions {").contains("opacity: 0;"));
+    assert!(block(".terminal-pane-actions.revealed,").contains("opacity: 1;"));
+}
+
+#[test]
+fn app_header_actions_use_readable_contrast() {
     let source = include_str!("../style.css");
     let block = |selector: &str| {
         source
@@ -1038,9 +1058,6 @@ fn app_chrome_uses_readable_contrast_without_compounding_status_microtext() {
     };
 
     assert!(block(".app-header .header-action,").contains("color: @ft_text_2;"));
-    assert!(block(".status-location {").contains("color: @ft_text_2;"));
-    assert!(block(".pane-status {").contains("color: @ft_text_2;"));
-    assert!(!block(".app-status-bar {").contains("font-size:"));
 }
 
 #[test]
@@ -1217,6 +1234,40 @@ fn app_menu_uses_the_logo_without_duplicate_brand_or_hamburger() {
     assert!(source.contains("main_menu_shortcut_should_open"));
     assert!(source.contains("\"ghostty-terminal\""));
     assert!(source.contains("\"forktty-terminal-focus-boundary\""));
+}
+
+#[test]
+fn titlebar_groups_window_controls_with_spacing_instead_of_a_rule() {
+    let app_source = include_str!("app.rs");
+    let css = include_str!("../style.css");
+    let block = |selector: &str| {
+        css.split(selector)
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .unwrap_or_else(|| panic!("missing CSS block {selector}"))
+    };
+
+    assert!(!app_source.contains("header_action_separator"));
+    assert!(!css.contains(".header-action-separator"));
+    assert!(block(".app-window-controls {").contains("margin: 0 1px 0 5px;"));
+    let logo = block(".app-header menubutton.app-logo-menu > button image {");
+    assert!(logo.contains("-gtk-icon-size: 19px;"));
+    assert!(logo.contains("opacity: 0.82;"));
+}
+
+#[test]
+fn app_shell_omits_the_redundant_global_status_bar() {
+    let app_source = include_str!("app.rs");
+    let sidebar_source = include_str!("sidebar.rs");
+    let css = include_str!("../style.css");
+
+    assert!(!app_source.contains("let status_bar ="));
+    assert!(!app_source.contains("status_location"));
+    assert!(!app_source.contains("pane_status"));
+    assert!(!app_source.contains("palette_hint"));
+    assert!(!sidebar_source.contains("status_location"));
+    assert!(!sidebar_source.contains("pane_status"));
+    assert!(!css.contains(".app-status-bar"));
 }
 
 #[test]

@@ -20,6 +20,10 @@ Use these rules for GTK UI changes so the app stays quiet, dense, and native.
 - In the titlebar, the ForkTTY logo is the sole main-menu trigger. Keep it next
   to sidebar/workspace navigation instead of duplicating it with a static
   wordmark, hamburger, or separator.
+- Keep the titlebar as the only permanent global bar. Do not add a bottom status
+  bar for workspace, pane-count, or shortcut information already available in
+  the titlebar, pane chrome, sidebar, tooltips, or command palette.
+- Group titlebar tools and window controls with spacing, not decorative rules.
 - Keep the workspace sidebar as a narrow Adwaita overlay so opening it does not
   reflow terminal panes. Workspace rows are flat navigation, and routine agent
   summaries stay hidden unless the workspace needs attention or reports an
@@ -49,6 +53,8 @@ Use these rules for GTK UI changes so the app stays quiet, dense, and native.
 - Dim only unfocused panes when the visible workspace has more than one terminal pane.
 - In split layouts, mark only the focused pane with the warm header hairline.
   Keep agent lifecycle in that header and avoid duplicating it in a pane footer.
+- Keep split-pane headers at 22 px, on the recessed stage surface. Drag cues stay
+  faint until hover or focus, and pane actions remain hidden until interaction.
 - Visual bell uses the accent color as a short 2px inner border. Do not add sound.
 - The scrollback indicator is a minimal right-edge overlay; avoid permanent chrome.
 

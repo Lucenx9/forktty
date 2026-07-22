@@ -10,7 +10,12 @@
 > `GtkPaned` and card-row instructions below document the original polish pass;
 > use [`../DESIGN.md`](../DESIGN.md) for the current visual contract.
 
-> **Status:** Historical design spec for the GTK chrome polish pass. The implementation has since gained additional release polish such as the product wordmark/icon, theme-source settings, workspace rename, terminal clipboard shortcuts, and README screenshot.
+> **Chrome follow-up (2026-07-22):** the global status bar described in Section
+> 6 was removed after its workspace, cwd, pane-count, and palette information
+> became available in the titlebar, pane headers, sidebar, and command palette.
+> The titlebar is now the only permanent global bar.
+
+> **Status:** Historical design spec for the GTK chrome polish pass. The implementation has since gained additional release polish such as the menu logo, theme-source settings, workspace rename, terminal clipboard shortcuts, and README screenshot.
 
 ---
 

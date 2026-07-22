@@ -73,7 +73,6 @@ entry:focus-visible,
 .ft-menu-item:focus-visible,
 .terminal-pane-action:focus-visible,
 .terminal-pane:focus-visible,
-.status-location:focus-visible,
 .app-header-title:focus-visible,
 .sidebar-add:focus-visible {
   outline: 1px solid @accent_color;
@@ -163,8 +162,8 @@ headerbar.app-header windowhandle,
 }
 
 .app-header menubutton.app-logo-menu > button image {
-  -gtk-icon-size: 18px;
-  opacity: 0.72;
+  -gtk-icon-size: 19px;
+  opacity: 0.82;
 }
 
 .app-header .header-action:hover,
@@ -205,20 +204,12 @@ headerbar.app-header windowhandle,
   /* Rely on focus ring for visibility. */
 }
 
-.app-header .header-action-separator {
-  min-width: 1px;
-  min-height: 13px;
-  margin: 0 5px;
-  background: @ft_line;
-  opacity: 0.72;
-}
-
 .app-header windowcontrols {
   margin: 0 1px;
 }
 
 .app-window-controls {
-  margin: 0 1px;
+  margin: 0 1px 0 5px;
 }
 
 .app-header .app-window-control {
@@ -462,8 +453,7 @@ button.flat.header-workspace-chip:disabled {
   font-size: 0.80em;
 }
 
-/* Sidebar and status bar share one recessed ground so the workbench reads as
- * terminal content plus one chrome tone. */
+/* The sidebar uses one recessed ground so terminal content stays primary. */
 .sidebar-shell {
   background: @ft_bg_recessed;
   color: @ft_text_2;
@@ -792,70 +782,6 @@ button.flat.sidebar-nav-row:focus-visible {
   font-weight: 600;
 }
 
-.app-status-bar {
-  min-height: 24px;
-  padding: 0 10px 0 12px;
-  background: @ft_bg_recessed;
-  border-top: 1px solid @ft_bg_1;
-  box-shadow: none;
-  color: @ft_text_3;
-}
-
-.status-location {
-  padding: 0 7px;
-  background: transparent;
-  border: 0;
-  color: @ft_text_2;
-  font-size: 0.80em;
-  font-weight: 600;
-  letter-spacing: 0;
-  /* Small radius — avoids pill feel. Clean and modern. */
-  border-radius: 4px;
-}
-
-.app-status-bar .keycap {
-  min-height: 17px;
-  padding: 0 5px;
-  font-size: 0.68em;
-}
-
-.status-shortcut {
-  border-color: @ft_line;
-  background: @ft_bg_control;
-  color: @ft_text_3;
-  transition: background-color 90ms ease-out, color 90ms ease-out, border-color 90ms ease-out;
-}
-
-.status-shortcut:hover,
-button.flat.status-shortcut:hover {
-  background: @ft_bg_1;
-  color: @ft_text_1;
-  border-color: @ft_line_strong;
-}
-
-.status-shortcut:focus-visible,
-button.flat.status-shortcut:focus-visible {
-  background: @ft_bg_1;
-  color: @ft_text_1;
-  border-color: @ft_line_strong;
-}
-
-.pane-status {
-  color: @ft_text_2;
-  font-size: 0.80em;
-  margin-left: 12px;
-}
-
-.status-location:hover {
-  background: @ft_bg_1;
-  color: @ft_text_1;
-}
-
-.status-location:disabled {
-  color: @ft_text_4;
-  background: transparent;
-}
-
 /* Workspace popover */
 
 .ft-workspace-popover-list {
@@ -979,9 +905,9 @@ button.flat.status-shortcut:focus-visible {
 }
 
 .terminal-pane-header {
-  min-height: 24px;
-  padding: 0 10px;
-  background: @ft_bg_0;
+  min-height: 22px;
+  padding: 0 8px;
+  background: @ft_bg_stage;
   border-bottom: 1px solid @ft_bg_1;
   color: @ft_text_3;
 }
@@ -990,18 +916,18 @@ button.flat.status-shortcut:focus-visible {
   -gtk-icon-size: 12px;
   color: @ft_text_4;
   min-width: 14px;
-  opacity: 0.38;
+  opacity: 0.18;
 }
 
 .terminal-pane-header:hover .pane-drag-grip,
 .terminal-pane.active .pane-drag-grip {
-  opacity: 0.74;
+  opacity: 0.58;
 }
 
 .terminal-pane.active .terminal-pane-header {
   color: @ft_text_1;
   border-bottom-color: @ft_line;
-  box-shadow: inset 0 1px 0 alpha(@accent_color, 0.72);
+  box-shadow: inset 0 1px 0 alpha(@accent_color, 0.62);
   /* No extra background shift — active conveyed by top accent hairline (Cursor-style) + text.
    * Keeps multi-pane chrome minimal so terminals remain primary. */
 }
@@ -1277,8 +1203,8 @@ button.flat.pane-tab-close:active {
 }
 
 .terminal-pane-action {
-  min-width: 21px;
-  min-height: 21px;
+  min-width: 20px;
+  min-height: 20px;
   padding: 0;
   margin: 0 1px;
   border-radius: 6px;

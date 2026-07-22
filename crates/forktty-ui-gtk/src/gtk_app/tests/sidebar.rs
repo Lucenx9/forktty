@@ -132,11 +132,7 @@ fn workspace_meta_line_prefers_agent_resume_cwd_for_visible_project() {
     let workspace = model.list_workspaces().remove(0);
     let surface = model.surface(&surface_id).unwrap();
 
-    let meta = workspace_meta_line(
-        &workspace,
-        None,
-        Some(surface_effective_project_cwd(surface)),
-    );
+    let meta = workspace_meta_line(&workspace, None, surface_agent_resume_cwd(surface));
 
     assert!(meta.ends_with("forktty"), "{meta}");
     assert!(!meta.ends_with(home.to_string_lossy().as_ref()), "{meta}");
@@ -295,41 +291,9 @@ fn sidebar_snapshot_tracks_ssh_child_exit_and_restart_lifecycle() {
     });
 }
 
-#[test]
-fn sidebar_snapshot_hides_launch_cwd_title_when_effective_cwd_differs() {
-    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
-    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
-    let state = SocketAppState::new(
-        model.clone(),
-        terminal,
-        "/bin/sh",
-        PathBuf::from("/tmp/forktty.sock"),
-    )
-    .with_notification_dispatch(false);
-    {
-        let mut model = model.lock().unwrap();
-        let workspace = model.create_workspace("main", "/tmp");
-        let surface_id = workspace.focused_surface_id;
-        assert!(model.set_surface_title(&surface_id, "/tmp".to_string()));
-        assert!(model.set_surface_agent_session(
-            &surface_id,
-            forktty_core::AgentKind::Codex,
-            "codex-session",
-        ));
-        assert!(
-            model.set_surface_agent_session_resume_cwd(&surface_id, PathBuf::from("/tmp/forktty"),)
-        );
-    }
-
-    let snapshot = sidebar_snapshot(&state);
-
-    assert_eq!(snapshot.active_full_path.as_deref(), Some("/tmp/forktty"));
-    assert_eq!(snapshot.active_pane_label, None);
-}
-
 #[cfg(target_os = "linux")]
 #[test]
-fn session_autosave_updates_sidebar_and_persists_live_terminal_cwd() {
+fn session_autosave_persists_live_terminal_cwd() {
     crate::test_env::with_isolated_user_dirs(|| {
         let launch_dir = tempfile::tempdir().unwrap();
         let live_dir = tempfile::tempdir().unwrap();
@@ -367,15 +331,10 @@ fn session_autosave_updates_sidebar_and_persists_live_terminal_cwd() {
 
         let mut last_saved = None;
         autosave_session_from_state(&state, &mut last_saved);
-        let snapshot = sidebar_snapshot(&state);
         let saved = forktty_core::session::load_session()
             .unwrap()
             .expect("session should be saved");
 
-        assert_eq!(
-            snapshot.active_full_path.as_deref(),
-            Some(live_dir.path().to_string_lossy().as_ref())
-        );
         assert_eq!(
             saved
                 .surfaces

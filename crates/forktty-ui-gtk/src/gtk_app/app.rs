@@ -368,10 +368,7 @@ pub(super) fn build_ui(app: &adw::Application) {
     window_controls.append(&close);
 
     // Global app tools stay in the titlebar; workspace creation lives in the sidebar.
-    let header_action_separator = gtk::Separator::new(gtk::Orientation::Vertical);
-    header_action_separator.add_css_class("header-action-separator");
     header.pack_end(&window_controls);
-    header.pack_end(&header_action_separator);
     header.pack_end(&notifications);
     header.pack_end(&agents);
     header.pack_end(&command_palette);
@@ -442,52 +439,10 @@ pub(super) fn build_ui(app: &adw::Application) {
         app_config.appearance.sidebar_visible,
     );
 
-    let status_bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    status_bar.add_css_class("app-status-bar");
-    let status_location_label = gtk::Label::builder()
-        .label("")
-        .xalign(0.0)
-        .ellipsize(gtk::pango::EllipsizeMode::Middle)
-        .max_width_chars(56)
-        .single_line_mode(true)
-        .build();
-    let status_location = gtk::Button::builder()
-        .child(&status_location_label)
-        .has_frame(false)
-        .build();
-    status_location.add_css_class("flat");
-    status_location.add_css_class("status-location");
-    status_location.set_sensitive(false);
-    let status_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    status_spacer.set_hexpand(true);
-    let pane_status = gtk::Label::builder()
-        .label("")
-        .xalign(0.0)
-        .ellipsize(gtk::pango::EllipsizeMode::End)
-        .max_width_chars(42)
-        .single_line_mode(true)
-        .build();
-    pane_status.add_css_class("pane-status");
-    let palette_hint = gtk::Button::builder()
-        .label("Ctrl+Shift+P")
-        .has_frame(false)
-        .tooltip_text("Open Command Palette (Ctrl+Shift+P)")
-        .build();
-    palette_hint.add_css_class("flat");
-    palette_hint.add_css_class("keycap");
-    palette_hint.add_css_class("status-shortcut");
-    palette_hint.set_action_name(Some("app.command-palette"));
-    set_accessible_button_text(&palette_hint, "Open Command Palette", Some("Ctrl+Shift+P"));
-    status_bar.append(&status_location);
-    status_bar.append(&pane_status);
-    status_bar.append(&status_spacer);
-    status_bar.append(&palette_hint);
-
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.add_css_class("app-root");
     content.append(&header);
     content.append(&workbench_overlay);
-    content.append(&status_bar);
     let toast_overlay = adw::ToastOverlay::new();
     toast_overlay.set_child(Some(&content));
     let toast_handle = ToastHandle::new(&toast_overlay);
@@ -574,14 +529,6 @@ pub(super) fn build_ui(app: &adw::Application) {
         });
     }
     {
-        let state_for_click = state.clone();
-        let controller_for_click = controller.clone();
-        let button = status_location.clone();
-        status_location.connect_clicked(move |_| {
-            show_workspace_popover(&button, &state_for_click, &controller_for_click);
-        });
-    }
-    {
         let window_for_git_repos = window.clone();
         let state_for_git_repos = state.clone();
         sidebar_sections.git_repos_row.connect_clicked(move |_| {
@@ -597,9 +544,6 @@ pub(super) fn build_ui(app: &adw::Application) {
         parent_window: window.clone(),
         workspace_title: workspace_title.clone(),
         workspace_title_label: workspace_title_label.clone(),
-        status_location: status_location.clone(),
-        status_location_label: status_location_label.clone(),
-        pane_status: pane_status.clone(),
         last_signature: Rc::new(RefCell::new(None::<String>)),
         context_menu_open: Rc::new(Cell::new(false)),
         context_popover: Rc::new(RefCell::new(None)),
