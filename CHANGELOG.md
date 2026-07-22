@@ -40,6 +40,10 @@ All notable changes to ForkTTY are documented here.
   and public site with a current workspace screenshot.
 
 ### Fixed
+- Embedded Ghostty panes now wait for their per-widget child PID instead of
+  guessing from ForkTTY's process-wide child list, preventing concurrently
+  restored panes from reporting another surface's PID for live-CWD and port
+  discovery.
 - Closing a terminal tab now releases its GTK tab strip and embedded Ghostty
   widget, so the tab's shell process exits instead of remaining alive after the
   surface has disappeared from the workspace model.

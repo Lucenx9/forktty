@@ -221,14 +221,10 @@ fn child_exit_pid_removal_ignores_stale_generations() {
     assert!(pids.is_empty());
 }
 
-#[cfg(target_os = "linux")]
 #[test]
-fn proc_stat_parent_pid_parses_process_names_with_spaces_and_parens() {
-    assert_eq!(
-        proc_stat_parent_pid("1234 (shell (worker) one) S 42 1 1 0 -1 4194304"),
-        Some(42)
-    );
-    assert_eq!(proc_stat_parent_pid("not a proc stat line"), None);
+fn embedded_pid_poll_does_not_claim_an_unidentified_process_child() {
+    assert_eq!(embedded_surface_pid_candidate(None), None);
+    assert_eq!(embedded_surface_pid_candidate(Some(300)), Some(300));
 }
 
 #[test]
