@@ -989,12 +989,13 @@ button.flat.sidebar-nav-row:focus-visible {
 /* The selected tab is a compact raised surface with one warm top hairline.
  * It stays independent from the user-owned terminal palette below. */
 .pane-tab.active {
-  background: @ft_bg_2;
+  background-color: @ft_bg_2;
+  background-image: linear-gradient(to bottom, alpha(@accent_color, 0.72) 0, alpha(@accent_color, 0.72) 1px, transparent 1px);
   border-color: @ft_line;
   border-bottom: 0;
-  border-top-color: alpha(@accent_color, 0.72);
+  border-top-color: transparent;
   color: @ft_text_1;
-  box-shadow: inset 0 1px 0 alpha(@accent_color, 0.36);
+  box-shadow: none;
 }
 
 .pane-tab:drop(active),
