@@ -17,16 +17,21 @@ pub(super) struct AgentSetupStatus {
     pub(super) kind: AgentSetupStatusKind,
     pub(super) label: String,
     pub(super) detail: String,
+    pub(super) installed_agent_labels: Vec<String>,
 }
 
 impl AgentSetupStatus {
     pub(super) fn action_label(&self) -> &'static str {
         match self.kind {
             AgentSetupStatusKind::UpToDate => "Repair",
-            AgentSetupStatusKind::NotInstalled => "Set Up",
+            AgentSetupStatusKind::NotInstalled => "Set up",
             AgentSetupStatusKind::UpdateAvailable => "Update",
             AgentSetupStatusKind::CheckFailed => "Retry",
         }
+    }
+
+    pub(super) fn has_managed_hooks(&self) -> bool {
+        !self.installed_agent_labels.is_empty()
     }
 }
 
@@ -69,23 +74,49 @@ pub(super) fn run_agent_integrations_setup() -> Result<String, String> {
     setup_success_message(&summaries)
 }
 
+pub(super) fn run_agent_integrations_remove() -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|err| err.to_string())?;
+    let summaries = run_setup_subcommand_summaries(&exe, &["--json", "hooks", "remove"])?;
+    removal_success_message(&summaries)
+}
+
 pub(super) fn inspect_agent_integrations_setup() -> AgentSetupStatus {
-    let result = (|| -> Result<(Vec<SetupSummary>, Vec<SetupSummary>), String> {
-        let exe = std::env::current_exe().map_err(|err| err.to_string())?;
-        let remove =
-            run_setup_subcommand_summaries(&exe, &["--json", "hooks", "remove", "--dry-run"])?;
-        let profile = installed_claude_setup_profile(&remove)?;
-        let setup_args = json_hook_setup_args(&[], profile, true);
-        let setup = run_setup_subcommand_summaries(&exe, &setup_args)?;
-        Ok((setup, remove))
-    })();
-    match result {
-        Ok((setup, remove)) => classify_setup_summaries("Hooks", "Agent hooks", &setup, &remove),
-        Err(err) => AgentSetupStatus {
-            kind: AgentSetupStatusKind::CheckFailed,
-            label: "Check failed".to_string(),
-            detail: format!("Agent hooks status could not be checked: {err}"),
-        },
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(err) => {
+            return check_failed_status(
+                format!("Agent hooks status could not be checked: {err}"),
+                Vec::new(),
+            );
+        }
+    };
+    let remove =
+        match run_setup_subcommand_summaries(&exe, &["--json", "hooks", "remove", "--dry-run"]) {
+            Ok(remove) => remove,
+            Err(err) => {
+                return check_failed_status(
+                    format!("Agent hooks status could not be checked: {err}"),
+                    Vec::new(),
+                );
+            }
+        };
+    let installed_agent_labels = installed_agent_labels(&remove);
+    let profile = match installed_claude_setup_profile(&remove) {
+        Ok(profile) => profile,
+        Err(err) => {
+            return check_failed_status(
+                format!("Agent hooks status could not be checked: {err}"),
+                installed_agent_labels,
+            );
+        }
+    };
+    let setup_args = json_hook_setup_args(&[], profile, true);
+    match run_setup_subcommand_summaries(&exe, &setup_args) {
+        Ok(setup) => classify_setup_summaries(&setup, &remove),
+        Err(err) => check_failed_status(
+            format!("Agent hooks status could not be checked: {err}"),
+            installed_agent_labels,
+        ),
     }
 }
 
@@ -142,6 +173,17 @@ fn setup_success_message(summaries: &[SetupSummary]) -> Result<String, String> {
     })
 }
 
+fn removal_success_message(summaries: &[SetupSummary]) -> Result<String, String> {
+    if summaries.is_empty() {
+        return Err("Agent hooks removal returned no integrations.".to_string());
+    }
+    if summaries.iter().any(|summary| summary.changed) {
+        Ok("ForkTTY-managed hooks removed.".to_string())
+    } else {
+        Ok("No ForkTTY-managed hooks were installed.".to_string())
+    }
+}
+
 fn run_setup_subcommand_summaries<S: AsRef<OsStr>>(
     exe: &Path,
     args: &[S],
@@ -169,25 +211,31 @@ fn run_setup_subcommand_summaries<S: AsRef<OsStr>>(
 }
 
 fn classify_setup_summaries(
-    label: &str,
-    detail_label: &str,
     setup_summaries: &[SetupSummary],
     removal_summaries: &[SetupSummary],
 ) -> AgentSetupStatus {
-    if setup_summaries.is_empty() || removal_summaries.is_empty() {
-        return AgentSetupStatus {
-            kind: AgentSetupStatusKind::CheckFailed,
-            label: "Check failed".to_string(),
-            detail: format!("{detail_label} status returned no integrations."),
-        };
+    if removal_summaries.is_empty() {
+        return check_failed_status(
+            "Agent hooks status returned no integrations.".to_string(),
+            Vec::new(),
+        );
+    }
+    let installed_agent_labels = installed_agent_labels(removal_summaries);
+    if setup_summaries.is_empty() {
+        return check_failed_status(
+            "Agent hooks status returned no integrations.".to_string(),
+            installed_agent_labels,
+        );
     }
     if !removal_summaries.iter().any(|summary| summary.changed) {
         return AgentSetupStatus {
             kind: AgentSetupStatusKind::NotInstalled,
             label: "Not installed".to_string(),
-            detail: format!("{detail_label} are not installed yet."),
+            detail: "Optional for Codex, Claude Code, Antigravity, and OpenCode.".to_string(),
+            installed_agent_labels: Vec::new(),
         };
     }
+    let installed_agent_list = join_agent_labels(&installed_agent_labels);
     let installed_agents = removal_summaries
         .iter()
         .filter(|summary| summary.changed)
@@ -198,11 +246,10 @@ fn classify_setup_summaries(
             .iter()
             .any(|summary| summary.agent == *agent)
     }) {
-        return AgentSetupStatus {
-            kind: AgentSetupStatusKind::CheckFailed,
-            label: "Check failed".to_string(),
-            detail: format!("{detail_label} status returned inconsistent integrations."),
-        };
+        return check_failed_status(
+            "Agent hooks status returned inconsistent integrations.".to_string(),
+            installed_agent_labels,
+        );
     }
     if setup_summaries
         .iter()
@@ -212,13 +259,54 @@ fn classify_setup_summaries(
         return AgentSetupStatus {
             kind: AgentSetupStatusKind::UpToDate,
             label: "Up to date".to_string(),
-            detail: format!("Installed {detail_label} are current for this ForkTTY build."),
+            detail: format!("Installed for {installed_agent_list}."),
+            installed_agent_labels,
         };
     }
     AgentSetupStatus {
         kind: AgentSetupStatusKind::UpdateAvailable,
         label: "Update available".to_string(),
-        detail: format!("Re-run setup to refresh managed {label} entries."),
+        detail: format!("Updates are available for {installed_agent_list}."),
+        installed_agent_labels,
+    }
+}
+
+fn check_failed_status(detail: String, installed_agent_labels: Vec<String>) -> AgentSetupStatus {
+    AgentSetupStatus {
+        kind: AgentSetupStatusKind::CheckFailed,
+        label: "Check failed".to_string(),
+        detail,
+        installed_agent_labels,
+    }
+}
+
+fn installed_agent_labels(summaries: &[SetupSummary]) -> Vec<String> {
+    summaries
+        .iter()
+        .filter(|summary| summary.changed)
+        .map(|summary| agent_display_label(&summary.agent).to_string())
+        .collect()
+}
+
+fn agent_display_label(agent: &str) -> &str {
+    match agent {
+        "codex" => "Codex",
+        "claude" => "Claude Code",
+        "antigravity" => "Antigravity",
+        "opencode" => "OpenCode",
+        _ => agent,
+    }
+}
+
+fn join_agent_labels(labels: &[String]) -> String {
+    match labels {
+        [] => "installed agents".to_string(),
+        [label] => label.clone(),
+        [first, second] => format!("{first} and {second}"),
+        _ => {
+            let (last, leading) = labels.split_last().expect("non-empty label list");
+            format!("{}, and {last}", leading.join(", "))
+        }
     }
 }
 
@@ -239,12 +327,8 @@ mod tests {
 
     #[test]
     fn setup_status_is_up_to_date_when_dry_run_has_no_changes() {
-        let status = classify_setup_summaries(
-            "Hooks",
-            "Agent hooks",
-            &[summary("codex", false)],
-            &[summary("codex", true)],
-        );
+        let status =
+            classify_setup_summaries(&[summary("codex", false)], &[summary("codex", true)]);
 
         assert_eq!(status.kind, AgentSetupStatusKind::UpToDate);
         assert_eq!(status.action_label(), "Repair");
@@ -252,35 +336,43 @@ mod tests {
 
     #[test]
     fn setup_status_is_not_installed_when_provider_config_exists_without_managed_hooks() {
-        let status = classify_setup_summaries(
-            "Hooks",
-            "Agent hooks",
-            &[summary("codex", true)],
-            &[summary("codex", false)],
-        );
+        let status =
+            classify_setup_summaries(&[summary("codex", true)], &[summary("codex", false)]);
 
         assert_eq!(status.kind, AgentSetupStatusKind::NotInstalled);
-        assert_eq!(status.action_label(), "Set Up");
+        assert_eq!(status.action_label(), "Set up");
+        assert!(!status.has_managed_hooks());
     }
 
     #[test]
     fn setup_status_is_update_available_when_existing_configs_would_change() {
         let status = classify_setup_summaries(
-            "Hooks",
-            "Agent hooks",
-            &[summary("codex", true)],
-            &[summary("codex", true)],
+            &[summary("codex", true), summary("claude", true)],
+            &[summary("codex", true), summary("claude", true)],
         );
 
         assert_eq!(status.kind, AgentSetupStatusKind::UpdateAvailable);
         assert_eq!(status.action_label(), "Update");
+        assert!(status.has_managed_hooks());
+        assert_eq!(
+            status.installed_agent_labels,
+            ["Codex".to_string(), "Claude Code".to_string()]
+        );
+        assert!(status.detail.contains("Codex and Claude Code"));
+    }
+
+    #[test]
+    fn setup_probe_failure_keeps_managed_hooks_available_for_removal() {
+        let status = classify_setup_summaries(&[], &[summary("codex", true)]);
+
+        assert_eq!(status.kind, AgentSetupStatusKind::CheckFailed);
+        assert!(status.has_managed_hooks());
+        assert_eq!(status.installed_agent_labels, ["Codex".to_string()]);
     }
 
     #[test]
     fn setup_status_ignores_intentionally_absent_providers() {
         let status = classify_setup_summaries(
-            "Hooks",
-            "Agent hooks",
             &[summary("codex", false), summary("claude", true)],
             &[summary("codex", true), summary("claude", false)],
         );
@@ -340,6 +432,24 @@ mod tests {
         assert_eq!(
             setup_success_message(&[codex]).expect("success message"),
             "Agent hooks configured. Run /hooks in Codex to approve them."
+        );
+    }
+
+    #[test]
+    fn removal_success_message_distinguishes_removed_from_already_absent() {
+        assert_eq!(
+            removal_success_message(&[summary("codex", true), summary("claude", false)])
+                .expect("removal summary"),
+            "ForkTTY-managed hooks removed."
+        );
+        assert_eq!(
+            removal_success_message(&[summary("codex", false), summary("claude", false)])
+                .expect("removal summary"),
+            "No ForkTTY-managed hooks were installed."
+        );
+        assert_eq!(
+            removal_success_message(&[]).unwrap_err(),
+            "Agent hooks removal returned no integrations."
         );
     }
 }

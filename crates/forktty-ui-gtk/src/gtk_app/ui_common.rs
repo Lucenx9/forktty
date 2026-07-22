@@ -475,7 +475,7 @@ pub(super) fn show_rename_workspace_dialog<W>(
         .build();
     title.add_css_class("ft-dialog-title");
     let subtitle = gtk::Label::builder()
-        .label("Choose a short name that is easy to recognize in the sidebar and status bar.")
+        .label("Choose a short name that is easy to recognize in the sidebar and titlebar.")
         .xalign(0.0)
         .wrap(true)
         .build();

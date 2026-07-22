@@ -17,6 +17,28 @@ Use these rules for GTK UI changes so the app stays quiet, dense, and native.
 - Keep operational UI compact. Avoid marketing-page composition, oversized headings, nested cards, and decorative backgrounds.
 - Use icons for toolbar-style actions when a stock or bundled icon exists.
 - Keep cards only for repeated items, popovers, dialogs, and framed tools.
+- In the titlebar, the ForkTTY logo is the sole main-menu trigger. Keep it next
+  to sidebar/workspace navigation instead of duplicating it with a static
+  wordmark, hamburger, or separator.
+- Keep the titlebar as the only permanent global bar. Do not add a bottom status
+  bar for workspace, pane-count, or shortcut information already available in
+  the titlebar, pane chrome, sidebar, tooltips, or command palette.
+- Group titlebar tools and window controls with spacing, not decorative rules.
+- Keep the workspace sidebar as a narrow Adwaita overlay so opening it does not
+  reflow terminal panes. Workspace rows are flat navigation, and routine agent
+  summaries stay hidden unless the workspace needs attention or reports an
+  error or terminal-exit state.
+- Keep Settings compact and goal-oriented: core pages precede optional
+  integrations under General, Integrations, and System navigation. Preference
+  groups use one subtle raised surface; navigation headings stay sentence case.
+- Treat external configuration as a trust boundary. Before Settings writes an
+  integration, state what ForkTTY owns, require confirmation, and provide a
+  nearby removal path that preserves unrelated configuration.
+- Keep the Worktree manager task-first: show the source workspace and path as a
+  compact context row, keep the selected operation in one segmented control,
+  and give the target field a persistent mode-specific label. Helper copy must
+  explain consequences instead of repeating the placeholder; removal must say
+  that the git branch remains intact.
 
 ## Motion
 
@@ -42,6 +64,10 @@ Use these rules for GTK UI changes so the app stays quiet, dense, and native.
 - Dim only unfocused panes when the visible workspace has more than one terminal pane.
 - In split layouts, mark only the focused pane with the warm header hairline.
   Keep agent lifecycle in that header and avoid duplicating it in a pane footer.
+- Keep split-pane headers at 22 px, on the recessed stage surface. Drag cues stay
+  faint until hover or focus, and pane actions remain hidden until interaction.
+- Keep pane-action hover fills inset from both header edges so they never cover
+  the focused-pane hairline or read as a full-height flash during pointer travel.
 - Visual bell uses the accent color as a short 2px inner border. Do not add sound.
 - The scrollback indicator is a minimal right-edge overlay; avoid permanent chrome.
 

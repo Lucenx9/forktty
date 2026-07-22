@@ -689,18 +689,68 @@ fn settings_apply_refreshes_pr_lookup_when_enabled() {
 }
 
 #[test]
-fn settings_agents_initial_page_targets_agents_stack() {
+fn settings_agent_hooks_initial_page_targets_agent_hooks_stack() {
     assert_eq!(SettingsInitialPage::Interface.stack_name(), "interface");
-    assert_eq!(SettingsInitialPage::Agents.stack_name(), "agents");
+    assert_eq!(SettingsInitialPage::AgentHooks.stack_name(), "agent-hooks");
 }
 
 #[test]
-fn settings_agents_nav_uses_agent_semantic_icon() {
+fn settings_agent_hooks_nav_uses_agent_semantic_icon() {
     let source = include_str!("settings_dialog.rs");
 
     assert!(source.contains(
-        "settings_nav_button(\"forktty-terminal-symbolic\", \"Agents\", \"Lifecycle hooks\")"
+        "\"forktty-terminal-symbolic\",\n        \"Agent hooks\",\n        \"Lifecycle metadata\""
     ));
+}
+
+#[test]
+fn agent_hook_settings_explain_opt_in_and_offer_managed_removal() {
+    let source = include_str!("settings_dialog.rs");
+    assert!(source.contains("settings_section(\"Lifecycle hooks\", \"\")"));
+    assert!(source.contains("settings_section(\"What hooks do\", \"\")"));
+    assert!(source.contains("ForkTTY never installs or updates hooks in the background."));
+    assert!(source.contains("Hooks report lifecycle and attention state; they never move focus"));
+    assert!(source.contains("run_agent_integrations_remove"));
+    assert!(source.contains("show_agent_hook_setup_confirmation"));
+    assert!(source.contains("set_settings_task_controls_sensitive(&controls, false)"));
+    assert!(source.contains("set_settings_task_controls_sensitive(&controls, true)"));
+    assert!(source.contains("status_kind: AgentSetupStatusKind"));
+    assert!(source.contains("\"Update agent hooks?\""));
+    assert!(source.contains("\"Remove agent hooks?\""));
+    assert!(!source.contains("\"Update Agent Hooks?\""));
+    assert!(!source.contains("\"Remove Agent Hooks?\""));
+}
+
+#[test]
+fn settings_navigation_groups_core_worktrees_before_optional_integrations() {
+    let source = include_str!("settings_dialog.rs");
+    let general = source.find("settings_nav_heading(\"General\")").unwrap();
+    let interface = source[general..]
+        .find("nav.append(&interface_nav)")
+        .unwrap()
+        + general;
+    let worktrees = source[interface..]
+        .find("nav.append(&worktrees_nav)")
+        .unwrap()
+        + interface;
+    let integrations = source[worktrees..]
+        .find("settings_nav_heading(\"Integrations\")")
+        .unwrap()
+        + worktrees;
+    let agent_hooks = source[integrations..]
+        .find("nav.append(&agent_hooks_nav)")
+        .unwrap()
+        + integrations;
+    let system = source[agent_hooks..]
+        .find("settings_nav_heading(\"System\")")
+        .unwrap()
+        + agent_hooks;
+
+    assert!(general < interface);
+    assert!(interface < worktrees);
+    assert!(worktrees < integrations);
+    assert!(integrations < agent_hooks);
+    assert!(agent_hooks < system);
 }
 
 #[test]
@@ -822,7 +872,7 @@ fn chrome_micro_polish_css_stays_gtk_414_compatible() {
 }
 
 #[test]
-fn sidebar_fixed_sections_cover_resources_and_footer() {
+fn sidebar_footer_keeps_secondary_navigation_compact() {
     let sidebar_source = include_str!("sidebar.rs");
     let app_source = include_str!("app.rs");
     let css = include_str!("../style.css");
@@ -833,16 +883,54 @@ fn sidebar_fixed_sections_cover_resources_and_footer() {
     );
     assert!(!app_source.contains("is not available yet"));
     assert!(app_source.contains("show_about_dialog(&window_for_about)"));
-    assert!(sidebar_source.contains("sidebar_section_label(\"Resources\")"));
     assert!(sidebar_source.contains("sidebar_nav_row(\"forktty-merge-symbolic\", \"Worktrees\")"));
     assert!(!sidebar_source.contains("Knowledge Base"));
     assert!(!sidebar_source.contains("Snippets"));
     assert!(!sidebar_source.contains("Environments"));
     assert!(!sidebar_source.contains("Secrets"));
     assert!(sidebar_source.contains("settings_row.set_action_name(Some(\"app.settings\"));"));
-    assert!(css.contains(".sidebar-fixed-section {"));
+    assert!(!sidebar_source.contains("sidebar_section_label(\"Resources\")"));
+    assert!(!css.contains(".sidebar-fixed-section {"));
     assert!(css.contains("button.flat.sidebar-nav-row {"));
     assert!(css.contains(".sidebar-footer {"));
+}
+
+#[test]
+fn workbench_sidebar_overlays_terminal_content_and_preserves_configured_side() {
+    let actions_source = include_str!("actions.rs");
+    assert!(!actions_source.contains("Sidebar shown"));
+    assert!(!actions_source.contains("Sidebar hidden"));
+    assert!(actions_source.contains("next.appearance.sidebar_visible = visible;"));
+
+    let _ = crate::test_env::with_gtk_test(|| {
+        let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let workspace_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
+        let overlay = build_workbench_overlay(&sidebar, &workspace_area, "left", true);
+
+        assert!(overlay.is_collapsed());
+        assert!(!overlay.is_pin_sidebar());
+        assert!(overlay.shows_sidebar());
+        assert!(!overlay.enables_hide_gesture());
+        assert!(!overlay.enables_show_gesture());
+        assert_eq!(overlay.min_sidebar_width(), 204.0);
+        assert_eq!(overlay.max_sidebar_width(), 216.0);
+        assert_eq!(overlay.sidebar_position(), gtk::PackType::Start);
+        assert_eq!(overlay.sidebar().as_ref(), Some(sidebar.upcast_ref()));
+        assert_eq!(
+            overlay.content().as_ref(),
+            Some(workspace_area.upcast_ref())
+        );
+
+        apply_sidebar_position(&overlay, &sidebar, "right");
+        assert_eq!(overlay.sidebar_position(), gtk::PackType::End);
+        assert!(sidebar.has_css_class("right"));
+        assert!(!sidebar.has_css_class("left"));
+
+        overlay.set_show_sidebar(false);
+        assert!(!overlay.shows_sidebar());
+        assert!(workspace_area.is_visible());
+    });
 }
 
 #[test]
@@ -853,8 +941,8 @@ fn settings_dialog_covers_workbench_layout_and_privacy_sections() {
         .contains("show_worktree_dialog(&parent_for_worktrees, &state_for_worktrees)"));
     assert!(settings_source.contains("model.clear_notifications()"));
     assert!(settings_source.contains("run_agent_integrations_setup"));
-    assert!(settings_source.contains("if !agent_setup_status_kind.get().should_run_setup()"));
-    assert!(settings_source.contains("settings_section(\"Optional\", \"\")"));
+    assert!(settings_source.contains("if !status_kind.should_run_setup()"));
+    assert!(settings_source.contains("settings_section(\"Lifecycle hooks\", \"\")"));
     assert!(settings_source.contains("settings_section(\"Local-first by design\", \"\")"));
     assert!(settings_source.contains(
         "Terminal automation and agent lifecycle metadata use an owner-only local Unix socket."
@@ -918,7 +1006,7 @@ fn chrome_micro_polish_quiets_sidebar_badges() {
 }
 
 #[test]
-fn workspace_rows_keep_uniform_height_and_pane_tabs_keep_compact_navigation_rhythm() {
+fn workspace_rows_keep_compact_height_and_pane_tabs_keep_navigation_rhythm() {
     let controller_source = include_str!("controller.rs");
     let css = include_str!("../style.css");
 
@@ -928,7 +1016,7 @@ fn workspace_rows_keep_uniform_height_and_pane_tabs_keep_compact_navigation_rhyt
     assert!(controller_source
         .contains("set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);"));
     assert!(controller_source.contains("queue_reveal_tab(&strip.scroller, &strip.tabstrip, tab);"));
-    assert!(css.contains(".workspace-card {\n  min-height: 54px;"));
+    assert!(css.contains(".workspace-card {\n  min-height: 44px;"));
     assert!(css.contains(".workspace-row .workspace-card.drop-before {"));
     assert!(css.contains(".pane-tab {\n  min-width: 96px;"));
     assert!(css.contains(".pane-tab-grip {\n  -gtk-icon-size: 11px;\n  min-width: 14px;\n  color: @ft_text_4;\n  opacity: 0.24;"));
@@ -962,7 +1050,6 @@ fn chrome_micro_polish_keyboard_focus_matches_hover() {
     assert!(
         block("button.flat.terminal-pane-action:focus-visible {").contains("background: @ft_bg_1;")
     );
-    assert!(block("button.flat.status-shortcut:focus-visible {").contains("background: @ft_bg_1;"));
     assert!(block("button.flat.sidebar-add:focus-visible {").contains("background: @ft_bg_1;"));
 }
 
@@ -985,11 +1072,35 @@ fn chrome_micro_polish_unifies_pane_hover_and_hairline_tone() {
     assert!(block(".terminal-pane.active .terminal-pane-header {")
         .contains("border-bottom-color: @ft_line;"));
     assert!(block(".terminal-pane.active .terminal-pane-header {")
-        .contains("box-shadow: inset 0 1px 0 alpha(@accent_color, 0.72);"));
+        .contains("box-shadow: inset 0 1px 0 alpha(@accent_color, 0.62);"));
 }
 
 #[test]
-fn app_chrome_uses_readable_contrast_without_compounding_status_microtext() {
+fn split_pane_headers_stay_compact_and_reveal_controls_on_demand() {
+    let pane_source = include_str!("pane_chrome.rs");
+    let css = include_str!("../style.css");
+    let block = |selector: &str| {
+        css.split(selector)
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .unwrap_or_else(|| panic!("missing CSS block {selector}"))
+    };
+
+    assert!(pane_source.contains("let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);"));
+    let header = block(".terminal-pane-header {");
+    assert!(header.contains("min-height: 22px;"));
+    assert!(header.contains("padding: 0 8px;"));
+    assert!(header.contains("background: @ft_bg_stage;"));
+    assert!(block(".pane-drag-grip {").contains("opacity: 0.18;"));
+    assert!(block(".terminal-pane-actions {").contains("opacity: 0;"));
+    assert!(block(".terminal-pane-actions.revealed,").contains("opacity: 1;"));
+    let action = block(".terminal-pane-action {");
+    assert!(action.contains("min-height: 18px;"));
+    assert!(action.contains("margin: 2px 1px;"));
+}
+
+#[test]
+fn app_header_actions_use_readable_contrast() {
     let source = include_str!("../style.css");
     let block = |selector: &str| {
         source
@@ -1000,9 +1111,6 @@ fn app_chrome_uses_readable_contrast_without_compounding_status_microtext() {
     };
 
     assert!(block(".app-header .header-action,").contains("color: @ft_text_2;"));
-    assert!(block(".status-location {").contains("color: @ft_text_2;"));
-    assert!(block(".pane-status {").contains("color: @ft_text_2;"));
-    assert!(!block(".app-status-bar {").contains("font-size:"));
 }
 
 #[test]
@@ -1160,15 +1268,59 @@ fn accessible_shortcut_text_uses_accessibility_key_names() {
 }
 
 #[test]
-fn app_menu_source_uses_packaged_icon_and_guarded_f10_shortcut() {
+fn app_menu_uses_the_logo_without_duplicate_brand_or_hamburger() {
     let source = include_str!("app.rs");
 
-    assert!(source.contains(".icon_name(\"forktty-menu-symbolic\")"));
+    assert!(source
+        .contains("let app_menu = gtk::MenuButton::builder()\n        .icon_name(\"forktty\")"));
+    assert!(!source.contains(".label(\"forktty\")"));
+    assert!(!source.contains("forktty-menu-symbolic"));
+    assert!(!source.contains("brand_separator"));
+    assert!(source.contains("gtk::accessible::Property::Label(\"Main menu\")"));
+    let menu_position = source.find("header.pack_start(&app_menu);").unwrap();
+    let location_position = source
+        .find("header.pack_start(&location_cluster);")
+        .unwrap();
+    assert!(menu_position < location_position);
     assert!(source.contains("gtk::gdk::Key::F10"));
     assert!(source.contains("app_menu.popup()"));
     assert!(source.contains("main_menu_shortcut_should_open"));
     assert!(source.contains("\"ghostty-terminal\""));
     assert!(source.contains("\"forktty-terminal-focus-boundary\""));
+}
+
+#[test]
+fn titlebar_groups_window_controls_with_spacing_instead_of_a_rule() {
+    let app_source = include_str!("app.rs");
+    let css = include_str!("../style.css");
+    let block = |selector: &str| {
+        css.split(selector)
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .unwrap_or_else(|| panic!("missing CSS block {selector}"))
+    };
+
+    assert!(!app_source.contains("header_action_separator"));
+    assert!(!css.contains(".header-action-separator"));
+    assert!(block(".app-window-controls {").contains("margin: 0 1px 0 5px;"));
+    let logo = block(".app-header menubutton.app-logo-menu > button image {");
+    assert!(logo.contains("-gtk-icon-size: 19px;"));
+    assert!(logo.contains("opacity: 0.82;"));
+}
+
+#[test]
+fn app_shell_omits_the_redundant_global_status_bar() {
+    let app_source = include_str!("app.rs");
+    let sidebar_source = include_str!("sidebar.rs");
+    let css = include_str!("../style.css");
+
+    assert!(!app_source.contains("let status_bar ="));
+    assert!(!app_source.contains("status_location"));
+    assert!(!app_source.contains("pane_status"));
+    assert!(!app_source.contains("palette_hint"));
+    assert!(!sidebar_source.contains("status_location"));
+    assert!(!sidebar_source.contains("pane_status"));
+    assert!(!css.contains(".app-status-bar"));
 }
 
 #[test]
@@ -1209,8 +1361,8 @@ fn worktree_context_failures_use_error_notifications() {
     let source = include_str!("workspace_menu.rs");
 
     assert!(source.contains("create_local_notification_with_kind("));
-    assert!(source.contains("\"Merge Failed\""));
-    assert!(source.contains("\"Remove Failed\""));
+    assert!(source.contains("\"Merge failed\""));
+    assert!(source.contains("\"Remove failed\""));
     assert!(source.contains("NotificationKind::Error"));
 }
 
@@ -1320,8 +1472,37 @@ fn worktree_dialog_reports_mode_and_load_failure_context() {
 
     assert!(source.contains("dialog: gtk::Window"));
     assert!(source.contains("controls.dialog.set_title(Some(mode.dialog_title()))"));
-    assert!(source.contains("worktree_list_failed"));
+    assert!(source.contains("worktree_dialog_hint(mode, state.discovery)"));
     assert!(source.contains("Could not load linked worktrees"));
+}
+
+#[test]
+fn worktree_dialog_keeps_context_and_target_hierarchy_visible() {
+    let source = include_str!("worktree_dialog.rs");
+    let css = include_str!("../style.css");
+
+    assert!(source.contains(".label(\"Starting from\")"));
+    assert!(source.contains("context_icon.add_css_class(\"worktree-context-icon\")"));
+    assert!(source.contains("target_label: gtk::Label"));
+    assert!(source.contains("controls.target_label.set_label(mode.target_label())"));
+    assert!(css.contains(".worktree-context-icon"));
+    assert!(css.contains(".worktree-target-label"));
+}
+
+#[test]
+fn worktree_actions_use_sentence_case() {
+    let palette = include_str!("command_palette.rs");
+    let menu = include_str!("workspace_menu.rs");
+
+    assert!(palette.contains("\"New worktree...\""));
+    assert!(menu.contains("\"New worktree from here...\""));
+    assert!(menu.contains("\"Merge worktree\""));
+    assert!(menu.contains("\"Remove worktree\""));
+    assert!(menu.contains("\"Merge failed\""));
+    assert!(menu.contains("\"Remove failed\""));
+    assert!(!palette.contains("\"New Worktree...\""));
+    assert!(!menu.contains("\"Merge Worktree\""));
+    assert!(!menu.contains("\"Remove Worktree\""));
 }
 
 #[test]
@@ -1330,8 +1511,8 @@ fn settings_initial_focus_tracks_requested_page() {
 
     assert!(source.contains("SettingsInitialPage::Interface =>"));
     assert!(source.contains("interface_nav.grab_focus();"));
-    assert!(source.contains("SettingsInitialPage::Agents =>"));
-    assert!(source.contains("agents_nav.grab_focus();"));
+    assert!(source.contains("SettingsInitialPage::AgentHooks =>"));
+    assert!(source.contains("agent_hooks_nav.grab_focus();"));
     assert!(source.contains("Agent hooks"));
 }
 

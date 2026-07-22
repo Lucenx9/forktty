@@ -26,7 +26,7 @@ place work in dedicated git worktrees without tying the UI to one agent vendor.
 
 > **Status**: Early alpha (v0.2.0-alpha.19). ForkTTY is Linux-only and the GTK/Ghostty runtime is now the primary implementation. The AppImage is the primary Linux download for this alpha; the Debian package remains available for Debian/Ubuntu users.
 
-![ForkTTY workspace with three tiled agent terminals, workspace sidebar, and lifecycle status labels](docs/assets/forktty-workspace.png)
+![ForkTTY workspace with three split terminals and a compact content-first titlebar](docs/assets/forktty-workspace.png)
 
 For the fastest local walkthrough, read [GETTING_STARTED.md](GETTING_STARTED.md).
 For local quality targets, read [METRICS.md](METRICS.md).
@@ -46,7 +46,9 @@ the linked guides carry the detailed contracts.
   unread state, status/progress metadata, and the Agent HUD make terminal work
   visible while the process inside each pane owns its own coordination.
 - **First-class worktree workflows**: create, attach, remove, and merge isolated worktree workspaces through native `git2` operations and optional `.forktty/setup` / `.forktty/teardown` hooks.
-- **Native Linux terminal stack**: GTK4/libadwaita shell with embedded Ghostty-backed terminals, split panes, session restore, notifications, command palette, settings, and quake mode.
+- **Native Linux terminal stack**: GTK4/libadwaita shell with embedded
+  Ghostty-backed terminals, a compact overlay workspace sidebar, split panes,
+  session restore, notifications, command palette, settings, and quake mode.
 - **Local-first posture**: no crash reporting or product event tracking, an anonymous daily usage ping that can be disabled, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution. Optional update checks hit GitHub Releases at most once per day and can also be disabled.
 
 ## Install
@@ -216,7 +218,7 @@ command palette for most navigation and pane actions:
 - `Ctrl+Shift+T`: new tab in the focused pane
 - `Ctrl+Shift+W`: close pane
 - `Ctrl++`/`Ctrl+=`, `Ctrl+-`, `Ctrl+0`: zoom terminal panes
-- `Ctrl+B` or `F9`: toggle workspace sidebar
+- `Ctrl+B` or `F9`: toggle the overlay workspace sidebar without resizing panes
 - Agents: titlebar button or command palette
 - `Ctrl+Shift+M`: notifications
 - `Ctrl+?` (`F1` also works): keyboard shortcuts
@@ -295,6 +297,11 @@ optional and are never installed or refreshed automatically. Claude uses its
 lower-frequency lifecycle profile by default; `--full` adds per-tool hooks.
 `hooks remove gemini` exists only for legacy cleanup and does not enable Gemini
 setup.
+
+Settings > Agent hooks shows the installed providers before any action. Setup,
+update, and repair require confirmation; Remove deletes only ForkTTY-managed
+entries and leaves unrelated agent configuration untouched. Hooks report
+lifecycle and attention state; they never move focus or rearrange panes.
 
 Diagnose an installed integration with:
 

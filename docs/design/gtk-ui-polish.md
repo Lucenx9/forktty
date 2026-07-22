@@ -4,7 +4,18 @@
 **Scope:** Polish + chrome redesign (Scope B). Visual language target: Zed/Ghostty — minimal, dense.
 **Affected crates:** `forktty-ui-gtk` (primary), `forktty-core` (config additions for sidebar visibility).
 
-> **Status:** Historical design spec for the GTK chrome polish pass. The implementation has since gained additional release polish such as the product wordmark/icon, theme-source settings, workspace rename, terminal clipboard shortcuts, and README screenshot.
+> **Current follow-up (2026-07-22):** the workspace sidebar now lives in a
+> collapsed `AdwOverlaySplitView`, with a 204–216 px adaptive width and flat
+> navigation rows. Showing it no longer resizes terminal panes. The detailed
+> `GtkPaned` and card-row instructions below document the original polish pass;
+> use [`../DESIGN.md`](../DESIGN.md) for the current visual contract.
+
+> **Chrome follow-up (2026-07-22):** the global status bar described in Section
+> 6 was removed after its workspace, cwd, pane-count, and palette information
+> became available in the titlebar, pane headers, sidebar, and command palette.
+> The titlebar is now the only permanent global bar.
+
+> **Status:** Historical design spec for the GTK chrome polish pass. The implementation has since gained additional release polish such as the menu logo, theme-source settings, workspace rename, terminal clipboard shortcuts, and README screenshot.
 
 ---
 

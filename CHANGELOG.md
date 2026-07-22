@@ -5,6 +5,34 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- Refined the Worktree manager around a clearer task hierarchy: the source
+  workspace and path stay visible in a compact, mode-aware context row, every
+  mode keeps a persistent target label, helper copy explains the operation
+  instead of repeating the placeholder, and worktree actions use sentence case
+  consistently.
+- Refined Settings as a quieter native preference surface: reduced the default
+  dialog and navigation width, grouped pages under General, Integrations, and
+  System, strengthened page hierarchy, and placed controls on subtle raised
+  group surfaces.
+- Made the Agent hooks settings flow explicit and reversible: status details
+  name the installed providers, setup and updates require confirmation, the UI
+  explains that hooks never change focus or pane layout, and managed entries
+  can be removed without touching unrelated agent configuration.
+- Refined the terminal chrome around one permanent global titlebar: removed the
+  redundant bottom status bar, tightened split-pane headers to 22 px, softened
+  their drag and focus cues, strengthened the menu logo, and replaced the
+  titlebar's final vertical separator with spacing.
+- Simplified the titlebar's leading controls: the ForkTTY logo now owns the
+  main application menu, replacing the duplicated static wordmark, hamburger,
+  and divider while leaving sidebar and workspace navigation adjacent.
+- Removed the redundant “Sidebar shown/hidden” toast from Ctrl+B/F9 toggles;
+  the overlay itself provides immediate feedback while visibility persistence
+  remains unchanged.
+- Reworked the workspace sidebar as a compact libadwaita overlay: opening it no
+  longer resizes terminal panes, workspace rows use a flat navigation treatment,
+  routine activity summaries stay out of the primary scan path, and Worktrees,
+  Settings, and About share one quiet utility footer. Ctrl+B/F9, left/right
+  placement, and the persisted visibility preference remain unchanged.
 - Sped up terminal scrollback searches by rejecting first-character mismatches
   before running the full case-insensitive substring comparison.
 - Simplified the repository overview around installation and first-use paths,
@@ -12,6 +40,10 @@ All notable changes to ForkTTY are documented here.
   and public site with a current workspace screenshot.
 
 ### Fixed
+- Split-pane action hovers now stay inset from the compact header edges instead
+  of flashing across the focused pane hairline when the pointer crosses an icon.
+- A failed new-tab terminal spawn now restores the exact previous pane layout
+  and focus instead of moving focus into the pane where the tab was attempted.
 - GTK Remove/Merge worktree actions now use the modeled workspace checkout
   (`working_dir`) instead of the focused surface's live shell CWD, so a pane
   that has `cd`'d outside the repo (or into another tree) can no longer route

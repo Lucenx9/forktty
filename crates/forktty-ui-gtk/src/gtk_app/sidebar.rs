@@ -1,4 +1,4 @@
-//! Workspace sidebar state, rows, popovers, and status/location summaries.
+//! Workspace sidebar state, rows, popovers, and workspace summaries.
 
 use super::*;
 use std::collections::BTreeSet;
@@ -22,9 +22,6 @@ pub(super) struct WorkspaceStatusBadge {
 pub(super) struct SidebarSnapshot {
     pub(super) rows: Vec<SidebarWorkspaceRow>,
     active_workspace_name: Option<String>,
-    active_status_label: Option<String>,
-    pub(super) active_full_path: Option<String>,
-    pub(super) active_pane_label: Option<String>,
     pub(super) signature: String,
 }
 
@@ -34,9 +31,6 @@ pub(super) struct SidebarUi {
     pub(super) parent_window: adw::ApplicationWindow,
     pub(super) workspace_title: gtk::Button,
     pub(super) workspace_title_label: gtk::Label,
-    pub(super) status_location: gtk::Button,
-    pub(super) status_location_label: gtk::Label,
-    pub(super) pane_status: gtk::Label,
     pub(super) last_signature: Rc<RefCell<Option<String>>>,
     pub(super) context_menu_open: Rc<Cell<bool>>,
     pub(super) context_popover: Rc<RefCell<Option<gtk::Popover>>>,
@@ -214,41 +208,6 @@ pub(super) fn refresh_sidebar(
         set_accessible_button_text(&ui.workspace_title, "No active workspace", None);
         ui.workspace_title.set_sensitive(false);
     }
-    if let Some(label) = snapshot.active_status_label.as_deref() {
-        ui.status_location_label.set_label(label);
-        if let Some(path) = snapshot.active_full_path.as_deref() {
-            ui.status_location
-                .set_tooltip_text(Some(&format!("Workspace location: {path}")));
-        } else {
-            ui.status_location
-                .set_tooltip_text(Some("Workspace location"));
-        }
-        set_accessible_button_text(
-            &ui.status_location,
-            &format!("Workspace location: {label}"),
-            None,
-        );
-        ui.status_location.set_sensitive(true);
-    } else {
-        ui.status_location_label.set_label("");
-        ui.status_location
-            .set_tooltip_text(Some("No active workspace location"));
-        ui.status_location
-            .update_property(&[gtk::accessible::Property::Label(
-                "No active workspace location",
-            )]);
-        ui.status_location.set_sensitive(false);
-    }
-    if let Some(label) = snapshot.active_pane_label.as_deref() {
-        ui.pane_status.set_label(label);
-        ui.pane_status.set_tooltip_text(Some(label));
-        ui.pane_status.set_visible(true);
-    } else {
-        ui.pane_status.set_label("");
-        ui.pane_status.set_tooltip_text(None);
-        ui.pane_status.set_visible(false);
-    }
-
     if !force {
         if ui.context_menu_open.get() {
             return;
@@ -384,7 +343,9 @@ pub(super) fn refresh_sidebar(
         text.append(&name_line);
         text.append(&meta_label);
 
-        if !summary.is_empty() {
+        if !summary.is_empty()
+            && sidebar_shows_activity_summary(workspace.needs_attention, status.as_ref())
+        {
             let summary_label = gtk::Label::builder()
                 .label(&summary)
                 .xalign(0.0)
@@ -538,6 +499,19 @@ pub(super) fn refresh_sidebar(
     }
 }
 
+pub(super) fn sidebar_shows_activity_summary(
+    needs_attention: bool,
+    status: Option<&WorkspaceStatusBadge>,
+) -> bool {
+    needs_attention
+        || status.is_some_and(|status| {
+            matches!(
+                status.class_name,
+                "needs-input" | "attention" | "error" | "exited"
+            )
+        })
+}
+
 pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
     let terminal_surfaces = state.terminal.surfaces().unwrap_or_default();
     let ready_surface_ids = ready_surface_ids(state, &terminal_surfaces).unwrap_or_default();
@@ -545,9 +519,6 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
         return SidebarSnapshot {
             rows: Vec::new(),
             active_workspace_name: None,
-            active_status_label: None,
-            active_full_path: None,
-            active_pane_label: None,
             signature: "lock-poisoned".to_string(),
         };
     };
@@ -619,60 +590,7 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
         .map(|row| &row.workspace)
         .find(|workspace| active_workspace_id.as_deref() == Some(workspace.id.as_str()));
     let active_workspace_name = active_workspace.map(|workspace| workspace.name.clone());
-    let active_status_label = active_workspace.map(|workspace| {
-        let cwd = model
-            .surface(&workspace.focused_surface_id)
-            .map(|surface| compact_path(surface_effective_project_cwd(surface)))
-            .unwrap_or_else(|| compact_path(&workspace.working_dir));
-        format!("{} · {}", workspace.name, cwd)
-    });
-    let active_full_path = active_workspace.map(|workspace| {
-        model
-            .surface(&workspace.focused_surface_id)
-            .map(|surface| {
-                surface_effective_project_cwd(surface)
-                    .to_string_lossy()
-                    .to_string()
-            })
-            .unwrap_or_else(|| workspace.working_dir.to_string_lossy().to_string())
-    });
-    let active_pane_label = active_workspace.and_then(|workspace| {
-        let panes = collect_panes(&workspace.pane_tree);
-        let pane_count = panes.len();
-        let index = panes
-            .iter()
-            .position(|surface_id| surface_id == &workspace.focused_surface_id)?;
-        let surface = model.surface(&workspace.focused_surface_id);
-        let title = surface
-            .map(surface_title)
-            .unwrap_or_else(|| "Terminal".to_string());
-        let title_is_cwd_echo = surface
-            .map(|surface| {
-                title_matches_path_echo(&title, surface_effective_project_cwd(surface))
-                    || title_matches_path_echo(&title, &surface.cwd)
-            })
-            .unwrap_or_else(|| title_matches_path_echo(&title, &workspace.working_dir));
-        if pane_count <= 1 {
-            // With a single pane the "Pane 1/1" prefix is noise; the cwd is
-            // already shown in status_location. Only surface a distinct title.
-            if title == "Terminal" || title_is_cwd_echo {
-                return None;
-            }
-            return Some(title);
-        }
-        if title == "Terminal" || title_is_cwd_echo {
-            return Some(format!("Pane {}/{}", index + 1, pane_count));
-        }
-        Some(format!("Pane {}/{} · {}", index + 1, pane_count, title))
-    });
-    let mut signature = format!(
-        "active={:?};status={:?};path={:?};pane={:?};rows={};",
-        active_workspace_id,
-        active_status_label,
-        active_full_path,
-        active_pane_label,
-        rows.len()
-    );
+    let mut signature = format!("active={active_workspace_id:?};rows={};", rows.len());
     for row in &rows {
         signature.push_str(&format!(
             "{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?};",
@@ -693,9 +611,6 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
     SidebarSnapshot {
         rows,
         active_workspace_name,
-        active_status_label,
-        active_full_path,
-        active_pane_label,
         signature,
     }
 }
@@ -740,18 +655,8 @@ pub(super) fn workspace_meta_line(
     parts.join(" · ")
 }
 
-pub(super) fn surface_effective_project_cwd(surface: &forktty_core::Surface) -> &Path {
-    surface_agent_resume_cwd(surface).unwrap_or(surface.cwd.as_path())
-}
-
 pub(super) fn surface_agent_resume_cwd(surface: &forktty_core::Surface) -> Option<&Path> {
     surface.agent_session.as_ref()?.resume_cwd.as_deref()
-}
-
-fn title_matches_path_echo(title: &str, path: &Path) -> bool {
-    let compact = compact_path(path);
-    let full = path.to_string_lossy();
-    title == compact.as_str() || title == full.as_ref() || full.ends_with(&format!("/{title}"))
 }
 
 pub(super) async fn select_sidebar_workspace(
@@ -1339,21 +1244,17 @@ fn format_status_summary_part(status: &StatusEntry) -> String {
 /// Settings/About footer.
 #[derive(Clone)]
 pub(super) struct SidebarSectionsUi {
-    pub(super) resources_shell: gtk::Box,
     pub(super) git_repos_row: gtk::Button,
     pub(super) footer_shell: gtk::Box,
     pub(super) about_row: gtk::Button,
 }
 
 pub(super) fn build_sidebar_sections() -> SidebarSectionsUi {
-    let resources_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    resources_shell.add_css_class("sidebar-fixed-section");
-    resources_shell.append(&sidebar_section_label("Resources"));
     let git_repos_row = sidebar_nav_row("forktty-merge-symbolic", "Worktrees");
-    resources_shell.append(&git_repos_row);
 
     let footer_shell = gtk::Box::new(gtk::Orientation::Vertical, 0);
     footer_shell.add_css_class("sidebar-footer");
+    footer_shell.append(&git_repos_row);
     let settings_row = sidebar_nav_row("forktty-settings-symbolic", "Settings");
     settings_row.set_action_name(Some("app.settings"));
     footer_shell.append(&settings_row);
@@ -1361,22 +1262,10 @@ pub(super) fn build_sidebar_sections() -> SidebarSectionsUi {
     footer_shell.append(&about_row);
 
     SidebarSectionsUi {
-        resources_shell,
         git_repos_row,
         footer_shell,
         about_row,
     }
-}
-
-fn sidebar_section_label(title: &str) -> gtk::Label {
-    let label = gtk::Label::builder()
-        .label(title)
-        .xalign(0.0)
-        .single_line_mode(true)
-        .build();
-    label.add_css_class("sidebar-section-label");
-    label.add_css_class("sidebar-fixed-section-label");
-    label
 }
 
 fn sidebar_nav_row(icon: &str, label: &str) -> gtk::Button {

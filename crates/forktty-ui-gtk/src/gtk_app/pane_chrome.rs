@@ -35,7 +35,7 @@ fn build_pane_chrome_with_content(
         widget.attach_navigation_key_fallback(&pane);
     }
 
-    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     header.add_css_class("terminal-pane-header");
     // Animate the header in and out as the workspace transitions between a
     // single pane and a split layout instead of toggling visibility abruptly.

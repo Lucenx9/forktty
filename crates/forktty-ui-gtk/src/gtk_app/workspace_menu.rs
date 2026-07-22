@@ -178,7 +178,7 @@ pub(super) fn build_workspace_context_menu(
         &menu,
         &popover,
         "forktty-folder-new-symbolic",
-        "New Worktree from Here...",
+        "New worktree from here...",
         false,
         move || {
             let state = state_.clone();
@@ -214,7 +214,7 @@ pub(super) fn build_workspace_context_menu(
             &menu,
             &popover,
             "forktty-check-symbolic",
-            "Merge Worktree",
+            "Merge worktree",
             false,
             move || {
                 let state = state_.clone();
@@ -225,10 +225,10 @@ pub(super) fn build_workspace_context_menu(
                         return;
                     }
                     match merge_worktree_from_gtk_async(&state, &name).await {
-                        Ok(msg) => create_local_notification(&state, "Worktree Merged", &msg),
+                        Ok(msg) => create_local_notification(&state, "Worktree merged", &msg),
                         Err(err) => create_local_notification_with_kind(
                             &state,
-                            "Merge Failed",
+                            "Merge failed",
                             &err,
                             NotificationKind::Error,
                         ),
@@ -245,7 +245,7 @@ pub(super) fn build_workspace_context_menu(
             &menu,
             &popover,
             "forktty-trash-symbolic",
-            "Remove Worktree",
+            "Remove worktree",
             true,
             move || {
                 let state_confirm = state_.clone();
@@ -253,11 +253,11 @@ pub(super) fn build_workspace_context_menu(
                 let name_confirm = name_.clone();
                 show_destructive_confirmation(
                     &parent_,
-                    "Remove Worktree?",
+                    "Remove worktree?",
                     &format!(
                         "Remove worktree '{name_confirm}' and close its ForkTTY workspace. The git branch is left intact."
                     ),
-                    "Remove Worktree",
+                    "Remove worktree",
                     move || {
                         let state = state_confirm.clone();
                         let name = name_confirm.clone();
@@ -269,7 +269,7 @@ pub(super) fn build_workspace_context_menu(
                             if let Err(err) = remove_worktree_from_gtk_async(&state, &name).await {
                                 create_local_notification_with_kind(
                                     &state,
-                                    "Remove Failed",
+                                    "Remove failed",
                                     &err,
                                     NotificationKind::Error,
                                 );

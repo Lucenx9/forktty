@@ -13,7 +13,7 @@ pub(super) fn install_actions(
     app: &adw::Application,
     window: &adw::ApplicationWindow,
     state: &SocketAppState,
-    sidebar_shell: &gtk::Box,
+    workbench_overlay: &adw::OverlaySplitView,
     controller: &Rc<RefCell<TerminalController>>,
     settings_apply: SettingsApplyCallback,
     quake_mode: bool,
@@ -208,16 +208,10 @@ pub(super) fn install_actions(
         move || controller.borrow_mut().toggle_maximized_pane()
     });
     add_action(app, "toggle-sidebar", {
-        let sidebar_shell = sidebar_shell.clone();
-        let controller = controller.clone();
+        let workbench_overlay = workbench_overlay.clone();
         move || {
-            let visible = !sidebar_shell.is_visible();
-            sidebar_shell.set_visible(visible);
-            controller.borrow().show_toast(if visible {
-                "Sidebar shown"
-            } else {
-                "Sidebar hidden"
-            });
+            let visible = !workbench_overlay.shows_sidebar();
+            workbench_overlay.set_show_sidebar(visible);
             // Read-modify-write of the config file off the main thread; the
             // toggle itself must not wait on disk.
             std::thread::spawn(move || {

@@ -44,7 +44,7 @@ or CLI parser tests), so they should be treated as regressions if they fail in C
 - worktree `.forktty/setup` hook failure visibility: failure stays non-fatal but
   is now returned as `WorktreeInfo.setup_warning`, included in the
   `worktree.create`/`worktree.attach` socket responses as `setup_warning`, and
-  surfaced as a `Worktree Setup Hook Failed` error notification (core + socket
+  surfaced as a `Worktree setup hook failed` error notification (core + socket
   tests)
 
 Manual QA below should focus on runtime integration that headless tests cannot
@@ -87,7 +87,9 @@ the current display or `xvfb-run` when available.
 - Close the last workspace from the GTK UI and confirm a replacement `main` workspace opens a live terminal in the same directory.
 - If GTK cannot spawn the replacement terminal while closing the last workspace, it shows a Close Workspace Failed notification and keeps the old workspace and terminal visible.
 - If GTK cannot close a workspace's terminal surface, it shows a Close Workspace Failed notification and leaves the workspace visible instead of dropping it from the sidebar.
-- Toggle the sidebar twice and confirm `~/.config/forktty/config.toml` remains valid TOML with no `config.toml.tmp-*` sibling left behind.
+- Toggle the sidebar twice and confirm it overlays rather than resizes the
+  terminal layout, then confirm `~/.config/forktty/config.toml` remains valid
+  TOML with no `config.toml.tmp-*` sibling left behind.
 - Symlink `~/.config/forktty/config.toml` to a real managed TOML file, toggle
   the sidebar, and confirm the target updates while the symlink remains a symlink.
 - Restart the app and confirm workspace/pane layout restores.
@@ -103,11 +105,11 @@ Use this for visible GTK changes. It applies the visual rules in
 `docs/DESIGN.md` and the general UI metrics in `METRICS.md`.
 
 - Open ForkTTY at normal laptop width and wide desktop width.
-- Inspect the default workspace, sidebar, pane chrome, status bar, command
+- Inspect the default workspace, sidebar, pane chrome, titlebar, command
   palette, notifications panel, Settings, and any dialog touched by the change.
 - Create a three-pane layout and move focus between panes. Confirm exactly one
   pane header has the warm focus hairline, no redundant shell/status footer is
-  shown per pane, and the global status bar remains readable.
+  shown per pane, and no redundant global bottom bar takes terminal space.
 - Confirm the screen keeps one accent color, no gradients/glow, no emoji-as-UI,
   compact operational spacing, sentence-case labels, and no decorative elements
   that compete with terminal state or navigation.
@@ -247,7 +249,7 @@ checking that the opt-in browser feature still builds and starts.
 - `HOME=$(mktemp -d) CODEX_HOME= CLAUDE_CONFIG_DIR= OPENCODE_CONFIG_DIR= forktty hooks setup` — creates `.codex`, `.claude`, `.gemini/config` for Antigravity, and `.config/opencode/plugins/forktty.generated.js` under that temporary home, not the real home directory.
 - `forktty hooks remove codex --dry-run` — prints `would remove` and leaves the Codex config unchanged.
 - `forktty hooks remove codex opencode` — removes only ForkTTY-managed Codex entries and the generated OpenCode plugin, preserving unrelated hook commands.
-- Launch the GTK app with no ForkTTY-managed hooks installed — it does not create an unread setup reminder; setup remains available from the first-run welcome flow and Settings > Agents.
+- Launch the GTK app with no ForkTTY-managed hooks installed — it does not create an unread setup reminder; setup remains available from the first-run welcome flow and Settings > Agent hooks.
 - Inspect one generated hook command — it calls the absolute `forktty` launcher directly, so AppImage and packaged installs do not need a source checkout or Node.js; if that launcher is an AppImage, the command includes `APPIMAGE_EXTRACT_AND_RUN=1`.
 - Repeat the previous command — prints `already configured` for each agent and does not create new backups.
 

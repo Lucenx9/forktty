@@ -73,7 +73,6 @@ entry:focus-visible,
 .ft-menu-item:focus-visible,
 .terminal-pane-action:focus-visible,
 .terminal-pane:focus-visible,
-.status-location:focus-visible,
 .app-header-title:focus-visible,
 .sidebar-add:focus-visible {
   outline: 1px solid @accent_color;
@@ -111,27 +110,6 @@ headerbar.app-header windowhandle,
   background-color: @ft_bg_0;
   background-image: none;
   color: @ft_text_2;
-}
-
-.app-brand {
-  min-height: 26px;
-  margin: 0 2px 0 0;
-  padding: 0 7px 0 3px;
-  color: @ft_text_2;
-}
-
-.app-brand-logo {
-  opacity: 0.58;
-}
-
-.app-brand-wordmark {
-  color: @ft_text_1;
-}
-
-.app-brand-name {
-  color: @ft_text_3;
-  font-size: 0.80em;
-  font-weight: 500;
 }
 
 .app-header-title-spacer {
@@ -179,6 +157,15 @@ headerbar.app-header windowhandle,
   -gtk-icon-size: 14px;
 }
 
+.app-header menubutton.app-logo-menu {
+  margin-right: 2px;
+}
+
+.app-header menubutton.app-logo-menu > button image {
+  -gtk-icon-size: 19px;
+  opacity: 0.82;
+}
+
 .app-header .header-action:hover,
 .app-header menubutton.header-action > button:hover {
   color: @ft_text_1;
@@ -217,20 +204,12 @@ headerbar.app-header windowhandle,
   /* Rely on focus ring for visibility. */
 }
 
-.app-header .header-action-separator {
-  min-width: 1px;
-  min-height: 13px;
-  margin: 0 5px;
-  background: @ft_line;
-  opacity: 0.72;
-}
-
 .app-header windowcontrols {
   margin: 0 1px;
 }
 
 .app-window-controls {
-  margin: 0 1px;
+  margin: 0 1px 0 5px;
 }
 
 .app-header .app-window-control {
@@ -417,15 +396,8 @@ popover.ft-context-menu contents {
 }
 
 /* --------------------------------------------------------------------------
- * Workspace paned + sidebar
+ * Workspace splits + sidebar
  * -------------------------------------------------------------------------- */
-
-.workspace-paned > separator {
-  background: alpha(@window_fg_color, 0.075);
-  min-width: 3px;
-  min-height: 3px;
-  transition: background-color 90ms ease-out;
-}
 
 .workspace-area > separator {
   background: @ft_bg_1;
@@ -434,15 +406,12 @@ popover.ft-context-menu contents {
   transition: background-color 90ms ease-out;
 }
 
-.workspace-paned > separator:hover,
-.workspace-paned > separator:focus-visible,
 .workspace-area > separator:hover,
 .workspace-area > separator:focus-visible {
   background: alpha(@accent_color, 0.28);
 }
 
 /* GTK marks the separator `:active` while the divider is being dragged. */
-.workspace-paned > separator:active,
 .workspace-area > separator:active {
   background: alpha(@accent_color, 0.56);
 }
@@ -484,8 +453,7 @@ button.flat.header-workspace-chip:disabled {
   font-size: 0.80em;
 }
 
-/* Sidebar and status bar share one recessed ground so the workbench reads as
- * terminal content plus one chrome tone. */
+/* The sidebar uses one recessed ground so terminal content stays primary. */
 .sidebar-shell {
   background: @ft_bg_recessed;
   color: @ft_text_2;
@@ -508,9 +476,8 @@ button.flat.header-workspace-chip:disabled {
 .sidebar-section-label {
   color: @ft_text_3;
   font-weight: 600;
-  font-size: 0.68em;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
+  font-size: 0.74em;
+  letter-spacing: 0;
 }
 
 .sidebar-add {
@@ -589,21 +556,19 @@ button.flat.sidebar-add:focus-visible {
   border-left-color: @accent_color;
 }
 
-/* Workspace rows are inset navigation items, not edge-to-edge cards. A small
- * warm rail marks context while the surface and hairline keep the list calm. */
+/* Workspace rows are quiet navigation items. A small warm rail marks context
+ * without adding a second card/border hierarchy inside the overlay. */
 
 .workspace-card {
-  min-height: 54px;
-  /* Match the intrinsic three-line variant so rows without activity summary
-   * keep the same click target and visual rhythm. */
-  padding: 6px 6px 6px 12px;
-  margin: 0 6px;
-  border: 1px solid transparent;
+  min-height: 44px;
+  padding: 6px 12px;
+  margin: 0;
+  border: 0;
   border-left: 2px solid transparent;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   box-shadow: none;
-  transition: background-color 90ms ease-out, border-color 90ms ease-out, box-shadow 90ms ease-out;
+  transition: background-color 90ms ease-out, border-left-color 90ms ease-out;
 }
 
 .workspace-drag-grip {
@@ -629,9 +594,8 @@ button.flat.sidebar-add:focus-visible {
 
 .workspace-row.active .workspace-card {
   background: @ft_bg_2;
-  border-color: alpha(@window_fg_color, 0.055);
   border-left-color: alpha(@accent_color, 0.62);
-  box-shadow: inset 0 1px 0 alpha(@window_fg_color, 0.025);
+  box-shadow: none;
 }
 
 .workspace-row.active:hover .workspace-card {
@@ -780,25 +744,17 @@ button.flat.sidebar-add:focus-visible {
   font-weight: 500;
 }
 
-/* Fixed sidebar sections: Resources and the Settings/About footer. */
-
-.sidebar-fixed-section {
-  padding: 6px 5px 8px 5px;
-  border-top: 1px solid @ft_bg_1;
-}
-
-.sidebar-fixed-section-label {
-  padding: 2px 9px 5px 9px;
-}
+/* Compact utility footer: project tools and app settings stay available
+ * without creating a second navigation section. */
 
 .sidebar-footer {
-  padding: 5px 5px 6px 5px;
+  padding: 6px;
   border-top: 1px solid @ft_bg_1;
 }
 
 button.flat.sidebar-nav-row {
   min-height: 30px;
-  padding: 0 10px;
+  padding: 0 12px;
   border-radius: 6px;
   background: transparent;
   color: @ft_text_2;
@@ -824,70 +780,6 @@ button.flat.sidebar-nav-row:focus-visible {
   color: @ft_text_3;
   font-size: 0.74em;
   font-weight: 600;
-}
-
-.app-status-bar {
-  min-height: 24px;
-  padding: 0 10px 0 12px;
-  background: @ft_bg_recessed;
-  border-top: 1px solid @ft_bg_1;
-  box-shadow: none;
-  color: @ft_text_3;
-}
-
-.status-location {
-  padding: 0 7px;
-  background: transparent;
-  border: 0;
-  color: @ft_text_2;
-  font-size: 0.80em;
-  font-weight: 600;
-  letter-spacing: 0;
-  /* Small radius — avoids pill feel. Clean and modern. */
-  border-radius: 4px;
-}
-
-.app-status-bar .keycap {
-  min-height: 17px;
-  padding: 0 5px;
-  font-size: 0.68em;
-}
-
-.status-shortcut {
-  border-color: @ft_line;
-  background: @ft_bg_control;
-  color: @ft_text_3;
-  transition: background-color 90ms ease-out, color 90ms ease-out, border-color 90ms ease-out;
-}
-
-.status-shortcut:hover,
-button.flat.status-shortcut:hover {
-  background: @ft_bg_1;
-  color: @ft_text_1;
-  border-color: @ft_line_strong;
-}
-
-.status-shortcut:focus-visible,
-button.flat.status-shortcut:focus-visible {
-  background: @ft_bg_1;
-  color: @ft_text_1;
-  border-color: @ft_line_strong;
-}
-
-.pane-status {
-  color: @ft_text_2;
-  font-size: 0.80em;
-  margin-left: 12px;
-}
-
-.status-location:hover {
-  background: @ft_bg_1;
-  color: @ft_text_1;
-}
-
-.status-location:disabled {
-  color: @ft_text_4;
-  background: transparent;
 }
 
 /* Workspace popover */
@@ -1013,9 +905,9 @@ button.flat.status-shortcut:focus-visible {
 }
 
 .terminal-pane-header {
-  min-height: 24px;
-  padding: 0 10px;
-  background: @ft_bg_0;
+  min-height: 22px;
+  padding: 0 8px;
+  background: @ft_bg_stage;
   border-bottom: 1px solid @ft_bg_1;
   color: @ft_text_3;
 }
@@ -1024,18 +916,18 @@ button.flat.status-shortcut:focus-visible {
   -gtk-icon-size: 12px;
   color: @ft_text_4;
   min-width: 14px;
-  opacity: 0.38;
+  opacity: 0.18;
 }
 
 .terminal-pane-header:hover .pane-drag-grip,
 .terminal-pane.active .pane-drag-grip {
-  opacity: 0.74;
+  opacity: 0.58;
 }
 
 .terminal-pane.active .terminal-pane-header {
   color: @ft_text_1;
   border-bottom-color: @ft_line;
-  box-shadow: inset 0 1px 0 alpha(@accent_color, 0.72);
+  box-shadow: inset 0 1px 0 alpha(@accent_color, 0.62);
   /* No extra background shift — active conveyed by top accent hairline (Cursor-style) + text.
    * Keeps multi-pane chrome minimal so terminals remain primary. */
 }
@@ -1311,10 +1203,10 @@ button.flat.pane-tab-close:active {
 }
 
 .terminal-pane-action {
-  min-width: 21px;
-  min-height: 21px;
+  min-width: 20px;
+  min-height: 18px;
   padding: 0;
-  margin: 0 1px;
+  margin: 2px 1px;
   border-radius: 6px;
   border: 0;
   background: transparent;
@@ -2130,7 +2022,7 @@ window.ft-dialog,
 }
 
 .settings-titlebar {
-  min-height: 42px;
+  min-height: 38px;
   padding: 0 8px 0 14px;
   background: @ft_bg_0;
   background-color: @ft_bg_0;
@@ -2175,24 +2067,23 @@ window.ft-dialog,
 }
 
 .settings-nav {
-  min-width: 184px;
-  padding: 11px 9px 15px 9px;
+  min-width: 172px;
+  padding: 12px 6px 18px 6px;
   background: @ft_bg_0;
   border-right: 1px solid @ft_line;
 }
 
 .settings-nav-heading {
-  margin: 9px 10px 4px 10px;
+  margin: 12px 12px 6px 12px;
   color: @ft_text_4;
-  font-size: 0.68em;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 0.74em;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 .settings-nav-item {
   min-height: 38px;
-  padding: 0 10px;
+  padding: 0 12px;
   border: 1px solid transparent;
   border-radius: 8px;
   color: @ft_text_3;
@@ -2231,6 +2122,10 @@ window.ft-dialog,
 .settings-nav-label {
   color: inherit;
   font-size: 0.92em;
+  font-weight: 600;
+}
+
+.settings-nav-item:checked .settings-nav-label {
   font-weight: 700;
 }
 
@@ -2257,9 +2152,9 @@ window.ft-dialog,
 
 .settings-page-title {
   color: @ft_text_1;
-  font-size: 1.00em;
+  font-size: 1.22em;
   font-weight: 700;
-  letter-spacing: 0;
+  letter-spacing: -0.01em;
 }
 
 .settings-page-description {
@@ -2284,8 +2179,9 @@ window.ft-dialog,
 }
 
 .settings-list {
-  background: transparent;
-  border: none;
+  background: @ft_bg_1;
+  border: 1px solid @ft_line;
+  border-radius: 8px;
   box-shadow: none;
 }
 
@@ -2326,6 +2222,10 @@ window.ft-dialog,
 
 .settings-list row.settings-secondary-row label.title {
   color: @ft_text_2;
+}
+
+.settings-list row.settings-info-row:hover {
+  background: transparent;
 }
 
 .settings-list row label.title {
@@ -2508,12 +2408,32 @@ window.ft-dialog,
 }
 
 .worktree-context {
-  padding: 6px 9px;
+  padding: 6px 12px;
   border-radius: 8px;
+  background: @ft_bg_1;
+  border: 1px solid @ft_line;
+}
+
+.worktree-context-icon {
+  -gtk-icon-size: 16px;
   color: @ft_text_3;
-  background: @ft_bg_stage;
-  border: 1px solid @ft_bg_3;
+}
+
+.worktree-context-title {
+  color: @ft_text_4;
+  font-size: 0.74em;
+}
+
+.worktree-context-value {
+  color: @ft_text_2;
+  font-size: 0.86em;
+  font-weight: 500;
+}
+
+.worktree-target-label {
+  color: @ft_text_2;
   font-size: 0.80em;
+  font-weight: 600;
 }
 
 .worktree-mode-selector {

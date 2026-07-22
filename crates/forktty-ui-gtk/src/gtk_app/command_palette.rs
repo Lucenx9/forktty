@@ -400,7 +400,7 @@ pub(super) fn show_command_palette_with_query(
             open_workspace_dialog(&parent, &state);
         }
     });
-    command!("New Worktree...", None, {
+    command!("New worktree...", None, {
         let state = state.clone();
         let parent = parent.clone();
         let dialog = dialog.clone();
