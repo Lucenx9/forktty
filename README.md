@@ -26,7 +26,7 @@ place work in dedicated git worktrees without tying the UI to one agent vendor.
 
 > **Status**: Early alpha (v0.2.0-alpha.19). ForkTTY is Linux-only and the GTK/Ghostty runtime is now the primary implementation. The AppImage is the primary Linux download for this alpha; the Debian package remains available for Debian/Ubuntu users.
 
-![ForkTTY workspace with three split terminals and a compact content-first titlebar](docs/assets/forktty-workspace.png)
+![ForkTTY workspace running several coding agents across split terminal panes](docs/assets/forktty-workspace.png)
 
 For the fastest local walkthrough, read [GETTING_STARTED.md](GETTING_STARTED.md).
 For local quality targets, read [METRICS.md](METRICS.md).

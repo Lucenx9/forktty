@@ -37,7 +37,7 @@ All notable changes to ForkTTY are documented here.
   before running the full case-insensitive substring comparison.
 - Simplified the repository overview around installation and first-use paths,
   moved detailed contracts to their dedicated guides, and refreshed the README
-  and public site with a current workspace screenshot.
+  and public site with the latest multi-agent workspace screenshot.
 
 ### Fixed
 - Active pane tabs now keep their accent as a single straight top hairline
