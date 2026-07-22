@@ -544,6 +544,19 @@ fn method_registry_classifies_socket_exposure() {
     }
 }
 
+#[test]
+fn advertised_socket_methods_are_classified_in_stability_docs() {
+    let stability_docs = include_str!("../../../../docs/socket-api.md");
+
+    for method in methods::capability_method_names() {
+        let documented_name = format!("`{method}`");
+        assert!(
+            stability_docs.contains(&documented_name),
+            "advertised method {method} is missing from docs/socket-api.md"
+        );
+    }
+}
+
 #[cfg(not(feature = "browser"))]
 #[tokio::test]
 async fn browser_methods_are_not_available_without_browser_feature() {

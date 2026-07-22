@@ -12,6 +12,7 @@ implementation.
 
 - Architecture and behavior contract: [`SPEC.md`](SPEC.md)
 - Roadmap and scope: [`ROADMAP.md`](ROADMAP.md)
+- Feature-quality brief for non-trivial changes: [`docs/feature-quality-template.md`](docs/feature-quality-template.md)
 - Release process: [`RELEASING.md`](RELEASING.md)
 - Pre-release QA matrix: [`docs/QA.md`](docs/QA.md) and [`docs/release-qa.md`](docs/release-qa.md)
 - Security policy and threat model: [`SECURITY.md`](SECURITY.md)
@@ -54,6 +55,15 @@ cargo run -p forktty-ui-gtk
    describes (config fields, socket methods, security boundaries).
 6. Add or update tests where it is reasonable to do so (see "Tests"
    below).
+
+For a non-trivial change that crosses modules or affects socket, session,
+config, security, worktree, packaging, or release contracts, use
+[`docs/feature-quality-template.md`](docs/feature-quality-template.md) unless
+the originating issue or design already contains equivalent requirements,
+failure/recovery behavior, and traceability. Complete its consistency review
+before implementation and its requirement-to-evidence review before opening
+the PR. Focused fixes do not need a new brief when their issue and regression
+test already provide that evidence.
 
 ## Pre-PR checks
 
@@ -129,8 +139,8 @@ issue. Follow the disclosure process in [`SECURITY.md`](SECURITY.md).
 ## Pull requests
 
 - One topic per PR. Smaller PRs are reviewed faster.
-- Fill out the PR template. The "what changed" and "how was this
-  tested" sections matter.
+- Fill out [the PR template](.github/PULL_REQUEST_TEMPLATE.md). Its scope,
+  verification, and release/docs-impact sections matter.
 - Describe user-visible behavior changes in the PR body even if you've
   also updated `CHANGELOG.md`.
 - Sign-off (`Signed-off-by:` line) and signed commits are appreciated

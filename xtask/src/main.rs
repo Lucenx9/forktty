@@ -246,9 +246,79 @@ fn validate_release_tag(version: &str, tag: Option<&str>) -> Result<()> {
 fn check_all() -> Result<()> {
     check_no_legacy_node_cli()?;
     check_no_vte_references()?;
+    check_libghostty_release_invariants()?;
     check_full_ghostty_vendor()?;
     check_packaging_ghostty_gtk_lib_guard()?;
     check_hook_templates()
+}
+
+fn check_libghostty_release_invariants() -> Result<()> {
+    check_libghostty_release_invariants_at(&repo_root())?;
+    println!("libghostty release invariants: ok");
+    Ok(())
+}
+
+fn check_libghostty_release_invariants_at(root: &Path) -> Result<()> {
+    let manifest_path = root.join("Cargo.toml");
+    let manifest_raw = fs::read_to_string(&manifest_path)
+        .map_err(|err| format!("failed to read {}: {err}", manifest_path.display()))?;
+    let manifest = manifest_raw
+        .parse::<toml::Table>()
+        .map_err(|err| format!("failed to parse {}: {err}", manifest_path.display()))?;
+    let patches = manifest
+        .get("patch")
+        .and_then(toml::Value::as_table)
+        .and_then(|patch| patch.get("crates-io"))
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| "Cargo.toml is missing [patch.crates-io]".to_string())?;
+    for (package, expected_path) in [
+        ("libghostty-vt", "vendor/libghostty-rs/crates/libghostty-vt"),
+        (
+            "libghostty-vt-sys",
+            "vendor/libghostty-rs/crates/libghostty-vt-sys",
+        ),
+    ] {
+        let actual_path = patches
+            .get(package)
+            .and_then(toml::Value::as_table)
+            .and_then(|patch| patch.get("path"))
+            .and_then(toml::Value::as_str);
+        if actual_path != Some(expected_path) {
+            return Err(format!(
+                "[patch.crates-io].{package} must use path `{expected_path}` under vendor/libghostty-rs"
+            ));
+        }
+    }
+
+    let cargo_config_path = root.join(".cargo/config.toml");
+    let cargo_config_raw = fs::read_to_string(&cargo_config_path)
+        .map_err(|err| format!("failed to read {}: {err}", cargo_config_path.display()))?;
+    let cargo_config = cargo_config_raw
+        .parse::<toml::Table>()
+        .map_err(|err| format!("failed to parse {}: {err}", cargo_config_path.display()))?;
+    let optimize = cargo_config
+        .get("env")
+        .and_then(toml::Value::as_table)
+        .and_then(|env| env.get("LIBGHOSTTY_VT_SYS_OPTIMIZE"))
+        .and_then(toml::Value::as_str);
+    if optimize != Some("ReleaseSafe") {
+        return Err(
+            ".cargo/config.toml must set LIBGHOSTTY_VT_SYS_OPTIMIZE to `ReleaseSafe`".to_string(),
+        );
+    }
+
+    let build_script_path = root.join("vendor/libghostty-rs/crates/libghostty-vt-sys/build.rs");
+    let build_script = fs::read_to_string(&build_script_path)
+        .map_err(|err| format!("failed to read {}: {err}", build_script_path.display()))?;
+    for marker in ["FORKTTY PATCH", "build.arg(\"-Dcpu=baseline\")"] {
+        if !build_script.contains(marker) {
+            return Err(format!(
+                "{} must retain the native -Dcpu=baseline FORKTTY PATCH marker and build argument",
+                build_script_path.display()
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn check_no_legacy_node_cli() -> Result<()> {
@@ -1424,5 +1494,102 @@ version = "0.2.0-alpha.19"
         assert_eq!(workspace_version(manifest).unwrap(), "0.2.0-alpha.19");
         assert!(workspace_version("[workspace]\nmembers = []\n").is_err());
         assert!(workspace_version("not = [valid").is_err());
+    }
+
+    fn write_libghostty_release_fixture(root: &Path) {
+        fs::create_dir_all(root.join(".cargo")).unwrap();
+        fs::create_dir_all(root.join("vendor/libghostty-rs/crates/libghostty-vt-sys")).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"
+[patch.crates-io]
+libghostty-vt = { path = "vendor/libghostty-rs/crates/libghostty-vt" }
+libghostty-vt-sys = { path = "vendor/libghostty-rs/crates/libghostty-vt-sys" }
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join(".cargo/config.toml"),
+            r#"
+[env]
+LIBGHOSTTY_VT_SYS_OPTIMIZE = "ReleaseSafe"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            root.join("vendor/libghostty-rs/crates/libghostty-vt-sys/build.rs"),
+            r#"
+// FORKTTY PATCH: keep distributed native builds on the baseline CPU.
+if target == host {
+    build.arg("-Dcpu=baseline");
+}
+"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn libghostty_release_invariants_accept_expected_pins() {
+        let temp = TestDir::new("libghostty-release-invariants-valid");
+        write_libghostty_release_fixture(temp.path());
+
+        assert!(check_libghostty_release_invariants_at(temp.path()).is_ok());
+    }
+
+    #[test]
+    fn libghostty_release_invariants_reject_mixed_patch_sources() {
+        let temp = TestDir::new("libghostty-release-invariants-mixed-source");
+        write_libghostty_release_fixture(temp.path());
+        fs::write(
+            temp.path().join("Cargo.toml"),
+            r#"
+[patch.crates-io]
+libghostty-vt = { path = "vendor/libghostty-rs/crates/libghostty-vt" }
+libghostty-vt-sys = { git = "https://example.invalid/libghostty-rs" }
+"#,
+        )
+        .unwrap();
+
+        let error = check_libghostty_release_invariants_at(temp.path()).unwrap_err();
+        assert!(error.contains("libghostty-vt-sys"), "{error}");
+        assert!(error.contains("vendor/libghostty-rs"), "{error}");
+    }
+
+    #[test]
+    fn libghostty_release_invariants_require_release_safe_debug_builds() {
+        let temp = TestDir::new("libghostty-release-invariants-optimize");
+        write_libghostty_release_fixture(temp.path());
+        fs::write(
+            temp.path().join(".cargo/config.toml"),
+            r#"
+[env]
+LIBGHOSTTY_VT_SYS_OPTIMIZE = "Debug"
+"#,
+        )
+        .unwrap();
+
+        let error = check_libghostty_release_invariants_at(temp.path()).unwrap_err();
+        assert!(error.contains("LIBGHOSTTY_VT_SYS_OPTIMIZE"), "{error}");
+        assert!(error.contains("ReleaseSafe"), "{error}");
+    }
+
+    #[test]
+    fn libghostty_release_invariants_require_native_cpu_baseline_patch() {
+        let temp = TestDir::new("libghostty-release-invariants-cpu");
+        write_libghostty_release_fixture(temp.path());
+        fs::write(
+            temp.path()
+                .join("vendor/libghostty-rs/crates/libghostty-vt-sys/build.rs"),
+            r#"
+if target == host {
+    build.arg("-Dcpu=native");
+}
+"#,
+        )
+        .unwrap();
+
+        let error = check_libghostty_release_invariants_at(temp.path()).unwrap_err();
+        assert!(error.contains("-Dcpu=baseline"), "{error}");
+        assert!(error.contains("FORKTTY PATCH"), "{error}");
     }
 }

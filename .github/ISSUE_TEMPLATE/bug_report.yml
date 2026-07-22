@@ -1,0 +1,107 @@
+name: Bug report
+description: Report reproducible incorrect behavior in ForkTTY
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve ForkTTY. Do not report security vulnerabilities here; use the private process in SECURITY.md.
+
+  - type: input
+    id: version
+    attributes:
+      label: ForkTTY version or commit
+      description: Paste `forktty --version` or the commit SHA used for a source build.
+      placeholder: 0.2.0-alpha.x or commit SHA
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation
+      options:
+        - AppImage
+        - Debian package
+        - Source build with gtk-ghostty
+        - Source build with browser
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: distro
+    attributes:
+      label: Linux distribution
+      placeholder: Ubuntu 24.04, Debian 13, Fedora 42, Arch, …
+    validations:
+      required: true
+
+  - type: dropdown
+    id: session
+    attributes:
+      label: Display session
+      options:
+        - Wayland
+        - X11
+        - Headless or CI
+        - Unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the incorrect behavior and when it occurs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Start ForkTTY with …
+        2. Create or select …
+        3. Run or click …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor output
+      description: Paste relevant `forktty --json doctor` output after removing sensitive paths or values.
+      render: json
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Attach the smallest relevant log, crash output, or screenshot. Redact terminal contents and local paths when necessary.
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmation
+      options:
+        - label: I searched existing issues for the same behavior.
+          required: true
+        - label: I removed secrets and sensitive terminal or project data from this report.
+          required: true

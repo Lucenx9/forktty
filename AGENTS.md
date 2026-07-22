@@ -103,12 +103,26 @@ workflow using this file, local code, tests, and issue/spec context.
 - Use `grilling`, `grill-me`, or `grill-with-docs` only when the user wants a plan or design stress-tested before implementation.
 - Use `prototype` for throwaway UI/state-model experiments, and `handoff` when stopping midstream and another agent needs to continue.
 
+For non-trivial work that crosses modules or changes socket, session, config,
+security, worktree, packaging, or release contracts, use
+`docs/feature-quality-template.md` unless the originating issue or design
+already contains equivalent requirements, failure/recovery behavior, and
+traceability. Run the template's consistency review before implementation and
+its requirement-to-evidence convergence review before final code review. Do
+not create a new brief for a focused fix when the issue and regression test
+already provide the same evidence.
+
+Specification ownership is hybrid but explicit: `SPEC.md` is the living
+product contract; completed design briefs are historical decision records; and
+plans/checklists are derived operational artifacts, not competing normative
+sources.
+
 ## GitHub repository structure
 
 ForkTTY uses standard GitHub community/automation locations plus a small set of root source-of-truth docs. Keep the repository shape predictable for GitHub, contributors, release automation, and coding agents.
 
 - Keep root-level project docs stable and purpose-specific: `README.md` for user-facing overview/install/usage, `CONTRIBUTING.md` for contributor workflow, `SECURITY.md` for private vulnerability reporting, `RELEASING.md` for maintainer release steps, `CHANGELOG.md` for user-visible changes, `LICENSE` for licensing, and `AGENTS.md` for coding-agent operating rules. Do not bury these in feature directories.
-- Keep `.github/` for GitHub-native metadata only: workflows in `.github/workflows/`, ownership in `.github/CODEOWNERS`, dependency automation in `.github/dependabot.yml`, and future issue/PR templates under `.github/ISSUE_TEMPLATE/` or `.github/PULL_REQUEST_TEMPLATE/`. Do not put product docs, release notes, or generated app assets there.
+- Keep `.github/` for GitHub-native metadata only: workflows in `.github/workflows/`, ownership in `.github/CODEOWNERS`, dependency automation in `.github/dependabot.yml`, and issue/PR templates under `.github/ISSUE_TEMPLATE/` or `.github/PULL_REQUEST_TEMPLATE.md`. Do not put product docs, release notes, or generated app assets there.
 - Treat GitHub community health files as discoverability contracts. GitHub recognizes `README`, `LICENSE`, `CONTRIBUTING`, `CODE_OF_CONDUCT`, security policy files, and issue/PR templates from supported locations; in this repo, prefer root files for ForkTTY-specific policies and `.github/` for templates/automation. Adding a new governance file such as `CODE_OF_CONDUCT.md` is an owner/product decision, not a drive-by cleanup.
 - Keep `.github/workflows/*.yml` small and task-focused. Shared command knowledge belongs in scripts, `xtask`, or this file; workflows should call those commands instead of duplicating long shell logic. When changing workflow behavior, update the matching local command/check section above so CI and local guidance do not drift.
 - Keep GitHub templates actionable and short. Issue templates should ask for environment, version/build, reproduction steps, logs/screenshots when relevant, and expected/actual behavior. PR templates should ask for scope, user-visible changes, linked issues, tests run, and release/docs impact. Avoid broad checklists that contributors cannot verify.

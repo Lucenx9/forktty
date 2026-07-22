@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Lucenx9/forktty/security/advisories/new
+    about: Use GitHub private vulnerability reporting instead of a public issue.
