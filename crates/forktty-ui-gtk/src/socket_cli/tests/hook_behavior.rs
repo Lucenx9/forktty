@@ -769,6 +769,7 @@ const CLAUDE_SESSION_START_CHILD_SOCKET_ENV: &str =
 const CLAUDE_SESSION_START_OUTPUT_BEGIN: &str = "FORKTTY_SESSION_START_OUTPUT_BEGIN";
 const CLAUDE_SESSION_START_OUTPUT_END: &str = "FORKTTY_SESSION_START_OUTPUT_END";
 const CLAUDE_PROMPT_SUBMIT_CHILD_SOCKET: &str = "FORKTTY_TEST_CLAUDE_PROMPT_SUBMIT_SOCKET";
+const CODEX_APP_SERVER_HOOK_CHILD: &str = "FORKTTY_TEST_CODEX_APP_SERVER_HOOK_CHILD";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ClaudeSessionStartSocketEnv {
@@ -791,6 +792,252 @@ fn claude_prompt_submit_dispatch_child() {
             "prompt-submit",
         ]))
         .expect("Claude prompt-submit dispatcher succeeds");
+    });
+}
+
+#[test]
+fn codex_app_server_hook_dispatch_child() {
+    with_env(&[], || {
+        if std::env::var_os(CODEX_APP_SERVER_HOOK_CHILD).is_none() {
+            return;
+        }
+        run_inner(os_strings(&["hooks", "codex", "session-start"]))
+            .expect("Codex SessionStart dispatcher succeeds");
+    });
+}
+
+#[test]
+fn codex_app_server_hook_without_forktty_env_uses_default_socket() {
+    crate::test_env::with_isolated_user_dirs(|| {
+        let session_id = "codex-app-server-session";
+        let home = PathBuf::from(std::env::var_os("HOME").unwrap());
+        let session_cwd = home.join("session-project");
+        fs::create_dir(&session_cwd).unwrap();
+        let scoped_cwd = home.join("scoped-project");
+        fs::create_dir(&scoped_cwd).unwrap();
+        let sessions_dir = home.join(".codex/sessions");
+        fs::create_dir_all(&sessions_dir).unwrap();
+        fs::write(
+            sessions_dir.join(format!("rollout-{session_id}.jsonl")),
+            format!(
+                "{}\n",
+                json!({
+                    "type": "session_meta",
+                    "payload": {
+                        "id": session_id,
+                        "cwd": session_cwd,
+                        "originator": "codex-tui"
+                    }
+                })
+            ),
+        )
+        .unwrap();
+        let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").expect("isolated runtime directory");
+        let socket_path = PathBuf::from(runtime_dir).join("forktty.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let server_stopped = stopped.clone();
+        let server = thread::spawn(move || {
+            let mut requests = Vec::new();
+            while !server_stopped.load(std::sync::atomic::Ordering::Acquire) {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(connection) => connection,
+                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(1));
+                        continue;
+                    }
+                    Err(err) => panic!("Codex hook socket accept failed: {err}"),
+                };
+                let mut line = String::new();
+                BufReader::new(&stream).read_line(&mut line).unwrap();
+                let request: Value = serde_json::from_str(line.trim()).unwrap();
+                stream
+                    .write_all(
+                        format!(
+                            "{}\n",
+                            json!({ "id": request["id"], "ok": true, "result": null })
+                        )
+                        .as_bytes(),
+                    )
+                    .unwrap();
+                requests.push(request);
+            }
+            requests
+        });
+
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "socket_cli::tests::hook_behavior::codex_app_server_hook_dispatch_child",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CODEX_APP_SERVER_HOOK_CHILD, "1")
+            .env_remove("CODEX_HOME")
+            .env_remove("FORKTTY_SOCKET_PATH")
+            .env_remove("FORKTTY_WORKSPACE_ID")
+            .env_remove("FORKTTY_SURFACE_ID")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = command.spawn().unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"{\"session_id\":\"codex-app-server-session\"}\n")
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        let mut scoped_command = std::process::Command::new(std::env::current_exe().unwrap());
+        scoped_command
+            .args([
+                "--exact",
+                "socket_cli::tests::hook_behavior::codex_app_server_hook_dispatch_child",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CODEX_APP_SERVER_HOOK_CHILD, "1")
+            .env_remove("CODEX_HOME")
+            .env("FORKTTY_SOCKET_PATH", &socket_path)
+            .env("FORKTTY_WORKSPACE_ID", "scoped-workspace")
+            .env("FORKTTY_SURFACE_ID", "scoped-surface")
+            .current_dir(&scoped_cwd)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut scoped_child = scoped_command.spawn().unwrap();
+        scoped_child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"{\"session_id\":\"codex-app-server-session\"}\n")
+            .unwrap();
+        let scoped_output = scoped_child.wait_with_output().unwrap();
+        let mut socket_only_command = std::process::Command::new(std::env::current_exe().unwrap());
+        socket_only_command
+            .args([
+                "--exact",
+                "socket_cli::tests::hook_behavior::codex_app_server_hook_dispatch_child",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CODEX_APP_SERVER_HOOK_CHILD, "1")
+            .env_remove("CODEX_HOME")
+            .env("FORKTTY_SOCKET_PATH", &socket_path)
+            .env_remove("FORKTTY_WORKSPACE_ID")
+            .env_remove("FORKTTY_SURFACE_ID")
+            .current_dir(&scoped_cwd)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut socket_only_child = socket_only_command.spawn().unwrap();
+        socket_only_child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"{\"session_id\":\"codex-app-server-session\"}\n")
+            .unwrap();
+        let socket_only_output = socket_only_child.wait_with_output().unwrap();
+        stopped.store(true, std::sync::atomic::Ordering::Release);
+        let requests = server.join().unwrap();
+
+        assert!(
+            output.status.success(),
+            "child failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            scoped_output.status.success(),
+            "scoped child failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&scoped_output.stdout),
+            String::from_utf8_lossy(&scoped_output.stderr)
+        );
+        assert!(
+            socket_only_output.status.success(),
+            "socket-only child failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&socket_only_output.stdout),
+            String::from_utf8_lossy(&socket_only_output.stderr)
+        );
+        assert_eq!(requests.len(), 6);
+        assert_eq!(requests[0]["method"], "metadata.log");
+        assert_eq!(requests[1]["method"], "metadata.set_status");
+        for request in &requests[..2] {
+            assert_eq!(request["params"]["hook_agent"], "codex");
+            assert_eq!(
+                request["params"]["hook_session_id"],
+                "codex-app-server-session"
+            );
+            assert_eq!(request["params"]["hook_session_originator"], "codex-tui");
+            assert_eq!(
+                request["params"]["hook_session_cwd"],
+                session_cwd.to_string_lossy().as_ref()
+            );
+            assert!(request["params"].get("workspace_id").is_none());
+            assert!(request["params"].get("surface_id").is_none());
+        }
+        for request in &requests[2..4] {
+            assert_eq!(request["params"]["hook_agent"], "codex");
+            assert_eq!(request["params"]["workspace_id"], "scoped-workspace");
+            assert_eq!(request["params"]["surface_id"], "scoped-surface");
+            assert_eq!(
+                request["params"]["hook_session_cwd"],
+                scoped_cwd.to_string_lossy().as_ref()
+            );
+        }
+        for request in &requests[4..] {
+            assert_eq!(request["params"]["hook_session_originator"], "codex-tui");
+            assert_eq!(
+                request["params"]["hook_session_cwd"],
+                session_cwd.to_string_lossy().as_ref()
+            );
+            assert!(request["params"].get("workspace_id").is_none());
+            assert!(request["params"].get("surface_id").is_none());
+        }
+    });
+}
+
+#[test]
+fn codex_default_socket_fallback_requires_local_tui_originator() {
+    with_env(&[("FORKTTY_SOCKET_PATH", None)], || {
+        let mut context = test_context();
+        context.socket_explicit = false;
+        let codex = agent_spec("codex").unwrap();
+        let payload = json!({
+            "session_id": "codex-app-server-session",
+            "cwd": std::env::current_dir().unwrap(),
+        });
+
+        assert!(should_send_hook_actions(
+            &context,
+            codex,
+            &payload,
+            Some("codex-tui"),
+            Some("/tmp/project")
+        ));
+        assert!(!should_send_hook_actions(
+            &context,
+            codex,
+            &payload,
+            Some("Codex Desktop"),
+            Some("/tmp/project")
+        ));
+        assert!(!should_send_hook_actions(
+            &context,
+            codex,
+            &payload,
+            None,
+            Some("/tmp/project")
+        ));
+        assert!(!should_send_hook_actions(
+            &context,
+            codex,
+            &payload,
+            Some("codex-tui"),
+            None
+        ));
     });
 }
 

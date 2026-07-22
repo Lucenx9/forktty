@@ -3,10 +3,11 @@ use crate::{
     optional_non_blank_string_param, optional_surface_id_param, path_resolver,
     resolve_workspace_id_for_metadata, workspace_selector_params, DispatchError, SocketAppState,
 };
-use forktty_core::{AgentSessionLifecycle, HookPromptKind, HookPromptResolution};
+use forktty_core::{AgentKind, AgentSessionLifecycle, HookPromptKind, HookPromptResolution};
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -303,6 +304,17 @@ where
     let session_id = session_id.to_string();
     let hook = optional_hook_status_metadata(params)?;
     let event_name = hook.as_ref().map(|hook| hook.event.as_str());
+    let codex_process_discovery = is_unscoped_codex_hook(params)?;
+    let _codex_discovery_guard = if codex_process_discovery {
+        Some(
+            state
+                .codex_hook_discovery_gate
+                .lock()
+                .map_err(|_| "Lock poisoned".to_string())?,
+        )
+    } else {
+        None
+    };
     let cleanup_prompts_on_success =
         method == "metadata.clear_status" && event_name == Some("session-end");
     let evict_on_success = should_evict_hook_session_target_on_return(method, params, event_name)?;
@@ -363,6 +375,31 @@ where
         learned_target.as_ref(),
     )?;
     let result = mutation(params)?;
+    let target_changed = matches!(
+        (previous_target.as_ref(), learned_target.as_ref()),
+        (Some(previous), Some(learned)) if previous != learned
+    );
+    if target_changed || (codex_process_discovery && learned_target.is_some()) {
+        let mut claims = state
+            .codex_process_claims
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        if target_changed {
+            claims.retain(|_, owner| owner != &session_id);
+        }
+        if codex_process_discovery {
+            if let Some(target) = learned_target.as_ref() {
+                claims.insert(target.surface_id.clone(), session_id.clone());
+            }
+        }
+    }
+    if cleanup_prompts_on_success && provider == Some("codex") {
+        state
+            .codex_process_claims
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?
+            .retain(|_, owner| owner != &session_id);
+    }
     resolve_completed_hook_prompt(state, prompt_resolution)?;
     if cleanup_prompts_on_success {
         if let (Some(provider), Some(target)) = (provider, target.as_ref()) {
@@ -396,8 +433,21 @@ where
     }
     if evict_on_success {
         ingress.target = None;
+        state
+            .codex_process_claims
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?
+            .retain(|_, owner| owner != &session_id);
     }
     Ok(Some(result))
+}
+
+fn is_unscoped_codex_hook(params: &Value) -> Result<bool, DispatchError> {
+    Ok(
+        optional_non_blank_string_param(params, "hook_agent")? == Some("codex")
+            && optional_surface_id_param(params)?.is_none()
+            && workspace_selector_params(params)?.is_empty(),
+    )
 }
 
 fn evict_hook_prompt_correlations_for_session_target(
@@ -669,7 +719,7 @@ fn unique_hook_session_target_from_cwd_with(
         })
         .collect::<Vec<_>>();
     if !exact_matches.is_empty() {
-        return unique_cwd_hook_session_target(exact_matches);
+        return unique_cwd_hook_session_target_for_params(state, params, &cwd, exact_matches);
     }
     let ancestor_matches = surfaces
         .into_iter()
@@ -678,7 +728,203 @@ fn unique_hook_session_target_from_cwd_with(
             cwd.starts_with(&surface_cwd).then_some(surface.target)
         })
         .collect::<Vec<_>>();
-    unique_cwd_hook_session_target(ancestor_matches)
+    unique_cwd_hook_session_target_for_params(state, params, &cwd, ancestor_matches)
+}
+
+fn unique_cwd_hook_session_target_for_params(
+    state: &SocketAppState,
+    params: &Value,
+    cwd: &Path,
+    matches: Vec<HookSessionTarget>,
+) -> Result<Option<HookSessionTarget>, DispatchError> {
+    if optional_non_blank_string_param(params, "hook_agent")? != Some("codex") {
+        return unique_cwd_hook_session_target(matches);
+    }
+    let originator = optional_non_blank_string_param(params, "hook_session_originator")?;
+    if let Some(originator) = originator {
+        ensure_max_text_size("hook_session_originator", originator)?;
+    }
+    if originator != Some("codex-tui") {
+        return Err(DispatchError::NotFound(
+            "hook_session_cwd Codex TUI session target".to_string(),
+        ));
+    }
+    let session_id = optional_non_blank_string_param(params, "hook_session_id")?
+        .ok_or(DispatchError::MissingParam("hook_session_id"))?;
+    unique_codex_process_target(state, matches, session_id, cwd)
+}
+
+fn unique_codex_process_target(
+    state: &SocketAppState,
+    matches: Vec<HookSessionTarget>,
+    session_id: &str,
+    cwd: &Path,
+) -> Result<Option<HookSessionTarget>, DispatchError> {
+    let claims = state
+        .codex_process_claims
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?
+        .clone();
+    let (exact, eligible, protected) = {
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| "Lock poisoned".to_string())?;
+        let mut exact = Vec::new();
+        let mut eligible = Vec::new();
+        let mut protected = Vec::new();
+        for target in matches {
+            let Some(surface) = model.surface(&target.surface_id) else {
+                continue;
+            };
+            let current_is_exact = surface.agent_session.as_ref().is_some_and(|existing| {
+                existing.agent == AgentKind::Codex && existing.session_id == session_id
+            });
+            let claim = claims.get(&target.surface_id).map(String::as_str);
+            if current_is_exact || claim == Some(session_id) {
+                exact.push(target);
+            } else if claim.is_some()
+                || surface
+                    .agent_session
+                    .as_ref()
+                    .is_some_and(|existing| existing.lifecycle != AgentSessionLifecycle::Ended)
+            {
+                protected.push(target);
+            } else {
+                eligible.push(target);
+            }
+        }
+        (exact, eligible, protected)
+    };
+    let runtime_roots = state
+        .terminal
+        .surfaces()?
+        .into_iter()
+        .filter_map(|surface| surface.pid.map(|pid| (surface.surface_id, pid)))
+        .collect::<HashMap<_, _>>();
+    let proc_root = Path::new("/proc");
+    let mut unclaimed_pids = codex_tui_pids_in_cwd(proc_root, cwd);
+
+    if !exact.is_empty() {
+        let exact_matches =
+            targets_containing_codex_pids(exact, &runtime_roots, &unclaimed_pids, proc_root);
+        return unique_codex_process_match(exact_matches);
+    }
+
+    for pid in target_codex_pids(&protected, &runtime_roots, &unclaimed_pids, proc_root) {
+        unclaimed_pids.remove(&pid);
+    }
+    match unclaimed_pids.len() {
+        0 => {
+            return Err(DispatchError::NotFound(
+                "hook_session_cwd Codex process target".to_string(),
+            ));
+        }
+        1 => {}
+        _ => {
+            return Err(DispatchError::Conflict(
+                "hook_session_cwd matches multiple unclaimed Codex TUI processes".to_string(),
+            ));
+        }
+    }
+    unique_codex_process_match(targets_containing_codex_pids(
+        eligible,
+        &runtime_roots,
+        &unclaimed_pids,
+        proc_root,
+    ))
+}
+
+fn unique_codex_process_match(
+    process_matches: Vec<HookSessionTarget>,
+) -> Result<Option<HookSessionTarget>, DispatchError> {
+    match process_matches.as_slice() {
+        [target] => Ok(Some(target.clone())),
+        [] => Err(DispatchError::NotFound(
+            "hook_session_cwd Codex process target".to_string(),
+        )),
+        _ => Err(DispatchError::Conflict(
+            "hook_session_cwd matches multiple Codex processes".to_string(),
+        )),
+    }
+}
+
+fn targets_containing_codex_pids(
+    targets: Vec<HookSessionTarget>,
+    runtime_roots: &HashMap<String, u32>,
+    codex_pids: &BTreeSet<i32>,
+    proc_root: &Path,
+) -> Vec<HookSessionTarget> {
+    targets
+        .into_iter()
+        .filter(|target| {
+            !target_codex_pids(
+                std::slice::from_ref(target),
+                runtime_roots,
+                codex_pids,
+                proc_root,
+            )
+            .is_empty()
+        })
+        .collect()
+}
+
+fn target_codex_pids(
+    targets: &[HookSessionTarget],
+    runtime_roots: &HashMap<String, u32>,
+    codex_pids: &BTreeSet<i32>,
+    proc_root: &Path,
+) -> BTreeSet<i32> {
+    targets
+        .iter()
+        .filter_map(|target| runtime_roots.get(&target.surface_id))
+        .filter_map(|root| i32::try_from(*root).ok())
+        .flat_map(|root| forktty_core::ports::descendant_pids(&[root], proc_root))
+        .filter(|pid| codex_pids.contains(pid))
+        .collect()
+}
+
+fn codex_tui_pids_in_cwd(proc_root: &Path, cwd: &Path) -> BTreeSet<i32> {
+    let Ok(entries) = fs::read_dir(proc_root) else {
+        return BTreeSet::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let pid = entry.file_name().to_str()?.parse::<i32>().ok()?;
+            let process_dir = entry.path();
+            if fs::metadata(&process_dir).ok()?.uid() != crate::socket_bind::effective_uid()
+                || !process_is_codex(&process_dir)
+                || process_is_app_server(&process_dir)
+            {
+                return None;
+            }
+            let process_cwd = fs::read_link(process_dir.join("cwd")).ok()?;
+            let process_cwd = fs::canonicalize(process_cwd).ok()?;
+            (process_cwd == cwd).then_some(pid)
+        })
+        .collect()
+}
+
+fn process_is_codex(process_dir: &Path) -> bool {
+    let executable_matches = fs::read_link(process_dir.join("exe"))
+        .ok()
+        .and_then(|path| path.file_name().map(|name| name == "codex"))
+        .unwrap_or(false);
+    executable_matches
+        || fs::read_to_string(process_dir.join("comm"))
+            .ok()
+            .is_some_and(|name| name.trim() == "codex")
+}
+
+fn process_is_app_server(process_dir: &Path) -> bool {
+    fs::read(process_dir.join("cmdline"))
+        .ok()
+        .is_some_and(|cmdline| {
+            cmdline
+                .split(|byte| *byte == 0)
+                .any(|arg| arg == b"app-server")
+        })
 }
 
 fn unique_cwd_hook_session_target(

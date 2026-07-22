@@ -94,7 +94,26 @@ pub(in crate::socket_cli) fn handle_hook_event(
         }
     };
     let order = next_hook_event_order();
-    let actions = build_hook_actions(spec, &event, &payload, &order);
+    let has_socket_context = has_hook_socket_context(context);
+    let has_explicit_hook_target = trimmed_env("FORKTTY_WORKSPACE_ID").is_some()
+        || trimmed_env("FORKTTY_SURFACE_ID").is_some();
+    let codex_session_originator = local_codex_session_originator(spec, &payload);
+    let codex_session_cwd = local_codex_session_cwd(spec, &payload);
+    let mut actions = build_hook_actions(spec, &event, &payload, &order);
+    if !has_explicit_hook_target {
+        add_codex_session_provenance(
+            &mut actions,
+            codex_session_originator.as_deref(),
+            codex_session_cwd.as_deref(),
+        );
+    }
+    let send_actions = should_send_hook_actions(
+        context,
+        spec,
+        &payload,
+        codex_session_originator.as_deref(),
+        codex_session_cwd.as_deref(),
+    );
     hook_debug(
         context,
         &format!(
@@ -103,14 +122,14 @@ pub(in crate::socket_cli) fn handle_hook_event(
             event,
             order,
             actions.len(),
-            if should_send_hook_actions(context) {
+            if send_actions {
                 context.socket_path.display().to_string()
             } else {
                 "(disabled)".to_string()
             }
         ),
     );
-    if should_send_hook_actions(context) {
+    if send_actions {
         for (method, params) in actions {
             if let Err(err) = send_socket_request_with_timeout(
                 &context.socket_path,
@@ -121,10 +140,12 @@ pub(in crate::socket_cli) fn handle_hook_event(
                 // Keep going on failure: a transient error on one action (e.g.
                 // an informational log) must not skip later cleanup actions
                 // like clearing a stale status or permission marker.
-                eprintln!(
-                    "{}",
-                    sanitize_for_terminal(&format!("ForkTTY hook warning: {}", err.message))
-                );
+                let warning = format!("ForkTTY hook warning: {}", err.message);
+                if has_socket_context {
+                    eprintln!("{}", sanitize_for_terminal(&warning));
+                } else {
+                    hook_debug(context, &warning);
+                }
             }
         }
     }
@@ -132,7 +153,7 @@ pub(in crate::socket_cli) fn handle_hook_event(
     if let Some(token_action) =
         build_token_progress_action(spec, &enrichments, &event, &payload, &order)
     {
-        if should_send_hook_actions(context) {
+        if send_actions {
             let _ = send_socket_request_with_timeout(
                 &context.socket_path,
                 "metadata.set_progress",
@@ -185,8 +206,68 @@ pub(in crate::socket_cli) fn is_supported_hook_event(event: &str) -> bool {
     )
 }
 
-pub(in crate::socket_cli) fn should_send_hook_actions(context: &CliContext) -> bool {
+pub(in crate::socket_cli) fn has_hook_socket_context(context: &CliContext) -> bool {
     context.socket_explicit || socket_path_from_env().is_some()
+}
+
+pub(in crate::socket_cli) fn should_send_hook_actions(
+    context: &CliContext,
+    spec: &AgentSpec,
+    payload: &Value,
+    codex_session_originator: Option<&str>,
+    codex_session_cwd: Option<&str>,
+) -> bool {
+    // Codex hooks can be launched by its long-lived shared app-server, which
+    // does not inherit the environment of the TUI pane that owns the session.
+    // Local Codex TUI session metadata plus cwd is enough to ask the
+    // owner-only socket. The server still requires one matching surface and
+    // one unclaimed live Codex TUI process before it accepts the fallback.
+    has_hook_socket_context(context)
+        || (spec.key == "codex"
+            && extract_hook_session_id(payload).is_some()
+            && codex_session_originator == Some("codex-tui")
+            && codex_session_cwd.is_some())
+}
+
+fn local_codex_session_originator(spec: &AgentSpec, payload: &Value) -> Option<String> {
+    (spec.key == "codex")
+        .then(|| extract_hook_session_id(payload))
+        .flatten()
+        .and_then(|session_id| forktty_core::codex_session_originator(&session_id))
+}
+
+fn local_codex_session_cwd(spec: &AgentSpec, payload: &Value) -> Option<String> {
+    (spec.key == "codex")
+        .then(|| extract_hook_session_id(payload))
+        .flatten()
+        .and_then(|session_id| forktty_core::codex_session_cwd(&session_id))
+        .map(|cwd| cwd.to_string_lossy().into_owned())
+}
+
+fn add_codex_session_provenance(
+    actions: &mut [(String, Value)],
+    codex_session_originator: Option<&str>,
+    codex_session_cwd: Option<&str>,
+) {
+    if codex_session_originator.is_none() && codex_session_cwd.is_none() {
+        return;
+    }
+    for (_, params) in actions {
+        if let Some(params) = params.as_object_mut() {
+            if let Some(originator) = codex_session_originator {
+                params.insert(
+                    "hook_session_originator".to_string(),
+                    Value::String(originator.to_string()),
+                );
+            }
+            if let Some(cwd) = codex_session_cwd {
+                params.insert(
+                    "hook_session_cwd".to_string(),
+                    Value::String(cwd.to_string()),
+                );
+            }
+        }
+    }
 }
 
 pub(in crate::socket_cli) fn hook_debug(context: &CliContext, message: &str) {
@@ -1084,7 +1165,7 @@ pub(in crate::socket_cli) fn hook_workspace_context(
     context: &CliContext,
     hook_context: &ForkttyHookContext,
 ) -> Option<HookWorkspaceContext> {
-    if !should_send_hook_actions(context) {
+    if !has_hook_socket_context(context) {
         return None;
     }
     let workspaces = send_socket_request_with_timeout(

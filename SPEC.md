@@ -441,6 +441,19 @@ absolute socket path from the same ForkTTY child environment. If any provenance
 component is absent or invalid, the hook returns the exact continue response
 without reading stdin or issuing a socket request.
 
+Codex may execute hooks from a shared app-server process that does not inherit
+the originating terminal pane's `FORKTTY_*` environment. A managed Codex hook
+whose local `session_meta` identifies a `codex-tui` originator, provider
+session id, and absolute hook cwd may therefore contact the default owner-only
+ForkTTY socket. When no explicit surface is present, the socket inventories
+same-user Codex TUI processes in the canonical cwd and binds the session only
+if exactly one unclaimed process belongs to exactly one eligible ForkTTY
+surface. Processes already claimed by other live ForkTTY sessions are excluded;
+ended sessions release their claim. Any other unclaimed Codex TUI in the cwd,
+including one outside ForkTTY, makes the request fail closed instead of
+selecting active focus. Learned exact-session targets remain authoritative for
+later events.
+
 Hook notifications that do not request attention are logged without publishing
 an `agent:<key>` status update. An informational notification received after
 `Stop` therefore preserves the persisted idle lifecycle instead of changing the
@@ -609,7 +622,13 @@ notifications and terminal output. The CLI exposes one-page access as `forktty n
   session ids and hook cwd values learned from hooks are persisted as resume
   metadata for explicit and restore-time provider resume. Codex cwd fallback
   reads only local `session_meta` JSONL records under `$CODEX_HOME/sessions` or
-  `~/.codex/sessions` and requires the referenced cwd to still be a directory.
+  `~/.codex/sessions`, requires originator `codex-tui`, and requires the
+  referenced cwd to still be a directory. Unscoped Codex hooks also require a
+  unique unclaimed live `codex` process in the canonical cwd and in the
+  candidate surface's Linux `/proc` descendant tree; ambiguity is rejected.
+  Session metadata and `/proc` correlation are same-user local provenance, not
+  authentication or a security boundary; a same-user process that deliberately
+  forges both can impersonate this best-effort lifecycle signal.
 - Shell and notification executables must be absolute executable files.
 - Hooks are limited to verified worktree-local paths.
 - Worktree removal rejects dirty/tampered targets.

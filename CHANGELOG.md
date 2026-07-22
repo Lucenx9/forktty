@@ -40,6 +40,11 @@ All notable changes to ForkTTY are documented here.
   and public site with the latest multi-agent workspace screenshot.
 
 ### Fixed
+- Codex lifecycle hooks now keep workspace status badges working when Codex
+  runs them through its shared app-server without the pane's `FORKTTY_*`
+  environment. The fallback accepts only local `codex-tui` sessions whose one
+  unclaimed same-cwd Codex process maps to one eligible ForkTTY surface;
+  missing, external, or ambiguous candidates remain inert.
 - Active pane tabs now keep their accent as a single straight top hairline
   instead of wrapping it around the rounded tab corners.
 - Embedded Ghostty panes now wait for their per-widget child PID instead of

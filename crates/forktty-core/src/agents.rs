@@ -159,6 +159,18 @@ pub fn codex_session_cwd(session_id: &str) -> Option<PathBuf> {
     codex_session_cwd_from_home(&codex_home, session_id)
 }
 
+/// Return the client originator recorded in Codex's local session metadata.
+///
+/// ForkTTY uses this only as local provenance for the shared app-server hook
+/// fallback. Missing, malformed, or unknown session metadata stays absent.
+pub fn codex_session_originator(session_id: &str) -> Option<String> {
+    let codex_home = std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| dirs::home_dir().map(|home| home.join(".codex")))?;
+    codex_session_originator_from_home(&codex_home, session_id)
+}
+
 pub fn codex_session_cwd_from_home(codex_home: &Path, session_id: &str) -> Option<PathBuf> {
     let session_id = safe_resume_session_id(session_id).ok()?;
     let mut candidates = Vec::new();
@@ -177,6 +189,26 @@ pub fn codex_session_cwd_from_home(codex_home: &Path, session_id: &str) -> Optio
     candidates
         .iter()
         .find_map(|path| codex_session_meta_cwd(path, &session_id))
+}
+
+pub fn codex_session_originator_from_home(codex_home: &Path, session_id: &str) -> Option<String> {
+    let session_id = safe_resume_session_id(session_id).ok()?;
+    let mut candidates = Vec::new();
+    collect_codex_session_candidates(
+        &codex_home.join("sessions"),
+        &session_id,
+        0,
+        &mut candidates,
+    );
+    candidates.sort_by_key(|path| {
+        std::fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+    });
+    candidates.reverse();
+    candidates
+        .iter()
+        .find_map(|path| codex_session_meta_originator(path, &session_id))
 }
 
 fn collect_codex_session_candidates(
@@ -216,6 +248,20 @@ fn collect_codex_session_candidates(
 }
 
 fn codex_session_meta_cwd(path: &Path, session_id: &str) -> Option<PathBuf> {
+    let payload = codex_session_meta_payload(path, session_id)?;
+    let cwd = PathBuf::from(payload.get("cwd")?.as_str()?);
+    safe_resume_cwd(&cwd).ok()?;
+    cwd.is_dir().then_some(cwd)
+}
+
+fn codex_session_meta_originator(path: &Path, session_id: &str) -> Option<String> {
+    let payload = codex_session_meta_payload(path, session_id)?;
+    let originator = payload.get("originator")?.as_str()?.trim();
+    (!originator.is_empty() && !originator.chars().any(char::is_control))
+        .then(|| originator.to_string())
+}
+
+fn codex_session_meta_payload(path: &Path, session_id: &str) -> Option<serde_json::Value> {
     let file = std::fs::File::open(path).ok()?;
     let mut reader = std::io::BufReader::new(file.take(MAX_CODEX_SESSION_META_BYTES));
     let mut line = String::new();
@@ -228,9 +274,7 @@ fn codex_session_meta_cwd(path: &Path, session_id: &str) -> Option<PathBuf> {
     if payload.get("id").and_then(serde_json::Value::as_str) != Some(session_id) {
         return None;
     }
-    let cwd = PathBuf::from(payload.get("cwd")?.as_str()?);
-    safe_resume_cwd(&cwd).ok()?;
-    cwd.is_dir().then_some(cwd)
+    Some(payload.clone())
 }
 
 fn safe_resume_session_id(session_id: &str) -> Result<String, AgentResumeError> {
@@ -490,6 +534,7 @@ mod tests {
                     "payload": {
                         "id": "codex-session-1",
                         "cwd": project.to_string_lossy(),
+                        "originator": "codex-tui",
                     }
                 }),
                 serde_json::json!({
@@ -506,6 +551,11 @@ mod tests {
             super::codex_session_cwd_from_home(&dir.path().join("codex"), "codex-session-1")
                 .as_deref(),
             Some(project.as_path())
+        );
+        assert_eq!(
+            super::codex_session_originator_from_home(&dir.path().join("codex"), "codex-session-1")
+                .as_deref(),
+            Some("codex-tui")
         );
     }
 
