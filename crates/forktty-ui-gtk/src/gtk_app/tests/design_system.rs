@@ -126,6 +126,20 @@ fn stylesheet_uses_standard_font_weights() {
 }
 
 #[test]
+fn settings_keep_clear_page_and_preference_group_hierarchy() {
+    let page_title = block(".settings-page-title {");
+    assert!(page_title.contains("font-size: 1.22em;"));
+
+    let group = block(".settings-list {");
+    assert!(group.contains("background: @ft_bg_1;"));
+    assert!(group.contains("border: 1px solid @ft_line;"));
+    assert!(group.contains("border-radius: 8px;"));
+
+    let nav_heading = block(".settings-nav-heading {");
+    assert!(!nav_heading.contains("text-transform: uppercase;"));
+}
+
+#[test]
 fn stylesheet_keeps_hex_colors_in_named_tokens() {
     let css = without_comments(CSS);
     for (line_number, line) in css.lines().enumerate() {

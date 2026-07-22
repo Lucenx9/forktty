@@ -704,6 +704,38 @@ fn settings_agents_nav_uses_agent_semantic_icon() {
 }
 
 #[test]
+fn settings_navigation_groups_core_worktrees_before_optional_integrations() {
+    let source = include_str!("settings_dialog.rs");
+    let general = source.find("settings_nav_heading(\"General\")").unwrap();
+    let interface = source[general..]
+        .find("nav.append(&interface_nav)")
+        .unwrap()
+        + general;
+    let worktrees = source[interface..]
+        .find("nav.append(&worktrees_nav)")
+        .unwrap()
+        + interface;
+    let integrations = source[worktrees..]
+        .find("settings_nav_heading(\"Integrations\")")
+        .unwrap()
+        + worktrees;
+    let agents = source[integrations..]
+        .find("nav.append(&agents_nav)")
+        .unwrap()
+        + integrations;
+    let system = source[agents..]
+        .find("settings_nav_heading(\"System\")")
+        .unwrap()
+        + agents;
+
+    assert!(general < interface);
+    assert!(interface < worktrees);
+    assert!(worktrees < integrations);
+    assert!(integrations < agents);
+    assert!(agents < system);
+}
+
+#[test]
 fn close_phase_keeps_ui_alive_until_socket_drain_completes() {
     let first = close_request_transition(ClosePhase::Running, true);
     assert_eq!(first.phase, ClosePhase::Draining);

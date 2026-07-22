@@ -28,6 +28,9 @@ Use these rules for GTK UI changes so the app stays quiet, dense, and native.
   reflow terminal panes. Workspace rows are flat navigation, and routine agent
   summaries stay hidden unless the workspace needs attention or reports an
   error or terminal-exit state.
+- Keep Settings compact and goal-oriented: core pages precede optional
+  integrations under General, Integrations, and System navigation. Preference
+  groups use one subtle raised surface; navigation headings stay sentence case.
 
 ## Motion
 

@@ -5,6 +5,10 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- Refined Settings as a quieter native preference surface: reduced the default
+  dialog and navigation width, grouped pages under General, Integrations, and
+  System, strengthened page hierarchy, and placed controls on subtle raised
+  group surfaces.
 - Refined the terminal chrome around one permanent global titlebar: removed the
   redundant bottom status bar, tightened split-pane headers to 22 px, softened
   their drag and focus cues, strengthened the menu logo, and replaced the

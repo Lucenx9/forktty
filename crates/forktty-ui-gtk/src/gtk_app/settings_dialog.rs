@@ -38,8 +38,8 @@ pub(super) fn show_settings_dialog_page(
         .transient_for(parent)
         .modal(true)
         .resizable(true)
-        .default_width(860)
-        .default_height(580)
+        .default_width(820)
+        .default_height(560)
         .build();
     window.set_size_request(700, 440);
     window.add_css_class("ft-settings-window");
@@ -67,7 +67,6 @@ pub(super) fn show_settings_dialog_page(
     nav.add_css_class("settings-nav");
     nav.set_hexpand(false);
     nav.set_vexpand(true);
-    nav.set_width_request(184);
     body.append(&nav);
 
     let stack = gtk::Stack::builder()
@@ -97,11 +96,11 @@ pub(super) fn show_settings_dialog_page(
     agents_nav.set_group(Some(&interface_nav));
     alerts_nav.set_group(Some(&interface_nav));
     advanced_nav.set_group(Some(&interface_nav));
-    nav.append(&settings_nav_heading("Essentials"));
+    nav.append(&settings_nav_heading("General"));
     nav.append(&interface_nav);
-    nav.append(&settings_nav_heading("Workspace"));
-    nav.append(&agents_nav);
     nav.append(&worktrees_nav);
+    nav.append(&settings_nav_heading("Integrations"));
+    nav.append(&agents_nav);
     #[cfg(feature = "browser")]
     let browser_nav = {
         let button = settings_nav_button(
@@ -117,7 +116,8 @@ pub(super) fn show_settings_dialog_page(
     nav.append(&alerts_nav);
     nav.append(&advanced_nav);
 
-    let (interface_page, interface_content) = settings_page("Interface", "Window and sidebar.");
+    let (interface_page, interface_content) =
+        settings_page("Interface", "Window behavior and workspace navigation.");
     let (window_section, window_list) = settings_section("Window", "");
     let window_mode = settings_combo_row(
         "Window mode",
@@ -147,9 +147,9 @@ pub(super) fn show_settings_dialog_page(
     stack.add_named(&interface_page, Some("interface"));
 
     let (worktrees_page, worktrees_content) =
-        settings_page("Worktrees", "Workspaces and terminal sessions.");
+        settings_page("Worktrees", "Git layout and terminal continuity.");
 
-    let (worktree_section, worktree_list) = settings_section("Git Worktrees", "");
+    let (worktree_section, worktree_list) = settings_section("Git worktrees", "");
     let worktree_layout = settings_combo_row(
         "Worktree layout",
         "Where new worktree directories are created.",
@@ -167,7 +167,7 @@ pub(super) fn show_settings_dialog_page(
     worktrees_content.append(&worktree_section);
 
     let (terminal_session_section, terminal_session_list) =
-        settings_section("Terminal Sessions", "");
+        settings_section("Terminal sessions", "");
     let pty_persistence_subtitle = if forktty_core::pty_persistence::detect().is_some() {
         "Plain terminals use dtach to survive ForkTTY UI restarts; pane close/restart starts fresh."
     } else {
@@ -200,7 +200,8 @@ pub(super) fn show_settings_dialog_page(
     });
     stack.add_named(&worktrees_page, Some("worktrees"));
 
-    let (agents_page, agents_content) = settings_page("Agents", "Agent integrations.");
+    let (agents_page, agents_content) =
+        settings_page("Agents", "Optional lifecycle metadata for coding agents.");
     let (agent_setup_section, agent_setup_list) = settings_section("Optional", "");
     let all_setup_row = settings_action_row(
         "Agent hooks",
@@ -219,10 +220,11 @@ pub(super) fn show_settings_dialog_page(
 
     #[cfg(feature = "browser")]
     {
-        let (browser_page, browser_content) = settings_page("Browser", "Imported browser data.");
+        let (browser_page, browser_content) =
+            settings_page("Browser", "Local profiles and imported browser data.");
         let (import_section, import_list) = settings_section("Profiles", "");
         let import_row = settings_action_row(
-            "Import Browser Data",
+            "Import browser data",
             "Import history and bookmarks from discovered local browser profiles.",
         );
         let import_button = gtk::Button::with_label("Import");
@@ -241,7 +243,10 @@ pub(super) fn show_settings_dialog_page(
         });
     }
 
-    let (alerts_page, alerts_content) = settings_page("Notifications", "Alerts and command hooks.");
+    let (alerts_page, alerts_content) = settings_page(
+        "Notifications",
+        "Desktop alerts, history, and command hooks.",
+    );
     let (delivery_section, delivery_list) = settings_section("Delivery", "");
     let desktop_notifications = adw::SwitchRow::builder()
         .title("Desktop notifications")
@@ -294,7 +299,7 @@ pub(super) fn show_settings_dialog_page(
     stack.add_named(&alerts_page, Some("alerts"));
 
     let (advanced_page, advanced_content) =
-        settings_page("Privacy", "ForkTTY is local-first and built for privacy.");
+        settings_page("Privacy", "Telemetry controls and local data locations.");
     let (local_first_section, local_first_list) = settings_section("Local-first by design", "");
     for line in [
         "All workspace and session data stays on this machine.",
