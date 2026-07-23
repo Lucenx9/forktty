@@ -994,7 +994,7 @@ fn terminal_empty_stage_surfaces_workspace_actions() {
 }
 
 #[test]
-fn chrome_micro_polish_quiets_sidebar_badges() {
+fn workspace_sidebar_polish_quiets_status_counts_and_reorder_grip() {
     let source = include_str!("../style.css");
     let badge = source
         .split(".workspace-status-badge {")
@@ -1003,6 +1003,22 @@ fn chrome_micro_polish_quiets_sidebar_badges() {
         .expect("workspace-status-badge block");
 
     assert!(!badge.contains("text-transform: uppercase;"));
+
+    let count = source
+        .split(".workspace-count-badge {")
+        .nth(1)
+        .and_then(|rest| rest.split('}').next())
+        .expect("workspace-count-badge block");
+    assert!(count.contains("background: transparent;"));
+    assert!(count.contains("border: 0;"));
+
+    let active_grip = source
+        .split(".workspace-row.active .workspace-drag-grip {")
+        .nth(1)
+        .and_then(|rest| rest.split('}').next())
+        .expect("active workspace-drag-grip block");
+    assert!(active_grip.contains("opacity: 0.24;"));
+    assert!(!source.contains("row:focus-visible .workspace-drag-grip"));
 }
 
 #[test]
@@ -1016,7 +1032,7 @@ fn workspace_rows_keep_compact_height_and_pane_tabs_keep_navigation_rhythm() {
     assert!(controller_source
         .contains("set_policy(gtk::PolicyType::External, gtk::PolicyType::Never);"));
     assert!(controller_source.contains("queue_reveal_tab(&strip.scroller, &strip.tabstrip, tab);"));
-    assert!(css.contains(".workspace-card {\n  min-height: 44px;"));
+    assert!(css.contains(".workspace-card {\n  min-height: 36px;"));
     assert!(css.contains(".workspace-row .workspace-card.drop-before {"));
     assert!(css.contains(".pane-tab {\n  min-width: 96px;"));
     assert!(css.contains(".pane-tab-grip {\n  -gtk-icon-size: 11px;\n  min-width: 14px;\n  color: @ft_text_4;\n  opacity: 0.24;"));
