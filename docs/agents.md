@@ -46,6 +46,14 @@ no socket I/O. The managed event counts are Codex 10, Claude 25 lifecycle / 28
 full, Antigravity 3, and OpenCode 11. Claude lifecycle excludes only
 `PreToolUse`, `PostToolUse`, and `PostToolUseFailure`; `PostToolBatch` remains.
 
+Codex can execute hooks in its shared app-server without the terminal pane's
+`FORKTTY_*` environment. A local session whose `session_meta` originator is
+`codex-tui` may probe the default owner-only socket. ForkTTY binds it only when
+exactly one unclaimed Codex TUI process has the hook cwd and belongs to exactly
+one eligible ForkTTY surface. Another unclaimed same-cwd TUI, including one
+outside ForkTTY, rejects the fallback; later events reuse the learned exact
+session target, and accepted session cleanup releases the surface claim.
+
 Non-attention hook notifications are logged without replacing the current
 lifecycle. In particular, an informational notification after `Stop` cannot
 change an idle session back to running.
@@ -78,7 +86,9 @@ panes.
 1. Probe only documented local config locations and environment overrides.
 2. Write hook configuration atomically and preserve unrelated entries.
 3. Treat terminal text and hook payloads as untrusted data.
-4. Reject ambiguous cwd-to-surface matches instead of guessing active focus.
+4. Reject ambiguous cwd-to-surface matches instead of guessing active focus;
+   unscoped Codex hooks additionally require local `codex-tui` metadata and a
+   unique unclaimed live Codex process in both the cwd and surface process tree.
 5. Keep hook doctor checks local-only and non-mutating. Doctor health requires a
    complete canonical managed plan, including exact regular executable
    Antigravity wrappers; `installationCheck.ok` gates the top-level result.

@@ -232,6 +232,616 @@ async fn hook_session_status_rejects_ambiguous_hook_cwd_instead_of_defaulting_ac
     assert!(other_statuses.as_array().unwrap().is_empty());
 }
 
+fn spawn_named_codex(cwd: &Path) -> (tempfile::TempDir, std::process::Child) {
+    let executable_dir = tempfile::tempdir().unwrap();
+    let executable = executable_dir.path().join("codex");
+    std::fs::copy("/bin/sleep", &executable).unwrap();
+    for _ in 0..10 {
+        match std::process::Command::new(&executable)
+            .arg("30")
+            .current_dir(cwd)
+            .spawn()
+        {
+            Ok(child) => return (executable_dir, child),
+            Err(err) if err.raw_os_error() == Some(libc::ETXTBSY) => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(err) => panic!("failed to spawn temporary Codex fixture: {err}"),
+        }
+    }
+    panic!("temporary Codex fixture stayed busy after bounded retries");
+}
+
+#[tokio::test]
+async fn codex_hook_session_uses_the_only_same_cwd_surface_running_codex() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let (state, backend) = test_state();
+    let first = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "first", "workingDir": project_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let second = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "second", "workingDir": project_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let first_surface_id = first["focused_surface_id"].as_str().unwrap();
+    let second_surface_id = second["focused_surface_id"].as_str().unwrap();
+    let (_codex_dir, mut codex) = spawn_named_codex(project_dir.path());
+    let mut shell = std::process::Command::new("/bin/sleep")
+        .arg("30")
+        .current_dir(project_dir.path())
+        .spawn()
+        .unwrap();
+    backend
+        .mark_surface_pid(first_surface_id, codex.id())
+        .unwrap();
+    backend
+        .mark_surface_pid(second_surface_id, shell.id())
+        .unwrap();
+
+    dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "key": "agent:codex",
+            "label": "Codex",
+            "value": "Running",
+            "hook_agent": "codex",
+            "hook_session_originator": "codex-tui",
+            "hook_session_id": "codex-app-server-session",
+            "hook_session_cwd": project_dir.path(),
+            "hook_event_name": "prompt-submit",
+            "hook_event_order": 100
+        }),
+    )
+    .await
+    .unwrap();
+
+    let model = state.model.lock().unwrap();
+    assert_eq!(
+        model
+            .surface(first_surface_id)
+            .unwrap()
+            .agent_session
+            .as_ref()
+            .unwrap()
+            .session_id,
+        "codex-app-server-session"
+    );
+    assert!(model
+        .surface(second_surface_id)
+        .unwrap()
+        .agent_session
+        .is_none());
+    drop(model);
+    let _ = codex.kill();
+    let _ = codex.wait();
+    let _ = shell.kill();
+    let _ = shell.wait();
+}
+
+#[tokio::test]
+async fn codex_hook_session_rejects_multiple_same_cwd_codex_surfaces() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let (state, backend) = test_state();
+    let first = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "first", "workingDir": project_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let second = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "second", "workingDir": project_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let (_first_dir, mut first_codex) = spawn_named_codex(project_dir.path());
+    let (_second_dir, mut second_codex) = spawn_named_codex(project_dir.path());
+    backend
+        .mark_surface_pid(
+            first["focused_surface_id"].as_str().unwrap(),
+            first_codex.id(),
+        )
+        .unwrap();
+    backend
+        .mark_surface_pid(
+            second["focused_surface_id"].as_str().unwrap(),
+            second_codex.id(),
+        )
+        .unwrap();
+
+    let err = dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "key": "agent:codex",
+            "label": "Codex",
+            "value": "Running",
+            "hook_agent": "codex",
+            "hook_session_originator": "codex-tui",
+            "hook_session_id": "ambiguous-codex-session",
+            "hook_session_cwd": project_dir.path(),
+            "hook_event_name": "prompt-submit",
+            "hook_event_order": 100
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "conflict");
+    assert!(err
+        .to_string()
+        .contains("multiple unclaimed Codex TUI processes"));
+    let _ = first_codex.kill();
+    let _ = first_codex.wait();
+    let _ = second_codex.kill();
+    let _ = second_codex.wait();
+}
+
+#[tokio::test]
+async fn codex_hook_session_rejects_same_cwd_surfaces_without_a_codex_process() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let (state, backend) = test_state();
+    let workspace = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "shell-only", "workingDir": project_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let surface_id = workspace["focused_surface_id"].as_str().unwrap();
+    let mut shell = std::process::Command::new("/bin/sleep")
+        .arg("30")
+        .current_dir(project_dir.path())
+        .spawn()
+        .unwrap();
+    backend.mark_surface_pid(surface_id, shell.id()).unwrap();
+
+    let err = dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "key": "agent:codex",
+            "label": "Codex",
+            "value": "Running",
+            "hook_agent": "codex",
+            "hook_session_originator": "codex-tui",
+            "hook_session_id": "external-codex-session",
+            "hook_session_cwd": project_dir.path(),
+            "hook_event_name": "prompt-submit",
+            "hook_event_order": 100
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "not_found");
+    assert!(err.to_string().contains("Codex process target"));
+    assert!(state
+        .model
+        .lock()
+        .unwrap()
+        .surface(surface_id)
+        .unwrap()
+        .agent_session
+        .is_none());
+    let _ = shell.kill();
+    let _ = shell.wait();
+}
+
+#[tokio::test]
+async fn codex_hook_session_rejects_non_tui_session_originator() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let (state, backend) = test_state();
+    let workspace = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "desktop", "workingDir": project_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let surface_id = workspace["focused_surface_id"].as_str().unwrap();
+    let (_codex_dir, mut codex) = spawn_named_codex(project_dir.path());
+    backend.mark_surface_pid(surface_id, codex.id()).unwrap();
+
+    let err = dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "key": "agent:codex",
+            "label": "Codex",
+            "value": "Running",
+            "hook_agent": "codex",
+            "hook_session_originator": "Codex Desktop",
+            "hook_session_id": "desktop-codex-session",
+            "hook_session_cwd": project_dir.path(),
+            "hook_event_name": "prompt-submit",
+            "hook_event_order": 100
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "not_found");
+    assert!(state
+        .model
+        .lock()
+        .unwrap()
+        .surface(surface_id)
+        .unwrap()
+        .agent_session
+        .is_none());
+    let _ = codex.kill();
+    let _ = codex.wait();
+}
+
+#[tokio::test]
+async fn codex_hook_session_rejects_an_external_same_cwd_tui_process() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let (state, backend) = test_state();
+    let workspace = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "forktty", "workingDir": project_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let surface_id = workspace["focused_surface_id"].as_str().unwrap();
+    let (_forktty_codex_dir, mut forktty_codex) = spawn_named_codex(project_dir.path());
+    let (_external_codex_dir, mut external_codex) = spawn_named_codex(project_dir.path());
+    backend
+        .mark_surface_pid(surface_id, forktty_codex.id())
+        .unwrap();
+
+    let err = dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "key": "agent:codex",
+            "label": "Codex",
+            "value": "Running",
+            "hook_agent": "codex",
+            "hook_session_originator": "codex-tui",
+            "hook_session_id": "external-codex-session",
+            "hook_session_cwd": project_dir.path(),
+            "hook_event_name": "prompt-submit",
+            "hook_event_order": 100
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "conflict");
+    assert!(err
+        .to_string()
+        .contains("multiple unclaimed Codex TUI processes"));
+    assert!(state
+        .model
+        .lock()
+        .unwrap()
+        .surface(surface_id)
+        .unwrap()
+        .agent_session
+        .is_none());
+    let _ = forktty_codex.kill();
+    let _ = forktty_codex.wait();
+    let _ = external_codex.kill();
+    let _ = external_codex.wait();
+}
+
+#[tokio::test]
+async fn codex_hook_log_claim_prevents_another_session_from_stealing_the_surface() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let (state, backend) = test_state();
+    let workspace = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "claim", "workingDir": project_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let surface_id = workspace["focused_surface_id"].as_str().unwrap();
+    let (_codex_dir, mut codex) = spawn_named_codex(project_dir.path());
+    backend.mark_surface_pid(surface_id, codex.id()).unwrap();
+
+    dispatch(
+        &state,
+        "metadata.log",
+        json!({
+            "level": "info",
+            "message": "first session started",
+            "hook_agent": "codex",
+            "hook_session_originator": "codex-tui",
+            "hook_session_id": "first-codex-session",
+            "hook_session_cwd": project_dir.path(),
+            "hook_event_name": "session-start",
+            "hook_event_order": 100
+        }),
+    )
+    .await
+    .unwrap();
+    assert!(state
+        .model
+        .lock()
+        .unwrap()
+        .surface(surface_id)
+        .unwrap()
+        .agent_session
+        .is_none());
+
+    let err = dispatch(
+        &state,
+        "metadata.log",
+        json!({
+            "level": "info",
+            "message": "second session started",
+            "hook_agent": "codex",
+            "hook_session_originator": "codex-tui",
+            "hook_session_id": "second-codex-session",
+            "hook_session_cwd": project_dir.path(),
+            "hook_event_name": "session-start",
+            "hook_event_order": 100
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.code(), "not_found");
+    let _ = codex.kill();
+    let _ = codex.wait();
+}
+
+#[tokio::test]
+async fn codex_hook_discovery_serializes_the_claim_before_another_session_resolves() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let (state, backend) = test_state();
+    let workspace = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "atomic-claim", "workingDir": project_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let surface_id = workspace["focused_surface_id"].as_str().unwrap();
+    let (_codex_dir, mut codex) = spawn_named_codex(project_dir.path());
+    backend.mark_surface_pid(surface_id, codex.id()).unwrap();
+
+    let first_params = json!({
+        "level": "info",
+        "message": "first session started",
+        "hook_agent": "codex",
+        "hook_session_originator": "codex-tui",
+        "hook_session_id": "first-concurrent-session",
+        "hook_session_cwd": project_dir.path(),
+        "hook_event_name": "session-start",
+        "hook_event_order": 100
+    });
+    let second_params = json!({
+        "level": "info",
+        "message": "second session started",
+        "hook_agent": "codex",
+        "hook_session_originator": "codex-tui",
+        "hook_session_id": "second-concurrent-session",
+        "hook_session_cwd": project_dir.path(),
+        "hook_event_name": "session-start",
+        "hook_event_order": 100
+    });
+    let (first_entered_tx, first_entered_rx) = std::sync::mpsc::channel();
+    let (release_first_tx, release_first_rx) = std::sync::mpsc::channel();
+    let first_state = state.clone();
+    let first = std::thread::spawn(move || {
+        let mut params = first_params;
+        hook_session::run_serialized_hook_ingress(&first_state, "metadata.log", &mut params, |_| {
+            first_entered_tx.send(()).unwrap();
+            release_first_rx.recv().unwrap();
+            Ok(json!({"applied": "first"}))
+        })
+    });
+    first_entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap();
+
+    let (second_mutated_tx, second_mutated_rx) = std::sync::mpsc::channel();
+    let (second_calling_tx, second_calling_rx) = std::sync::mpsc::channel();
+    let (second_done_tx, second_done_rx) = std::sync::mpsc::channel();
+    let second_state = state.clone();
+    let second = std::thread::spawn(move || {
+        let mut params = second_params;
+        second_calling_tx.send(()).unwrap();
+        let result = hook_session::run_serialized_hook_ingress(
+            &second_state,
+            "metadata.log",
+            &mut params,
+            |_| {
+                second_mutated_tx.send(()).unwrap();
+                Ok(json!({"applied": "second"}))
+            },
+        );
+        second_done_tx.send(result).unwrap();
+    });
+
+    second_calling_rx
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap();
+    assert!(second_done_rx
+        .recv_timeout(Duration::from_millis(100))
+        .is_err());
+    assert!(second_mutated_rx.try_recv().is_err());
+    release_first_tx.send(()).unwrap();
+    assert_eq!(
+        first.join().unwrap().unwrap(),
+        Some(json!({"applied": "first"}))
+    );
+    let second_error = second_done_rx
+        .recv_timeout(Duration::from_secs(1))
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(second_error.code(), "not_found");
+    assert!(second_mutated_rx.try_recv().is_err());
+    second.join().unwrap();
+    let _ = codex.kill();
+    let _ = codex.wait();
+}
+
+#[tokio::test]
+async fn primary_codex_session_end_clear_releases_the_surface_for_a_new_session() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let (state, backend) = test_state();
+    let workspace = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "reuse", "workingDir": project_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let surface_id = workspace["focused_surface_id"].as_str().unwrap();
+    let (_codex_dir, mut codex) = spawn_named_codex(project_dir.path());
+    backend.mark_surface_pid(surface_id, codex.id()).unwrap();
+
+    dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "key": "agent:codex",
+            "label": "Codex",
+            "value": "Running",
+            "hook_agent": "codex",
+            "hook_session_originator": "codex-tui",
+            "hook_session_id": "old-codex-session",
+            "hook_session_cwd": project_dir.path(),
+            "hook_event_name": "prompt-submit",
+            "hook_event_order": 100
+        }),
+    )
+    .await
+    .unwrap();
+    dispatch(
+        &state,
+        "metadata.clear_status",
+        json!({
+            "key": "agent:codex",
+            "hook_agent": "codex",
+            "hook_session_originator": "codex-tui",
+            "hook_session_id": "old-codex-session",
+            "hook_session_cwd": project_dir.path(),
+            "hook_event_name": "session-end",
+            "hook_event_order": 200
+        }),
+    )
+    .await
+    .unwrap();
+
+    dispatch(
+        &state,
+        "metadata.set_status",
+        json!({
+            "key": "agent:codex",
+            "label": "Codex",
+            "value": "Running",
+            "hook_agent": "codex",
+            "hook_session_originator": "codex-tui",
+            "hook_session_id": "new-codex-session",
+            "hook_session_cwd": project_dir.path(),
+            "hook_event_name": "prompt-submit",
+            "hook_event_order": 300
+        }),
+    )
+    .await
+    .unwrap();
+
+    let model = state.model.lock().unwrap();
+    let session = model
+        .surface(surface_id)
+        .unwrap()
+        .agent_session
+        .as_ref()
+        .unwrap();
+    assert_eq!(session.session_id, "new-codex-session");
+    assert_eq!(session.lifecycle, AgentSessionLifecycle::Running);
+    drop(model);
+    let _ = codex.kill();
+    let _ = codex.wait();
+}
+
+#[tokio::test]
+async fn codex_session_end_without_status_releases_a_log_only_claim() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let (state, backend) = test_state();
+    let workspace = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "log-only-reuse", "workingDir": project_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let surface_id = workspace["focused_surface_id"].as_str().unwrap();
+    let (_codex_dir, mut codex) = spawn_named_codex(project_dir.path());
+    backend.mark_surface_pid(surface_id, codex.id()).unwrap();
+
+    dispatch(
+        &state,
+        "metadata.log",
+        json!({
+            "level": "info",
+            "message": "old session started",
+            "hook_agent": "codex",
+            "hook_session_originator": "codex-tui",
+            "hook_session_id": "old-log-only-session",
+            "hook_session_cwd": project_dir.path(),
+            "hook_event_name": "session-start",
+            "hook_event_order": 100
+        }),
+    )
+    .await
+    .unwrap();
+
+    let clear = dispatch(
+        &state,
+        "metadata.clear_status",
+        json!({
+            "key": "agent:codex",
+            "hook_agent": "codex",
+            "hook_session_originator": "codex-tui",
+            "hook_session_id": "old-log-only-session",
+            "hook_session_cwd": project_dir.path(),
+            "hook_event_name": "session-end",
+            "hook_event_order": 200
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(clear, json!({"cleared": true}));
+
+    dispatch(
+        &state,
+        "metadata.log",
+        json!({
+            "level": "info",
+            "message": "new session started",
+            "hook_agent": "codex",
+            "hook_session_originator": "codex-tui",
+            "hook_session_id": "new-log-only-session",
+            "hook_session_cwd": project_dir.path(),
+            "hook_event_name": "session-start",
+            "hook_event_order": 300
+        }),
+    )
+    .await
+    .unwrap();
+
+    let _ = codex.kill();
+    let _ = codex.wait();
+}
+
 #[tokio::test]
 async fn hook_status_binds_persisted_sessions_for_all_agent_status_keys() {
     let (state, _backend) = test_state();

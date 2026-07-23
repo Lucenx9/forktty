@@ -693,6 +693,19 @@ fn evict_hook_session_targets_for_completion(
     for surface_id in surface_ids {
         targets.remove_surface(surface_id);
     }
+    drop(targets);
+    match state.codex_process_claims.lock() {
+        Ok(mut claims) => claims.retain(|surface_id, _| !surface_ids.contains(surface_id)),
+        Err(poisoned) => {
+            errors.push(
+                "Codex process claim lock was poisoned during removal completion".to_string(),
+            );
+            state.codex_process_claims.clear_poison();
+            poisoned
+                .into_inner()
+                .retain(|surface_id, _| !surface_ids.contains(surface_id));
+        }
+    }
 }
 
 fn lock_model_for_completion<'a>(

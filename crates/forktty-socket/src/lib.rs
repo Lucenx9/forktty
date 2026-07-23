@@ -83,6 +83,7 @@ use forktty_terminal::SpawnRequest;
 use serde_json::json;
 #[cfg(test)]
 use serde_json::Value;
+use std::collections::HashMap;
 use std::future::Future;
 use std::io;
 #[cfg(all(test, feature = "browser"))]
@@ -314,6 +315,8 @@ pub struct SocketAppState {
     pub browser_cmd: Option<async_channel::Sender<BrowserCommand>>,
     hook_session_targets: Arc<Mutex<hook_session::HookSessionTargets>>,
     hook_target_gates: Arc<Mutex<hook_session::HookTargetGates>>,
+    codex_hook_discovery_gate: Arc<Mutex<()>>,
+    codex_process_claims: Arc<Mutex<HashMap<String, String>>>,
     #[cfg(test)]
     panic_after_worktree_filesystem_finish: Arc<AtomicU8>,
     coordinator: Arc<SocketCoordinator>,
@@ -339,6 +342,8 @@ impl SocketAppState {
             browser_cmd: None,
             hook_session_targets: Arc::new(Mutex::new(hook_session::HookSessionTargets::default())),
             hook_target_gates: Arc::new(Mutex::new(hook_session::HookTargetGates::default())),
+            codex_hook_discovery_gate: Arc::new(Mutex::new(())),
+            codex_process_claims: Arc::new(Mutex::new(HashMap::new())),
             #[cfg(test)]
             panic_after_worktree_filesystem_finish: Arc::new(AtomicU8::new(0)),
             coordinator: Arc::new(SocketCoordinator::default()),

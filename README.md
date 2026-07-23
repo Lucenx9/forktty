@@ -316,6 +316,12 @@ provider event coverage, disable variables, trust checks, and lifecycle
 semantics are documented in [hooks/README.md](hooks/README.md) and
 [docs/agents.md](docs/agents.md).
 
+Codex can run hooks from a shared app-server that lacks the terminal pane's
+`FORKTTY_*` environment. ForkTTY still restores the workspace badge for a
+local `codex-tui` session when exactly one unclaimed Codex TUI process has the
+same cwd and belongs to one eligible ForkTTY surface. An additional Codex TUI
+in that cwd, including one outside ForkTTY, makes the fallback fail closed.
+
 ## Configuration
 
 Config file: `~/.config/forktty/config.toml`. All fields are optional. The

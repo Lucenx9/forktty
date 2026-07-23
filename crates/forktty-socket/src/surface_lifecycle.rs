@@ -780,6 +780,12 @@ pub fn evict_hook_session_targets_for_surfaces(
     for surface_id in surface_ids {
         targets.remove_surface(surface_id);
     }
+    drop(targets);
+    state
+        .codex_process_claims
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?
+        .retain(|surface_id, _| !surface_ids.contains(surface_id));
     Ok(())
 }
 

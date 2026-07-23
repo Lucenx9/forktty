@@ -160,6 +160,14 @@ For Codex and Claude Code, `SubagentStop` leaves the parent session `Running`
 because the event only reports a nested subagent completion. Claude Code
 `TeammateIdle` publishes `Ready` and persists the teammate lifecycle as idle.
 
+Codex may invoke hooks through its shared app-server, outside the originating
+pane's `FORKTTY_*` environment. Such a hook uses the default local socket only
+when its local session metadata identifies a `codex-tui` session with an id and
+cwd. The server binds it only when one unclaimed same-cwd Codex TUI process
+belongs to one eligible ForkTTY surface. Another same-cwd TUI, including an
+external one, rejects the fallback rather than guessing. Once learned, the
+exact session target is reused until accepted session cleanup releases it.
+
 Permission, elicitation, and recognized attention hooks attach a normalized
 provider/session/kind prompt identity to their ForkTTY notification. Accepted
 result hooks retain only the matching in-app notification as read history and
