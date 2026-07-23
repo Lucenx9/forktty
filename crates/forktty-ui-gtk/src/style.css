@@ -536,7 +536,7 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .navigation-sidebar row:selected .workspace-card {
-  background: @ft_bg_2;
+  background: @ft_bg_selected;
 }
 
 .navigation-sidebar row:drop(active),
@@ -560,7 +560,7 @@ button.flat.sidebar-add:focus-visible {
  * without adding a second card/border hierarchy inside the overlay. */
 
 .workspace-card {
-  min-height: 44px;
+  min-height: 36px;
   padding: 6px 12px;
   margin: 0;
   border: 0;
@@ -585,7 +585,7 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .workspace-row.active .workspace-drag-grip {
-  opacity: 0.34;
+  opacity: 0.24;
 }
 
 .navigation-sidebar row:hover .workspace-card {
@@ -593,13 +593,13 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .workspace-row.active .workspace-card {
-  background: @ft_bg_2;
+  background: @ft_bg_selected;
   border-left-color: alpha(@accent_color, 0.62);
   box-shadow: none;
 }
 
 .workspace-row.active:hover .workspace-card {
-  background: @ft_bg_2;
+  background: @ft_bg_selected;
   border-left-color: alpha(@accent_color, 0.76);
 }
 
@@ -615,12 +615,12 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .workspace-row.active.needs-attention .workspace-card {
-  background: @ft_bg_2;
+  background: @ft_bg_selected;
   border-left-color: alpha(@accent_color, 0.82);
 }
 
 .workspace-row.active.needs-attention:hover .workspace-card {
-  background: @ft_bg_2;
+  background: @ft_bg_selected;
 }
 
 .workspace-row .workspace-card.drop-before {
@@ -639,6 +639,7 @@ button.flat.sidebar-add:focus-visible {
   color: @ft_text_2;
   font-weight: 500;
   font-size: 0.86em;
+  transition: color 90ms ease-out;
 }
 
 .workspace-name-line {
@@ -648,6 +649,10 @@ button.flat.sidebar-add:focus-visible {
 .workspace-row.active .workspace-name {
   color: @ft_text_1;
   font-weight: 500;
+}
+
+.navigation-sidebar row:hover .workspace-name {
+  color: @ft_text_1;
 }
 
 /* Status reads as quiet colored text, not a bordered pill. */
@@ -694,23 +699,17 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .workspace-count-badge {
-  padding: 1px 5px;
+  padding: 0;
   min-width: 0;
-  /* Small radius for the compact count control; full rounding stays on intrinsically round shapes. */
-  border-radius: 6px;
-  background: @ft_bg_0;
+  border-radius: 0;
+  background: transparent;
   color: @ft_text_3;
-  border: 1px solid @ft_line;
+  border: 0;
 }
 
 .workspace-count-icon {
   color: @ft_text_3;
   -gtk-icon-size: 11px;
-}
-
-.workspace-row.active .workspace-count-badge {
-  background: transparent;
-  color: @ft_text_3;
 }
 
 /* Sidebar empty state */
@@ -766,9 +765,20 @@ button.flat.sidebar-nav-row:focus-visible {
   color: @ft_text_1;
 }
 
+button.flat.sidebar-nav-row:active {
+  background: @ft_bg_1;
+  color: @ft_text_1;
+}
+
 .sidebar-nav-icon {
   color: @ft_text_3;
   -gtk-icon-size: 14px;
+  transition: color 90ms ease-out;
+}
+
+button.flat.sidebar-nav-row:hover .sidebar-nav-icon,
+button.flat.sidebar-nav-row:focus-visible .sidebar-nav-icon {
+  color: @ft_text_2;
 }
 
 .sidebar-nav-label {

@@ -289,7 +289,7 @@ pub(super) fn refresh_sidebar(
 
         let card = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
-            .spacing(8)
+            .spacing(6)
             .hexpand(true)
             .build();
         card.add_css_class("workspace-card");
@@ -1269,7 +1269,7 @@ pub(super) fn build_sidebar_sections() -> SidebarSectionsUi {
 }
 
 fn sidebar_nav_row(icon: &str, label: &str) -> gtk::Button {
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let icon = gtk::Image::from_icon_name(icon);
     icon.add_css_class("sidebar-nav-icon");
     content.append(&icon);

@@ -5,6 +5,10 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- Refined the workspace sidebar's scan rhythm with denser rows, a quieter
+  selected surface, restrained reorder grips, borderless pane-count metadata,
+  and spacing aligned to the 6 px chrome grid while preserving its overlay
+  layout and behavior.
 - Refined the Worktree manager around a clearer task hierarchy: the source
   workspace and path stay visible in a compact, mode-aware context row, every
   mode keeps a persistent target label, helper copy explains the operation
