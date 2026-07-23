@@ -773,6 +773,76 @@ async fn primary_codex_session_end_clear_releases_the_surface_for_a_new_session(
 }
 
 #[tokio::test]
+async fn codex_session_end_without_status_releases_a_log_only_claim() {
+    let project_dir = tempfile::tempdir().unwrap();
+    let (state, backend) = test_state();
+    let workspace = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "log-only-reuse", "workingDir": project_dir.path()}),
+    )
+    .await
+    .unwrap();
+    let surface_id = workspace["focused_surface_id"].as_str().unwrap();
+    let (_codex_dir, mut codex) = spawn_named_codex(project_dir.path());
+    backend.mark_surface_pid(surface_id, codex.id()).unwrap();
+
+    dispatch(
+        &state,
+        "metadata.log",
+        json!({
+            "level": "info",
+            "message": "old session started",
+            "hook_agent": "codex",
+            "hook_session_originator": "codex-tui",
+            "hook_session_id": "old-log-only-session",
+            "hook_session_cwd": project_dir.path(),
+            "hook_event_name": "session-start",
+            "hook_event_order": 100
+        }),
+    )
+    .await
+    .unwrap();
+
+    let clear = dispatch(
+        &state,
+        "metadata.clear_status",
+        json!({
+            "key": "agent:codex",
+            "hook_agent": "codex",
+            "hook_session_originator": "codex-tui",
+            "hook_session_id": "old-log-only-session",
+            "hook_session_cwd": project_dir.path(),
+            "hook_event_name": "session-end",
+            "hook_event_order": 200
+        }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(clear, json!({"cleared": true}));
+
+    dispatch(
+        &state,
+        "metadata.log",
+        json!({
+            "level": "info",
+            "message": "new session started",
+            "hook_agent": "codex",
+            "hook_session_originator": "codex-tui",
+            "hook_session_id": "new-log-only-session",
+            "hook_session_cwd": project_dir.path(),
+            "hook_event_name": "session-start",
+            "hook_event_order": 300
+        }),
+    )
+    .await
+    .unwrap();
+
+    let _ = codex.kill();
+    let _ = codex.wait();
+}
+
+#[tokio::test]
 async fn hook_status_binds_persisted_sessions_for_all_agent_status_keys() {
     let (state, _backend) = test_state();
     let agents = [

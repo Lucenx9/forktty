@@ -1000,7 +1000,7 @@ fn codex_app_server_hook_without_forktty_env_uses_default_socket() {
 }
 
 #[test]
-fn codex_default_socket_fallback_requires_local_tui_originator() {
+fn codex_default_socket_fallback_rejects_missing_tui_provenance() {
     with_env(&[("FORKTTY_SOCKET_PATH", None)], || {
         let mut context = test_context();
         context.socket_explicit = false;
@@ -1009,35 +1009,7 @@ fn codex_default_socket_fallback_requires_local_tui_originator() {
             "session_id": "codex-app-server-session",
             "cwd": std::env::current_dir().unwrap(),
         });
-
-        assert!(should_send_hook_actions(
-            &context,
-            codex,
-            &payload,
-            Some("codex-tui"),
-            Some("/tmp/project")
-        ));
-        assert!(!should_send_hook_actions(
-            &context,
-            codex,
-            &payload,
-            Some("Codex Desktop"),
-            Some("/tmp/project")
-        ));
-        assert!(!should_send_hook_actions(
-            &context,
-            codex,
-            &payload,
-            None,
-            Some("/tmp/project")
-        ));
-        assert!(!should_send_hook_actions(
-            &context,
-            codex,
-            &payload,
-            Some("codex-tui"),
-            None
-        ));
+        assert!(!should_send_hook_actions(&context, codex, &payload, None));
     });
 }
 

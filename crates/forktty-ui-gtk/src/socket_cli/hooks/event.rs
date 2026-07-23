@@ -97,23 +97,13 @@ pub(in crate::socket_cli) fn handle_hook_event(
     let has_socket_context = has_hook_socket_context(context);
     let has_explicit_hook_target = trimmed_env("FORKTTY_WORKSPACE_ID").is_some()
         || trimmed_env("FORKTTY_SURFACE_ID").is_some();
-    let codex_session_originator = local_codex_session_originator(spec, &payload);
-    let codex_session_cwd = local_codex_session_cwd(spec, &payload);
+    let codex_session_provenance = local_codex_session_provenance(spec, &payload);
     let mut actions = build_hook_actions(spec, &event, &payload, &order);
     if !has_explicit_hook_target {
-        add_codex_session_provenance(
-            &mut actions,
-            codex_session_originator.as_deref(),
-            codex_session_cwd.as_deref(),
-        );
+        add_codex_session_provenance(&mut actions, codex_session_provenance.as_ref());
     }
-    let send_actions = should_send_hook_actions(
-        context,
-        spec,
-        &payload,
-        codex_session_originator.as_deref(),
-        codex_session_cwd.as_deref(),
-    );
+    let send_actions =
+        should_send_hook_actions(context, spec, &payload, codex_session_provenance.as_ref());
     hook_debug(
         context,
         &format!(
@@ -214,8 +204,7 @@ pub(in crate::socket_cli) fn should_send_hook_actions(
     context: &CliContext,
     spec: &AgentSpec,
     payload: &Value,
-    codex_session_originator: Option<&str>,
-    codex_session_cwd: Option<&str>,
+    codex_session_provenance: Option<&forktty_core::CodexTuiSessionProvenance>,
 ) -> bool {
     // Codex hooks can be launched by its long-lived shared app-server, which
     // does not inherit the environment of the TUI pane that owns the session.
@@ -225,47 +214,36 @@ pub(in crate::socket_cli) fn should_send_hook_actions(
     has_hook_socket_context(context)
         || (spec.key == "codex"
             && extract_hook_session_id(payload).is_some()
-            && codex_session_originator == Some("codex-tui")
-            && codex_session_cwd.is_some())
+            && codex_session_provenance.is_some())
 }
 
-fn local_codex_session_originator(spec: &AgentSpec, payload: &Value) -> Option<String> {
+fn local_codex_session_provenance(
+    spec: &AgentSpec,
+    payload: &Value,
+) -> Option<forktty_core::CodexTuiSessionProvenance> {
     (spec.key == "codex")
         .then(|| extract_hook_session_id(payload))
         .flatten()
-        .and_then(|session_id| forktty_core::codex_session_originator(&session_id))
-}
-
-fn local_codex_session_cwd(spec: &AgentSpec, payload: &Value) -> Option<String> {
-    (spec.key == "codex")
-        .then(|| extract_hook_session_id(payload))
-        .flatten()
-        .and_then(|session_id| forktty_core::codex_session_cwd(&session_id))
-        .map(|cwd| cwd.to_string_lossy().into_owned())
+        .and_then(|session_id| forktty_core::codex_tui_session_provenance(&session_id))
 }
 
 fn add_codex_session_provenance(
     actions: &mut [(String, Value)],
-    codex_session_originator: Option<&str>,
-    codex_session_cwd: Option<&str>,
+    provenance: Option<&forktty_core::CodexTuiSessionProvenance>,
 ) {
-    if codex_session_originator.is_none() && codex_session_cwd.is_none() {
+    let Some(provenance) = provenance else {
         return;
-    }
+    };
     for (_, params) in actions {
         if let Some(params) = params.as_object_mut() {
-            if let Some(originator) = codex_session_originator {
-                params.insert(
-                    "hook_session_originator".to_string(),
-                    Value::String(originator.to_string()),
-                );
-            }
-            if let Some(cwd) = codex_session_cwd {
-                params.insert(
-                    "hook_session_cwd".to_string(),
-                    Value::String(cwd.to_string()),
-                );
-            }
+            params.insert(
+                "hook_session_originator".to_string(),
+                Value::String("codex-tui".to_string()),
+            );
+            params.insert(
+                "hook_session_cwd".to_string(),
+                Value::String(provenance.cwd().to_string_lossy().into_owned()),
+            );
         }
     }
 }

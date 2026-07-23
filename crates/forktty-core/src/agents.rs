@@ -55,6 +55,19 @@ pub struct AgentResumeCommand {
     pub args: Vec<String>,
 }
 
+/// Validated local provenance for a Codex TUI session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexTuiSessionProvenance {
+    cwd: PathBuf,
+}
+
+impl CodexTuiSessionProvenance {
+    /// Return the canonicalizable working directory recorded by the TUI.
+    pub fn cwd(&self) -> &Path {
+        &self.cwd
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentResumeError {
     UnsupportedAgent(AgentKind),
@@ -152,46 +165,49 @@ fn agent_permission_mode_is_bypass(permission_mode: Option<&str>) -> bool {
 }
 
 pub fn codex_session_cwd(session_id: &str) -> Option<PathBuf> {
-    let codex_home = std::env::var_os("CODEX_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| dirs::home_dir().map(|home| home.join(".codex")))?;
+    let codex_home = local_codex_home()?;
     codex_session_cwd_from_home(&codex_home, session_id)
 }
 
-/// Return the client originator recorded in Codex's local session metadata.
-///
-/// ForkTTY uses this only as local provenance for the shared app-server hook
-/// fallback. Missing, malformed, or unknown session metadata stays absent.
-pub fn codex_session_originator(session_id: &str) -> Option<String> {
-    let codex_home = std::env::var_os("CODEX_HOME")
+/// Return provenance only when one Codex record contains both a valid cwd and
+/// the `codex-tui` originator required by the shared app-server hook fallback.
+pub fn codex_tui_session_provenance(session_id: &str) -> Option<CodexTuiSessionProvenance> {
+    let codex_home = local_codex_home()?;
+    codex_tui_session_provenance_from_home(&codex_home, session_id)
+}
+
+fn local_codex_home() -> Option<PathBuf> {
+    std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
         .filter(|path| path.is_absolute())
-        .or_else(|| dirs::home_dir().map(|home| home.join(".codex")))?;
-    codex_session_originator_from_home(&codex_home, session_id)
+        .or_else(|| dirs::home_dir().map(|home| home.join(".codex")))
 }
 
 pub fn codex_session_cwd_from_home(codex_home: &Path, session_id: &str) -> Option<PathBuf> {
-    let session_id = safe_resume_session_id(session_id).ok()?;
-    let mut candidates = Vec::new();
-    collect_codex_session_candidates(
-        &codex_home.join("sessions"),
-        &session_id,
-        0,
-        &mut candidates,
-    );
-    candidates.sort_by_key(|path| {
-        std::fs::metadata(path)
-            .and_then(|metadata| metadata.modified())
-            .ok()
-    });
-    candidates.reverse();
+    let (session_id, candidates) = ordered_codex_session_candidates(codex_home, session_id)?;
     candidates
         .iter()
         .find_map(|path| codex_session_meta_cwd(path, &session_id))
 }
 
-pub fn codex_session_originator_from_home(codex_home: &Path, session_id: &str) -> Option<String> {
+fn codex_tui_session_provenance_from_home(
+    codex_home: &Path,
+    session_id: &str,
+) -> Option<CodexTuiSessionProvenance> {
+    let (session_id, candidates) = ordered_codex_session_candidates(codex_home, session_id)?;
+    candidates.iter().find_map(|path| {
+        let payload = codex_session_meta_payload(path, &session_id)?;
+        codex_session_meta_is_tui(&payload).then_some(())?;
+        Some(CodexTuiSessionProvenance {
+            cwd: codex_session_meta_cwd_from_payload(&payload)?,
+        })
+    })
+}
+
+fn ordered_codex_session_candidates(
+    codex_home: &Path,
+    session_id: &str,
+) -> Option<(String, Vec<PathBuf>)> {
     let session_id = safe_resume_session_id(session_id).ok()?;
     let mut candidates = Vec::new();
     collect_codex_session_candidates(
@@ -206,9 +222,7 @@ pub fn codex_session_originator_from_home(codex_home: &Path, session_id: &str) -
             .ok()
     });
     candidates.reverse();
-    candidates
-        .iter()
-        .find_map(|path| codex_session_meta_originator(path, &session_id))
+    Some((session_id, candidates))
 }
 
 fn collect_codex_session_candidates(
@@ -249,16 +263,21 @@ fn collect_codex_session_candidates(
 
 fn codex_session_meta_cwd(path: &Path, session_id: &str) -> Option<PathBuf> {
     let payload = codex_session_meta_payload(path, session_id)?;
+    codex_session_meta_cwd_from_payload(&payload)
+}
+
+fn codex_session_meta_cwd_from_payload(payload: &serde_json::Value) -> Option<PathBuf> {
     let cwd = PathBuf::from(payload.get("cwd")?.as_str()?);
     safe_resume_cwd(&cwd).ok()?;
     cwd.is_dir().then_some(cwd)
 }
 
-fn codex_session_meta_originator(path: &Path, session_id: &str) -> Option<String> {
-    let payload = codex_session_meta_payload(path, session_id)?;
-    let originator = payload.get("originator")?.as_str()?.trim();
-    (!originator.is_empty() && !originator.chars().any(char::is_control))
-        .then(|| originator.to_string())
+fn codex_session_meta_is_tui(payload: &serde_json::Value) -> bool {
+    payload
+        .get("originator")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        == Some("codex-tui")
 }
 
 fn codex_session_meta_payload(path: &Path, session_id: &str) -> Option<serde_json::Value> {
@@ -518,7 +537,7 @@ mod tests {
     }
 
     #[test]
-    fn finds_codex_session_cwd_from_local_session_metadata() {
+    fn finds_codex_tui_provenance_and_cwd_from_one_session_record() {
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path().join("project");
         std::fs::create_dir(&project).unwrap();
@@ -552,11 +571,85 @@ mod tests {
                 .as_deref(),
             Some(project.as_path())
         );
-        assert_eq!(
-            super::codex_session_originator_from_home(&dir.path().join("codex"), "codex-session-1")
-                .as_deref(),
-            Some("codex-tui")
-        );
+        let provenance = super::codex_tui_session_provenance_from_home(
+            &dir.path().join("codex"),
+            "codex-session-1",
+        )
+        .unwrap();
+        assert_eq!(provenance.cwd(), project);
+    }
+
+    #[test]
+    fn codex_tui_provenance_does_not_combine_fields_from_different_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project");
+        std::fs::create_dir(&project).unwrap();
+        let sessions_dir = dir.path().join("codex/sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        std::fs::write(
+            sessions_dir.join("rollout-cwd-split-codex-session.jsonl"),
+            format!(
+                "{}\n",
+                serde_json::json!({
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "split-codex-session",
+                        "cwd": project,
+                    }
+                })
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            sessions_dir.join("rollout-originator-split-codex-session.jsonl"),
+            format!(
+                "{}\n",
+                serde_json::json!({
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "split-codex-session",
+                        "originator": "codex-tui",
+                    }
+                })
+            ),
+        )
+        .unwrap();
+
+        assert!(super::codex_tui_session_provenance_from_home(
+            &dir.path().join("codex"),
+            "split-codex-session",
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn codex_tui_provenance_rejects_other_originators() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project");
+        std::fs::create_dir(&project).unwrap();
+        let sessions_dir = dir.path().join("codex/sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+        std::fs::write(
+            sessions_dir.join("rollout-desktop-codex-session.jsonl"),
+            format!(
+                "{}\n",
+                serde_json::json!({
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "desktop-codex-session",
+                        "cwd": project,
+                        "originator": "Codex Desktop",
+                    }
+                })
+            ),
+        )
+        .unwrap();
+
+        assert!(super::codex_tui_session_provenance_from_home(
+            &dir.path().join("codex"),
+            "desktop-codex-session",
+        )
+        .is_none());
     }
 
     #[test]
