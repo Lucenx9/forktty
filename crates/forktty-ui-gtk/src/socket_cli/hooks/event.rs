@@ -255,9 +255,12 @@ pub(in crate::socket_cli) fn hook_debug(context: &CliContext, message: &str) {
 }
 
 pub(in crate::socket_cli) fn is_truthy_env(key: &str) -> bool {
-    trimmed_env(key)
-        .map(|value| matches!(value.to_lowercase().as_str(), "1" | "true" | "yes"))
-        .unwrap_or(false)
+    // 💡 What: Replaced `.map().unwrap_or(false)` with `.is_some_and()` and replaced `.to_lowercase()` with `.eq_ignore_ascii_case()`.
+    // 🎯 Why: Eagerly calling `.to_lowercase()` allocates a new `String` unnecessarily when comparing against known ASCII literals.
+    // 📊 Impact: Eliminates one redundant O(N) heap allocation per environment variable check.
+    trimmed_env(key).is_some_and(|value| {
+        value == "1" || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("yes")
+    })
 }
 
 /// Hook event ordering must survive wall-clock steps (NTP, manual `date`):
