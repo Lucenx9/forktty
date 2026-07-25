@@ -266,9 +266,11 @@ server, or managed agent skills.
 
 Socket requests are one JSON-RPC object per line over the owner-only Unix
 socket at `$XDG_RUNTIME_DIR/forktty.sock` (with an owner-only fallback under
-`/tmp/forktty-<uid>/`). Request/response bounds, notification cursors, worktree
-transaction guarantees, shutdown behavior, and stability tiers are documented
-in [SPEC.md](SPEC.md#socket-api) and
+`/tmp/forktty-<uid>/`). Before sending requests, official CLI and hook clients
+verify that the connected server's `SO_PEERCRED` uid matches their effective
+uid. Request/response bounds, notification cursors, worktree transaction
+guarantees, shutdown behavior, and stability tiers are documented in
+[SPEC.md](SPEC.md#socket-api) and
 [docs/socket-api.md](docs/socket-api.md).
 
 ### Upgrading from orchestration builds
@@ -384,7 +386,7 @@ ForkTTY imports legacy `session.json` when present, but saves the native runtime
 ## Security Summary
 
 - Local Linux desktop threat model; same-user processes remain part of the local trust boundary.
-- Unix socket defaults to `$XDG_RUNTIME_DIR/forktty.sock` with `/tmp/forktty-<uid>/forktty.sock` fallback and owner-only permissions.
+- Unix socket defaults to `$XDG_RUNTIME_DIR/forktty.sock` with `/tmp/forktty-<uid>/forktty.sock` fallback and owner-only permissions; the server authenticates connecting peers, and official clients authenticate the server peer before sending requests.
 - Socket request lines, config files, and session files are size bounded.
 - Shell paths, hooks, and custom notification commands use validated argv execution, not shell pipelines.
 - Worktree names, socket-provided repo paths, and hook locations are validated before mutation or execution.

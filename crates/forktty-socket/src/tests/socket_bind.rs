@@ -351,6 +351,59 @@ fn bind_accepts_private_owned_parent_when_enforcing() {
 }
 
 #[test]
+fn owner_client_accepts_server_with_same_effective_uid() {
+    let dir = runtime_socket_tempdir();
+    let socket_path = dir.path().join("forktty.sock");
+    let listener = StdUnixListener::bind(&socket_path).unwrap();
+
+    let client = connect_owner_unix_stream_with_timeout(&socket_path, Duration::from_secs(1));
+
+    assert!(client.is_ok());
+    drop(listener);
+}
+
+#[test]
+fn owner_client_rejects_mismatched_peer_before_request_bytes_are_sent() {
+    use std::io::Read as _;
+
+    let dir = runtime_socket_tempdir();
+    let socket_path = dir.path().join("forktty.sock");
+    let listener = StdUnixListener::bind(&socket_path).unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let mut byte = [0_u8; 1];
+        stream.read(&mut byte).unwrap()
+    });
+    let actual_uid = effective_uid();
+    let other_uid = if actual_uid == u32::MAX {
+        actual_uid - 1
+    } else {
+        actual_uid + 1
+    };
+
+    let error = connect_owner_unix_stream_with_timeout_for_uid(
+        &socket_path,
+        Duration::from_secs(1),
+        other_uid,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert!(error.to_string().contains(&actual_uid.to_string()));
+    assert_eq!(server.join().unwrap(), 0);
+}
+
+#[test]
+fn owner_client_rejects_different_uid_including_root() {
+    assert!(client_peer_uid_allowed(1000, 1000));
+    assert!(!client_peer_uid_allowed(1001, 1000));
+    assert!(!client_peer_uid_allowed(0, 1000));
+}
+
+#[test]
 fn peer_uid_allowed_accepts_server_effective_uid_and_root_only() {
     assert!(peer_uid_allowed(1000, 1000));
     assert!(peer_uid_allowed(0, 1000));

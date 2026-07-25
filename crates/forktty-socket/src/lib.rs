@@ -233,9 +233,11 @@ pub(crate) use terminal_text_params::{
     terminal_tail_lines_from_params, terminal_text_capture_from_params,
     terminal_text_max_bytes_from_params, MAX_CAPTURE_TAIL_LINES, MAX_TERMINAL_TEXT_BYTES,
 };
-pub use unix_connect::connect_unix_stream_with_timeout;
 #[cfg(test)]
-pub(crate) use unix_connect::unix_socket_address;
+pub(crate) use unix_connect::{
+    client_peer_uid_allowed, connect_owner_unix_stream_with_timeout_for_uid, unix_socket_address,
+};
+pub use unix_connect::{connect_owner_unix_stream_with_timeout, connect_unix_stream_with_timeout};
 pub use worktree_runtime::{
     finish_prepared_worktree_removal, open_worktree_transaction, open_worktree_workspace,
     remove_worktree_transaction, rollback_created_worktree_after_runtime_failure,
