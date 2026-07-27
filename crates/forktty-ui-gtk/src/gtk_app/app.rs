@@ -545,6 +545,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         workspace_title: workspace_title.clone(),
         workspace_title_label: workspace_title_label.clone(),
         last_signature: Rc::new(RefCell::new(None::<String>)),
+        rendered_rows: Rc::new(RefCell::new(BTreeMap::new())),
         context_menu_open: Rc::new(Cell::new(false)),
         context_popover: Rc::new(RefCell::new(None)),
     };

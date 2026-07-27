@@ -5,6 +5,11 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Changed
+- Improved workspace scanning without adding new controls: sidebar refreshes
+  now reuse unchanged rows, targeted notifications lead with their workspace
+  context and preserve scroll position, inactive pane attention is easier to
+  spot, and split dividers have a larger drag target while retaining a thin
+  visual line.
 - Refined the workspace sidebar's scan rhythm with denser rows, a quieter
   selected surface, restrained reorder grips, borderless pane-count metadata,
   and spacing aligned to the 6 px chrome grid while preserving its overlay

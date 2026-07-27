@@ -1,7 +1,7 @@
 //! Workspace sidebar state, rows, popovers, and workspace summaries.
 
 use super::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub(super) struct SidebarWorkspaceRow {
@@ -26,14 +26,64 @@ pub(super) struct SidebarSnapshot {
 }
 
 #[derive(Clone)]
+pub(super) struct RenderedSidebarWorkspaceRow {
+    signature: String,
+    row: glib::WeakRef<gtk::ListBoxRow>,
+}
+
+#[derive(Clone)]
 pub(super) struct SidebarUi {
     pub(super) sidebar: gtk::ListBox,
     pub(super) parent_window: adw::ApplicationWindow,
     pub(super) workspace_title: gtk::Button,
     pub(super) workspace_title_label: gtk::Label,
     pub(super) last_signature: Rc<RefCell<Option<String>>>,
+    pub(super) rendered_rows: Rc<RefCell<BTreeMap<String, RenderedSidebarWorkspaceRow>>>,
     pub(super) context_menu_open: Rc<Cell<bool>>,
     pub(super) context_popover: Rc<RefCell<Option<gtk::Popover>>>,
+}
+
+fn sidebar_workspace_row_signature(row: &SidebarWorkspaceRow) -> String {
+    format!(
+        "{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}",
+        row.workspace.id,
+        row.workspace.name,
+        row.workspace.active,
+        row.workspace.needs_attention,
+        row.workspace.working_dir.to_string_lossy(),
+        row.workspace.worktree_name.as_deref().unwrap_or(""),
+        row.pane_count,
+        row.meta,
+        row.summary,
+        row.status
+            .as_ref()
+            .map(|status| (status.label, status.class_name))
+    )
+}
+
+fn reconcile_sidebar_rows(sidebar: &gtk::ListBox, desired_rows: &[gtk::ListBoxRow]) {
+    let mut child = sidebar.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        let keep = widget
+            .clone()
+            .downcast::<gtk::ListBoxRow>()
+            .ok()
+            .is_some_and(|row| desired_rows.iter().any(|desired| desired == &row));
+        if !keep {
+            sidebar.remove(&widget);
+        }
+    }
+
+    for (index, row) in desired_rows.iter().enumerate() {
+        if sidebar.row_at_index(index as i32).as_ref() == Some(row) {
+            continue;
+        }
+        if row.parent().is_some() {
+            sidebar.remove(row);
+        }
+        sidebar.insert(row, index as i32);
+    }
 }
 
 pub(super) fn schedule_sidebar_refresh(
@@ -218,10 +268,11 @@ pub(super) fn refresh_sidebar(
     }
     *ui.last_signature.borrow_mut() = Some(snapshot.signature.clone());
 
-    while let Some(child) = ui.sidebar.first_child() {
-        ui.sidebar.remove(&child);
-    }
     if snapshot.rows.is_empty() {
+        ui.rendered_rows.borrow_mut().clear();
+        while let Some(child) = ui.sidebar.first_child() {
+            ui.sidebar.remove(&child);
+        }
         let row = gtk::ListBoxRow::new();
         row.set_selectable(false);
         row.set_activatable(false);
@@ -253,7 +304,30 @@ pub(super) fn refresh_sidebar(
         ui.sidebar.append(&row);
         return;
     }
+    let snapshot_workspace_ids = snapshot
+        .rows
+        .iter()
+        .map(|row| row.workspace.id.clone())
+        .collect::<BTreeSet<_>>();
+    let mut desired_rows = Vec::with_capacity(snapshot.rows.len());
+    let mut selected_row = None;
     for row_data in snapshot.rows {
+        let workspace_id = row_data.workspace.id.clone();
+        let select_row = row_data.workspace.active;
+        let signature = sidebar_workspace_row_signature(&row_data);
+        let cached_row = ui
+            .rendered_rows
+            .borrow()
+            .get(&workspace_id)
+            .filter(|rendered| rendered.signature == signature)
+            .and_then(|rendered| rendered.row.upgrade());
+        if let Some(row) = cached_row {
+            if select_row {
+                selected_row = Some(row.clone());
+            }
+            desired_rows.push(row);
+            continue;
+        }
         let SidebarWorkspaceRow {
             workspace,
             meta,
@@ -491,11 +565,24 @@ pub(super) fn refresh_sidebar(
         });
         row.add_controller(gesture);
 
-        let select_row = workspace.active;
-        ui.sidebar.append(&row);
+        ui.rendered_rows.borrow_mut().insert(
+            workspace_id,
+            RenderedSidebarWorkspaceRow {
+                signature,
+                row: row.downgrade(),
+            },
+        );
         if select_row {
-            ui.sidebar.select_row(Some(&row));
+            selected_row = Some(row.clone());
         }
+        desired_rows.push(row);
+    }
+    ui.rendered_rows
+        .borrow_mut()
+        .retain(|workspace_id, _| snapshot_workspace_ids.contains(workspace_id));
+    reconcile_sidebar_rows(&ui.sidebar, &desired_rows);
+    if let Some(row) = selected_row.as_ref() {
+        ui.sidebar.select_row(Some(row));
     }
 }
 
@@ -592,21 +679,8 @@ pub(super) fn sidebar_snapshot(state: &SocketAppState) -> SidebarSnapshot {
     let active_workspace_name = active_workspace.map(|workspace| workspace.name.clone());
     let mut signature = format!("active={active_workspace_id:?};rows={};", rows.len());
     for row in &rows {
-        signature.push_str(&format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?};",
-            row.workspace.id,
-            row.workspace.name,
-            row.workspace.active,
-            row.workspace.needs_attention,
-            row.workspace.working_dir.to_string_lossy(),
-            row.workspace.worktree_name.as_deref().unwrap_or(""),
-            row.pane_count,
-            row.meta,
-            row.summary,
-            row.status
-                .as_ref()
-                .map(|status| (status.label, status.class_name))
-        ));
+        signature.push_str(&sidebar_workspace_row_signature(row));
+        signature.push(';');
     }
     SidebarSnapshot {
         rows,

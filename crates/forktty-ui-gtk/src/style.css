@@ -611,7 +611,7 @@ button.flat.sidebar-add:focus-visible {
 }
 
 .workspace-row.needs-attention .workspace-card {
-  border-left-color: alpha(@accent_color, 0.62);
+  border-left-color: alpha(@accent_color, 0.92);
 }
 
 .workspace-row.active.needs-attention .workspace-card {
@@ -876,20 +876,32 @@ button.flat.sidebar-nav-row:focus-visible .sidebar-nav-icon {
 }
 
 .terminal-stage paned > separator {
-  background: alpha(@window_fg_color, 0.042);
-  min-width: 3px;
-  min-height: 3px;
+  background: alpha(@window_fg_color, 0.06);
+  background-clip: padding-box;
+  min-width: 1px;
+  min-height: 1px;
+  border: 0;
   transition: background-color 90ms ease-out;
+}
+
+.terminal-stage paned.horizontal > separator {
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+}
+
+.terminal-stage paned.vertical > separator {
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
 }
 
 .terminal-stage paned > separator:hover,
 .terminal-stage paned > separator:focus-visible {
-  background: alpha(@accent_color, 0.16);
+  background: alpha(@accent_color, 0.44);
 }
 
 /* GTK marks the separator `:active` while the divider is being dragged. */
 .terminal-stage paned > separator:active {
-  background: alpha(@accent_color, 0.34);
+  background: alpha(@accent_color, 0.72);
 }
 
 .terminal-pane {
@@ -937,14 +949,18 @@ button.flat.sidebar-nav-row:focus-visible .sidebar-nav-icon {
 .terminal-pane.active .terminal-pane-header {
   color: @ft_text_1;
   border-bottom-color: @ft_line;
-  box-shadow: inset 0 1px 0 alpha(@accent_color, 0.62);
+  box-shadow: inset 0 1px 0 alpha(@accent_color, 0.78);
   /* No extra background shift — active conveyed by top accent hairline (Cursor-style) + text.
    * Keeps multi-pane chrome minimal so terminals remain primary. */
 }
 
 .terminal-pane.needs-attention .terminal-pane-header {
-  /* Attention signaled only by the small dot in header (see pane_chrome.rs) + quiet text.
-   * No border color change — keeps pane chrome calm per Linear/Vercel/Cursor pattern. */
+  color: @ft_text_1;
+  box-shadow: inset 0 2px 0 alpha(@accent_color, 0.82);
+}
+
+.terminal-pane.active.needs-attention .terminal-pane-header {
+  box-shadow: inset 0 1px 0 alpha(@accent_color, 0.78);
 }
 
 .terminal-pane-header:drop(active),
@@ -1190,14 +1206,13 @@ button.flat.pane-tab-close:active {
   font-size: 0.74em;
 }
 
-/* Inactive attention panes already carry a 2px warning border on top.
- * Keep the dot as a redundant cue for screen-magnifier users but shrink
- * its visual weight so it reads as accent, not duplicate alarm. */
+/* The dot backs up the inactive pane hairline at magnified sizes without
+ * introducing another color or animated attention treatment. */
 .pane-attention-dot {
-  min-width: 4px;
-  min-height: 4px;
+  min-width: 6px;
+  min-height: 6px;
   border-radius: 999px;
-  background: alpha(@accent_color, 0.55);
+  background: alpha(@accent_color, 0.90);
   margin-right: 4px;
 }
 
@@ -2777,8 +2792,10 @@ entry.search.command-search:focus-within,
 }
 
 .notification-target {
-  color: @ft_text_4;
+  color: @ft_text_2;
   font-size: 0.80em;
+  font-weight: 600;
+  margin-bottom: 2px;
 }
 
 .notification-actions {

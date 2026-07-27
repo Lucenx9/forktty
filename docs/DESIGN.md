@@ -27,7 +27,8 @@ Use these rules for GTK UI changes so the app stays quiet, dense, and native.
 - Keep the workspace sidebar as a narrow Adwaita overlay so opening it does not
   reflow terminal panes. Workspace rows are flat navigation, and routine agent
   summaries stay hidden unless the workspace needs attention or reports an
-  error or terminal-exit state.
+  error or terminal-exit state. Model refreshes reuse unchanged rows instead of
+  rebuilding the full list, preserving unaffected row identity and interaction.
 - Keep Settings compact and goal-oriented: core pages precede optional
   integrations under General, Integrations, and System navigation. Preference
   groups use one subtle raised surface; navigation headings stay sentence case.
@@ -64,12 +65,23 @@ Use these rules for GTK UI changes so the app stays quiet, dense, and native.
 - Dim only unfocused panes when the visible workspace has more than one terminal pane.
 - In split layouts, mark only the focused pane with the warm header hairline.
   Keep agent lifecycle in that header and avoid duplicating it in a pane footer.
+- Give inactive panes that need attention a stronger two-pixel warm hairline
+  and dot; focused panes retain the single-pixel focus treatment.
 - Keep split-pane headers at 22 px, on the recessed stage surface. Drag cues stay
   faint until hover or focus, and pane actions remain hidden until interaction.
+- Split dividers use a seven-pixel pointer target with a one-pixel idle line;
+  hover and drag may tint the target without making the resting divider heavy.
 - Keep pane-action hover fills inset from both header edges so they never cover
   the focused-pane hairline or read as a full-height flash during pointer travel.
 - Visual bell uses the accent color as a short 2px inner border. Do not add sound.
 - The scrollback indicator is a minimal right-edge overlay; avoid permanent chrome.
+
+## Notifications
+
+- Lead targeted notification rows with workspace and path context before title
+  and body so the destination is visible before an action is taken.
+- Preserve the panel's scroll position when visible notification content is
+  reconciled; background refreshes must not return the user to the top.
 
 ## CSS Boundaries
 

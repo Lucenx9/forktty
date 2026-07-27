@@ -1100,11 +1100,24 @@ fn chrome_micro_polish_unifies_pane_hover_and_hairline_tone() {
     assert!(block("button.flat.terminal-pane-action:hover {").contains("background: @ft_bg_1;"));
     assert!(block("button.flat.pane-close-action:hover {").contains("background: @ft_danger_bg;"));
     assert!(block(".pane-action-separator {").contains("background: @ft_line;"));
-    assert!(block(".terminal-stage paned > separator {").contains("min-width: 3px;"));
+    let separator = block(".terminal-stage paned > separator {");
+    assert!(separator.contains("min-width: 1px;"));
+    assert!(separator.contains("background-clip: padding-box;"));
+    let horizontal_separator = block(".terminal-stage paned.horizontal > separator {");
+    assert!(horizontal_separator.contains("border-left: 3px solid transparent;"));
+    assert!(horizontal_separator.contains("border-right: 3px solid transparent;"));
+    let vertical_separator = block(".terminal-stage paned.vertical > separator {");
+    assert!(vertical_separator.contains("border-top: 3px solid transparent;"));
+    assert!(vertical_separator.contains("border-bottom: 3px solid transparent;"));
     assert!(block(".terminal-pane.active .terminal-pane-header {")
         .contains("border-bottom-color: @ft_line;"));
     assert!(block(".terminal-pane.active .terminal-pane-header {")
-        .contains("box-shadow: inset 0 1px 0 alpha(@accent_color, 0.62);"));
+        .contains("box-shadow: inset 0 1px 0 alpha(@accent_color, 0.78);"));
+    assert!(
+        block(".terminal-pane.needs-attention .terminal-pane-header {")
+            .contains("box-shadow: inset 0 2px 0 alpha(@accent_color, 0.82);")
+    );
+    assert!(block(".pane-attention-dot {").contains("min-width: 6px;"));
 }
 
 #[test]
