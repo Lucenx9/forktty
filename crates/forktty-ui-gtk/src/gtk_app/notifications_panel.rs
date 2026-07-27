@@ -627,6 +627,12 @@ impl NotificationPanelView {
         snapshot: &NotificationPanelSnapshot,
         view: &std::rc::Weak<RefCell<Self>>,
     ) {
+        let previous_scroll_position = self
+            .body
+            .first_child()
+            .and_then(|child| child.downcast::<gtk::ScrolledWindow>().ok())
+            .map(|scroll| scroll.vadjustment().value())
+            .unwrap_or(0.0);
         while let Some(child) = self.body.first_child() {
             self.body.remove(&child);
         }
@@ -690,6 +696,19 @@ impl NotificationPanelView {
             }
             if panel_row.section_label == "Needs action" {
                 card.add_css_class("actionable");
+            }
+
+            if let Some(target) = panel_row.target_label.as_deref() {
+                let target_label = gtk::Label::builder()
+                    .label(target)
+                    .tooltip_text(target)
+                    .xalign(0.0)
+                    .ellipsize(gtk::pango::EllipsizeMode::Middle)
+                    .max_width_chars(58)
+                    .single_line_mode(true)
+                    .build();
+                target_label.add_css_class("notification-target");
+                card.append(&target_label);
             }
 
             let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -816,22 +835,16 @@ impl NotificationPanelView {
                 }
                 card.append(&actions);
             }
-            if let Some(target) = panel_row.target_label.as_deref() {
-                let target_label = gtk::Label::builder()
-                    .label(target)
-                    .tooltip_text(target)
-                    .xalign(0.0)
-                    .ellipsize(gtk::pango::EllipsizeMode::Middle)
-                    .max_width_chars(58)
-                    .single_line_mode(true)
-                    .build();
-                target_label.add_css_class("notification-target");
-                card.append(&target_label);
-            }
             row.set_child(Some(&card));
             list.append(&row);
         }
         self.body.append(&scroll);
+        let adjustment = scroll.vadjustment();
+        glib::idle_add_local_once(move || {
+            let lower = adjustment.lower();
+            let maximum = (adjustment.upper() - adjustment.page_size()).max(lower);
+            adjustment.set_value(previous_scroll_position.clamp(lower, maximum));
+        });
     }
 
     fn start_refresh(view: &Rc<RefCell<Self>>) {

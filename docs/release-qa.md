@@ -98,6 +98,9 @@ the current display or `xvfb-run` when available.
   shell editor in Settings.
 - Open the Settings font family picker and confirm the dropdown lists installed monospace fonts with a working search field; the font size and scrollback spin rows show theme-independent −/+ glyph buttons.
 - Open Notifications, dismiss one notification, then Clear All.
+- Fill Notifications beyond one viewport, scroll into the list, publish another
+  notification, and confirm the panel keeps its scroll position. Confirm each
+  targeted row shows workspace/path context before its title and body.
 
 ## General UI Quality Smoke
 
@@ -110,6 +113,9 @@ Use this for visible GTK changes. It applies the visual rules in
 - Create a three-pane layout and move focus between panes. Confirm exactly one
   pane header has the warm focus hairline, no redundant shell/status footer is
   shown per pane, and no redundant global bottom bar takes terminal space.
+- Mark an inactive pane and workspace unread, confirm both attention cues are
+  discoverable without animation, and drag each split divider from either side
+  of its thin visible line.
 - Confirm the screen keeps one accent color, no gradients/glow, no emoji-as-UI,
   compact operational spacing, sentence-case labels, and no decorative elements
   that compete with terminal state or navigation.

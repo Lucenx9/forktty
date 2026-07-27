@@ -48,6 +48,92 @@ fn sidebar_workspace_order(model: &WorkspaceModel) -> Vec<String> {
         .collect()
 }
 
+#[cfg(feature = "gtk-ghostty")]
+fn rendered_sidebar_rows(sidebar: &gtk::ListBox) -> Vec<gtk::ListBoxRow> {
+    let mut rows = Vec::new();
+    let mut child = sidebar.first_child();
+    while let Some(widget) = child {
+        child = widget.next_sibling();
+        if let Ok(row) = widget.downcast::<gtk::ListBoxRow>() {
+            if row.has_css_class("workspace-row") {
+                rows.push(row);
+            }
+        }
+    }
+    rows
+}
+
+#[cfg(feature = "gtk-ghostty")]
+#[test]
+fn sidebar_refresh_keeps_unchanged_workspace_row_identity() {
+    let _ = crate::test_env::with_gtk_test(|| {
+        crate::test_env::with_isolated_user_dirs(|| {
+            let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+            let (terminal_tx, _terminal_rx) = mpsc::channel();
+            let terminal = Arc::new(GtkTerminalBackend::new(terminal_tx));
+            let state = SocketAppState::new(
+                model.clone(),
+                terminal.clone(),
+                "/bin/sh",
+                PathBuf::from(std::env::var("XDG_RUNTIME_DIR").unwrap()).join("forktty.sock"),
+            )
+            .with_notification_dispatch(false);
+            let second_workspace_id = {
+                let mut model = model.lock().unwrap();
+                model.create_workspace("first", "/tmp/first");
+                model.create_workspace("second", "/tmp/second").id
+            };
+
+            let parent = adw::ApplicationWindow::builder().build();
+            let stage = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            let controller = Rc::new(RefCell::new(TerminalController::new(
+                stage,
+                parent.clone(),
+                model.clone(),
+                terminal,
+            )));
+            let sidebar = gtk::ListBox::new();
+            let workspace_title = gtk::Button::new();
+            let workspace_title_label = gtk::Label::new(None);
+            workspace_title.set_child(Some(&workspace_title_label));
+            let ui = SidebarUi {
+                sidebar: sidebar.clone(),
+                parent_window: parent,
+                workspace_title,
+                workspace_title_label,
+                last_signature: Rc::new(RefCell::new(None)),
+                rendered_rows: Rc::new(RefCell::new(BTreeMap::new())),
+                context_menu_open: Rc::new(Cell::new(false)),
+                context_popover: Rc::new(RefCell::new(None)),
+            };
+
+            refresh_sidebar(&ui, &state, &controller, true);
+            let rows_before = rendered_sidebar_rows(&sidebar);
+            assert_eq!(rows_before.len(), 2);
+
+            model.lock().unwrap().create_notification(
+                "Needs input",
+                "Only the second workspace changed",
+                NotificationKind::Prompt,
+                Some(second_workspace_id),
+                None,
+            );
+            refresh_sidebar(&ui, &state, &controller, false);
+            let rows_after = rendered_sidebar_rows(&sidebar);
+
+            assert_eq!(rows_after.len(), 2);
+            assert_eq!(
+                rows_after[0], rows_before[0],
+                "refreshing one workspace must keep unaffected row widgets stable"
+            );
+            assert_ne!(
+                rows_after[1], rows_before[1],
+                "a workspace whose visible state changed should be reconciled"
+            );
+        });
+    });
+}
+
 #[test]
 fn builds_surface_metadata_keys() {
     assert_eq!(surface_status_key("surface-1"), "surface:surface-1:status");

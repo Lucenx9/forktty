@@ -72,6 +72,14 @@ fn rendered_notification_row(dialog: &gtk::Window) -> gtk::Widget {
 }
 
 #[cfg(feature = "gtk-ghostty")]
+fn rendered_notification_scroll(dialog: &gtk::Window) -> gtk::ScrolledWindow {
+    descendant_widgets(dialog.upcast_ref())
+        .into_iter()
+        .find_map(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
+        .expect("notification panel scroller")
+}
+
+#[cfg(feature = "gtk-ghostty")]
 fn rendered_notification_count_label(dialog: &gtk::Window) -> String {
     descendant_widgets(dialog.upcast_ref())
         .into_iter()
@@ -248,6 +256,116 @@ fn unchanged_visible_panel_keeps_rendered_row_across_refresh_interval() {
 
             dialog.close();
             drop(dialog);
+            parent.close();
+            drain_main_context();
+        });
+    });
+}
+
+#[cfg(feature = "gtk-ghostty")]
+#[test]
+fn notification_rows_lead_with_workspace_context() {
+    let _ = crate::test_env::with_gtk_test(|| {
+        crate::test_env::with_isolated_user_dirs(|| {
+            let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+            let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+            let state = SocketAppState::new(
+                model.clone(),
+                terminal,
+                "/bin/sh",
+                PathBuf::from(std::env::var("XDG_RUNTIME_DIR").unwrap()).join("forktty.sock"),
+            )
+            .with_notification_dispatch(false);
+            {
+                let mut model = model.lock().unwrap();
+                let workspace = model.create_workspace("main", "/tmp/project");
+                let workspace_id = workspace.id.clone();
+                let active_workspace = model.create_workspace("secondary", "/tmp/secondary");
+                model.select_workspace(WorkspaceSelector::Id(&active_workspace.id));
+                model.create_notification(
+                    "Build finished",
+                    "Ready for review",
+                    NotificationKind::Info,
+                    Some(workspace_id),
+                    None,
+                );
+            }
+            let parent = adw::ApplicationWindow::builder().build();
+            let panel = NotificationPanel::new(&parent, &state, None);
+            let card = rendered_notification_row(&panel.dialog)
+                .downcast::<gtk::Box>()
+                .expect("notification card");
+            let target = card
+                .first_child()
+                .and_then(|child| child.downcast::<gtk::Label>().ok())
+                .expect("notification target label");
+
+            assert!(target.has_css_class("notification-target"));
+            assert!(target.label().contains("main"));
+            assert!(target.label().contains("/tmp/project"));
+        });
+    });
+}
+
+#[cfg(feature = "gtk-ghostty")]
+#[test]
+fn notification_refresh_restores_scroll_position_after_visible_change() {
+    let _ = crate::test_env::with_gtk_test(|| {
+        crate::test_env::with_isolated_user_dirs(|| {
+            let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+            let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+            let state = SocketAppState::new(
+                model.clone(),
+                terminal,
+                "/bin/sh",
+                PathBuf::from(std::env::var("XDG_RUNTIME_DIR").unwrap()).join("forktty.sock"),
+            )
+            .with_notification_dispatch(false);
+            let workspace_id = {
+                let mut model = model.lock().unwrap();
+                let workspace = model.create_workspace("main", "/tmp/project");
+                for index in 0..30 {
+                    model.create_notification(
+                        format!("Notification {index}"),
+                        "Enough content to make the notification panel scroll",
+                        NotificationKind::Info,
+                        Some(workspace.id.clone()),
+                        None,
+                    );
+                }
+                workspace.id
+            };
+            let parent = adw::ApplicationWindow::builder().build();
+            parent.present();
+            let panel = NotificationPanel::new(&parent, &state, None);
+            let dialog = panel.dialog.clone();
+            panel.present();
+            drain_main_context();
+
+            let adjustment = rendered_notification_scroll(&dialog).vadjustment();
+            let maximum = (adjustment.upper() - adjustment.page_size()).max(0.0);
+            assert!(maximum > 0.0, "test panel should have scrollable content");
+            let expected = maximum.min(120.0);
+            adjustment.set_value(expected);
+            drain_main_context();
+
+            model.lock().unwrap().create_notification(
+                "New notification",
+                "Visible while the panel is open",
+                NotificationKind::Info,
+                Some(workspace_id),
+                None,
+            );
+            wait_for_rendered_notification_rows(&dialog, 31);
+            drain_main_context();
+
+            let restored = rendered_notification_scroll(&dialog).vadjustment().value();
+            assert!(
+                (restored - expected).abs() < 1.0,
+                "visible refresh moved scroll from {expected} to {restored}"
+            );
+
+            dialog.close();
             parent.close();
             drain_main_context();
         });
