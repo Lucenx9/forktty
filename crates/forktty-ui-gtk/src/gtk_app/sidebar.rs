@@ -57,7 +57,7 @@ fn sidebar_workspace_row_signature(row: &SidebarWorkspaceRow) -> String {
         row.summary,
         row.status
             .as_ref()
-            .map(|status| (status.label, status.class_name))
+            .map(|status| (status.label, status.tooltip, status.class_name))
     )
 }
 

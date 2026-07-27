@@ -279,11 +279,14 @@ fn notification_rows_lead_with_workspace_context() {
             {
                 let mut model = model.lock().unwrap();
                 let workspace = model.create_workspace("main", "/tmp/project");
+                let workspace_id = workspace.id.clone();
+                let active_workspace = model.create_workspace("secondary", "/tmp/secondary");
+                model.select_workspace(WorkspaceSelector::Id(&active_workspace.id));
                 model.create_notification(
                     "Build finished",
                     "Ready for review",
                     NotificationKind::Info,
-                    Some(workspace.id),
+                    Some(workspace_id),
                     None,
                 );
             }
@@ -292,10 +295,14 @@ fn notification_rows_lead_with_workspace_context() {
             let card = rendered_notification_row(&panel.dialog)
                 .downcast::<gtk::Box>()
                 .expect("notification card");
-
-            assert!(card
+            let target = card
                 .first_child()
-                .is_some_and(|child| child.has_css_class("notification-target")));
+                .and_then(|child| child.downcast::<gtk::Label>().ok())
+                .expect("notification target label");
+
+            assert!(target.has_css_class("notification-target"));
+            assert!(target.label().contains("main"));
+            assert!(target.label().contains("/tmp/project"));
         });
     });
 }
