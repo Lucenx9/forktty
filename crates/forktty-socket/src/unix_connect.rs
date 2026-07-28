@@ -65,6 +65,77 @@ pub fn connect_unix_stream_with_timeout(
     }
 }
 
+/// Connect to an owner-operated filesystem Unix socket within `timeout`.
+///
+/// The peer's kernel-recorded effective uid is checked before the returned
+/// stream can be used, so callers do not disclose request data to a socket
+/// planted by another local user.
+///
+/// # Errors
+///
+/// Returns [`io::ErrorKind::PermissionDenied`] when the connected peer is not
+/// owned by the caller's effective uid. Other errors are those reported by
+/// [`connect_unix_stream_with_timeout`] or `getsockopt(SO_PEERCRED)`.
+pub fn connect_owner_unix_stream_with_timeout(
+    socket_path: &Path,
+    timeout: Duration,
+) -> io::Result<UnixStream> {
+    connect_owner_unix_stream_with_timeout_for_uid(socket_path, timeout, effective_uid())
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn connect_owner_unix_stream_with_timeout_for_uid(
+    socket_path: &Path,
+    timeout: Duration,
+    effective_uid: u32,
+) -> io::Result<UnixStream> {
+    let stream = connect_unix_stream_with_timeout(socket_path, timeout)?;
+    let peer_uid = peer_effective_uid(&stream)?;
+    if !client_peer_uid_allowed(peer_uid, effective_uid) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "socket peer uid {peer_uid} does not match client effective uid {effective_uid}"
+            ),
+        ));
+    }
+    Ok(stream)
+}
+
+pub(crate) fn client_peer_uid_allowed(peer_uid: u32, client_effective_uid: u32) -> bool {
+    peer_uid == client_effective_uid
+}
+
+fn peer_effective_uid(stream: &UnixStream) -> io::Result<u32> {
+    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: both pointers refer to writable storage of the lengths supplied,
+    // and `stream` owns a live AF_UNIX socket descriptor.
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            &mut credentials as *mut libc::ucred as *mut libc::c_void,
+            &mut length,
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if length as usize != std::mem::size_of::<libc::ucred>() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "SO_PEERCRED returned an unexpected credential size",
+        ));
+    }
+    Ok(credentials.uid)
+}
+
+fn effective_uid() -> u32 {
+    unsafe { libc::geteuid() as u32 }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConnectOutcome {
     Connected,

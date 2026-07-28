@@ -125,6 +125,9 @@ All notable changes to ForkTTY are documented here.
   (e.g. `143` for `SIGTERM`) instead of collapsing every signal death to `1`.
 
 ### Security
+- Official CLI and hook clients now verify the Unix-socket server's kernel
+  credentials before sending request data, preventing another local user from
+  capturing Codex fallback hook metadata through a planted default socket.
 - The socket server now verifies each accepted connection's `SO_PEERCRED`
   credentials and drops peers whose uid is neither the server's effective uid
   nor root, instead of relying solely on socket file permissions.

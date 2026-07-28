@@ -331,7 +331,9 @@ user (rejecting a symlinked parent directory, validated on an opened
 `O_NOFOLLOW` descriptor), refuses unsafe existing paths, verifies each accepted
 connection's `SO_PEERCRED` uid against the server's effective uid (root is also
 accepted; anything else is dropped before dispatch), and applies bounded reads
-to terminal text and event replay. One request yields one response, except `events.subscribe`,
+to terminal text and event replay. Official clients likewise verify that the
+connected server's `SO_PEERCRED` uid matches the client's effective uid before
+writing any request data. One request yields one response, except `events.subscribe`,
 which upgrades the connection to a replay-plus-live event stream.
 
 Official socket clients and existing-socket inspection use the same
@@ -614,6 +616,8 @@ notifications and terminal output. The CLI exposes one-page access as `forktty n
 - Owner-only Unix socket permissions and private runtime directory validation;
   the socket parent must not be a symlink, and accepted connections must carry
   the server's effective uid (or root) in their `SO_PEERCRED` credentials.
+  Official clients send requests only when the server peer carries the client's
+  effective uid.
 - 1 MiB bounds for socket requests, config, and session files.
 - Hook session-to-surface routing and prompt-correlation state is local process
   memory only. The routing cache is capped at 256 entries; prompt correlations

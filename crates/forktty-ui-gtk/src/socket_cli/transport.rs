@@ -17,7 +17,7 @@ pub(crate) fn send_socket_request_with_timeout(
         method: method.to_string(),
         params,
     };
-    let mut stream = forktty_socket::connect_unix_stream_with_timeout(socket_path, timeout)
+    let mut stream = forktty_socket::connect_owner_unix_stream_with_timeout(socket_path, timeout)
         .map_err(|err| format_socket_connect_error(err, socket_path))?;
     stream.set_read_timeout(Some(timeout)).ok();
     stream.set_write_timeout(Some(timeout)).ok();
@@ -148,8 +148,9 @@ pub(super) fn stream_events(socket_path: &Path, replay: bool) -> CliResult<()> {
         method: "events.subscribe".to_string(),
         params: json!({ "replay": replay }),
     };
-    let mut stream = forktty_socket::connect_unix_stream_with_timeout(socket_path, SOCKET_TIMEOUT)
-        .map_err(|err| format_socket_connect_error(err, socket_path))?;
+    let mut stream =
+        forktty_socket::connect_owner_unix_stream_with_timeout(socket_path, SOCKET_TIMEOUT)
+            .map_err(|err| format_socket_connect_error(err, socket_path))?;
     // Bound the subscribe round-trip so a wedged server cannot hang the CLI
     // forever; the timeout is lifted once the stream is established because
     // events may legitimately be arbitrarily far apart.
