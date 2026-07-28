@@ -4,6 +4,8 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.20] - 2026-07-28
+
 ### Changed
 - Improved workspace scanning without adding new controls: sidebar refreshes
   now reuse unchanged rows, targeted notifications lead with their workspace
