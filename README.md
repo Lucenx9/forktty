@@ -318,6 +318,12 @@ provider event coverage, disable variables, trust checks, and lifecycle
 semantics are documented in [hooks/README.md](hooks/README.md) and
 [docs/agents.md](docs/agents.md).
 
+If a lifecycle hook keeps the workspace id but loses or carries a stale pane
+id, ForkTTY can recover the session from its live learned target or one unique
+same-cwd surface inside that workspace. Ambiguous or missing targets fail
+without publishing a hidden agent status, and a corrected hook retry remains
+eligible.
+
 Codex can run hooks from a shared app-server that lacks the terminal pane's
 `FORKTTY_*` environment. ForkTTY still restores the workspace badge for a
 local `codex-tui` session when exactly one unclaimed Codex TUI process has the

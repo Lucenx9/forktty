@@ -182,6 +182,363 @@ async fn hook_session_status_learns_unique_surface_target_from_hook_cwd() {
     assert_eq!(session.lifecycle, forktty_core::AgentSessionLifecycle::Idle);
 }
 
+async fn create_hook_test_workspace(
+    state: &SocketAppState,
+    name: &str,
+    working_dir: &std::path::Path,
+) -> (String, String) {
+    let workspace = dispatch(
+        state,
+        "workspace.create",
+        json!({"name": name, "workingDir": working_dir}),
+    )
+    .await
+    .unwrap();
+    (
+        workspace["id"].as_str().unwrap().to_string(),
+        workspace["focused_surface_id"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+    )
+}
+
+async fn assert_single_claude_hook_target(
+    state: &SocketAppState,
+    workspace_id: &str,
+    surface_id: &str,
+    session_id: &str,
+) {
+    let agents = dispatch(state, "agent.list", json!({"workspace_id": workspace_id}))
+        .await
+        .unwrap();
+    assert_eq!(agents.as_array().unwrap().len(), 1);
+    assert_eq!(agents[0]["surface_id"], surface_id);
+    assert_eq!(agents[0]["agent"], "claude_code");
+    assert_eq!(agents[0]["session_id"], session_id);
+}
+
+fn claude_hook_status(session_id: &str, value: &str, event_name: &str, event_order: u64) -> Value {
+    json!({
+        "key": "agent:claude",
+        "label": "Claude",
+        "value": value,
+        "hook_agent": "claude",
+        "hook_session_id": session_id,
+        "hook_event_name": event_name,
+        "hook_event_order": event_order
+    })
+}
+
+#[tokio::test]
+async fn explicit_workspace_hook_status_learns_unique_surface_from_cwd() {
+    let target_dir = tempfile::tempdir().unwrap();
+    let other_dir = tempfile::tempdir().unwrap();
+    let (state, _backend) = test_state();
+    let (workspace_id, surface_id) =
+        create_hook_test_workspace(&state, "target", target_dir.path()).await;
+    create_hook_test_workspace(&state, "other", other_dir.path()).await;
+    let mut params = claude_hook_status(
+        "claude-explicit-workspace",
+        "Running Bash",
+        "prompt-submit",
+        100,
+    );
+    params["workspace_id"] = json!(workspace_id);
+    params["hook_session_cwd"] = json!(target_dir.path());
+
+    let status = dispatch(&state, "metadata.set_status", params)
+        .await
+        .unwrap();
+
+    assert_eq!(status["value"], "Running Bash");
+    assert_single_claude_hook_target(
+        &state,
+        &workspace_id,
+        &surface_id,
+        "claude-explicit-workspace",
+    )
+    .await;
+    let statuses = dispatch(
+        &state,
+        "metadata.list_status",
+        json!({"workspace_id": workspace_id}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(statuses[0]["value"], "Running Bash");
+}
+
+#[tokio::test]
+async fn explicit_workspace_name_hook_status_learns_unique_surface_from_cwd() {
+    let target_dir = tempfile::tempdir().unwrap();
+    let (state, _backend) = test_state();
+    let (workspace_id, surface_id) =
+        create_hook_test_workspace(&state, "target", target_dir.path()).await;
+    let mut params = claude_hook_status(
+        "claude-explicit-workspace-name",
+        "Running Bash",
+        "prompt-submit",
+        100,
+    );
+    params["workspace_name"] = json!("target");
+    params["hook_session_cwd"] = json!(target_dir.path());
+
+    dispatch(&state, "metadata.set_status", params)
+        .await
+        .unwrap();
+
+    assert_single_claude_hook_target(
+        &state,
+        &workspace_id,
+        &surface_id,
+        "claude-explicit-workspace-name",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn stale_surface_hook_status_recovers_unique_surface_from_cwd() {
+    let target_dir = tempfile::tempdir().unwrap();
+    let (state, _backend) = test_state();
+    let (workspace_id, surface_id) =
+        create_hook_test_workspace(&state, "target", target_dir.path()).await;
+    let mut params =
+        claude_hook_status("claude-stale-surface", "Running Bash", "prompt-submit", 100);
+    params["workspace_id"] = json!(workspace_id);
+    params["surface_id"] = json!("surface-stale");
+    params["hook_session_cwd"] = json!(target_dir.path());
+
+    let status = dispatch(&state, "metadata.set_status", params)
+        .await
+        .unwrap();
+
+    assert_eq!(status["value"], "Running Bash");
+    assert_single_claude_hook_target(&state, &workspace_id, &surface_id, "claude-stale-surface")
+        .await;
+}
+
+#[tokio::test]
+async fn stale_surface_hook_status_without_workspace_recovers_unique_surface_from_cwd() {
+    let target_dir = tempfile::tempdir().unwrap();
+    let (state, _backend) = test_state();
+    let (workspace_id, surface_id) =
+        create_hook_test_workspace(&state, "target", target_dir.path()).await;
+    let mut params = claude_hook_status(
+        "claude-unscoped-stale-surface",
+        "Running Bash",
+        "prompt-submit",
+        100,
+    );
+    params["surface_id"] = json!("surface-stale");
+    params["hook_session_cwd"] = json!(target_dir.path());
+
+    dispatch(&state, "metadata.set_status", params)
+        .await
+        .unwrap();
+
+    assert_single_claude_hook_target(
+        &state,
+        &workspace_id,
+        &surface_id,
+        "claude-unscoped-stale-surface",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn stale_surface_hook_status_recovers_live_learned_target() {
+    let (state, _backend) = test_state();
+    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspaces[0]["id"].as_str().unwrap();
+    let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+    let mut initial = claude_hook_status("claude-learned-target", "Ready", "session-start", 100);
+    initial["workspace_id"] = json!(workspace_id);
+    initial["surface_id"] = json!(surface_id);
+
+    dispatch(&state, "metadata.set_status", initial)
+        .await
+        .unwrap();
+    let mut stale = claude_hook_status(
+        "claude-learned-target",
+        "Running Bash",
+        "prompt-submit",
+        200,
+    );
+    stale["workspace_id"] = json!(workspace_id);
+    stale["surface_id"] = json!("surface-stale");
+
+    let status = dispatch(&state, "metadata.set_status", stale)
+        .await
+        .unwrap();
+
+    assert_eq!(status["value"], "Running Bash");
+    assert_single_claude_hook_target(&state, workspace_id, surface_id, "claude-learned-target")
+        .await;
+}
+
+#[tokio::test]
+async fn unresolved_agent_hook_status_rejects_without_consuming_retry_order() {
+    let (state, _backend) = test_state();
+    let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
+    let workspace_id = workspaces[0]["id"].as_str().unwrap();
+    let surface_id = workspaces[0]["focused_surface_id"].as_str().unwrap();
+    let mut unresolved = claude_hook_status(
+        "claude-corrected-retry",
+        "Running Bash",
+        "prompt-submit",
+        100,
+    );
+    unresolved["workspace_id"] = json!(workspace_id);
+
+    let error = dispatch(&state, "metadata.set_status", unresolved.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(error.code(), "not_found");
+    let statuses = dispatch(
+        &state,
+        "metadata.list_status",
+        json!({"workspace_id": workspace_id}),
+    )
+    .await
+    .unwrap();
+    assert!(statuses.as_array().unwrap().is_empty());
+
+    let mut corrected = unresolved;
+    corrected["surface_id"] = json!(surface_id);
+    let status = dispatch(&state, "metadata.set_status", corrected)
+        .await
+        .unwrap();
+    assert_eq!(status["value"], "Running Bash");
+    assert_single_claude_hook_target(&state, workspace_id, surface_id, "claude-corrected-retry")
+        .await;
+}
+
+#[tokio::test]
+async fn explicit_workspace_hook_target_does_not_reuse_other_workspace_session_target() {
+    let first_dir = tempfile::tempdir().unwrap();
+    let second_dir = tempfile::tempdir().unwrap();
+    let (state, _backend) = test_state();
+    let (first_workspace_id, first_surface_id) =
+        create_hook_test_workspace(&state, "first", first_dir.path()).await;
+    let (second_workspace_id, _) =
+        create_hook_test_workspace(&state, "second", second_dir.path()).await;
+    let mut initial =
+        claude_hook_status("claude-workspace-isolation", "Ready", "session-start", 100);
+    initial["workspace_id"] = json!(first_workspace_id);
+    initial["surface_id"] = json!(first_surface_id);
+
+    dispatch(&state, "metadata.set_status", initial)
+        .await
+        .unwrap();
+    let mut cross_workspace = claude_hook_status(
+        "claude-workspace-isolation",
+        "Running elsewhere",
+        "prompt-submit",
+        200,
+    );
+    cross_workspace["workspace_id"] = json!(second_workspace_id);
+
+    let error = dispatch(&state, "metadata.set_status", cross_workspace)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code(), "not_found");
+    let second_statuses = dispatch(
+        &state,
+        "metadata.list_status",
+        json!({"workspace_id": second_workspace_id}),
+    )
+    .await
+    .unwrap();
+    assert!(second_statuses.as_array().unwrap().is_empty());
+    assert_single_claude_hook_target(
+        &state,
+        &first_workspace_id,
+        &first_surface_id,
+        "claude-workspace-isolation",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn explicit_workspace_hook_target_does_not_cross_workspace_for_cwd() {
+    let selected_dir = tempfile::tempdir().unwrap();
+    let other_dir = tempfile::tempdir().unwrap();
+    let (state, _backend) = test_state();
+    let (selected_workspace_id, _) =
+        create_hook_test_workspace(&state, "selected", selected_dir.path()).await;
+    let (other_workspace_id, _) =
+        create_hook_test_workspace(&state, "other", other_dir.path()).await;
+    let mut params = claude_hook_status(
+        "claude-cross-workspace-cwd",
+        "Running elsewhere",
+        "prompt-submit",
+        100,
+    );
+    params["workspace_id"] = json!(selected_workspace_id);
+    params["hook_session_cwd"] = json!(other_dir.path());
+
+    let error = dispatch(&state, "metadata.set_status", params)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code(), "not_found");
+    for workspace_id in [selected_workspace_id, other_workspace_id] {
+        let statuses = dispatch(
+            &state,
+            "metadata.list_status",
+            json!({"workspace_id": workspace_id}),
+        )
+        .await
+        .unwrap();
+        assert!(statuses.as_array().unwrap().is_empty());
+    }
+    let agents = dispatch(&state, "agent.list", json!({})).await.unwrap();
+    assert!(agents.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn explicit_workspace_hook_target_rejects_ambiguous_same_cwd_surfaces() {
+    let target_dir = tempfile::tempdir().unwrap();
+    let (state, _backend) = test_state();
+    let (workspace_id, surface_id) =
+        create_hook_test_workspace(&state, "target", target_dir.path()).await;
+    dispatch(
+        &state,
+        "surface.split",
+        json!({"surface_id": surface_id, "axis": "vertical"}),
+    )
+    .await
+    .unwrap();
+    let mut params = claude_hook_status(
+        "claude-ambiguous-workspace",
+        "Running Bash",
+        "prompt-submit",
+        100,
+    );
+    params["workspace_id"] = json!(workspace_id);
+    params["hook_session_cwd"] = json!(target_dir.path());
+
+    let error = dispatch(&state, "metadata.set_status", params)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code(), "conflict");
+    let statuses = dispatch(
+        &state,
+        "metadata.list_status",
+        json!({"workspace_id": workspace_id}),
+    )
+    .await
+    .unwrap();
+    assert!(statuses.as_array().unwrap().is_empty());
+    let agents = dispatch(&state, "agent.list", json!({"workspace_id": workspace_id}))
+        .await
+        .unwrap();
+    assert!(agents.as_array().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn hook_session_status_rejects_ambiguous_hook_cwd_instead_of_defaulting_active_workspace() {
     let (state, _backend) = test_state();
@@ -1531,7 +1888,7 @@ async fn hook_session_status_explicit_target_beats_learned_target() {
 }
 
 #[tokio::test]
-async fn hook_session_status_surface_close_clears_status_and_invalidates_learned_target() {
+async fn hook_session_status_surface_close_rejects_untargeted_primary_status() {
     let (state, _backend) = test_state();
     let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
     let workspace_id = workspaces[0]["id"].as_str().unwrap().to_string();
@@ -1579,7 +1936,7 @@ async fn hook_session_status_surface_close_clears_status_and_invalidates_learned
     .await
     .unwrap();
 
-    dispatch(
+    let error = dispatch(
         &state,
         "metadata.set_status",
         json!({
@@ -1592,7 +1949,8 @@ async fn hook_session_status_surface_close_clears_status_and_invalidates_learned
         }),
     )
     .await
-    .unwrap();
+    .unwrap_err();
+    assert_eq!(error.code(), "not_found");
 
     let original_statuses = dispatch(
         &state,
@@ -1609,7 +1967,7 @@ async fn hook_session_status_surface_close_clears_status_and_invalidates_learned
     .await
     .unwrap();
     assert_eq!(original_statuses, json!([]));
-    assert_eq!(other_statuses[0]["value"], "Untargeted after close");
+    assert_eq!(other_statuses, json!([]));
 }
 
 #[tokio::test]

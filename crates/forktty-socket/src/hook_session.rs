@@ -1,7 +1,8 @@
 use crate::{
     agent_kind_from_status_key, ensure_max_text_size, optional_hook_status_metadata,
     optional_non_blank_string_param, optional_surface_id_param, path_resolver,
-    resolve_workspace_id_for_metadata, workspace_selector_params, DispatchError, SocketAppState,
+    replace_hook_target_params, resolve_workspace_id_for_metadata, workspace_selector_from_params,
+    workspace_selector_params, DispatchError, SocketAppState,
 };
 use forktty_core::{AgentKind, AgentSessionLifecycle, HookPromptKind, HookPromptResolution};
 use serde_json::{json, Value};
@@ -327,7 +328,12 @@ where
 
     let previous_target = ingress.target.clone();
     let learned_target = resolve_hook_session_target(state, params, &mut ingress)?;
-    let target = learned_target.clone().or_else(|| ingress.target.clone());
+    let target = learned_target.clone();
+    if target.is_none() && primary_agent_hook_status_requires_target(method, params)? {
+        return Err(DispatchError::NotFound(
+            "hook session surface target".to_string(),
+        ));
+    }
     let target_gate = if let Some(target) = target.as_ref() {
         Some(
             state
@@ -440,6 +446,18 @@ where
             .retain(|_, owner| owner != &session_id);
     }
     Ok(Some(result))
+}
+
+fn primary_agent_hook_status_requires_target(
+    method: &str,
+    params: &Value,
+) -> Result<bool, DispatchError> {
+    if method != "metadata.set_status" {
+        return Ok(false);
+    }
+    Ok(optional_non_blank_string_param(params, "key")?
+        .and_then(agent_kind_from_status_key)
+        .is_some())
 }
 
 fn is_unscoped_codex_hook(params: &Value) -> Result<bool, DispatchError> {
@@ -650,45 +668,100 @@ fn resolve_hook_session_target(
     let surface_id = optional_surface_id_param(params)?.map(str::to_string);
     let workspace_selectors = workspace_selector_params(params)?;
     let has_explicit_workspace = !workspace_selectors.is_empty();
+    let explicit_workspace_id = has_explicit_workspace
+        .then(|| resolve_explicit_hook_workspace_id(state, params))
+        .transpose()?;
     if let Some(surface_id) = surface_id {
-        let workspace_id = resolve_workspace_id_for_metadata(state, params)?;
-        let target = HookSessionTarget {
-            workspace_id,
-            surface_id,
+        let supplied_target = match explicit_workspace_id.clone() {
+            Some(workspace_id) => Some(HookSessionTarget {
+                workspace_id,
+                surface_id,
+            }),
+            None => match resolve_workspace_id_for_metadata(state, params) {
+                Ok(workspace_id) => Some(HookSessionTarget {
+                    workspace_id,
+                    surface_id,
+                }),
+                Err(DispatchError::NotFound(kind)) if kind == "surface" => None,
+                Err(error) => return Err(error),
+            },
         };
-        if !hook_session_target_is_live(state, &target)? {
-            return Err(DispatchError::NotFound("surface".to_string()));
+        if let Some(target) = supplied_target {
+            if hook_session_target_is_live(state, &target)? {
+                return Ok(Some(target));
+            }
         }
+        if let Some(recovered) =
+            recover_hook_session_target(state, params, ingress, explicit_workspace_id.as_deref())?
+        {
+            return Ok(Some(recovered));
+        }
+        return Err(DispatchError::NotFound("surface".to_string()));
+    }
+
+    recover_hook_session_target(state, params, ingress, explicit_workspace_id.as_deref())
+}
+
+fn recover_hook_session_target(
+    state: &SocketAppState,
+    params: &mut Value,
+    ingress: &HookSessionIngress,
+    workspace_id: Option<&str>,
+) -> Result<Option<HookSessionTarget>, DispatchError> {
+    let target = match live_learned_hook_session_target(state, ingress, workspace_id)? {
+        Some(target) => Some(target),
+        None => unique_hook_session_target_from_cwd(state, params, workspace_id)?,
+    };
+    if let Some(target) = target.as_ref() {
+        replace_hook_target_params(params, &target.workspace_id, &target.surface_id)?;
+    }
+    Ok(target)
+}
+
+fn live_learned_hook_session_target(
+    state: &SocketAppState,
+    ingress: &HookSessionIngress,
+    workspace_id: Option<&str>,
+) -> Result<Option<HookSessionTarget>, DispatchError> {
+    let Some(target) = ingress.target.clone() else {
+        return Ok(None);
+    };
+    if workspace_id.is_some_and(|workspace_id| target.workspace_id != workspace_id) {
+        return Ok(None);
+    }
+    if hook_session_target_is_live(state, &target)? {
         return Ok(Some(target));
     }
-
-    if !has_explicit_workspace {
-        if let Some(target) = ingress.target.clone() {
-            if hook_session_target_is_live(state, &target)? {
-                insert_hook_session_target(params, &target)?;
-            } else {
-                ingress.target = None;
-                return Err(DispatchError::NotFound("surface".to_string()));
-            }
-        } else if let Some(target) = unique_hook_session_target_from_cwd(state, params)? {
-            insert_hook_session_target(params, &target)?;
-            return Ok(Some(target));
-        }
-    }
-
     Ok(None)
+}
+
+fn resolve_explicit_hook_workspace_id(
+    state: &SocketAppState,
+    params: &Value,
+) -> Result<String, DispatchError> {
+    let selector = workspace_selector_from_params(params)?;
+    state
+        .model
+        .lock()
+        .map_err(|_| "Lock poisoned".to_string())?
+        .workspace_id_for(selector)
+        .ok_or(DispatchError::NotFound("workspace".to_string()))
 }
 
 fn unique_hook_session_target_from_cwd(
     state: &SocketAppState,
     params: &Value,
+    workspace_id: Option<&str>,
 ) -> Result<Option<HookSessionTarget>, DispatchError> {
-    unique_hook_session_target_from_cwd_with(state, params, |path| fs::canonicalize(path).ok())
+    unique_hook_session_target_from_cwd_with(state, params, workspace_id, |path| {
+        fs::canonicalize(path).ok()
+    })
 }
 
 fn unique_hook_session_target_from_cwd_with(
     state: &SocketAppState,
     params: &Value,
+    workspace_id: Option<&str>,
     mut canonicalize: impl FnMut(&Path) -> Option<PathBuf>,
 ) -> Result<Option<HookSessionTarget>, DispatchError> {
     let Some(cwd) = optional_hook_session_cwd(params)? else {
@@ -702,6 +775,7 @@ fn unique_hook_session_target_from_cwd_with(
         model
             .list_surfaces(None)
             .into_iter()
+            .filter(|surface| workspace_id.is_none_or(|id| surface.workspace_id == id))
             .map(|surface| HookSessionCwdSurface {
                 target: HookSessionTarget {
                     workspace_id: surface.workspace_id,
@@ -977,26 +1051,6 @@ fn hook_session_target_is_live(
         .is_some_and(|surface| surface.workspace_id == target.workspace_id))
 }
 
-fn insert_hook_session_target(
-    params: &mut Value,
-    target: &HookSessionTarget,
-) -> Result<(), DispatchError> {
-    let Some(params) = params.as_object_mut() else {
-        return Err(DispatchError::InvalidParam(
-            "Invalid hook target params: expected object".to_string(),
-        ));
-    };
-    params.insert(
-        "workspace_id".to_string(),
-        Value::String(target.workspace_id.clone()),
-    );
-    params.insert(
-        "surface_id".to_string(),
-        Value::String(target.surface_id.clone()),
-    );
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1017,7 +1071,7 @@ mod tests {
         .with_notification_dispatch(false);
         let params = json!({"hook_session_cwd": cwd.path()});
 
-        let target = unique_hook_session_target_from_cwd_with(&state, &params, |path| {
+        let target = unique_hook_session_target_from_cwd_with(&state, &params, None, |path| {
             assert!(
                 model.try_lock().is_ok(),
                 "filesystem resolution must not retain the workspace model lock"

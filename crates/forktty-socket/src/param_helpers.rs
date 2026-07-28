@@ -6,6 +6,7 @@ use serde_json::Value;
 use crate::DispatchError;
 
 pub(crate) const MAX_METADATA_TEXT_BYTES: usize = protocol_limits::SOCKET_METADATA_TEXT_MAX_BYTES;
+const SURFACE_ID_PARAM_KEYS: [&str; 2] = ["surface_id", "surfaceId"];
 
 pub(crate) fn ensure_max_text_size(field: &'static str, value: &str) -> Result<(), DispatchError> {
     if value.len() > MAX_METADATA_TEXT_BYTES {
@@ -185,7 +186,7 @@ struct SurfaceIdParam<'a> {
 
 fn surface_id_params<'a>(params: &'a Value) -> Result<Vec<SurfaceIdParam<'a>>, DispatchError> {
     let mut surface_ids = Vec::new();
-    for key in ["surface_id", "surfaceId"] {
+    for key in SURFACE_ID_PARAM_KEYS {
         if let Some(value) = optional_non_blank_string_param(params, key)? {
             surface_ids.push(SurfaceIdParam { key, value });
         }
@@ -199,6 +200,17 @@ pub(crate) enum WorkspaceSelectorKind {
     Name,
     WorktreeName,
 }
+
+const WORKSPACE_SELECTOR_PARAM_KINDS: [(&str, WorkspaceSelectorKind); 8] = [
+    ("id", WorkspaceSelectorKind::Id),
+    ("workspace_id", WorkspaceSelectorKind::Id),
+    ("workspaceId", WorkspaceSelectorKind::Id),
+    ("name", WorkspaceSelectorKind::Name),
+    ("workspace_name", WorkspaceSelectorKind::Name),
+    ("workspaceName", WorkspaceSelectorKind::Name),
+    ("worktreeName", WorkspaceSelectorKind::WorktreeName),
+    ("worktree_name", WorkspaceSelectorKind::WorktreeName),
+];
 
 pub(crate) struct WorkspaceSelectorParam<'a> {
     pub(crate) key: &'static str,
@@ -232,21 +244,39 @@ pub(crate) fn workspace_selector_params<'a>(
     params: &'a Value,
 ) -> Result<Vec<WorkspaceSelectorParam<'a>>, DispatchError> {
     let mut selectors = Vec::new();
-    for (key, kind) in [
-        ("id", WorkspaceSelectorKind::Id),
-        ("workspace_id", WorkspaceSelectorKind::Id),
-        ("workspaceId", WorkspaceSelectorKind::Id),
-        ("name", WorkspaceSelectorKind::Name),
-        ("workspace_name", WorkspaceSelectorKind::Name),
-        ("workspaceName", WorkspaceSelectorKind::Name),
-        ("worktreeName", WorkspaceSelectorKind::WorktreeName),
-        ("worktree_name", WorkspaceSelectorKind::WorktreeName),
-    ] {
+    for (key, kind) in WORKSPACE_SELECTOR_PARAM_KINDS {
         if let Some(value) = optional_non_blank_string_param(params, key)? {
             selectors.push(WorkspaceSelectorParam { key, kind, value });
         }
     }
     Ok(selectors)
+}
+
+pub(crate) fn replace_hook_target_params(
+    params: &mut Value,
+    workspace_id: &str,
+    surface_id: &str,
+) -> Result<(), DispatchError> {
+    let Some(params) = params.as_object_mut() else {
+        return Err(DispatchError::InvalidParam(
+            "Invalid hook target params: expected object".to_string(),
+        ));
+    };
+    for (key, _) in WORKSPACE_SELECTOR_PARAM_KINDS {
+        params.remove(key);
+    }
+    for key in SURFACE_ID_PARAM_KEYS {
+        params.remove(key);
+    }
+    params.insert(
+        "workspace_id".to_string(),
+        Value::String(workspace_id.to_string()),
+    );
+    params.insert(
+        "surface_id".to_string(),
+        Value::String(surface_id.to_string()),
+    );
+    Ok(())
 }
 
 pub(crate) fn format_param_names<'a>(names: impl Iterator<Item = &'a str>) -> String {

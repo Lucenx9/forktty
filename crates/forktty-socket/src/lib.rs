@@ -197,9 +197,9 @@ pub(crate) use param_helpers::MAX_METADATA_TEXT_BYTES;
 pub(crate) use param_helpers::{
     ensure_max_text_size, format_param_names, optional_bool_param, optional_f64,
     optional_non_blank_string_param, optional_surface_id_param, optional_u64_param,
-    optional_workspace_create_name_from_params, required_f64, required_string,
-    required_string_param, required_surface_id, required_trimmed_string, split_axis_from_params,
-    workspace_selector_from_params, workspace_selector_params,
+    optional_workspace_create_name_from_params, replace_hook_target_params, required_f64,
+    required_string, required_string_param, required_surface_id, required_trimmed_string,
+    split_axis_from_params, workspace_selector_from_params, workspace_selector_params,
 };
 pub use remote::ready_surface_ids;
 use socket_bind::verify_peer_credentials;

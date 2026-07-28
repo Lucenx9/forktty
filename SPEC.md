@@ -433,6 +433,17 @@ an explicit `forktty hooks setup` action, and are never installed or updated
 automatically at GTK startup. Hook setup writes atomically, preserves unrelated
 entries, and supports dry-run and targeted removal.
 
+Hook session target resolution completes before a serialized mutation or its
+event-order watermark commits. An explicit live surface wins. If the surface id
+is omitted or stale, ForkTTY may reuse that session's live learned target or a
+unique canonical-cwd match; an explicit workspace id constrains both fallbacks
+and is never overwritten by a surface in another workspace. A primary
+`agent:<provider>` hook status without a resolved live surface fails closed, so
+it cannot leave sidebar-invisible workspace metadata and a corrected retry at
+the same event order remains applicable. Workspace-scoped hook logs,
+notifications, and non-primary metadata retain their existing surface-optional
+behavior.
+
 The managed event sets contain 10 Codex events, 28 Claude events (25 in the
 default lifecycle profile and 28 with `--full`), 3 Antigravity events, and 11
 OpenCode plugin events. The Claude lifecycle profile excludes only

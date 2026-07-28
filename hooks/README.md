@@ -142,6 +142,12 @@ definitions. This is informational — the approval semantics belong to Codex.
 ForkTTY hooks publish the following status keys via `metadata.set_status`.
 They render in the ForkTTY UI status row and can be inspected from the CLI:
 
+Before a primary agent status is committed, ForkTTY resolves its live surface.
+A missing or stale surface id can recover through the session's learned target
+or one unique canonical-cwd surface. An explicit workspace limits recovery to
+that workspace; missing, cross-workspace, or ambiguous targets reject the
+status without consuming its retry order or leaving hidden sidebar metadata.
+
 | Key | Set on | Cleared on | Color semantics |
 |---|---|---|---|
 | `agent:<key>` | lifecycle, prompt, permission, tool, compact, stop, and attention notification events | session-end | `green` ready, `blue` running, `yellow` needs input / compacting / permission, `red` error |

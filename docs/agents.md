@@ -39,6 +39,13 @@ normalized lifecycle with a ForkTTY surface. Unknown provider strings remain
 custom and unknown states remain conservative. Executable discovery or a hook
 record proves neither authentication nor provider-side session validity.
 
+Target resolution precedes hook mutation and event-order commit. When a hook
+omits its surface id or supplies one that is no longer live, ForkTTY first
+reuses a compatible learned session target and then tries a unique canonical
+cwd match. An explicit workspace constrains both choices. Primary agent status
+events with no unique live target fail without publishing metadata, so a later
+corrected retry at the same event order is still accepted.
+
 Claude `SessionStart` enrichment requires complete ForkTTY provenance:
 workspace ID, surface ID, and an absolute socket path. A partial tuple is
 treated atomically as absent, returns the exact continue response, and performs
@@ -87,8 +94,9 @@ panes.
 2. Write hook configuration atomically and preserve unrelated entries.
 3. Treat terminal text and hook payloads as untrusted data.
 4. Reject ambiguous cwd-to-surface matches instead of guessing active focus;
-   unscoped Codex hooks additionally require local `codex-tui` metadata and a
-   unique unclaimed live Codex process in both the cwd and surface process tree.
+   never cross an explicit workspace boundary during recovery. Unscoped Codex
+   hooks additionally require local `codex-tui` metadata and a unique unclaimed
+   live Codex process in both the cwd and surface process tree.
 5. Keep hook doctor checks local-only and non-mutating. Doctor health requires a
    complete canonical managed plan, including exact regular executable
    Antigravity wrappers; `installationCheck.ok` gates the top-level result.

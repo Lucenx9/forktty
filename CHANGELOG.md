@@ -4,6 +4,13 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- Agent lifecycle hooks now recover a missing or stale pane target from the
+  session's live learned target or unique cwd match, including when a workspace
+  id is still present. Explicit workspace selection remains authoritative, and
+  unresolved or ambiguous primary agent statuses fail without leaving hidden
+  sidebar metadata or consuming their retry order.
+
 ## [0.2.0-alpha.20] - 2026-07-28
 
 ### Changed
