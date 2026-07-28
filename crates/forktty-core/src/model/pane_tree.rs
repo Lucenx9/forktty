@@ -643,23 +643,35 @@ pub(super) fn set_leaf_active_for_surface(node: &mut PaneNode, surface_id: &str)
 
 /// Push `new_tab_id` to the tabs of the leaf containing `near_surface_id`.
 /// Sets `active` to the new tab's index. Returns `true` if found.
+/// Push `new_tab_id` to the tabs of the leaf containing `near_surface_id`.
+/// Sets `active` to the new tab's index.
+///
+/// Returns `Ok(())` if the insertion succeeded, or `Err(new_tab_id)` if the
+/// leaf wasn't found in this branch, threading ownership back to avoid `clone()`.
 pub(super) fn push_tab_to_leaf(
     node: &mut PaneNode,
     near_surface_id: &str,
     new_tab_id: SurfaceId,
-) -> bool {
+) -> Result<(), SurfaceId> {
     match node {
         PaneNode::Leaf { tabs, active } => {
             if tabs.iter().any(|id| id == near_surface_id) {
                 tabs.push(new_tab_id);
                 *active = tabs.len() - 1;
-                true
+                Ok(())
             } else {
-                false
+                Err(new_tab_id)
             }
         }
-        PaneNode::Split { children, .. } => children
-            .iter_mut()
-            .any(|child| push_tab_to_leaf(child, near_surface_id, new_tab_id.clone())),
+        PaneNode::Split { children, .. } => {
+            let mut current_id = new_tab_id;
+            for child in children {
+                match push_tab_to_leaf(child, near_surface_id, current_id) {
+                    Ok(()) => return Ok(()),
+                    Err(id) => current_id = id,
+                }
+            }
+            Err(current_id)
+        }
     }
 }

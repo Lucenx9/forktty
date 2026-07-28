@@ -1,0 +1,3 @@
+## 2026-07-28 - Avoid eager cloning in recursive search
+**Learning:** In Rust, to avoid redundant allocations when passing owned values (like `String` or large aliases like `SurfaceId`) into recursive search functions (e.g., tree traversals) that might fail to consume them, pass the value by ownership and return it back in the `Err` variant of a `Result` on a cache miss (e.g., `Result<(), T>`). This allows the caller to reuse the same allocation for subsequent loop iterations without calling `.clone()`.
+**Action:** Use this pattern to eliminate `.clone()` calls inside `.any()` closures during tree traversals.
