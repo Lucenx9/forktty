@@ -74,7 +74,7 @@ entry:focus-visible,
 .terminal-pane-action:focus-visible,
 .terminal-pane:focus-visible,
 .app-header-title:focus-visible,
-.sidebar-add:focus-visible {
+.sidebar-header-action:focus-visible {
   outline: 1px solid @accent_color;
   outline-offset: 1px;
 }
@@ -480,7 +480,7 @@ button.flat.header-workspace-chip:disabled {
   letter-spacing: 0;
 }
 
-.sidebar-add {
+.sidebar-header-action {
   min-width: 24px;
   min-height: 24px;
   padding: 0;
@@ -491,22 +491,27 @@ button.flat.header-workspace-chip:disabled {
   transition: background-color 90ms ease-out, color 90ms ease-out;
 }
 
-.sidebar-add:hover,
-button.flat.sidebar-add:hover {
+.sidebar-header-action:hover,
+button.flat.sidebar-header-action:hover {
   background: @ft_bg_1;
   color: @ft_text_1;
 }
 
-.sidebar-add:focus-visible,
-button.flat.sidebar-add:focus-visible {
+.sidebar-header-action:focus-visible,
+button.flat.sidebar-header-action:focus-visible {
   background: @ft_bg_1;
   color: @ft_text_1;
 }
 
-.sidebar-add:active {
+.sidebar-header-action:active {
   /* Neutral gray instead of warm accent tint for routine active state */
   background: @ft_bg_selected;
   color: @ft_text_1;
+}
+
+.sidebar-header-action:checked {
+  background: @ft_bg_3;
+  color: @accent_color;
 }
 
 .sidebar-scroll {

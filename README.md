@@ -47,8 +47,9 @@ the linked guides carry the detailed contracts.
   visible while the process inside each pane owns its own coordination.
 - **First-class worktree workflows**: create, attach, remove, and merge isolated worktree workspaces through native `git2` operations and optional `.forktty/setup` / `.forktty/teardown` hooks.
 - **Native Linux terminal stack**: GTK4/libadwaita shell with embedded
-  Ghostty-backed terminals, a compact overlay workspace sidebar, split panes,
-  session restore, notifications, command palette, settings, and quake mode.
+  Ghostty-backed terminals, a compact overlay or pinned workspace sidebar,
+  split panes, session restore, notifications, command palette, settings, and
+  quake mode.
 - **Local-first posture**: no crash reporting or product event tracking, an anonymous daily usage ping that can be disabled, owner-only Unix socket permissions, bounded request/session/config files, and argv-based command execution. Optional update checks hit GitHub Releases at most once per day and can also be disabled.
 
 ## Install
@@ -218,7 +219,8 @@ command palette for most navigation and pane actions:
 - `Ctrl+Shift+T`: new tab in the focused pane
 - `Ctrl+Shift+W`: close pane
 - `Ctrl++`/`Ctrl+=`, `Ctrl+-`, `Ctrl+0`: zoom terminal panes
-- `Ctrl+B` or `F9`: toggle the overlay workspace sidebar without resizing panes
+- `Ctrl+B` or `F9`: toggle the workspace sidebar; unpinned it overlays panes,
+  while pinned it reserves space beside them
 - Agents: titlebar button or command palette
 - `Ctrl+Shift+M`: notifications
 - `Ctrl+?` (`F1` also works): keyboard shortcuts
@@ -348,6 +350,7 @@ persist_terminal_processes = false
 persistent_scrollback_lines = 0
 sidebar_position = "left" # "left" or "right"
 sidebar_visible = true
+sidebar_pinned = false
 window_mode = "normal" # "normal" or "quake"
 
 [notifications]

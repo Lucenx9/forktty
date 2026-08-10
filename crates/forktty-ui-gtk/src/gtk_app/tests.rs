@@ -906,7 +906,7 @@ fn workbench_sidebar_overlays_terminal_content_and_preserves_configured_side() {
         let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let workspace_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
 
-        let overlay = build_workbench_overlay(&sidebar, &workspace_area, "left", true);
+        let overlay = build_workbench_overlay(&sidebar, &workspace_area, "left", true, false);
 
         assert!(overlay.is_collapsed());
         assert!(!overlay.is_pin_sidebar());
@@ -930,6 +930,61 @@ fn workbench_sidebar_overlays_terminal_content_and_preserves_configured_side() {
         overlay.set_show_sidebar(false);
         assert!(!overlay.shows_sidebar());
         assert!(workspace_area.is_visible());
+    });
+}
+
+#[test]
+fn workbench_sidebar_switches_between_overlay_and_pinned_presentations() {
+    let _ = crate::test_env::with_gtk_test(|| {
+        let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let workspace_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let overlay = build_workbench_overlay(&sidebar, &workspace_area, "left", true, false);
+
+        apply_sidebar_pinned(&overlay, true);
+        assert!(!overlay.is_collapsed());
+        assert!(overlay.is_pin_sidebar());
+        assert!(overlay.shows_sidebar());
+        assert_eq!(overlay.sidebar_position(), gtk::PackType::Start);
+
+        overlay.set_show_sidebar(false);
+        apply_sidebar_pinned(&overlay, false);
+        assert!(overlay.is_collapsed());
+        assert!(!overlay.is_pin_sidebar());
+        assert!(!overlay.shows_sidebar());
+
+        apply_sidebar_pinned(&overlay, true);
+        assert!(!overlay.is_collapsed());
+        assert!(overlay.is_pin_sidebar());
+        assert!(!overlay.shows_sidebar());
+
+        overlay.set_show_sidebar(true);
+        assert!(overlay.shows_sidebar());
+        assert!(overlay.is_pin_sidebar());
+    });
+}
+
+#[test]
+fn sidebar_pin_button_reflects_the_selected_presentation() {
+    let app_source = include_str!("app.rs");
+    let css = include_str!("../style.css");
+    assert!(app_source.contains("sidebar_header.append(&sidebar_pin);"));
+    assert!(app_source.contains("next.appearance.sidebar_pinned = pinned;"));
+    assert!(app_source
+        .contains("sync_sidebar_pin_button(&sidebar_pin, config.appearance.sidebar_pinned);"));
+    assert!(css.contains(".sidebar-header-action:checked {"));
+
+    let _ = crate::test_env::with_gtk_test(|| {
+        let button = build_sidebar_pin_button(false);
+
+        assert!(!button.is_active());
+        assert!(button.is_focusable());
+        assert!(button.has_css_class("sidebar-header-action"));
+        assert_eq!(button.icon_name().as_deref(), Some("view-pin-symbolic"));
+        assert_eq!(button.tooltip_text().as_deref(), Some("Pin Sidebar"));
+
+        sync_sidebar_pin_button(&button, true);
+        assert!(button.is_active());
+        assert_eq!(button.tooltip_text().as_deref(), Some("Unpin Sidebar"));
     });
 }
 
@@ -1082,7 +1137,8 @@ fn chrome_micro_polish_keyboard_focus_matches_hover() {
     assert!(
         block("button.flat.terminal-pane-action:focus-visible {").contains("background: @ft_bg_1;")
     );
-    assert!(block("button.flat.sidebar-add:focus-visible {").contains("background: @ft_bg_1;"));
+    assert!(block("button.flat.sidebar-header-action:focus-visible {")
+        .contains("background: @ft_bg_1;"));
 }
 
 #[test]

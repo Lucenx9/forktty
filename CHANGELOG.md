@@ -4,6 +4,11 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+### Added
+- The workspace sidebar can now be pinned beside terminal content from its
+  header or left in the existing overlay presentation. The choice persists
+  across restarts without changing Ctrl+B/F9 visibility behavior.
+
 ### Fixed
 - Codex hook setup now installs the provider's `SessionEnd` event with a bounded
   round-trip deadline so closing a session releases its lifecycle status and

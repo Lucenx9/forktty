@@ -398,9 +398,12 @@ pub(super) fn build_ui(app: &adw::Application) {
         .build();
     sidebar_add.add_css_class("flat");
     sidebar_add.add_css_class("sidebar-add");
+    sidebar_add.add_css_class("sidebar-header-action");
     set_accessible_button_text(&sidebar_add, "New Workspace", Some("Ctrl+Shift+N"));
     sidebar_add.set_action_name(Some("app.new-workspace"));
+    let sidebar_pin = build_sidebar_pin_button(app_config.appearance.sidebar_pinned);
     sidebar_header.append(&section_label);
+    sidebar_header.append(&sidebar_pin);
     sidebar_header.append(&sidebar_add);
 
     let sidebar_scroll = gtk::ScrolledWindow::builder()
@@ -437,7 +440,23 @@ pub(super) fn build_ui(app: &adw::Application) {
         &workspace_area,
         &app_config.appearance.sidebar_position,
         app_config.appearance.sidebar_visible,
+        app_config.appearance.sidebar_pinned,
     );
+    sidebar_pin.connect_clicked({
+        let workbench_overlay = workbench_overlay.clone();
+        move |button| {
+            let pinned = button.is_active();
+            apply_sidebar_pinned(&workbench_overlay, pinned);
+            sync_sidebar_pin_button(button, pinned);
+            std::thread::spawn(move || {
+                if let Err(err) = config::update_config(|next| {
+                    next.appearance.sidebar_pinned = pinned;
+                }) {
+                    eprintln!("forktty: failed to persist sidebar_pinned: {err}");
+                }
+            });
+        }
+    });
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content.add_css_class("app-root");
@@ -636,6 +655,7 @@ pub(super) fn build_ui(app: &adw::Application) {
         &WorkbenchShells {
             overlay: workbench_overlay.clone(),
             sidebar: sidebar_shell.clone(),
+            sidebar_pin: sidebar_pin.clone(),
         },
         &controller,
         pr_model.clone(),
@@ -1007,6 +1027,7 @@ pub(super) fn default_startup_workspace_dir_from(
 pub(super) struct WorkbenchShells {
     pub(super) overlay: adw::OverlaySplitView,
     pub(super) sidebar: gtk::Box,
+    pub(super) sidebar_pin: gtk::ToggleButton,
 }
 
 pub(super) fn settings_apply_callback(
@@ -1017,6 +1038,7 @@ pub(super) fn settings_apply_callback(
 ) -> SettingsApplyCallback {
     let overlay = shells.overlay.clone();
     let sidebar_shell = shells.sidebar.clone();
+    let sidebar_pin = shells.sidebar_pin.clone();
     let controller = controller.clone();
     let pr_model = pr_model.clone();
     let pr_in_flight = pr_in_flight.clone();
@@ -1027,7 +1049,9 @@ pub(super) fn settings_apply_callback(
             &sidebar_shell,
             &config.appearance.sidebar_position,
         );
+        apply_sidebar_pinned(&overlay, config.appearance.sidebar_pinned);
         overlay.set_show_sidebar(config.appearance.sidebar_visible);
+        sync_sidebar_pin_button(&sidebar_pin, config.appearance.sidebar_pinned);
         let model = {
             let controller = controller.borrow();
             for widget in controller.widgets.values() {
@@ -1061,6 +1085,7 @@ pub(super) fn build_workbench_overlay(
     workspace_area: &gtk::Box,
     position: &str,
     sidebar_visible: bool,
+    sidebar_pinned: bool,
 ) -> adw::OverlaySplitView {
     let overlay = adw::OverlaySplitView::builder()
         .collapsed(true)
@@ -1076,7 +1101,16 @@ pub(super) fn build_workbench_overlay(
         .build();
     overlay.add_css_class("workspace-overlay");
     apply_sidebar_position(&overlay, sidebar_shell, position);
+    apply_sidebar_pinned(&overlay, sidebar_pinned);
     overlay
+}
+
+pub(super) fn apply_sidebar_pinned(overlay: &adw::OverlaySplitView, pinned: bool) {
+    let sidebar_visible = overlay.shows_sidebar();
+    overlay.set_pin_sidebar(true);
+    overlay.set_collapsed(!pinned);
+    overlay.set_pin_sidebar(pinned);
+    overlay.set_show_sidebar(sidebar_visible);
 }
 
 pub(super) fn set_sidebar_position_class(sidebar_shell: &gtk::Box, position: &str) {
