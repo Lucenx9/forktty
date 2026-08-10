@@ -901,6 +901,8 @@ fn workbench_sidebar_overlays_terminal_content_and_preserves_configured_side() {
     assert!(!actions_source.contains("Sidebar shown"));
     assert!(!actions_source.contains("Sidebar hidden"));
     assert!(actions_source.contains("next.appearance.sidebar_visible = visible;"));
+    assert!(actions_source
+        .contains("app.set_accels_for_action(\"app.toggle-sidebar\", &[\"F9\", \"<Control>b\"]);"));
 
     let _ = crate::test_env::with_gtk_test(|| {
         let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -946,7 +948,13 @@ fn workbench_sidebar_switches_between_overlay_and_pinned_presentations() {
         assert!(overlay.shows_sidebar());
         assert_eq!(overlay.sidebar_position(), gtk::PackType::Start);
 
-        overlay.set_show_sidebar(false);
+        apply_sidebar_position(&overlay, &sidebar, "right");
+        assert_eq!(overlay.sidebar_position(), gtk::PackType::End);
+        assert!(sidebar.has_css_class("right"));
+
+        assert!(!toggle_sidebar_visibility(&overlay));
+        assert!(overlay.is_pin_sidebar());
+        assert!(!overlay.is_collapsed());
         apply_sidebar_pinned(&overlay, false);
         assert!(overlay.is_collapsed());
         assert!(!overlay.is_pin_sidebar());
@@ -957,21 +965,58 @@ fn workbench_sidebar_switches_between_overlay_and_pinned_presentations() {
         assert!(overlay.is_pin_sidebar());
         assert!(!overlay.shows_sidebar());
 
-        overlay.set_show_sidebar(true);
-        assert!(overlay.shows_sidebar());
+        assert!(toggle_sidebar_visibility(&overlay));
         assert!(overlay.is_pin_sidebar());
+    });
+}
+
+#[test]
+fn applied_sidebar_config_syncs_layout_visibility_and_pin_control() {
+    let _ = crate::test_env::with_gtk_test(|| {
+        let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let workspace_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let overlay = build_workbench_overlay(&sidebar, &workspace_area, "left", true, false);
+        let sidebar_pin = build_sidebar_pin_button(false);
+        let shells = WorkbenchShells {
+            overlay: overlay.clone(),
+            sidebar: sidebar.clone(),
+            sidebar_pin: sidebar_pin.clone(),
+        };
+        let appearance = config::AppearanceConfig {
+            sidebar_position: "right".to_string(),
+            sidebar_visible: false,
+            sidebar_pinned: true,
+            ..config::AppearanceConfig::default()
+        };
+
+        apply_sidebar_config(&shells, &appearance);
+
+        assert_eq!(overlay.sidebar_position(), gtk::PackType::End);
+        assert!(!overlay.is_collapsed());
+        assert!(overlay.is_pin_sidebar());
+        assert!(!overlay.shows_sidebar());
+        assert!(sidebar_pin.is_active());
+        assert_eq!(sidebar_pin.tooltip_text().as_deref(), Some("Unpin Sidebar"));
+
+        apply_sidebar_config(&shells, &config::AppearanceConfig::default());
+
+        assert_eq!(overlay.sidebar_position(), gtk::PackType::Start);
+        assert!(overlay.is_collapsed());
+        assert!(!overlay.is_pin_sidebar());
+        assert!(overlay.shows_sidebar());
+        assert!(!sidebar_pin.is_active());
     });
 }
 
 #[test]
 fn sidebar_pin_button_reflects_the_selected_presentation() {
     let app_source = include_str!("app.rs");
+    let sidebar_source = include_str!("sidebar.rs");
     let css = include_str!("../style.css");
     assert!(app_source.contains("sidebar_header.append(&sidebar_pin);"));
     assert!(app_source.contains("next.appearance.sidebar_pinned = pinned;"));
-    assert!(app_source
-        .contains("sync_sidebar_pin_button(&sidebar_pin, config.appearance.sidebar_pinned);"));
     assert!(css.contains(".sidebar-header-action:checked {"));
+    assert!(sidebar_source.contains("\"Keep Sidebar Beside Terminal\""));
 
     let _ = crate::test_env::with_gtk_test(|| {
         let button = build_sidebar_pin_button(false);
@@ -980,7 +1025,10 @@ fn sidebar_pin_button_reflects_the_selected_presentation() {
         assert!(button.is_focusable());
         assert!(button.has_css_class("sidebar-header-action"));
         assert_eq!(button.icon_name().as_deref(), Some("view-pin-symbolic"));
-        assert_eq!(button.tooltip_text().as_deref(), Some("Pin Sidebar"));
+        assert_eq!(
+            button.tooltip_text().as_deref(),
+            Some("Pin Sidebar Beside Terminal")
+        );
 
         sync_sidebar_pin_button(&button, true);
         assert!(button.is_active());

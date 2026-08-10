@@ -1024,6 +1024,7 @@ pub(super) fn default_startup_workspace_dir_from(
 }
 
 /// Top-level workbench containers that live settings changes re-target.
+#[derive(Clone)]
 pub(super) struct WorkbenchShells {
     pub(super) overlay: adw::OverlaySplitView,
     pub(super) sidebar: gtk::Box,
@@ -1036,22 +1037,13 @@ pub(super) fn settings_apply_callback(
     pr_model: Arc<Mutex<WorkspaceModel>>,
     pr_in_flight: Arc<AtomicBool>,
 ) -> SettingsApplyCallback {
-    let overlay = shells.overlay.clone();
-    let sidebar_shell = shells.sidebar.clone();
-    let sidebar_pin = shells.sidebar_pin.clone();
+    let shells = shells.clone();
     let controller = controller.clone();
     let pr_model = pr_model.clone();
     let pr_in_flight = pr_in_flight.clone();
     Rc::new(move |config| {
         apply_color_scheme(config);
-        apply_sidebar_position(
-            &overlay,
-            &sidebar_shell,
-            &config.appearance.sidebar_position,
-        );
-        apply_sidebar_pinned(&overlay, config.appearance.sidebar_pinned);
-        overlay.set_show_sidebar(config.appearance.sidebar_visible);
-        sync_sidebar_pin_button(&sidebar_pin, config.appearance.sidebar_pinned);
+        apply_sidebar_config(&shells, &config.appearance);
         let model = {
             let controller = controller.borrow();
             for widget in controller.widgets.values() {
@@ -1065,6 +1057,20 @@ pub(super) fn settings_apply_callback(
             spawn_pr_refresh(pr_model.clone(), pr_in_flight.clone());
         }
     })
+}
+
+pub(super) fn apply_sidebar_config(
+    shells: &WorkbenchShells,
+    appearance: &config::AppearanceConfig,
+) {
+    apply_sidebar_position(
+        &shells.overlay,
+        &shells.sidebar,
+        &appearance.sidebar_position,
+    );
+    apply_sidebar_pinned(&shells.overlay, appearance.sidebar_pinned);
+    shells.overlay.set_show_sidebar(appearance.sidebar_visible);
+    sync_sidebar_pin_button(&shells.sidebar_pin, appearance.sidebar_pinned);
 }
 
 pub(super) fn apply_sidebar_position(

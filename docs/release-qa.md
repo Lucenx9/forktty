@@ -87,9 +87,12 @@ the current display or `xvfb-run` when available.
 - Close the last workspace from the GTK UI and confirm a replacement `main` workspace opens a live terminal in the same directory.
 - If GTK cannot spawn the replacement terminal while closing the last workspace, it shows a Close Workspace Failed notification and keeps the old workspace and terminal visible.
 - If GTK cannot close a workspace's terminal surface, it shows a Close Workspace Failed notification and leaves the workspace visible instead of dropping it from the sidebar.
-- Toggle the sidebar twice and confirm it overlays rather than resizes the
-  terminal layout, then confirm `~/.config/forktty/config.toml` remains valid
-  TOML with no `config.toml.tmp-*` sibling left behind.
+- With the sidebar unpinned, toggle it twice with Ctrl+B or F9 and confirm it
+  overlays rather than resizes the terminal layout. Pin it from the sidebar
+  header and confirm it stays beside the terminal; Ctrl+B/F9 must still hide
+  and show it without changing the pinned state. Restart ForkTTY and confirm
+  the pin choice persists. Then confirm `~/.config/forktty/config.toml` remains
+  valid TOML with no `config.toml.tmp-*` sibling left behind.
 - Symlink `~/.config/forktty/config.toml` to a real managed TOML file, toggle
   the sidebar, and confirm the target updates while the symlink remains a symlink.
 - Restart the app and confirm workspace/pane layout restores.

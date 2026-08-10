@@ -1,6 +1,6 @@
 # Feature quality brief: pinned workspace sidebar
 
-**Status:** Approved
+**Status:** Implemented
 
 **Owner:** ForkTTY maintainers
 
@@ -149,10 +149,10 @@ does not block GTK input.
 
 | Requirement | Planned test/command | Contract/docs impact | Final evidence |
 | --- | --- | --- | --- |
-| REQ-001 | `cargo test -p forktty-core sidebar_pinned` and GTK overlay test | `SPEC.md`, README, changelog, site | Pending |
-| REQ-002 | GTK overlay presentation transition test | `SPEC.md`, README, site | Pending |
-| REQ-003 | Config round-trip and GTK control source/UI assertions | `SPEC.md`, changelog | Pending |
-| REQ-004 | GTK overlay/toggle regression tests | README shortcut text remains stable | Pending |
+| REQ-001 | `cargo test -p forktty-core sidebar_pinned` and GTK overlay test | `SPEC.md`, README, changelog, site | `sidebar_pinned_defaults_to_false_when_missing`, `sidebar_pinned_round_trips_through_save_and_load`, and `workbench_sidebar_overlays_terminal_content_and_preserves_configured_side` pass. |
+| REQ-002 | GTK overlay presentation transition test | `SPEC.md`, README, site | `workbench_sidebar_switches_between_overlay_and_pinned_presentations` passes for visible and hidden transitions in both directions. |
+| REQ-003 | Config round-trip and GTK control source/UI assertions | `SPEC.md`, changelog | `sidebar_pin_button_reflects_the_selected_presentation` and `applied_sidebar_config_syncs_layout_visibility_and_pin_control` pass; the latter exercises both live pinned config and default reset state. |
+| REQ-004 | GTK overlay/toggle regression tests | README shortcut text remains stable | The workbench tests exercise right-side pinned layout and `toggle_sidebar_visibility` twice without changing pin state; source assertions retain F9/Ctrl+B accelerators. |
 
 ## Pre-implementation consistency review
 
@@ -172,8 +172,12 @@ named `pin-sidebar` property alone.
 
 | Finding | Classification | Requirement/source | Evidence | Resolution |
 | --- | --- | --- | --- | --- |
-| None yet | N/A | N/A | N/A | Complete before final review. |
+| Initial tests changed visibility directly and checked only the left pinned position. | Evidence gap | REQ-004, spec review | First review of `workbench_sidebar_switches_between_overlay_and_pinned_presentations`. | Extracted the production visibility transition, exercised it in pinned mode, asserted pin/layout stability, and covered the right edge plus accelerator mapping. |
+| Reset/live config synchronization was represented only by a source assertion. | Evidence gap | REQ-003, spec review | First review of the Settings apply path. | Extracted `apply_sidebar_config` and added a GTK test covering pinned live config followed by default reset state. |
+| The accessible name changed with the toggle action even though assistive technology also announces checked state. | Implementation defect | REQ-003, UX review | `sync_sidebar_pin_button` used Pin/Unpin as both tooltip and accessible name. | Kept the tooltip action-oriented and changed the accessible name to the stable `Keep Sidebar Beside Terminal`. |
+| Manual release QA required overlay behavior unconditionally. | Documentation drift | REQ-002, REQ-004, UX review | `docs/release-qa.md` had no pinned scenario. | Split QA expectations across unpinned overlay and pinned side-by-side behavior, including visibility independence and restart persistence. |
+| Reviewers looked for the site sync in a checkout containing unrelated user work. | Review-environment mismatch | Public-site alignment rule | Isolated site worktree commit `dd0f006`; 41 site tests and production build pass. | Kept the user's original checkout untouched and prepared the required site docs/LLM-context PR from `/home/simone/forktty-site-pinned-sidebar`. |
 
 **Fixed review point:** `origin/main`
 
-**Final verdict:** Not ready
+**Final verdict:** Ready

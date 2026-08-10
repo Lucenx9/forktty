@@ -56,13 +56,13 @@ pub(super) fn build_sidebar_pin_button(pinned: bool) -> gtk::ToggleButton {
 
 pub(super) fn sync_sidebar_pin_button(button: &gtk::ToggleButton, pinned: bool) {
     button.set_active(pinned);
-    let label = if pinned {
+    let tooltip = if pinned {
         "Unpin Sidebar"
     } else {
-        "Pin Sidebar"
+        "Pin Sidebar Beside Terminal"
     };
-    button.set_tooltip_text(Some(label));
-    set_accessible_button_text(button.upcast_ref(), label, None);
+    button.set_tooltip_text(Some(tooltip));
+    set_accessible_button_text(button.upcast_ref(), "Keep Sidebar Beside Terminal", None);
 }
 
 fn sidebar_workspace_row_signature(row: &SidebarWorkspaceRow) -> String {
