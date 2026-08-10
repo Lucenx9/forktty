@@ -719,7 +719,11 @@ impl<'a> HookActionBuilder<'a> {
         ]
     }
 
-    fn handle_failure_with_fallback(&self, fallback: &str) -> Vec<(String, Value)> {
+    fn handle_failure_with_status(
+        &self,
+        fallback: &str,
+        status_value: &str,
+    ) -> Vec<(String, Value)> {
         let body = if self.message.is_empty() {
             format!("{fallback}.")
         } else {
@@ -741,13 +745,13 @@ impl<'a> HookActionBuilder<'a> {
                     self.message.clone()
                 },
             ),
-            self.status("Error", "red", self.event),
+            self.status(status_value, "red", self.event),
             self.notification(note),
         ]
     }
 
     fn handle_failure(&self) -> Vec<(String, Value)> {
-        self.handle_failure_with_fallback(&format!("{} reported a failure", self.spec.label))
+        self.handle_failure_with_status(&format!("{} reported a failure", self.spec.label), "Error")
     }
 
     fn handle_basic_info(&self) -> Vec<(String, Value)> {
@@ -1022,16 +1026,22 @@ impl<'a> HookActionBuilder<'a> {
                 .get("error")
                 .and_then(Value::as_str)
                 .is_some_and(|error| !error.trim().is_empty());
+            let fully_idle = self.payload.get("fullyIdle").and_then(Value::as_bool);
             if has_error || matches!(termination_reason, "error" | "max_steps_exceeded") {
                 let fallback = if termination_reason == "max_steps_exceeded" {
                     format!("{} reached the maximum number of steps", self.spec.label)
                 } else {
                     format!("{} stopped with an error", self.spec.label)
                 };
-                let actions = self.handle_failure_with_fallback(&fallback);
+                let status_value = if fully_idle == Some(false) {
+                    "Error; background tasks running"
+                } else {
+                    "Error"
+                };
+                let actions = self.handle_failure_with_status(&fallback, status_value);
                 return self.finish_stop_actions(actions);
             }
-            if self.payload.get("fullyIdle").and_then(Value::as_bool) == Some(false) {
+            if fully_idle == Some(false) {
                 let actions = vec![
                     self.log(
                         "info",

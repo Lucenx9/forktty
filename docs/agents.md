@@ -55,7 +55,8 @@ full, Antigravity 5, and OpenCode 11. Claude lifecycle excludes only
 Codex `SessionEnd` releases lifecycle state and its learned target. Antigravity
 `Stop` returns ready only after a clean, fully idle termination; errors and
 exhausted step budgets publish an error, while active background tasks remain
-running.
+running. If a failed stop still has active background tasks, the error remains
+red without making the session reclaimable.
 
 Codex can execute hooks in its shared app-server without the terminal pane's
 `FORKTTY_*` environment. A local session whose `session_meta` originator is

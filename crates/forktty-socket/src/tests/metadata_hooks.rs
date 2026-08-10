@@ -41,6 +41,10 @@ fn nested_agent_hook_lifecycles_match_the_reported_session() {
         agent_session_lifecycle_from_hook("Background tasks running", Some("stop")),
         AgentSessionLifecycle::Running
     );
+    assert_eq!(
+        agent_session_lifecycle_from_hook("Error; background tasks running", Some("stop")),
+        AgentSessionLifecycle::Running
+    );
 }
 
 #[tokio::test]

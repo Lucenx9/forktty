@@ -1590,7 +1590,8 @@ fn antigravity_stop_marks_the_session_ready() {
 #[test]
 fn antigravity_stop_failure_reports_error_instead_of_ready() {
     for (termination_reason, error) in [
-        ("error", "model backend failed"),
+        ("error", ""),
+        ("model_stop", "model backend failed"),
         ("max_steps_exceeded", ""),
     ] {
         let actions = build_hook_actions(
@@ -1625,6 +1626,32 @@ fn antigravity_stop_failure_reports_error_instead_of_ready() {
 }
 
 #[test]
+fn antigravity_failed_stop_with_background_tasks_reports_both_states() {
+    let actions = build_hook_actions(
+        agent_spec("antigravity").unwrap(),
+        "stop",
+        &json!({
+            "conversationId": "agy-failed-background",
+            "terminationReason": "max_steps_exceeded",
+            "fullyIdle": false
+        }),
+        "14",
+    );
+    let status = actions
+        .iter()
+        .find(|(method, _)| method == "metadata.set_status")
+        .expect("failed Stop with live background tasks must publish both states");
+    assert_eq!(status.1["value"], "Error; background tasks running");
+    assert_eq!(status.1["color"], "red");
+    assert!(actions
+        .iter()
+        .any(|(method, _)| method == "notification.create"));
+    assert!(actions.iter().any(|(method, params)| {
+        method == "metadata.clear_status" && params["key"] == "agent:antigravity:permission"
+    }));
+}
+
+#[test]
 fn antigravity_stop_with_background_tasks_stays_running() {
     let actions = build_hook_actions(
         agent_spec("antigravity").unwrap(),
@@ -1634,7 +1661,7 @@ fn antigravity_stop_with_background_tasks_stays_running() {
             "terminationReason": "model_stop",
             "fullyIdle": false
         }),
-        "14",
+        "15",
     );
     let status = actions
         .iter()

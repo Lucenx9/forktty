@@ -456,7 +456,9 @@ Antigravity `PreInvocation`, `PostInvocation`, and `Stop` use flat lifecycle
 handlers. `PreToolUse` and `Stop` return an explicit allow decision. A clean,
 fully idle `Stop` returns the session to ready; `error` and
 `max_steps_exceeded` terminations publish an error, while a stop with active
-background work retains a running lifecycle. Claude `SessionStart` workspace
+background work retains a running lifecycle. If both conditions apply, the
+error remains visible in red without making the active session reclaimable.
+Claude `SessionStart` workspace
 enrichment is atomic: it requires nonblank workspace and surface IDs plus an
 absolute socket path from the same ForkTTY child environment. If any provenance
 component is absent or invalid, the hook returns the exact continue response
