@@ -808,8 +808,25 @@ fn sidebar_visible_defaults_to_true_when_missing() {
 #[test]
 fn sidebar_pinned_defaults_to_false_when_missing() {
     let dir = tempfile::tempdir().unwrap();
-    let config = load_config_from_path(&dir.path().join("missing.toml")).unwrap();
+    let path = dir.path().join("config.toml");
+    fs::write(
+        &path,
+        r#"
+            [appearance]
+            sidebar_position = "right"
+            "#,
+    )
+    .unwrap();
+
+    let config = load_config_from_path(&path).unwrap();
     assert!(!config.appearance.sidebar_pinned);
+
+    save_config_to_path(&path, &config).unwrap();
+
+    let saved = fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("sidebar_pinned = false"));
+    let reloaded = load_config_from_path(&path).unwrap();
+    assert!(!reloaded.appearance.sidebar_pinned);
 }
 
 #[test]
