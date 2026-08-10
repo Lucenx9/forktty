@@ -453,8 +453,9 @@ OpenCode plugin events. The Claude lifecycle profile excludes only
 installed for prompt-result correlation. Codex `SessionEnd` uses the provider's
 three-second maximum and releases lifecycle state and its learned surface claim.
 Antigravity `PreInvocation`, `PostInvocation`, and `Stop` use flat lifecycle
-handlers. `PreToolUse` and `Stop` return an explicit allow decision. A clean,
-fully idle `Stop` returns the session to ready; `error` and
+handlers. `PreToolUse` and `Stop` return an explicit allow decision. Only a
+clean `Stop` with an explicit boolean `fullyIdle: true` returns the session to
+ready; a missing or invalid idle result remains non-reclaimable. `error` and
 `max_steps_exceeded` terminations publish an error, while a stop with active
 background work retains a running lifecycle. If both conditions apply, the
 error remains visible in red without making the active session reclaimable.

@@ -29,6 +29,25 @@ pub(in crate::socket_cli) use token_usage::{
     format_token_usage_block, read_token_usage_from_transcript, resolve_token_ceiling, TokenUsage,
 };
 
+pub(in crate::socket_cli) fn hook_action_budget(
+    spec: &AgentSpec,
+    event: &str,
+) -> Option<std::time::Duration> {
+    if spec.key == "codex" && event == "session-end" {
+        let provider_timeout = spec
+            .hook_entries
+            .iter()
+            .find(|entry| entry.hook_event_name == event)
+            .map(|entry| std::time::Duration::from_secs(entry.timeout))
+            .unwrap_or(HOOK_STATUS_TIMEOUT);
+        // Leave one second for process startup, input parsing, response output,
+        // and scheduling around the provider's three-second hard deadline.
+        let action_budget = provider_timeout.saturating_sub(std::time::Duration::from_secs(1));
+        return Some(action_budget.min(HOOK_STATUS_TIMEOUT));
+    }
+    None
+}
+
 pub(in crate::socket_cli) fn handle_hook_event(
     context: &CliContext,
     args: Vec<String>,
@@ -120,12 +139,25 @@ pub(in crate::socket_cli) fn handle_hook_event(
         ),
     );
     if send_actions {
-        for (method, params) in actions {
+        let action_deadline =
+            hook_action_budget(spec, &event).map(|budget| std::time::Instant::now() + budget);
+        let action_count = actions.len();
+        for (index, (method, params)) in actions.into_iter().enumerate() {
+            let request_timeout = action_deadline
+                .map(|deadline| {
+                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                    let remaining_actions = u32::try_from(action_count - index).unwrap_or(u32::MAX);
+                    remaining / remaining_actions
+                })
+                .unwrap_or(HOOK_STATUS_TIMEOUT);
+            if request_timeout.is_zero() {
+                break;
+            }
             if let Err(err) = send_socket_request_with_timeout(
                 &context.socket_path,
                 &method,
                 params,
-                HOOK_STATUS_TIMEOUT,
+                request_timeout,
             ) {
                 // Keep going on failure: a transient error on one action (e.g.
                 // an informational log) must not skip later cleanup actions
@@ -1033,7 +1065,7 @@ impl<'a> HookActionBuilder<'a> {
                 } else {
                     format!("{} stopped with an error", self.spec.label)
                 };
-                let status_value = if fully_idle == Some(false) {
+                let status_value = if fully_idle != Some(true) {
                     "Error; background tasks running"
                 } else {
                     "Error"
@@ -1041,15 +1073,20 @@ impl<'a> HookActionBuilder<'a> {
                 let actions = self.handle_failure_with_status(&fallback, status_value);
                 return self.finish_stop_actions(actions);
             }
-            if fully_idle == Some(false) {
+            if fully_idle != Some(true) {
+                let message = if fully_idle == Some(false) {
+                    format!(
+                        "{} stopped with background tasks still running",
+                        self.spec.label
+                    )
+                } else {
+                    format!(
+                        "{} stopped without confirming that background tasks are idle",
+                        self.spec.label
+                    )
+                };
                 let actions = vec![
-                    self.log(
-                        "info",
-                        format!(
-                            "{} stopped with background tasks still running",
-                            self.spec.label
-                        ),
-                    ),
+                    self.log("info", message),
                     self.status("Background tasks running", "blue", self.event),
                 ];
                 return self.finish_stop_actions(actions);
@@ -1085,9 +1122,9 @@ impl<'a> HookActionBuilder<'a> {
 
     fn handle_session_end(&self) -> Vec<(String, Value)> {
         vec![
-            self.log("info", format!("{} session ended", self.spec.label)),
             self.clear_status(&self.key),
             self.clear_status(&self.permission_key),
+            self.log("info", format!("{} session ended", self.spec.label)),
         ]
     }
 

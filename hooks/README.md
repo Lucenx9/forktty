@@ -85,11 +85,12 @@ handler shape, while tool hooks use the nested matcher plus `hooks` array shape.
 Unknown event names are dropped silently, and hook stdout is unmarshaled
 strictly. ForkTTY therefore avoids the `continue` JSON used by other
 providers; it returns an explicit `{"decision":"allow"}` for the gating
-`PreToolUse` and `Stop` hooks, and `{}` for advisory Antigravity hooks. A clean,
-fully idle `Stop` returns the lifecycle to ready; provider errors and exhausted
-step budgets publish an error, while live background tasks remain running. A
-failed stop with live background tasks keeps the red error presentation but a
-running lifecycle.
+`PreToolUse` and `Stop` hooks, and `{}` for advisory Antigravity hooks. Only a
+clean `Stop` with an explicit boolean `fullyIdle: true` returns the lifecycle
+to ready; missing or invalid idle state remains non-reclaimable. Provider
+errors and exhausted step budgets publish an error, while live background tasks
+remain running. A failed stop with live background tasks keeps the red error
+presentation but a running lifecycle.
 Antigravity runs the generated wrapper scripts from its config directory, so
 ForkTTY derives Antigravity `resume_cwd` from the hook payload's
 `workspacePaths` instead of the wrapper process cwd.

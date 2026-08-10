@@ -1,9 +1,9 @@
 use super::{next_request_id, CliError, CliResult, MAX_SOCKET_RESPONSE_BYTES, SOCKET_TIMEOUT};
 use forktty_core::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use serde_json::{json, Value};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub(crate) fn send_socket_request_with_timeout(
     socket_path: &Path,
@@ -11,24 +11,29 @@ pub(crate) fn send_socket_request_with_timeout(
     params: Value,
     timeout: Duration,
 ) -> CliResult<Value> {
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or_else(|| CliError::new("Socket request timeout is too large"))?;
     let id = Value::String(next_request_id());
     let request = JsonRpcRequest {
         id: id.clone(),
         method: method.to_string(),
         params,
     };
-    let mut stream = forktty_socket::connect_owner_unix_stream_with_timeout(socket_path, timeout)
-        .map_err(|err| format_socket_connect_error(err, socket_path))?;
-    stream.set_read_timeout(Some(timeout)).ok();
-    stream.set_write_timeout(Some(timeout)).ok();
-    let request_json = serde_json::to_string(&request)?;
-    stream.write_all(request_json.as_bytes())?;
-    stream.write_all(b"\n")?;
-    stream.flush()?;
+    let connect_timeout = remaining_before_deadline(deadline)?;
+    let mut stream =
+        forktty_socket::connect_owner_unix_stream_with_timeout(socket_path, connect_timeout)
+            .map_err(|err| format_socket_connect_error(err, socket_path))?;
+    let mut request_json = serde_json::to_vec(&request)?;
+    request_json.push(b'\n');
+    write_all_before_deadline(&mut stream, &request_json, deadline)?;
 
-    let mut reader = BufReader::new(stream);
-    let Some(line) =
-        read_limited_response_line(&mut reader, MAX_SOCKET_RESPONSE_BYTES, "socket response")?
+    let Some(line) = read_limited_response_line_before_deadline(
+        &mut stream,
+        MAX_SOCKET_RESPONSE_BYTES,
+        "socket response",
+        deadline,
+    )?
     else {
         return Err(CliError::new(format!(
             "Socket closed without response for {method} at {}",
@@ -67,6 +72,82 @@ pub(crate) fn send_socket_request_with_timeout(
         ),
         error.code,
     ))
+}
+
+fn remaining_before_deadline(deadline: Instant) -> io::Result<Duration> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "socket request deadline elapsed",
+        ));
+    }
+    Ok(remaining)
+}
+
+fn write_all_before_deadline(
+    stream: &mut std::os::unix::net::UnixStream,
+    mut bytes: &[u8],
+    deadline: Instant,
+) -> io::Result<()> {
+    while !bytes.is_empty() {
+        stream.set_write_timeout(Some(remaining_before_deadline(deadline)?))?;
+        match stream.write(bytes) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "failed to write socket request",
+                ));
+            }
+            Ok(written) => bytes = &bytes[written..],
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(())
+}
+
+fn read_limited_response_line_before_deadline(
+    stream: &mut std::os::unix::net::UnixStream,
+    max_bytes: usize,
+    source: &str,
+    deadline: Instant,
+) -> CliResult<Option<String>> {
+    let mut buf = Vec::with_capacity(4096);
+    let mut chunk = [0_u8; 4096];
+    loop {
+        stream.set_read_timeout(Some(remaining_before_deadline(deadline)?))?;
+        let read = match stream.read(&mut chunk) {
+            Ok(read) => read,
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err.into()),
+        };
+        if read == 0 {
+            if buf.is_empty() {
+                return Ok(None);
+            }
+            break;
+        }
+        let available = &chunk[..read];
+        let newline = available.iter().position(|&byte| byte == b'\n');
+        let chunk_len = newline.unwrap_or(available.len());
+        if buf.len().saturating_add(chunk_len) > max_bytes {
+            return Err(CliError::code(
+                format!("{source} exceeds {max_bytes} byte limit"),
+                "response_too_large",
+            ));
+        }
+        buf.extend_from_slice(&available[..chunk_len]);
+        if newline.is_some() {
+            break;
+        }
+    }
+    if buf.last() == Some(&b'\r') {
+        buf.pop();
+    }
+    String::from_utf8(buf)
+        .map(Some)
+        .map_err(|err| CliError::code(err.to_string(), "parse_error"))
 }
 
 fn is_connection_level_socket_error(response: &JsonRpcResponse) -> bool {

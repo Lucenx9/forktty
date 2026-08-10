@@ -1675,6 +1675,49 @@ fn antigravity_stop_with_background_tasks_stays_running() {
 }
 
 #[test]
+fn antigravity_stop_without_boolean_fully_idle_stays_running() {
+    for payload in [
+        json!({
+            "conversationId": "agy-idle-missing",
+            "terminationReason": "model_stop"
+        }),
+        json!({
+            "conversationId": "agy-idle-invalid",
+            "terminationReason": "model_stop",
+            "fullyIdle": "unknown"
+        }),
+    ] {
+        let actions =
+            build_hook_actions(agent_spec("antigravity").unwrap(), "stop", &payload, "16");
+        let status = actions
+            .iter()
+            .find(|(method, _)| method == "metadata.set_status")
+            .expect("ambiguous Stop must keep a non-reclaimable lifecycle");
+        assert_eq!(status.1["value"], "Background tasks running");
+        assert_eq!(status.1["color"], "blue");
+    }
+}
+
+#[test]
+fn antigravity_failed_stop_without_fully_idle_stays_running() {
+    let actions = build_hook_actions(
+        agent_spec("antigravity").unwrap(),
+        "stop",
+        &json!({
+            "conversationId": "agy-error-idle-missing",
+            "terminationReason": "error"
+        }),
+        "17",
+    );
+    let status = actions
+        .iter()
+        .find(|(method, _)| method == "metadata.set_status")
+        .expect("ambiguous failed Stop must keep a non-reclaimable lifecycle");
+    assert_eq!(status.1["value"], "Error; background tasks running");
+    assert_eq!(status.1["color"], "red");
+}
+
+#[test]
 fn antigravity_gating_wrapper_fallbacks_are_explicit() {
     let spec = agent_spec("antigravity").unwrap();
     let pre_tool = build_antigravity_hook_script(Path::new("/usr/bin/forktty"), spec, "pre-tool");
@@ -2033,14 +2076,44 @@ fn session_end_clears_activity_and_permission_status() {
         "9",
     );
     assert_eq!(actions.len(), 3);
+    assert_eq!(actions[0].0, "metadata.clear_status");
+    assert_eq!(actions[0].1["key"], "agent:claude");
     assert_eq!(actions[1].0, "metadata.clear_status");
-    assert_eq!(actions[1].1["key"], "agent:claude");
-    assert_eq!(actions[2].0, "metadata.clear_status");
-    assert_eq!(actions[2].1["key"], "agent:claude:permission");
+    assert_eq!(actions[1].1["key"], "agent:claude:permission");
+    assert_eq!(actions[2].0, "metadata.log");
     // hook_session_id rides on every metadata action so the daemon can
     // correlate the clear with its originating session.
+    assert_eq!(actions[0].1["hook_session_id"], "sess-claude-end");
     assert_eq!(actions[1].1["hook_session_id"], "sess-claude-end");
-    assert_eq!(actions[2].1["hook_session_id"], "sess-claude-end");
+}
+
+#[test]
+fn codex_session_end_prioritizes_cleanup_within_provider_timeout() {
+    let spec = agent_spec("codex").unwrap();
+    let actions = build_hook_actions(
+        spec,
+        "session-end",
+        &json!({ "session_id": "sess-codex-end" }),
+        "10",
+    );
+    assert_eq!(actions[0].0, "metadata.clear_status");
+    assert_eq!(actions[0].1["key"], "agent:codex");
+    assert_eq!(actions[1].0, "metadata.clear_status");
+    assert_eq!(actions[1].1["key"], "agent:codex:permission");
+    assert_eq!(actions[2].0, "metadata.log");
+
+    let action_budget = hook_action_budget(spec, "session-end").unwrap();
+    let provider_timeout = Duration::from_secs(
+        spec.hook_entries
+            .iter()
+            .find(|entry| entry.hook_event_name == "session-end")
+            .unwrap()
+            .timeout,
+    );
+    assert!(
+        action_budget < provider_timeout,
+        "all SessionEnd requests must fit below the provider deadline"
+    );
 }
 
 #[test]
