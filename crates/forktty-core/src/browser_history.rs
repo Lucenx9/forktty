@@ -551,10 +551,20 @@ fn read_optional_file_bounded(
     limit: u64,
     label: &str,
 ) -> Result<Option<Vec<u8>>, HistoryError> {
+    let path_metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(HistoryError::Io(err.to_string())),
+    };
+    if !path_metadata.file_type().is_file() {
+        return Err(HistoryError::Io(format!(
+            "{label} path is not a regular file"
+        )));
+    }
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
-    options.custom_flags(libc::O_NONBLOCK);
+    options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
     let file = match options.open(path) {
         Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -598,6 +608,23 @@ mod tests {
             .unwrap_err();
 
         assert!(err.to_string().contains("exceeds limit of 1 bytes"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bookmark_store_rejects_symlinked_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.json");
+        let link = dir.path().join("bookmarks.json");
+        std::fs::write(&target, b"[]").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let err = match BookmarkStore::open(&link) {
+            Ok(_) => panic!("expected symlinked bookmark store to be rejected"),
+            Err(err) => err,
+        };
+
+        assert!(err.to_string().contains("not a regular file"));
     }
 
     fn store() -> HistoryStore {

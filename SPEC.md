@@ -524,6 +524,9 @@ data/cache/cookies. `forktty-core` also contains pure per-profile
 `HistoryStore` and `BookmarkStore` implementations. The socket and CLI expose
 history/bookmark list/search/clear/add/remove methods over those stores. Visit
 recording and GTK address-bar completion are not wired yet.
+Profile metadata and bookmark JSON stores reject symlinked inputs before
+parsing, as does the direct Chromium `Bookmarks` import path; their existing
+per-file byte limits are enforced again on the opened descriptor.
 
 ## Worktree Behavior
 

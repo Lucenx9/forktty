@@ -506,7 +506,6 @@ pub(super) fn show_settings_dialog_page(
                 return;
             }
             if let Some(mode) = settings_choice_value(WINDOW_MODE_ITEMS, row.selected()) {
-                let previous = current.borrow().appearance.window_mode.clone();
                 let saved = persist_settings_change(
                     &dialog,
                     &current,
@@ -515,7 +514,10 @@ pub(super) fn show_settings_dialog_page(
                     "Window mode saved. Restart ForkTTY to use it.",
                 );
                 restore_settings_control_after_failed_save(saved, &suppress_updates, || {
-                    row.set_selected(settings_choice_index(WINDOW_MODE_ITEMS, &previous));
+                    row.set_selected(settings_choice_index(
+                        WINDOW_MODE_ITEMS,
+                        &current.borrow().appearance.window_mode,
+                    ));
                 });
             }
         }
@@ -530,7 +532,6 @@ pub(super) fn show_settings_dialog_page(
                 return;
             }
             if let Some(position) = settings_choice_value(SIDEBAR_POSITION_ITEMS, row.selected()) {
-                let previous = current.borrow().appearance.sidebar_position.clone();
                 let saved = persist_settings_change(
                     &dialog,
                     &current,
@@ -539,7 +540,10 @@ pub(super) fn show_settings_dialog_page(
                     "Sidebar moved.",
                 );
                 restore_settings_control_after_failed_save(saved, &suppress_updates, || {
-                    row.set_selected(settings_choice_index(SIDEBAR_POSITION_ITEMS, &previous));
+                    row.set_selected(settings_choice_index(
+                        SIDEBAR_POSITION_ITEMS,
+                        &current.borrow().appearance.sidebar_position,
+                    ));
                 });
             }
         }
@@ -553,7 +557,6 @@ pub(super) fn show_settings_dialog_page(
             if suppress_updates.get() {
                 return;
             }
-            let previous = current.borrow().appearance.sidebar_visible;
             let saved = persist_settings_change(
                 &dialog,
                 &current,
@@ -562,7 +565,7 @@ pub(super) fn show_settings_dialog_page(
                 "Sidebar visibility updated.",
             );
             restore_settings_control_after_failed_save(saved, &suppress_updates, || {
-                row.set_active(previous);
+                row.set_active(current.borrow().appearance.sidebar_visible);
             });
         }
     });
@@ -576,7 +579,6 @@ pub(super) fn show_settings_dialog_page(
                 return;
             }
             if let Some(layout) = settings_choice_value(WORKTREE_LAYOUT_ITEMS, row.selected()) {
-                let previous = current.borrow().general.worktree_layout.clone();
                 let saved = persist_settings_change(
                     &dialog,
                     &current,
@@ -585,7 +587,10 @@ pub(super) fn show_settings_dialog_page(
                     "Worktree layout saved.",
                 );
                 restore_settings_control_after_failed_save(saved, &suppress_updates, || {
-                    row.set_selected(settings_choice_index(WORKTREE_LAYOUT_ITEMS, &previous));
+                    row.set_selected(settings_choice_index(
+                        WORKTREE_LAYOUT_ITEMS,
+                        &current.borrow().general.worktree_layout,
+                    ));
                 });
             }
         }
@@ -599,7 +604,6 @@ pub(super) fn show_settings_dialog_page(
             if suppress_updates.get() {
                 return;
             }
-            let previous = current.borrow().general.enable_pr_lookup;
             let saved = persist_settings_change(
                 &dialog,
                 &current,
@@ -608,7 +612,7 @@ pub(super) fn show_settings_dialog_page(
                 "PR lookup updated.",
             );
             restore_settings_control_after_failed_save(saved, &suppress_updates, || {
-                row.set_active(previous);
+                row.set_active(current.borrow().general.enable_pr_lookup);
             });
         }
     });
@@ -640,7 +644,7 @@ pub(super) fn show_settings_dialog_page(
                 }
             }
             restore_settings_control_after_failed_save(saved, &suppress_updates, || {
-                row.set_active(was_enabled);
+                row.set_active(current.borrow().general.persist_terminal_processes);
             });
         }
     });
@@ -676,7 +680,6 @@ pub(super) fn show_settings_dialog_page(
             if suppress_updates.get() {
                 return;
             }
-            let previous = current.borrow().notifications.desktop;
             let saved = persist_settings_change(
                 &dialog,
                 &current,
@@ -685,7 +688,7 @@ pub(super) fn show_settings_dialog_page(
                 "Desktop notifications updated.",
             );
             restore_settings_control_after_failed_save(saved, &suppress_updates, || {
-                row.set_active(previous);
+                row.set_active(current.borrow().notifications.desktop);
             });
         }
     });
@@ -698,7 +701,6 @@ pub(super) fn show_settings_dialog_page(
             if suppress_updates.get() {
                 return;
             }
-            let previous = current.borrow().notifications.sound;
             let saved = persist_settings_change(
                 &dialog,
                 &current,
@@ -707,7 +709,7 @@ pub(super) fn show_settings_dialog_page(
                 "Notification sound updated.",
             );
             restore_settings_control_after_failed_save(saved, &suppress_updates, || {
-                row.set_active(previous);
+                row.set_active(current.borrow().notifications.sound);
             });
         }
     });
@@ -720,7 +722,6 @@ pub(super) fn show_settings_dialog_page(
             if suppress_updates.get() {
                 return;
             }
-            let previous = current.borrow().telemetry.anonymous_ping;
             let saved = persist_settings_change(
                 &dialog,
                 &current,
@@ -729,7 +730,7 @@ pub(super) fn show_settings_dialog_page(
                 "Telemetry preference updated.",
             );
             restore_settings_control_after_failed_save(saved, &suppress_updates, || {
-                row.set_active(previous);
+                row.set_active(current.borrow().telemetry.anonymous_ping);
             });
         }
     });
@@ -1314,6 +1315,9 @@ pub(super) fn persist_settings_change<F: FnOnce(&mut config::AppConfig)>(
             true
         }
         Err(err) => {
+            if let Ok(latest) = config::load_config() {
+                *current.borrow_mut() = latest;
+            }
             dialog.add_toast(adw::Toast::new(&err.to_string()));
             false
         }
@@ -1351,6 +1355,33 @@ mod tests {
             assert!(row.is_active());
             assert_eq!(notifications.get(), 0);
             assert!(!suppress_updates.get());
+        });
+    }
+
+    #[cfg(feature = "gtk-ghostty")]
+    #[test]
+    fn failed_settings_save_refreshes_stale_dialog_snapshot_from_disk() {
+        let _ = crate::test_env::with_gtk_test(|| {
+            crate::test_env::with_isolated_user_dirs(|| {
+                let mut persisted = config::AppConfig::default();
+                persisted.appearance.window_mode = "quake".to_string();
+                config::save_config(&persisted).unwrap();
+
+                let current = Rc::new(RefCell::new(config::AppConfig::default()));
+                let dialog = adw::ToastOverlay::new();
+                let on_apply: SettingsApplyCallback = Rc::new(|_| {});
+
+                let saved = persist_settings_change(
+                    &dialog,
+                    &current,
+                    &on_apply,
+                    |next| next.appearance.window_mode = "invalid".to_string(),
+                    "unused",
+                );
+
+                assert!(!saved);
+                assert_eq!(current.borrow().appearance.window_mode, "quake");
+            });
         });
     }
 

@@ -222,10 +222,18 @@ fn read_chromium_bookmarks_file_bounded(
     path: &Path,
     limit: u64,
 ) -> std::io::Result<Option<Vec<u8>>> {
+    let path_metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    if !path_metadata.file_type().is_file() {
+        return Ok(None);
+    }
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
-    options.custom_flags(libc::O_NONBLOCK);
+    options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
 
     let file = match options.open(path) {
         Ok(file) => file,
@@ -427,6 +435,24 @@ mod tests {
             read_chromium_bookmarks_file_bounded(Path::new("/proc/self/cmdline"), 1).unwrap();
 
         assert!(bytes.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn chromium_bookmarks_symlink_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.json");
+        let link = dir.path().join("Bookmarks");
+        fs::write(
+            &target,
+            r#"{"roots":{"bookmark_bar":{"children":[{"type":"url","name":"A","url":"https://a.test/"}]}}}"#,
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let bookmarks = read_chromium_bookmarks(&link).unwrap();
+
+        assert!(bookmarks.is_empty());
     }
 
     #[cfg(unix)]
