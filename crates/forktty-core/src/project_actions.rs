@@ -1,4 +1,7 @@
 use std::collections::BTreeSet;
+use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -73,22 +76,10 @@ pub fn load_project_actions(
 ) -> Result<Vec<ProjectAction>, ProjectActionError> {
     let project_root = project_root.as_ref();
     let path = project_root.join(PROJECT_ACTIONS_FILE);
-    let metadata = match std::fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(err) => return Err(ProjectActionError::Io(err.to_string())),
+    let Some(bytes) = read_project_actions_file_bounded(&path, MAX_PROJECT_ACTION_FILE_BYTES)?
+    else {
+        return Ok(Vec::new());
     };
-    if !metadata.is_file() {
-        return Err(ProjectActionError::Invalid(format!(
-            "{PROJECT_ACTIONS_FILE} must be a regular file"
-        )));
-    }
-    if metadata.len() > MAX_PROJECT_ACTION_FILE_BYTES {
-        return Err(ProjectActionError::Invalid(format!(
-            "{PROJECT_ACTIONS_FILE} is too large"
-        )));
-    }
-    let bytes = std::fs::read(&path).map_err(|err| ProjectActionError::Io(err.to_string()))?;
     let raw = serde_json::from_slice::<ProjectActionsFile>(&bytes)
         .map_err(|err| ProjectActionError::Json(err.to_string()))?;
     if raw.actions.len() > MAX_PROJECT_ACTIONS {
@@ -111,6 +102,52 @@ pub fn load_project_actions(
             Ok(action)
         })
         .collect()
+}
+
+fn read_project_actions_file_bounded(
+    path: &Path,
+    limit: u64,
+) -> Result<Option<Vec<u8>>, ProjectActionError> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(ProjectActionError::Io(err.to_string())),
+    };
+    if !metadata.is_file() {
+        return Err(ProjectActionError::Invalid(format!(
+            "{PROJECT_ACTIONS_FILE} must be a regular file"
+        )));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    let file = options
+        .open(path)
+        .map_err(|err| ProjectActionError::Io(err.to_string()))?;
+    let metadata = file
+        .metadata()
+        .map_err(|err| ProjectActionError::Io(err.to_string()))?;
+    if !metadata.is_file() {
+        return Err(ProjectActionError::Invalid(format!(
+            "{PROJECT_ACTIONS_FILE} must be a regular file"
+        )));
+    }
+    if metadata.len() > limit {
+        return Err(ProjectActionError::Invalid(format!(
+            "{PROJECT_ACTIONS_FILE} is too large"
+        )));
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|err| ProjectActionError::Io(err.to_string()))?;
+    if bytes.len() as u64 > limit {
+        return Err(ProjectActionError::Invalid(format!(
+            "{PROJECT_ACTIONS_FILE} is too large"
+        )));
+    }
+    Ok(Some(bytes))
 }
 
 pub fn action_cwd(
@@ -325,6 +362,16 @@ mod tests {
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].id, "test");
         assert_eq!(actions[0].argv, ["cargo", "test"]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bounded_project_action_read_rejects_proc_file_larger_than_reported_metadata() {
+        let err = read_project_actions_file_bounded(Path::new("/proc/self/cmdline"), 1)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("too large"));
     }
 
     #[test]

@@ -1,7 +1,10 @@
 //! Read history and bookmarks from source browsers.
 //! Firefox uses `places.sqlite`; Chromium family uses `History` (sqlite) + `Bookmarks` (JSON).
 
-use std::{collections::BTreeMap, fmt, path::Path};
+use std::{collections::BTreeMap, fmt, io::Read, path::Path};
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 
 use rusqlite::{Connection, OpenFlags};
 use serde::{
@@ -197,19 +200,11 @@ pub fn read_chromium_history(history: &Path) -> rusqlite::Result<Vec<ImportedVis
 /// Malformed, oversized, or missing JSON content returns `Ok(vec![])` — only
 /// true IO errors propagate as `Err`.
 pub fn read_chromium_bookmarks(path: &Path) -> std::io::Result<Vec<ImportedBookmark>> {
-    let metadata = match std::fs::metadata(path) {
-        Ok(metadata) => metadata,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
-        Err(err) => return Err(err),
+    let Some(bytes) = read_chromium_bookmarks_file_bounded(path, MAX_CHROMIUM_BOOKMARKS_BYTES)?
+    else {
+        return Ok(vec![]);
     };
-    if !metadata.is_file() {
-        return Ok(vec![]);
-    }
-    if metadata.len() > MAX_CHROMIUM_BOOKMARKS_BYTES {
-        return Ok(vec![]);
-    }
-    let text = std::fs::read_to_string(path)?;
-    let file: ChromiumBookmarkFile = match serde_json::from_str(&text) {
+    let file: ChromiumBookmarkFile = match serde_json::from_slice(&bytes) {
         Ok(v) => v,
         Err(_) => return Ok(vec![]),
     };
@@ -221,6 +216,41 @@ pub fn read_chromium_bookmarks(path: &Path) -> std::io::Result<Vec<ImportedBookm
         collect_chromium_bookmarks(root_node, &mut out, &mut visited);
     }
     Ok(out)
+}
+
+fn read_chromium_bookmarks_file_bounded(
+    path: &Path,
+    limit: u64,
+) -> std::io::Result<Option<Vec<u8>>> {
+    let path_metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    if !path_metadata.file_type().is_file() {
+        return Ok(None);
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() > limit {
+        return Ok(None);
+    }
+
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Ok(None);
+    }
+    Ok(Some(bytes))
 }
 
 fn collect_chromium_bookmarks(
@@ -385,6 +415,44 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let bms = read_chromium_bookmarks(&dir.path().join("Bookmarks")).unwrap();
         assert!(bms.is_empty());
+    }
+
+    #[test]
+    fn chromium_bookmarks_invalid_utf8_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Bookmarks");
+        fs::write(&path, b"{\"roots\":\xff}").unwrap();
+
+        let bms = read_chromium_bookmarks(&path).unwrap();
+
+        assert!(bms.is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn chromium_bookmarks_bounded_read_checks_bytes_from_open_file() {
+        let bytes =
+            read_chromium_bookmarks_file_bounded(Path::new("/proc/self/cmdline"), 1).unwrap();
+
+        assert!(bytes.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn chromium_bookmarks_symlink_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.json");
+        let link = dir.path().join("Bookmarks");
+        fs::write(
+            &target,
+            r#"{"roots":{"bookmark_bar":{"children":[{"type":"url","name":"A","url":"https://a.test/"}]}}}"#,
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let bookmarks = read_chromium_bookmarks(&link).unwrap();
+
+        assert!(bookmarks.is_empty());
     }
 
     #[cfg(unix)]

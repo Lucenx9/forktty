@@ -3,6 +3,7 @@
 //! each `Browser` surface carries a `ProfileId`.
 
 use std::fmt;
+use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -328,11 +329,28 @@ fn read_optional_file_bounded(
     limit: u64,
     label: &str,
 ) -> Result<Option<Vec<u8>>, ProfileError> {
-    let metadata = match std::fs::metadata(path) {
+    let path_metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(ProfileError::Io(err.to_string())),
     };
+    if !path_metadata.file_type().is_file() {
+        return Err(ProfileError::Io(format!(
+            "{label} path is not a regular file"
+        )));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(ProfileError::Io(err.to_string())),
+    };
+    let metadata = file
+        .metadata()
+        .map_err(|err| ProfileError::Io(err.to_string()))?;
     if !metadata.is_file() {
         return Err(ProfileError::Io(format!(
             "{label} path is not a regular file"
@@ -344,14 +362,45 @@ fn read_optional_file_bounded(
             metadata.len()
         )));
     }
-    std::fs::read(path)
-        .map(Some)
-        .map_err(|err| ProfileError::Io(err.to_string()))
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|err| ProfileError::Io(err.to_string()))?;
+    if bytes.len() as u64 > limit {
+        return Err(ProfileError::Io(format!(
+            "{label} is {} bytes, exceeds limit of {limit} bytes",
+            bytes.len()
+        )));
+    }
+    Ok(Some(bytes))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bounded_profile_read_rejects_proc_file_larger_than_reported_metadata() {
+        let err = read_optional_file_bounded(Path::new("/proc/self/cmdline"), 1, "profile store")
+            .unwrap_err();
+
+        assert!(err.to_string().contains("exceeds limit of 1 bytes"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn profile_store_rejects_symlinked_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.json");
+        let link = dir.path().join("profiles.json");
+        std::fs::write(&target, serde_json::to_vec(&vec![default_meta()]).unwrap()).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let err = ProfileStore::load(link).unwrap_err();
+
+        assert!(err.to_string().contains("not a regular file"));
+    }
 
     fn temp_store() -> (tempfile::TempDir, ProfileStore) {
         let dir = tempfile::tempdir().unwrap();

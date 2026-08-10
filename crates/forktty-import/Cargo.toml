@@ -20,6 +20,7 @@ cbc.workspace = true
 dirs.workspace = true
 forktty-core = { path = "../forktty-core" }
 hmac.workspace = true
+libc.workspace = true
 pbkdf2.workspace = true
 rusqlite.workspace = true
 secret-service = { workspace = true, optional = true }

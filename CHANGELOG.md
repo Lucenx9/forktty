@@ -5,6 +5,14 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Fixed
+- Failed Settings writes now restore automatically saved toggles and selectors
+  to the latest persisted value instead of leaving them out of sync with the
+  active config.
+- Browser bookmark imports now ignore malformed non-UTF-8 JSON without
+  aborting the full import, while bounded profile/history readers reject
+  symlinked inputs, enforce their limits on the opened file, and AppImage
+  verification hashes in fixed-size chunks.
+- Updated `event-listener` to 5.4.2 to include the fix for RUSTSEC-2026-0221.
 - Agent lifecycle hooks now recover a missing or stale pane target from the
   session's live learned target or unique cwd match, including when a workspace
   id is still present. Explicit workspace selection remains authoritative, and
