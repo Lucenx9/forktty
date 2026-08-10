@@ -264,15 +264,46 @@ impl SurfaceCreationLayoutSnapshot {
 pub fn session_data_from_state(state: &SocketAppState) -> Option<session::SessionData> {
     let _worktree_guard = state.try_worktree_write_guard()?;
     let _surface_set_guard = state.try_surface_set_guard()?;
+    session_data_from_guarded_state(state).ok()
+}
+
+/// Wait for active worktree and surface-set transactions before taking the
+/// final session snapshot used during application shutdown.
+///
+/// Unlike [`session_data_from_state`], this path never skips a snapshot due to
+/// guard contention. Awaiting the guards also lets queued GTK surface work run
+/// and release its retained transaction guard instead of blocking the main
+/// loop.
+///
+/// # Errors
+///
+/// Returns an error when the workspace model lock is poisoned.
+pub async fn session_data_from_state_after_transactions(
+    state: &SocketAppState,
+) -> Result<session::SessionData, TerminalError> {
+    let _worktree_guard = state.worktree_write_guard().await;
+    let _surface_set_guard = state.surface_set_guard().await;
+    session_data_from_guarded_state(state)
+}
+
+fn session_data_from_guarded_state(
+    state: &SocketAppState,
+) -> Result<session::SessionData, TerminalError> {
     let worktree_identity_snapshots = {
-        let model = state.model.lock().ok()?;
+        let model = state
+            .model
+            .lock()
+            .map_err(|_| TerminalError::LockPoisoned)?;
         model.worktree_identity_snapshots()
     };
     let resolved_worktree_identities =
         resolve_worktree_identity_snapshots(worktree_identity_snapshots);
-    let mut model = state.model.lock().ok()?;
+    let mut model = state
+        .model
+        .lock()
+        .map_err(|_| TerminalError::LockPoisoned)?;
     let _ = model.repair_session_invariants(&resolved_worktree_identities);
-    Some(model.to_session_data())
+    Ok(model.to_session_data())
 }
 
 /// Build deferred compensation for an accepted terminal-surface spawn.

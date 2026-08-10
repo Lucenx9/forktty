@@ -783,12 +783,12 @@ fn close_phase_finalizes_exactly_once_and_then_proceeds() {
 #[test]
 fn close_persistence_snapshots_scrollback_before_session_serialization() {
     let order = RefCell::new(Vec::new());
-    run_close_persistence_steps(
+    glib::MainContext::new().block_on(run_close_persistence_steps(
         || order.borrow_mut().push("scrollback"),
         || order.borrow_mut().push("cwd"),
-        || order.borrow_mut().push("session"),
+        async { order.borrow_mut().push("session") },
         || order.borrow_mut().push("pty"),
-    );
+    ));
 
     assert_eq!(order.into_inner(), ["scrollback", "cwd", "session", "pty"]);
 }

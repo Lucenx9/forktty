@@ -88,7 +88,6 @@ pub(super) fn commit_embedded_scrollback_for_generation(
 /// Read a set of embedded panes while their backend incarnations remain
 /// current, then apply every successful tail under one model lock. A stale
 /// target is omitted without preventing still-current panes from being saved.
-#[allow(dead_code)] // Production caller is the Task 3.6 close finalizer.
 pub(super) fn snapshot_current_generation_scrollback_with<T>(
     backend: &GtkTerminalBackend,
     model: &Arc<Mutex<WorkspaceModel>>,

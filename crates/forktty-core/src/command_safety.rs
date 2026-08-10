@@ -18,10 +18,11 @@ use std::os::unix::fs::PermissionsExt;
 /// with less common names (`rbash`, `tcsh`, `xonsh`, etc.). `-c` is detected
 /// anywhere in the leading flag arguments, including clustered short options
 /// (`-lc`, `-xc`); options that take a value (`-o vi`, `--rcfile path`) are
-/// skipped before scanning continues. Scanning stops at the first non-flag
-/// argument or at `--`. A leading `env` (with its flags and `VAR=val`
-/// assignments) is unwrapped so `env bash -c <something>` is caught too.
-/// BusyBox applets are unwrapped so `busybox sh -c <something>` is caught
+/// skipped before scanning continues. Fish's `-C`, `--command`, and
+/// `--init-command` forms are also detected. Scanning stops at the first
+/// non-flag argument or at `--`. A leading `env` (with its flags and
+/// `VAR=val` assignments) is unwrapped so `env bash -c <something>` is caught
+/// too. BusyBox applets are unwrapped so `busybox sh -c <something>` is caught
 /// too. PowerShell (`pwsh`) uses its own command grammar and is handled by
 /// `powershell_invokes_command`.
 pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
@@ -74,7 +75,15 @@ pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
             // string.
             return false;
         }
-        if arg == "-c" || (arg.starts_with('-') && !arg.starts_with("--") && arg.contains('c')) {
+        let short_command_flag = arg.starts_with('-')
+            && !arg.starts_with("--")
+            && (arg.contains('c') || (basename == "fish" && arg.contains('C')));
+        let fish_long_command_flag = basename == "fish"
+            && matches!(
+                arg.split_once('=').map_or(arg, |(option, _)| option),
+                "--command" | "--init-command"
+            );
+        if short_command_flag || fish_long_command_flag {
             return true;
         }
         if shell_option_takes_value(arg) {
@@ -352,6 +361,29 @@ mod tests {
         assert!(is_shell_trampoline("/bin/bash", &["-lc", "echo hi"]));
         assert!(is_shell_trampoline("/bin/bash", &["-x", "-c", "echo hi"]));
         assert!(is_shell_trampoline("/usr/bin/zsh", &["-ic", "echo hi"]));
+    }
+
+    #[test]
+    fn shell_trampoline_detects_fish_command_flags() {
+        assert!(is_shell_trampoline(
+            "/usr/bin/fish",
+            &["--command", "echo hi"]
+        ));
+        assert!(is_shell_trampoline("/usr/bin/fish", &["--command=echo hi"]));
+        assert!(is_shell_trampoline(
+            "/usr/bin/fish",
+            &["--init-command", "echo hi", "-c", "true"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/fish",
+            &["--init-command=echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/fish",
+            &["-C", "echo hi", "-c", "true"]
+        ));
+        assert!(is_shell_trampoline("/usr/bin/fish", &["-NCtrue"]));
+        assert!(!is_shell_trampoline("/bin/bash", &["-C"]));
     }
 
     #[test]
