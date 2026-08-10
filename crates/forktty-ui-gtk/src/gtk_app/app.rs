@@ -57,15 +57,15 @@ pub(super) fn close_drain_completed_transition(
     })
 }
 
-pub(super) fn run_close_persistence_steps(
+pub(super) async fn run_close_persistence_steps(
     snapshot_scrollback: impl FnOnce(),
     sync_live_cwds: impl FnOnce(),
-    save_session: impl FnOnce(),
+    save_session: impl std::future::Future<Output = ()>,
     cleanup_ptys: impl FnOnce(),
 ) {
     snapshot_scrollback();
     sync_live_cwds();
-    save_session();
+    save_session.await;
     cleanup_ptys();
 }
 
@@ -730,15 +730,20 @@ pub(super) fn build_ui(app: &adw::Application) {
                                 .snapshot_live_embedded_scrollback(persistent_scrollback_lines);
                         },
                         || {
-                            let _ = forktty_socket::sync_live_surface_cwds(&state);
+                            if let Err(err) = forktty_socket::sync_live_surface_cwds(&state) {
+                                eprintln!(
+                                    "Failed to sync live surface directories on shutdown: {err}"
+                                );
+                            }
                         },
-                        || save_session_from_state(&state),
+                        save_session_from_state_after_transactions(&state),
                         || {
                             if cleanup_pty_persistence {
                                 cleanup_pty_persistence_sessions(&state, false);
                             }
                         },
-                    );
+                    )
+                    .await;
 
                     let Some(transition) =
                         close_drain_completed_transition(close_phase.get(), ui_alive.get())
@@ -1339,11 +1344,26 @@ pub(super) fn save_session_from_state(state: &SocketAppState) {
     }
 }
 
+pub(super) async fn save_session_from_state_after_transactions(state: &SocketAppState) {
+    let data = match session_data_from_state_after_transactions(state).await {
+        Ok(data) => data,
+        Err(err) => {
+            eprintln!("Failed to snapshot GTK session on shutdown: {err}");
+            return;
+        }
+    };
+    if let Err(err) = session::save_session(&data) {
+        eprintln!("Failed to save GTK session on shutdown: {err}");
+    }
+}
+
 pub(super) fn autosave_session_from_state(
     state: &SocketAppState,
     last_saved: &mut Option<session::SessionData>,
 ) {
-    let _ = forktty_socket::sync_live_surface_cwds(state);
+    if let Err(err) = forktty_socket::sync_live_surface_cwds(state) {
+        eprintln!("Failed to sync live surface directories for session autosave: {err}");
+    }
     let Some(data) = session_data_from_state(state) else {
         // Guard contention or lock poison: skip this tick; do not clobber
         // `last_saved` so a later successful snapshot still persists.

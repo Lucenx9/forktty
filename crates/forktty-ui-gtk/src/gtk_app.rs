@@ -10,8 +10,9 @@ use forktty_core::{
 use forktty_socket::default_socket_path;
 use forktty_socket::{
     bind_socket_listener, bootstrap_default_workspace, deferred_surface_creation_failure_handler,
-    ready_surface_ids, serve_until_shutdown, session_data_from_state, socket_path_from_env,
-    SocketAppState, SurfaceCreationLayoutSnapshot,
+    ready_surface_ids, serve_until_shutdown, session_data_from_state,
+    session_data_from_state_after_transactions, socket_path_from_env, SocketAppState,
+    SurfaceCreationLayoutSnapshot,
 };
 use forktty_terminal::{
     DeferredSpawnFailureHandler, SharedTerminalBackend, SpawnRequest, TerminalBackend,

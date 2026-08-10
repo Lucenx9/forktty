@@ -5,6 +5,11 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Fixed
+- GTK shutdown now waits for active worktree and surface transactions before
+  taking the final session snapshot, and reports live-directory sync failures
+  instead of silently skipping persistence.
+- Command validation now rejects fish command-string trampolines using `-C`,
+  `--command`, and `--init-command` as well as the existing `-c` forms.
 - Failed Settings writes now restore automatically saved toggles and selectors
   to the latest persisted value instead of leaving them out of sync with the
   active config.

@@ -18,10 +18,11 @@ use std::os::unix::fs::PermissionsExt;
 /// with less common names (`rbash`, `tcsh`, `xonsh`, etc.). `-c` is detected
 /// anywhere in the leading flag arguments, including clustered short options
 /// (`-lc`, `-xc`); options that take a value (`-o vi`, `--rcfile path`) are
-/// skipped before scanning continues. Scanning stops at the first non-flag
-/// argument or at `--`. A leading `env` (with its flags and `VAR=val`
-/// assignments) is unwrapped so `env bash -c <something>` is caught too.
-/// BusyBox applets are unwrapped so `busybox sh -c <something>` is caught
+/// skipped before scanning continues. Fish's `-C`, `--command`, and
+/// `--init-command` forms are also detected. Scanning stops at the first
+/// non-flag argument or at `--`. A leading `env` (with its flags and
+/// `VAR=val` assignments) is unwrapped so `env bash -c <something>` is caught
+/// too. BusyBox applets are unwrapped so `busybox sh -c <something>` is caught
 /// too. PowerShell (`pwsh`) uses its own command grammar and is handled by
 /// `powershell_invokes_command`.
 pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
@@ -43,13 +44,15 @@ pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
     if basename == "pwsh" {
         return powershell_invokes_command(args);
     }
+    if basename == "fish" {
+        return fish_invokes_command(args);
+    }
     let is_shell = matches!(
         basename,
         "sh" | "ash"
             | "bash"
             | "csh"
             | "dash"
-            | "fish"
             | "hush"
             | "ksh"
             | "lksh"
@@ -74,12 +77,60 @@ pub fn is_shell_trampoline<S: AsRef<str>>(program: &str, args: &[S]) -> bool {
             // string.
             return false;
         }
-        if arg == "-c" || (arg.starts_with('-') && !arg.starts_with("--") && arg.contains('c')) {
+        if arg.starts_with('-') && !arg.starts_with("--") && arg.contains('c') {
             return true;
         }
         if shell_option_takes_value(arg) {
             index += 2;
             continue;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn fish_invokes_command<S: AsRef<str>>(args: &[S]) -> bool {
+    let mut index = 0;
+    'args: while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--" {
+            return false;
+        }
+        if let Some(long_option) = arg.strip_prefix("--") {
+            let (name, has_attached_value) = long_option
+                .split_once('=')
+                .map_or((long_option, false), |(name, _)| (name, true));
+            match name {
+                "command" | "init-command" => return true,
+                "features" | "debug" | "debug-output" | "debug-stack-frames" | "profile"
+                | "profile-startup" => {
+                    index += if has_attached_value { 1 } else { 2 };
+                    continue;
+                }
+                _ => {
+                    index += 1;
+                    continue;
+                }
+            }
+        }
+
+        let Some(short_options) = arg.strip_prefix('-').filter(|options| !options.is_empty())
+        else {
+            return false;
+        };
+        let mut options = short_options.chars();
+        while let Some(option) = options.next() {
+            match option {
+                'c' | 'C' => return true,
+                // Fish's SHORT_OPTS declares these as required-argument
+                // options. Any remaining characters belong to that value,
+                // rather than forming additional flags in the same cluster.
+                'p' | 'd' | 'f' | 'D' | 'o' => {
+                    index += if options.as_str().is_empty() { 2 } else { 1 };
+                    continue 'args;
+                }
+                _ => {}
+            }
         }
         index += 1;
     }
@@ -352,6 +403,56 @@ mod tests {
         assert!(is_shell_trampoline("/bin/bash", &["-lc", "echo hi"]));
         assert!(is_shell_trampoline("/bin/bash", &["-x", "-c", "echo hi"]));
         assert!(is_shell_trampoline("/usr/bin/zsh", &["-ic", "echo hi"]));
+    }
+
+    #[test]
+    fn shell_trampoline_detects_fish_command_flags() {
+        assert!(is_shell_trampoline(
+            "/usr/bin/fish",
+            &["--command", "echo hi"]
+        ));
+        assert!(is_shell_trampoline("/usr/bin/fish", &["--command=echo hi"]));
+        assert!(is_shell_trampoline(
+            "/usr/bin/fish",
+            &["--init-command", "echo hi", "-c", "true"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/fish",
+            &["--init-command=echo hi"]
+        ));
+        assert!(is_shell_trampoline(
+            "/usr/bin/fish",
+            &["-C", "echo hi", "-c", "true"]
+        ));
+        assert!(is_shell_trampoline("/usr/bin/fish", &["-NCtrue"]));
+        assert!(!is_shell_trampoline("/bin/bash", &["-C"]));
+    }
+
+    #[test]
+    fn shell_trampoline_detects_fish_command_after_option_value() {
+        for option in ["-D", "-d", "-f", "-p", "-o"] {
+            assert!(
+                is_shell_trampoline(
+                    "/usr/bin/fish",
+                    &[option, "option-value", "--command", "echo hi"]
+                ),
+                "failed to scan past {option}'s value"
+            );
+        }
+    }
+
+    #[test]
+    fn shell_trampoline_does_not_scan_fish_option_values_as_flags() {
+        for option_with_value in ["-DC", "-dC", "-fC", "-pC", "-oC"] {
+            assert!(
+                !is_shell_trampoline("/usr/bin/fish", &[option_with_value, "script.fish"]),
+                "treated {option_with_value}'s attached value as a command flag"
+            );
+        }
+        assert!(!is_shell_trampoline(
+            "/usr/bin/fish",
+            &["-d", "--command", "script.fish"]
+        ));
     }
 
     #[test]

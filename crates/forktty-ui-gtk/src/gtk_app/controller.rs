@@ -231,7 +231,6 @@ impl TerminalController {
     /// Capture every live embedded pane's final scrollback tail. Ghostty reads
     /// run without the model mutex; successful current-generation results are
     /// committed together under one brief lock.
-    #[allow(dead_code)] // Used by the two-phase close finalizer introduced in Task 3.6.
     pub(super) fn snapshot_live_embedded_scrollback(&self, lines: u32) {
         let Some(embedder) = self.embedded_ghostty.as_ref() else {
             return;

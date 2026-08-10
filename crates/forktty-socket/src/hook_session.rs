@@ -227,19 +227,20 @@ impl HookSessionTargets {
             return ingress;
         }
 
-        self.evict_oldest_idle_entry();
+        self.evict_idle_entries_for_insert();
         let ingress = Arc::new(Mutex::new(HookSessionIngress::default()));
         self.entries.insert(session_id.to_string(), ingress.clone());
         self.order.push_back(session_id.to_string());
         ingress
     }
 
-    fn evict_oldest_idle_entry(&mut self) {
+    fn evict_idle_entries_for_insert(&mut self) {
         if self.entries.len() < super::HOOK_SESSION_TARGET_CAPACITY {
             return;
         }
-        let candidates = self.order.len();
-        for _ in 0..candidates {
+        let mut candidates = self.order.len();
+        while self.entries.len() >= super::HOOK_SESSION_TARGET_CAPACITY && candidates > 0 {
+            candidates -= 1;
             let Some(oldest) = self.order.pop_front() else {
                 return;
             };
@@ -249,9 +250,9 @@ impl HookSessionTargets {
                 .is_some_and(|ingress| Arc::strong_count(ingress) == 1);
             if idle {
                 self.entries.remove(&oldest);
-                return;
+            } else {
+                self.order.push_back(oldest);
             }
-            self.order.push_back(oldest);
         }
     }
 
@@ -327,7 +328,7 @@ where
     let mut ingress = ingress.lock().map_err(|_| "Lock poisoned".to_string())?;
 
     let previous_target = ingress.target.clone();
-    let learned_target = resolve_hook_session_target(state, params, &mut ingress)?;
+    let learned_target = resolve_hook_session_target(state, params, &ingress)?;
     let target = learned_target.clone();
     if target.is_none() && primary_agent_hook_status_requires_target(method, params)? {
         return Err(DispatchError::NotFound(
@@ -663,7 +664,7 @@ fn hook_ingress_decision(
 fn resolve_hook_session_target(
     state: &SocketAppState,
     params: &mut Value,
-    ingress: &mut HookSessionIngress,
+    ingress: &HookSessionIngress,
 ) -> Result<Option<HookSessionTarget>, DispatchError> {
     let surface_id = optional_surface_id_param(params)?.map(str::to_string);
     let workspace_selectors = workspace_selector_params(params)?;
@@ -1056,6 +1057,28 @@ mod tests {
     use super::*;
     use forktty_core::WorkspaceModel;
     use forktty_terminal::HeadlessTerminalBackend;
+
+    #[test]
+    fn hook_session_targets_converge_to_capacity_after_active_overflow_becomes_idle() {
+        let mut targets = HookSessionTargets::default();
+        let active = (0..=super::super::HOOK_SESSION_TARGET_CAPACITY)
+            .map(|index| targets.ingress_for(&format!("session-{index}")))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            targets.entries.len(),
+            super::super::HOOK_SESSION_TARGET_CAPACITY + 1,
+            "active ingress requests may temporarily exceed the soft capacity"
+        );
+
+        drop(active);
+        let _next = targets.ingress_for("session-next");
+
+        assert_eq!(
+            targets.entries.len(),
+            super::super::HOOK_SESSION_TARGET_CAPACITY,
+            "the next insertion should evict enough idle entries to restore capacity"
+        );
+    }
 
     #[test]
     fn cwd_target_filesystem_resolution_runs_after_model_access_is_released() {

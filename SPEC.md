@@ -347,8 +347,10 @@ GTK shutdown is cooperative and ordered. The first close request keeps the UI
 alive, stops new socket dispatch, and waits without a fixed deadline for requests
 that already entered dispatch and for the socket runtime to drop. Finalization
 then snapshots bounded embedded-terminal scrollback, synchronizes live surface
-working directories, saves the session, performs configured PTY-persistence
-cleanup, marks the UI dead, and issues the final window close.
+working directories, waits for process-local worktree and surface-set
+transactions to finish, saves the session, performs configured PTY-persistence
+cleanup, marks the UI dead, and issues the final window close. A live-directory
+sync failure is logged and does not silently suppress that final snapshot.
 
 Method stability tiers are tracked in [docs/socket-api.md](docs/socket-api.md).
 The core contract is deliberately process-neutral; agent methods are a thin

@@ -3,6 +3,40 @@
 use super::*;
 
 #[tokio::test]
+async fn final_session_snapshot_waits_for_transaction_guards() {
+    let (state, _backend) = test_state();
+    let worktree_reader = state.worktree_read_guard().await;
+    let surface_guard = state.surface_set_guard().await;
+    let snapshot_state = state.clone();
+    let mut snapshot =
+        tokio::spawn(
+            async move { session_data_from_state_after_transactions(&snapshot_state).await },
+        );
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut snapshot)
+            .await
+            .is_err(),
+        "final snapshot must wait for an active worktree transaction"
+    );
+    drop(worktree_reader);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut snapshot)
+            .await
+            .is_err(),
+        "final snapshot must also wait for an active surface transaction"
+    );
+    drop(surface_guard);
+
+    let data = tokio::time::timeout(Duration::from_secs(1), snapshot)
+        .await
+        .expect("final snapshot should resume after transactions finish")
+        .expect("snapshot task should complete")
+        .expect("final snapshot should read the model");
+    assert!(!data.workspaces.is_empty());
+}
+
+#[tokio::test]
 async fn dispatches_surface_send_text() {
     let (state, backend) = test_state();
     let workspaces = dispatch(&state, "workspace.list", json!({})).await.unwrap();
