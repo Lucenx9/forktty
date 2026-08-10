@@ -49,9 +49,11 @@ corrected retry at the same event order is still accepted.
 Claude `SessionStart` enrichment requires complete ForkTTY provenance:
 workspace ID, surface ID, and an absolute socket path. A partial tuple is
 treated atomically as absent, returns the exact continue response, and performs
-no socket I/O. The managed event counts are Codex 10, Claude 25 lifecycle / 28
-full, Antigravity 3, and OpenCode 11. Claude lifecycle excludes only
+no socket I/O. The managed event counts are Codex 11, Claude 25 lifecycle / 28
+full, Antigravity 5, and OpenCode 11. Claude lifecycle excludes only
 `PreToolUse`, `PostToolUse`, and `PostToolUseFailure`; `PostToolBatch` remains.
+Codex `SessionEnd` releases lifecycle state and its learned target. Antigravity
+`Stop` returns its lifecycle to ready after the execution loop terminates.
 
 Codex can execute hooks in its shared app-server without the terminal pane's
 `FORKTTY_*` environment. A local session whose `session_meta` originator is

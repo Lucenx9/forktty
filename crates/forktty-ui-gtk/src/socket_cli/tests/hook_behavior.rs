@@ -1552,6 +1552,24 @@ fn antigravity_pre_tool_response_explicitly_allows_tool_use() {
 }
 
 #[test]
+fn antigravity_stop_marks_the_session_ready() {
+    let actions = build_hook_actions(
+        agent_spec("antigravity").unwrap(),
+        "stop",
+        &json!({ "conversationId": "agy-session-stop" }),
+        "12",
+    );
+    let status = actions
+        .iter()
+        .find(|(method, _)| method == "metadata.set_status")
+        .expect("Stop must publish the ready lifecycle");
+    assert_eq!(status.1["key"], "agent:antigravity");
+    assert_eq!(status.1["value"], "Ready");
+    assert_eq!(status.1["color"], "green");
+    assert_eq!(status.1["hook_session_id"], "agy-session-stop");
+}
+
+#[test]
 fn antigravity_pre_tool_wrapper_fallback_explicitly_allows_tool_use() {
     let spec = agent_spec("antigravity").unwrap();
     let pre_tool = build_antigravity_hook_script(Path::new("/usr/bin/forktty"), spec, "pre-tool");
@@ -1884,17 +1902,18 @@ fn stop_preserves_permission_status_when_session_end_hook_exists() {
 }
 
 #[test]
-fn stop_clears_permission_status_when_no_session_end_hook_exists() {
+fn codex_stop_preserves_permission_status_until_session_end() {
     let actions = build_hook_actions(
         agent_spec("codex").unwrap(),
         "stop",
         &json!({ "session_id": "sess-codex-stop" }),
         "11",
     );
-    assert_eq!(actions.len(), 3);
-    assert_eq!(actions[2].0, "metadata.clear_status");
-    assert_eq!(actions[2].1["key"], "agent:codex:permission");
-    assert_eq!(actions[2].1["hook_session_id"], "sess-codex-stop");
+    assert_eq!(actions.len(), 2);
+    for (method, params) in &actions {
+        assert_ne!(method, "metadata.clear_status");
+        assert_ne!(params["key"], "agent:codex:permission");
+    }
 }
 
 #[test]
@@ -1977,6 +1996,7 @@ fn doctor_supported_events_track_installed_entries_per_provider() {
             "SubagentStart",
             "SubagentStop",
             "Stop",
+            "SessionEnd",
         ]
     );
     let claude_events: Vec<&str> = agent_spec("claude")
@@ -2020,6 +2040,22 @@ fn doctor_supported_events_track_installed_entries_per_provider() {
     );
     assert_eq!(claude_events.len(), 28);
     assert!(!claude_events.contains(&"WorktreeCreate"));
+    let antigravity_events: Vec<&str> = agent_spec("antigravity")
+        .unwrap()
+        .hook_entries
+        .iter()
+        .map(|entry| entry.event_name)
+        .collect();
+    assert_eq!(
+        antigravity_events,
+        vec![
+            "PreInvocation",
+            "PostInvocation",
+            "PreToolUse",
+            "PostToolUse",
+            "Stop",
+        ]
+    );
     assert_eq!(
         agent_spec("claude")
             .unwrap()
@@ -2032,10 +2068,10 @@ fn doctor_supported_events_track_installed_entries_per_provider() {
     for key in ["codex", "antigravity", "opencode"] {
         assert!(agent_spec(key).unwrap().retired_hook_entries.is_empty());
     }
-    // Codex docs do not list Notification or SessionEnd, so the Codex
-    // installer must never target them.
+    // Codex does not expose a Notification hook; attention is observed through
+    // PermissionRequest while SessionEnd releases the learned session target.
     assert!(!codex_events.contains(&"Notification"));
-    assert!(!codex_events.contains(&"SessionEnd"));
+    assert!(codex_events.contains(&"SessionEnd"));
 
     let opencode_events: Vec<&str> = agent_spec("opencode")
         .unwrap()

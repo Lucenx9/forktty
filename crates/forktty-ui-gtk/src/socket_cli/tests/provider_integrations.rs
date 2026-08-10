@@ -23,17 +23,29 @@ fn antigravity_setup_plan_writes_named_group_and_wrapper_scripts() {
         );
         assert!(group["PreInvocation"][0].get("hooks").is_none());
         assert!(group["PreInvocation"][0].get("matcher").is_none());
+        assert_eq!(
+            group["PostInvocation"][0]["command"],
+            antigravity_script_path("after-model").display().to_string()
+        );
+        assert!(group["PostInvocation"][0].get("hooks").is_none());
+        assert_eq!(
+            group["Stop"][0]["command"],
+            antigravity_script_path("stop").display().to_string()
+        );
+        assert!(group["Stop"][0].get("hooks").is_none());
         assert_eq!(group["PreToolUse"][0]["matcher"], json!("*"));
         assert_eq!(group["PostToolUse"][0]["matcher"], json!("*"));
 
-        assert_eq!(plan.scripts.len(), 3);
+        assert_eq!(plan.scripts.len(), 5);
         for (event, provider_event) in [
             ("before-model", "PreInvocation"),
+            ("after-model", "PostInvocation"),
             ("pre-tool", "PreToolUse"),
             ("post-tool", "PostToolUse"),
+            ("stop", "Stop"),
         ] {
             let script_path = antigravity_script_path(event);
-            let command = if provider_event == "PreInvocation" {
+            let command = if is_antigravity_flat_hook_event(provider_event) {
                 group[provider_event][0]["command"].as_str().unwrap()
             } else {
                 group[provider_event][0]["hooks"][0]["command"]
@@ -136,7 +148,13 @@ fn antigravity_setup_hardens_config_and_wrapper_directories() {
             fs::metadata(&scripts_dir).unwrap().permissions().mode() & 0o777,
             0o700
         );
-        for event in ["before-model", "pre-tool", "post-tool"] {
+        for event in [
+            "before-model",
+            "after-model",
+            "pre-tool",
+            "post-tool",
+            "stop",
+        ] {
             let script_path = antigravity_script_path(event);
             assert_eq!(
                 fs::metadata(script_path).unwrap().permissions().mode() & 0o777,
@@ -427,6 +445,7 @@ fn merge_hook_config_installs_current_codex_observability_events() {
         "SubagentStart",
         "SubagentStop",
         "Stop",
+        "SessionEnd",
     ] {
         assert!(codex["hooks"][event].is_array(), "missing Codex {event}");
     }
@@ -434,6 +453,7 @@ fn merge_hook_config_installs_current_codex_observability_events() {
         .as_str()
         .unwrap()
         .contains("hooks codex pre-tool"));
+    assert_eq!(codex["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"], 3);
 }
 
 #[test]
@@ -565,17 +585,22 @@ fn codex_and_claude_hook_timeouts_are_seconds_within_provider_budget() {
         let (_, config) =
             merge_hook_config(&json!({}), spec, Path::new("/usr/bin/forktty")).unwrap();
         let hooks = config["hooks"].as_object().expect("hooks object");
-        for entries in hooks.values() {
+        for (event, entries) in hooks {
             for entry in entries.as_array().expect("entry array") {
                 if !is_forktty_managed_entry(entry) {
                     continue;
                 }
                 for hook in entry["hooks"].as_array().expect("hooks array") {
                     let timeout = hook["timeout"].as_u64().expect("integer timeout");
+                    let expected = if spec.key == "codex" && event == "SessionEnd" {
+                        3
+                    } else {
+                        HOOK_ENTRY_TIMEOUT_SECS
+                    };
                     assert_eq!(
-                        timeout, HOOK_ENTRY_TIMEOUT_SECS,
-                        "{} entry must encode timeout in seconds",
-                        spec.key
+                        timeout, expected,
+                        "{} {event} entry must encode its provider timeout in seconds",
+                        spec.key,
                     );
                     assert!(
                         timeout < 600,
