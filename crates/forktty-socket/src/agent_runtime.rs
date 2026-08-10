@@ -671,7 +671,8 @@ pub(crate) fn agent_session_lifecycle_from_hook(
         .to_ascii_lowercase();
     match hook_event.as_str() {
         "session-end" => AgentSessionLifecycle::Ended,
-        "stop" | "stop-failure" | "teammate-idle" => AgentSessionLifecycle::Idle,
+        "stop" => agent_session_lifecycle_from_status(status_value),
+        "stop-failure" | "teammate-idle" => AgentSessionLifecycle::Idle,
         "permission-request" | "elicitation" | "ask-user-question" => {
             AgentSessionLifecycle::NeedsInput
         }

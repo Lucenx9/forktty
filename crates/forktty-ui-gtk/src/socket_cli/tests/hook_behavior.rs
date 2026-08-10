@@ -1552,11 +1552,29 @@ fn antigravity_pre_tool_response_explicitly_allows_tool_use() {
 }
 
 #[test]
+fn antigravity_stop_response_explicitly_allows_termination() {
+    let response = build_hook_response(
+        agent_spec("antigravity").unwrap(),
+        "stop",
+        &HookEnrichments {
+            token_usage: None,
+            workspace: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(response, json!({ "decision": "allow" }));
+}
+
+#[test]
 fn antigravity_stop_marks_the_session_ready() {
     let actions = build_hook_actions(
         agent_spec("antigravity").unwrap(),
         "stop",
-        &json!({ "conversationId": "agy-session-stop" }),
+        &json!({
+            "conversationId": "agy-session-stop",
+            "terminationReason": "model_stop",
+            "fullyIdle": true
+        }),
         "12",
     );
     let status = actions
@@ -1570,13 +1588,76 @@ fn antigravity_stop_marks_the_session_ready() {
 }
 
 #[test]
-fn antigravity_pre_tool_wrapper_fallback_explicitly_allows_tool_use() {
+fn antigravity_stop_failure_reports_error_instead_of_ready() {
+    for (termination_reason, error) in [
+        ("error", "model backend failed"),
+        ("max_steps_exceeded", ""),
+    ] {
+        let actions = build_hook_actions(
+            agent_spec("antigravity").unwrap(),
+            "stop",
+            &json!({
+                "conversationId": format!("agy-{termination_reason}"),
+                "terminationReason": termination_reason,
+                "error": error,
+                "fullyIdle": true
+            }),
+            "13",
+        );
+        let log = actions
+            .iter()
+            .find(|(method, _)| method == "metadata.log")
+            .expect("failed Stop must be logged");
+        assert_eq!(log.1["level"], "error");
+        let status = actions
+            .iter()
+            .find(|(method, _)| method == "metadata.set_status")
+            .expect("failed Stop must publish an error lifecycle");
+        assert_eq!(status.1["value"], "Error");
+        assert_eq!(status.1["color"], "red");
+        assert!(actions
+            .iter()
+            .any(|(method, _)| method == "notification.create"));
+        assert!(actions.iter().any(|(method, params)| {
+            method == "metadata.clear_status" && params["key"] == "agent:antigravity:permission"
+        }));
+    }
+}
+
+#[test]
+fn antigravity_stop_with_background_tasks_stays_running() {
+    let actions = build_hook_actions(
+        agent_spec("antigravity").unwrap(),
+        "stop",
+        &json!({
+            "conversationId": "agy-background",
+            "terminationReason": "model_stop",
+            "fullyIdle": false
+        }),
+        "14",
+    );
+    let status = actions
+        .iter()
+        .find(|(method, _)| method == "metadata.set_status")
+        .expect("Stop with live background tasks must publish a lifecycle");
+    assert_eq!(status.1["value"], "Background tasks running");
+    assert_eq!(status.1["color"], "blue");
+    assert!(!actions
+        .iter()
+        .any(|(method, _)| method == "notification.create"));
+}
+
+#[test]
+fn antigravity_gating_wrapper_fallbacks_are_explicit() {
     let spec = agent_spec("antigravity").unwrap();
     let pre_tool = build_antigravity_hook_script(Path::new("/usr/bin/forktty"), spec, "pre-tool");
     assert!(pre_tool.contains("printf '%s\\n' '{\"decision\":\"allow\"}'"));
 
     let post_tool = build_antigravity_hook_script(Path::new("/usr/bin/forktty"), spec, "post-tool");
     assert!(post_tool.contains("printf '%s\\n' '{}'"));
+
+    let stop = build_antigravity_hook_script(Path::new("/usr/bin/forktty"), spec, "stop");
+    assert!(stop.contains("printf '%s\\n' '{\"decision\":\"allow\"}'"));
 }
 
 #[test]

@@ -719,9 +719,9 @@ impl<'a> HookActionBuilder<'a> {
         ]
     }
 
-    fn handle_failure(&self) -> Vec<(String, Value)> {
+    fn handle_failure_with_fallback(&self, fallback: &str) -> Vec<(String, Value)> {
         let body = if self.message.is_empty() {
-            format!("{} reported a failure.", self.spec.label)
+            format!("{fallback}.")
         } else {
             self.message.clone()
         };
@@ -736,7 +736,7 @@ impl<'a> HookActionBuilder<'a> {
             self.log(
                 "error",
                 if self.message.is_empty() {
-                    format!("{} reported a failure", self.spec.label)
+                    fallback.to_string()
                 } else {
                     self.message.clone()
                 },
@@ -744,6 +744,10 @@ impl<'a> HookActionBuilder<'a> {
             self.status("Error", "red", self.event),
             self.notification(note),
         ]
+    }
+
+    fn handle_failure(&self) -> Vec<(String, Value)> {
+        self.handle_failure_with_fallback(&format!("{} reported a failure", self.spec.label))
     }
 
     fn handle_basic_info(&self) -> Vec<(String, Value)> {
@@ -992,18 +996,7 @@ impl<'a> HookActionBuilder<'a> {
         )
     }
 
-    fn handle_stop(&self) -> Vec<(String, Value)> {
-        let mut actions = vec![
-            self.log(
-                "info",
-                if self.message.is_empty() {
-                    format!("{} stopped", self.spec.label)
-                } else {
-                    self.message.clone()
-                },
-            ),
-            self.status("Ready", "green", self.event),
-        ];
+    fn finish_stop_actions(&self, mut actions: Vec<(String, Value)>) -> Vec<(String, Value)> {
         if !self
             .spec
             .hook_entries
@@ -1013,6 +1006,57 @@ impl<'a> HookActionBuilder<'a> {
             actions.push(self.clear_status(&self.permission_key));
         }
         actions
+    }
+
+    fn handle_stop(&self) -> Vec<(String, Value)> {
+        if self.spec.key == "antigravity" {
+            let termination_reason = self
+                .payload
+                .get("terminationReason")
+                .or_else(|| self.payload.get("termination_reason"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or_default();
+            let has_error = self
+                .payload
+                .get("error")
+                .and_then(Value::as_str)
+                .is_some_and(|error| !error.trim().is_empty());
+            if has_error || matches!(termination_reason, "error" | "max_steps_exceeded") {
+                let fallback = if termination_reason == "max_steps_exceeded" {
+                    format!("{} reached the maximum number of steps", self.spec.label)
+                } else {
+                    format!("{} stopped with an error", self.spec.label)
+                };
+                let actions = self.handle_failure_with_fallback(&fallback);
+                return self.finish_stop_actions(actions);
+            }
+            if self.payload.get("fullyIdle").and_then(Value::as_bool) == Some(false) {
+                let actions = vec![
+                    self.log(
+                        "info",
+                        format!(
+                            "{} stopped with background tasks still running",
+                            self.spec.label
+                        ),
+                    ),
+                    self.status("Background tasks running", "blue", self.event),
+                ];
+                return self.finish_stop_actions(actions);
+            }
+        }
+
+        self.finish_stop_actions(vec![
+            self.log(
+                "info",
+                if self.message.is_empty() {
+                    format!("{} stopped", self.spec.label)
+                } else {
+                    self.message.clone()
+                },
+            ),
+            self.status("Ready", "green", self.event),
+        ])
     }
 
     fn handle_teammate_idle(&self) -> Vec<(String, Value)> {
@@ -1275,10 +1319,10 @@ pub(in crate::socket_cli) fn build_hook_response(
     }
     // Antigravity unmarshals hook stdout with strict protojson and rejects
     // unknown fields ("continue" included), logging the hook as failed. Tool
-    // hooks are gating hooks and need an explicit allow decision; non-gating
-    // events can use an empty object as a no-op response.
+    // PreToolUse and Stop are gating hooks and need an explicit decision;
+    // non-gating events can use an empty object as a no-op response.
     if spec.key == "antigravity" {
-        if event == "pre-tool" {
+        if matches!(event, "pre-tool" | "stop") {
             return Ok(json!({ "decision": "allow" }));
         }
         return Ok(json!({}));

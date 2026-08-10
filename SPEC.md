@@ -453,7 +453,10 @@ OpenCode plugin events. The Claude lifecycle profile excludes only
 installed for prompt-result correlation. Codex `SessionEnd` uses the provider's
 three-second maximum and releases lifecycle state and its learned surface claim.
 Antigravity `PreInvocation`, `PostInvocation`, and `Stop` use flat lifecycle
-handlers; `Stop` returns the session to ready. Claude `SessionStart` workspace
+handlers. `PreToolUse` and `Stop` return an explicit allow decision. A clean,
+fully idle `Stop` returns the session to ready; `error` and
+`max_steps_exceeded` terminations publish an error, while a stop with active
+background work retains a running lifecycle. Claude `SessionStart` workspace
 enrichment is atomic: it requires nonblank workspace and surface IDs plus an
 absolute socket path from the same ForkTTY child environment. If any provenance
 component is absent or invalid, the hook returns the exact continue response

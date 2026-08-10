@@ -85,7 +85,9 @@ handler shape, while tool hooks use the nested matcher plus `hooks` array shape.
 Unknown event names are dropped silently, and hook stdout is unmarshaled
 strictly. ForkTTY therefore avoids the `continue` JSON used by other
 providers; it returns an explicit `{"decision":"allow"}` for the gating
-`PreToolUse` hook and `{}` for non-gating Antigravity hooks.
+`PreToolUse` and `Stop` hooks, and `{}` for advisory Antigravity hooks. A clean,
+fully idle `Stop` returns the lifecycle to ready; provider errors and exhausted
+step budgets publish an error, while live background tasks remain running.
 Antigravity runs the generated wrapper scripts from its config directory, so
 ForkTTY derives Antigravity `resume_cwd` from the hook payload's
 `workspacePaths` instead of the wrapper process cwd.

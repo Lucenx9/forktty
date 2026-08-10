@@ -288,7 +288,8 @@ pub(in crate::socket_cli) const CLAUDE_RETIRED_HOOK_ENTRIES: &[HookEntrySpec] = 
 pub(in crate::socket_cli) const CLAUDE_PER_TOOL_HOOK_ENTRIES: &[&str] =
     &["PreToolUse", "PostToolUse", "PostToolUseFailure"];
 
-// Antigravity lifecycle hooks use flat handler objects, while tool hooks use
+// The official Antigravity hooks contract and agy 1.0.16 expose these five
+// events. Lifecycle hooks use flat handler objects, while tool hooks use
 // matcher wrappers. The timeout field is unverified and never emitted.
 pub(in crate::socket_cli) const ANTIGRAVITY_HOOK_ENTRIES: &[HookEntrySpec] = &[
     HookEntrySpec {
