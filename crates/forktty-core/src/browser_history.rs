@@ -4,6 +4,7 @@
 //! sqlite runs in WAL mode so a concurrent reader and writer do not block.
 
 use std::fs;
+use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -550,11 +551,18 @@ fn read_optional_file_bounded(
     limit: u64,
     label: &str,
 ) -> Result<Option<Vec<u8>>, HistoryError> {
-    let metadata = match std::fs::metadata(path) {
-        Ok(metadata) => metadata,
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NONBLOCK);
+    let file = match options.open(path) {
+        Ok(file) => file,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(HistoryError::Io(err.to_string())),
     };
+    let metadata = file
+        .metadata()
+        .map_err(|err| HistoryError::Io(err.to_string()))?;
     if !metadata.is_file() {
         return Err(HistoryError::Io(format!(
             "{label} path is not a regular file"
@@ -566,14 +574,31 @@ fn read_optional_file_bounded(
             metadata.len()
         )));
     }
-    std::fs::read(path)
-        .map(Some)
-        .map_err(|err| HistoryError::Io(err.to_string()))
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|err| HistoryError::Io(err.to_string()))?;
+    if bytes.len() as u64 > limit {
+        return Err(HistoryError::Io(format!(
+            "{label} file is {} bytes, exceeds limit of {limit} bytes",
+            bytes.len()
+        )));
+    }
+    Ok(Some(bytes))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bounded_bookmark_read_rejects_proc_file_larger_than_reported_metadata() {
+        let err = read_optional_file_bounded(Path::new("/proc/self/cmdline"), 1, "bookmarks")
+            .unwrap_err();
+
+        assert!(err.to_string().contains("exceeds limit of 1 bytes"));
+    }
 
     fn store() -> HistoryStore {
         // In-memory db keeps tests headless and fast.

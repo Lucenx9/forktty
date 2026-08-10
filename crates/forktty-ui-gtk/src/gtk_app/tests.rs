@@ -436,7 +436,7 @@ fn appimage_update_replaces_only_after_checksum_matches() {
     assert_eq!(std::fs::read(&target).unwrap(), b"old image");
 
     std::fs::write(&temp, b"new image").unwrap();
-    let digest = sha256_hex(b"new image");
+    let digest = "41c04b3f2d0c69a66494faa96f05b622709379f3a5251078e0cd39fa9c44d67e";
     let sums = format!("{digest}  forktty-new-x86_64.AppImage\n");
     replace_appimage_with_verified_temp(&target, &temp, "forktty-new-x86_64.AppImage", &sums)
         .unwrap();

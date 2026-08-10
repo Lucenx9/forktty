@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -753,23 +753,69 @@ fn checksum_for_asset(sha256sums: &str, asset_name: &str) -> Option<String> {
 }
 
 fn sha256_file_hex(path: &Path) -> Result<String, std::io::Error> {
-    let bytes = fs::read(path)?;
-    Ok(sha256_hex(&bytes))
+    sha256_reader_hex(fs::File::open(path)?)
 }
 
-pub(super) fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
+fn sha256_reader_hex(mut reader: impl Read) -> io::Result<String> {
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => hasher.update(&buffer[..count]),
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err),
+        }
+    }
+    let digest = hasher.finalize();
     let mut out = String::with_capacity(digest.len() * 2);
     for byte in digest {
         use std::fmt::Write as _;
         let _ = write!(&mut out, "{byte:02x}");
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sha256_reader_retries_interrupted_reads_and_uses_bounded_chunks() {
+        struct BoundedRequestReader {
+            remaining: usize,
+            interrupt_next: bool,
+        }
+
+        impl io::Read for BoundedRequestReader {
+            fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+                if buffer.len() > 64 * 1024 {
+                    return Err(io::Error::other("read buffer exceeded 64 KiB"));
+                }
+                if self.interrupt_next {
+                    self.interrupt_next = false;
+                    return Err(io::Error::from(io::ErrorKind::Interrupted));
+                }
+                if self.remaining == 0 {
+                    return Ok(0);
+                }
+                let count = self.remaining.min(buffer.len());
+                buffer[..count].fill(b'a');
+                self.remaining -= count;
+                Ok(count)
+            }
+        }
+
+        let reader = BoundedRequestReader {
+            remaining: 1_000_000,
+            interrupt_next: true,
+        };
+
+        assert_eq!(
+            sha256_reader_hex(reader).unwrap(),
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
+        );
+    }
 
     #[cfg(feature = "gtk-ghostty")]
     #[test]
