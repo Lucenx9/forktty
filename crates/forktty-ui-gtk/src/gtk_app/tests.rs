@@ -996,7 +996,7 @@ fn applied_sidebar_config_syncs_layout_visibility_and_pin_control() {
         assert!(overlay.is_pin_sidebar());
         assert!(!overlay.shows_sidebar());
         assert!(sidebar_pin.is_active());
-        assert_eq!(sidebar_pin.tooltip_text().as_deref(), Some("Unpin Sidebar"));
+        assert_eq!(sidebar_pin.tooltip_text().as_deref(), Some("Unpin sidebar"));
 
         apply_sidebar_config(&shells, &config::AppearanceConfig::default());
 
@@ -1016,7 +1016,7 @@ fn sidebar_pin_button_reflects_the_selected_presentation() {
     assert!(app_source.contains("sidebar_header.append(&sidebar_pin);"));
     assert!(app_source.contains("next.appearance.sidebar_pinned = pinned;"));
     assert!(css.contains(".sidebar-header-action:checked {"));
-    assert!(sidebar_source.contains("\"Keep Sidebar Beside Terminal\""));
+    assert!(sidebar_source.contains("\"Keep sidebar beside terminal\""));
 
     let _ = crate::test_env::with_gtk_test(|| {
         let button = build_sidebar_pin_button(false);
@@ -1027,12 +1027,12 @@ fn sidebar_pin_button_reflects_the_selected_presentation() {
         assert_eq!(button.icon_name().as_deref(), Some("view-pin-symbolic"));
         assert_eq!(
             button.tooltip_text().as_deref(),
-            Some("Pin Sidebar Beside Terminal")
+            Some("Pin sidebar beside terminal")
         );
 
         sync_sidebar_pin_button(&button, true);
         assert!(button.is_active());
-        assert_eq!(button.tooltip_text().as_deref(), Some("Unpin Sidebar"));
+        assert_eq!(button.tooltip_text().as_deref(), Some("Unpin sidebar"));
     });
 }
 
