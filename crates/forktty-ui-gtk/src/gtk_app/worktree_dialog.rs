@@ -51,17 +51,22 @@ fn active_worktree_discovery_base(state: &SocketAppState) -> Option<(String, Pat
     Some((name, cwd))
 }
 
-/// Stable workspace checkout path for Remove/Merge and their chooser.
+/// Stable base-checkout path for Remove/Merge and their chooser.
 ///
-/// Uses the modeled `working_dir`, never the focused surface's ephemeral shell
-/// CWD. Shell CWD can leave the repo entirely (`cd /tmp`), and routing a
+/// Starts from the modeled `working_dir`, never the focused surface's ephemeral
+/// shell CWD, then resolves linked worktrees to the repository's common base
+/// checkout. Shell CWD can leave the repo entirely (`cd /tmp`), and routing a
 /// destructive worktree op through that path hits the wrong repository.
 fn active_workspace_repo_cwd(state: &SocketAppState) -> Option<PathBuf> {
-    state.model.lock().ok().and_then(|model| {
+    let workspace_cwd = state.model.lock().ok().and_then(|model| {
         model
             .active_workspace()
             .map(|workspace| workspace.working_dir.clone())
-    })
+    })?;
+    workspace_cwd
+        .to_str()
+        .and_then(|cwd| worktree::repository_root(cwd).ok())
+        .or(Some(workspace_cwd))
 }
 
 pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState) {
@@ -104,10 +109,9 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
                 .map(|path| compact_path(&path))
                 .unwrap_or_else(|_| "Current directory".to_string())
         });
-    let repo_context_text = base_workspace
+    let repo_context_text = repo_cwd
         .as_ref()
-        .zip(repo_cwd.as_ref())
-        .map(|((name, _), cwd)| format!("{} · {}", name, compact_path(cwd)))
+        .map(|cwd| compact_path(cwd))
         .unwrap_or_else(|| discovery_context_text.clone());
     let context = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     context.add_css_class("worktree-context");

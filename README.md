@@ -45,7 +45,7 @@ the linked guides carry the detailed contracts.
 - **Attention without orchestration policy**: OSC and hook notifications,
   unread state, status/progress metadata, and the Agent HUD make terminal work
   visible while the process inside each pane owns its own coordination.
-- **First-class worktree workflows**: create, attach, remove, and merge isolated worktree workspaces through native `git2` operations and optional `.forktty/setup` / `.forktty/teardown` hooks.
+- **First-class worktree workflows**: create, attach, remove, and merge isolated worktree workspaces from the primary or a linked checkout through native `git2` operations and optional `.forktty/setup` / `.forktty/teardown` hooks.
 - **Native Linux terminal stack**: GTK4/libadwaita shell with embedded
   Ghostty-backed terminals, a compact overlay or pinned workspace sidebar,
   split panes, session restore, notifications, command palette, settings, and

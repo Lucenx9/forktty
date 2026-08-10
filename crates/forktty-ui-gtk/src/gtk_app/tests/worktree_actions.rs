@@ -641,6 +641,37 @@ fn remove_and_merge_use_modeled_workspace_checkout_not_live_shell_cwd() {
     );
 }
 
+#[test]
+fn remove_and_merge_resolve_base_checkout_from_linked_workspace() {
+    let repo_dir = make_temp_repo();
+    let info = worktree::create(
+        repo_dir.path().to_str().unwrap(),
+        "linked-context",
+        "nested",
+    )
+    .unwrap();
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+    let state = SocketAppState::new(
+        model.clone(),
+        terminal,
+        "/bin/sh",
+        repo_dir.path().join("forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    model.lock().unwrap().create_worktree_workspace(
+        &info.branch,
+        PathBuf::from(&info.path),
+        &info.branch,
+        &info.worktree_name,
+    );
+
+    assert_eq!(
+        active_workspace_repo_cwd_string(&state).unwrap(),
+        repo_dir.path().to_string_lossy()
+    );
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn worktree_dialog_prefers_live_child_pid_cwd_over_recorded_surface_cwd() {

@@ -10,6 +10,12 @@ All notable changes to ForkTTY are documented here.
   across restarts without changing Ctrl+B/F9 visibility behavior.
 
 ### Fixed
+- Worktree Create and Attach now work from an already linked checkout while
+  keeping new worktrees in the primary repository layout and branching from
+  the active checkout's HEAD. Merge and Remove dialogs also name the actual
+  primary checkout they will operate on.
+- The notification panel now reserves a scrollbar gutter so its scrollbar no
+  longer covers row-level Dismiss controls.
 - Codex hook setup now installs the provider's `SessionEnd` event with a bounded
   round-trip deadline so closing a session releases its lifecycle status and
   learned surface claim. Antigravity setup now also installs `PostInvocation`

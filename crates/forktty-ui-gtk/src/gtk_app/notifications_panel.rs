@@ -659,6 +659,7 @@ impl NotificationPanelView {
         list.update_property(&[gtk::accessible::Property::Label("Notifications list")]);
         let scroll = gtk::ScrolledWindow::builder()
             .hscrollbar_policy(gtk::PolicyType::Never)
+            .overlay_scrolling(false)
             .vexpand(true)
             .child(&list)
             .build();

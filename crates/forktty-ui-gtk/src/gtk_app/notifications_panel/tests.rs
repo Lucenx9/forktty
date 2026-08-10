@@ -1280,3 +1280,10 @@ fn terminal_notification_icon_data_decodes_png_pixbuf() {
     assert_eq!(pixbuf.width(), 1);
     assert_eq!(pixbuf.height(), 1);
 }
+
+#[test]
+fn notification_panel_scrollbar_does_not_overlay_dismiss_buttons() {
+    let source = include_str!("../notifications_panel.rs");
+
+    assert!(source.contains(".overlay_scrolling(false)"));
+}
