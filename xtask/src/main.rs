@@ -34,6 +34,7 @@ const CODEX_ENTRIES: &[(&str, &str, u64)] = &[
     ("SubagentStart", "subagent-start", 30),
     ("SubagentStop", "subagent-stop", 30),
     ("Stop", "stop", 30),
+    ("SessionEnd", "session-end", 3),
 ];
 
 const CLAUDE_ENTRIES: &[(&str, &str, u64)] = &[

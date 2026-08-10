@@ -446,11 +446,20 @@ the same event order remains applicable. Workspace-scoped hook logs,
 notifications, and non-primary metadata retain their existing surface-optional
 behavior.
 
-The managed event sets contain 10 Codex events, 28 Claude events (25 in the
-default lifecycle profile and 28 with `--full`), 3 Antigravity events, and 11
+The managed event sets contain 11 Codex events, 28 Claude events (25 in the
+default lifecycle profile and 28 with `--full`), 5 Antigravity events, and 11
 OpenCode plugin events. The Claude lifecycle profile excludes only
 `PreToolUse`, `PostToolUse`, and `PostToolUseFailure`; `PostToolBatch` remains
-installed for prompt-result correlation. Claude `SessionStart` workspace
+installed for prompt-result correlation. Codex `SessionEnd` uses the provider's
+three-second maximum and releases lifecycle state and its learned surface claim.
+Antigravity `PreInvocation`, `PostInvocation`, and `Stop` use flat lifecycle
+handlers. `PreToolUse` and `Stop` return an explicit allow decision. Only a
+clean `Stop` with an explicit boolean `fullyIdle: true` returns the session to
+ready; a missing or invalid idle result remains non-reclaimable. `error` and
+`max_steps_exceeded` terminations publish an error, while a stop with active
+background work retains a running lifecycle. If both conditions apply, the
+error remains visible in red without making the active session reclaimable.
+Claude `SessionStart` workspace
 enrichment is atomic: it requires nonblank workspace and surface IDs plus an
 absolute socket path from the same ForkTTY child environment. If any provenance
 component is absent or invalid, the hook returns the exact continue response

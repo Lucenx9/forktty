@@ -29,6 +29,25 @@ pub(in crate::socket_cli) use token_usage::{
     format_token_usage_block, read_token_usage_from_transcript, resolve_token_ceiling, TokenUsage,
 };
 
+pub(in crate::socket_cli) fn hook_action_budget(
+    spec: &AgentSpec,
+    event: &str,
+) -> Option<std::time::Duration> {
+    if spec.key == "codex" && event == "session-end" {
+        let provider_timeout = spec
+            .hook_entries
+            .iter()
+            .find(|entry| entry.hook_event_name == event)
+            .map(|entry| std::time::Duration::from_secs(entry.timeout))
+            .unwrap_or(HOOK_STATUS_TIMEOUT);
+        // Leave one second for process startup, input parsing, response output,
+        // and scheduling around the provider's three-second hard deadline.
+        let action_budget = provider_timeout.saturating_sub(std::time::Duration::from_secs(1));
+        return Some(action_budget.min(HOOK_STATUS_TIMEOUT));
+    }
+    None
+}
+
 pub(in crate::socket_cli) fn handle_hook_event(
     context: &CliContext,
     args: Vec<String>,
@@ -120,12 +139,25 @@ pub(in crate::socket_cli) fn handle_hook_event(
         ),
     );
     if send_actions {
-        for (method, params) in actions {
+        let action_deadline =
+            hook_action_budget(spec, &event).map(|budget| std::time::Instant::now() + budget);
+        let action_count = actions.len();
+        for (index, (method, params)) in actions.into_iter().enumerate() {
+            let request_timeout = action_deadline
+                .map(|deadline| {
+                    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                    let remaining_actions = u32::try_from(action_count - index).unwrap_or(u32::MAX);
+                    remaining / remaining_actions
+                })
+                .unwrap_or(HOOK_STATUS_TIMEOUT);
+            if request_timeout.is_zero() {
+                break;
+            }
             if let Err(err) = send_socket_request_with_timeout(
                 &context.socket_path,
                 &method,
                 params,
-                HOOK_STATUS_TIMEOUT,
+                request_timeout,
             ) {
                 // Keep going on failure: a transient error on one action (e.g.
                 // an informational log) must not skip later cleanup actions
@@ -719,9 +751,13 @@ impl<'a> HookActionBuilder<'a> {
         ]
     }
 
-    fn handle_failure(&self) -> Vec<(String, Value)> {
+    fn handle_failure_with_status(
+        &self,
+        fallback: &str,
+        status_value: &str,
+    ) -> Vec<(String, Value)> {
         let body = if self.message.is_empty() {
-            format!("{} reported a failure.", self.spec.label)
+            format!("{fallback}.")
         } else {
             self.message.clone()
         };
@@ -736,14 +772,18 @@ impl<'a> HookActionBuilder<'a> {
             self.log(
                 "error",
                 if self.message.is_empty() {
-                    format!("{} reported a failure", self.spec.label)
+                    fallback.to_string()
                 } else {
                     self.message.clone()
                 },
             ),
-            self.status("Error", "red", self.event),
+            self.status(status_value, "red", self.event),
             self.notification(note),
         ]
+    }
+
+    fn handle_failure(&self) -> Vec<(String, Value)> {
+        self.handle_failure_with_status(&format!("{} reported a failure", self.spec.label), "Error")
     }
 
     fn handle_basic_info(&self) -> Vec<(String, Value)> {
@@ -992,18 +1032,7 @@ impl<'a> HookActionBuilder<'a> {
         )
     }
 
-    fn handle_stop(&self) -> Vec<(String, Value)> {
-        let mut actions = vec![
-            self.log(
-                "info",
-                if self.message.is_empty() {
-                    format!("{} stopped", self.spec.label)
-                } else {
-                    self.message.clone()
-                },
-            ),
-            self.status("Ready", "green", self.event),
-        ];
+    fn finish_stop_actions(&self, mut actions: Vec<(String, Value)>) -> Vec<(String, Value)> {
         if !self
             .spec
             .hook_entries
@@ -1013,6 +1042,68 @@ impl<'a> HookActionBuilder<'a> {
             actions.push(self.clear_status(&self.permission_key));
         }
         actions
+    }
+
+    fn handle_stop(&self) -> Vec<(String, Value)> {
+        if self.spec.key == "antigravity" {
+            let termination_reason = self
+                .payload
+                .get("terminationReason")
+                .or_else(|| self.payload.get("termination_reason"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or_default();
+            let has_error = self
+                .payload
+                .get("error")
+                .and_then(Value::as_str)
+                .is_some_and(|error| !error.trim().is_empty());
+            let fully_idle = self.payload.get("fullyIdle").and_then(Value::as_bool);
+            if has_error || matches!(termination_reason, "error" | "max_steps_exceeded") {
+                let fallback = if termination_reason == "max_steps_exceeded" {
+                    format!("{} reached the maximum number of steps", self.spec.label)
+                } else {
+                    format!("{} stopped with an error", self.spec.label)
+                };
+                let status_value = if fully_idle != Some(true) {
+                    "Error; background tasks running"
+                } else {
+                    "Error"
+                };
+                let actions = self.handle_failure_with_status(&fallback, status_value);
+                return self.finish_stop_actions(actions);
+            }
+            if fully_idle != Some(true) {
+                let message = if fully_idle == Some(false) {
+                    format!(
+                        "{} stopped with background tasks still running",
+                        self.spec.label
+                    )
+                } else {
+                    format!(
+                        "{} stopped without confirming that background tasks are idle",
+                        self.spec.label
+                    )
+                };
+                let actions = vec![
+                    self.log("info", message),
+                    self.status("Background tasks running", "blue", self.event),
+                ];
+                return self.finish_stop_actions(actions);
+            }
+        }
+
+        self.finish_stop_actions(vec![
+            self.log(
+                "info",
+                if self.message.is_empty() {
+                    format!("{} stopped", self.spec.label)
+                } else {
+                    self.message.clone()
+                },
+            ),
+            self.status("Ready", "green", self.event),
+        ])
     }
 
     fn handle_teammate_idle(&self) -> Vec<(String, Value)> {
@@ -1031,9 +1122,9 @@ impl<'a> HookActionBuilder<'a> {
 
     fn handle_session_end(&self) -> Vec<(String, Value)> {
         vec![
-            self.log("info", format!("{} session ended", self.spec.label)),
             self.clear_status(&self.key),
             self.clear_status(&self.permission_key),
+            self.log("info", format!("{} session ended", self.spec.label)),
         ]
     }
 
@@ -1275,10 +1366,10 @@ pub(in crate::socket_cli) fn build_hook_response(
     }
     // Antigravity unmarshals hook stdout with strict protojson and rejects
     // unknown fields ("continue" included), logging the hook as failed. Tool
-    // hooks are gating hooks and need an explicit allow decision; non-gating
-    // events can use an empty object as a no-op response.
+    // PreToolUse and Stop are gating hooks and need an explicit decision;
+    // non-gating events can use an empty object as a no-op response.
     if spec.key == "antigravity" {
-        if event == "pre-tool" {
+        if matches!(event, "pre-tool" | "stop") {
             return Ok(json!({ "decision": "allow" }));
         }
         return Ok(json!({}));

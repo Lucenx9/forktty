@@ -55,10 +55,12 @@ pub(in crate::socket_cli) struct AgentSpec {
 
 // Codex and Claude Code both treat the `timeout` field as seconds (Codex default 600s;
 // Claude default 600s, 30s for UserPromptSubmit). The previous Codex value of 5000
-// was a millisecond assumption that meant ~83 minutes; cap at 30s for both providers
+// was a millisecond assumption that meant ~83 minutes; cap routine entries at 30s
 // so a forktty hook never holds the agent loop for longer than a generous local
-// round-trip while still leaving headroom over the socket request budget.
+// round-trip while still leaving headroom over the socket request budget. Codex
+// SessionEnd uses that provider event's three-second maximum.
 pub(in crate::socket_cli) const HOOK_ENTRY_TIMEOUT_SECS: u64 = 30;
+pub(in crate::socket_cli) const CODEX_SESSION_END_TIMEOUT_SECS: u64 = 3;
 
 pub(in crate::socket_cli) const OPENCODE_HOOK_TIMEOUT_MS: u64 = HOOK_ENTRY_TIMEOUT_SECS * 1000;
 pub(in crate::socket_cli) const OPENCODE_MAX_INPUT_BYTES: usize = MAX_STDIN_TEXT_BYTES;
@@ -119,6 +121,11 @@ pub(in crate::socket_cli) const CODEX_HOOK_ENTRIES: &[HookEntrySpec] = &[
         event_name: "Stop",
         hook_event_name: "stop",
         timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "SessionEnd",
+        hook_event_name: "session-end",
+        timeout: CODEX_SESSION_END_TIMEOUT_SECS,
     },
 ];
 
@@ -281,15 +288,18 @@ pub(in crate::socket_cli) const CLAUDE_RETIRED_HOOK_ENTRIES: &[HookEntrySpec] = 
 pub(in crate::socket_cli) const CLAUDE_PER_TOOL_HOOK_ENTRIES: &[&str] =
     &["PreToolUse", "PostToolUse", "PostToolUseFailure"];
 
-// Antigravity CLI v1.0.3 parses exactly these hook events from hooks.json;
-// unknown event names are dropped silently (verified against the binary's
-// "N total handlers" load log). PreInvocation fires before each model call.
-// Lifecycle hooks use flat handler objects; tool hooks use matcher wrappers.
-// The timeout field is unverified for Antigravity and never emitted.
+// The official Antigravity hooks contract and agy 1.0.16 expose these five
+// events. Lifecycle hooks use flat handler objects, while tool hooks use
+// matcher wrappers. The timeout field is unverified and never emitted.
 pub(in crate::socket_cli) const ANTIGRAVITY_HOOK_ENTRIES: &[HookEntrySpec] = &[
     HookEntrySpec {
         event_name: "PreInvocation",
         hook_event_name: "before-model",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "PostInvocation",
+        hook_event_name: "after-model",
         timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
     HookEntrySpec {
@@ -300,6 +310,11 @@ pub(in crate::socket_cli) const ANTIGRAVITY_HOOK_ENTRIES: &[HookEntrySpec] = &[
     HookEntrySpec {
         event_name: "PostToolUse",
         hook_event_name: "post-tool",
+        timeout: HOOK_ENTRY_TIMEOUT_SECS,
+    },
+    HookEntrySpec {
+        event_name: "Stop",
+        hook_event_name: "stop",
         timeout: HOOK_ENTRY_TIMEOUT_SECS,
     },
 ];

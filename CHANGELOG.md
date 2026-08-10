@@ -5,6 +5,13 @@ All notable changes to ForkTTY are documented here.
 ## [Unreleased]
 
 ### Fixed
+- Codex hook setup now installs the provider's `SessionEnd` event with a bounded
+  round-trip deadline so closing a session releases its lifecycle status and
+  learned surface claim. Antigravity setup now also installs `PostInvocation`
+  and `Stop`, allowing model completion
+  to be observed. `Stop` now explicitly allows termination and distinguishes a
+  clean idle result from provider errors, exhausted step budgets, and active
+  background tasks; missing or invalid idle state remains non-reclaimable.
 - GTK shutdown now waits for active worktree and surface transactions before
   taking the final session snapshot, and reports live-directory sync failures
   instead of silently skipping persistence.

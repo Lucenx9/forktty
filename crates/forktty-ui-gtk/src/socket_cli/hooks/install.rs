@@ -307,9 +307,9 @@ pub(in crate::socket_cli) fn legacy_gemini_config_path() -> PathBuf {
     home_dir().join(".gemini/settings.json")
 }
 
-// Antigravity CLI loads user-level hooks from ~/.gemini/config/hooks.json
-// (verified against agy 1.0.3; the workspace-level .agents/hooks.json is
-// intentionally not managed so hooks work from any project).
+// The official Antigravity hooks contract and agy 1.0.16 load user-level hooks
+// from ~/.gemini/config/hooks.json. The workspace-level .agents/hooks.json is
+// intentionally not managed so hooks work from any project.
 pub(in crate::socket_cli) fn antigravity_root_dir() -> PathBuf {
     home_dir().join(".gemini")
 }
@@ -587,16 +587,16 @@ pub(in crate::socket_cli) const ANTIGRAVITY_SCRIPT_TAG: &str = "forktty-managed-
 
 /// Antigravity executes `command` as one executable path (no argv splitting,
 /// no shell), so each event points at a generated wrapper script that runs
-/// the launcher with the usual guard line. PreToolUse is a gating hook, so its
-/// disabled/failed fallback explicitly allows tool use; non-gating events
-/// fall back to `{}` because Antigravity rejects unknown response fields like
-/// `continue` under strict protojson unmarshaling.
+/// the launcher with the usual guard line. PreToolUse and Stop are gating
+/// hooks, so their disabled/failed fallback explicitly allows the requested
+/// transition; non-gating events fall back to `{}` because Antigravity rejects
+/// unknown response fields like `continue` under strict protojson unmarshaling.
 pub(in crate::socket_cli) fn build_antigravity_hook_script(
     launcher: &Path,
     spec: &AgentSpec,
     event: &str,
 ) -> String {
-    let fallback = if event == "pre-tool" {
+    let fallback = if matches!(event, "pre-tool" | "stop") {
         r#"{"decision":"allow"}"#
     } else {
         "{}"
@@ -653,7 +653,7 @@ pub(in crate::socket_cli) fn merge_antigravity_hook_config(
 }
 
 pub(in crate::socket_cli) fn is_antigravity_flat_hook_event(event_name: &str) -> bool {
-    event_name == "PreInvocation"
+    matches!(event_name, "PreInvocation" | "PostInvocation" | "Stop")
 }
 
 pub(in crate::socket_cli) fn is_legacy_forktty_hook_command(

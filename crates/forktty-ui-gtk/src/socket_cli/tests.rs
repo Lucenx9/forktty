@@ -114,6 +114,52 @@ fn with_socket_server(
     handle.join().unwrap()
 }
 
+#[test]
+fn socket_request_timeout_bounds_the_complete_round_trip() {
+    crate::test_env::with_isolated_user_dirs(|| {
+        let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").expect("isolated runtime directory");
+        let dir = tempfile::Builder::new()
+            .prefix("forktty-socket-deadline-")
+            .tempdir_in(runtime_dir)
+            .unwrap();
+        let socket_path = dir.path().join("forktty.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut line = String::new();
+            BufReader::new(&stream).read_line(&mut line).unwrap();
+            let request: Value = serde_json::from_str(line.trim()).unwrap();
+            let response = format!(
+                "{}\n",
+                json!({ "id": request["id"], "ok": true, "result": null })
+            );
+            let chunk_size = response.len().div_ceil(3);
+            for chunk in response.as_bytes().chunks(chunk_size) {
+                thread::sleep(Duration::from_millis(75));
+                if stream.write_all(chunk).is_err() {
+                    break;
+                }
+            }
+        });
+
+        let started = std::time::Instant::now();
+        let result = send_socket_request_with_timeout(
+            &socket_path,
+            "doctor",
+            json!({}),
+            Duration::from_millis(100),
+        );
+        let elapsed = started.elapsed();
+
+        assert!(result.is_err(), "a drip-fed response must hit one deadline");
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "round trip exceeded its deadline by too much: {elapsed:?}"
+        );
+        server.join().unwrap();
+    });
+}
+
 fn test_context() -> CliContext {
     CliContext {
         json: true,

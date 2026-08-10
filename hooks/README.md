@@ -79,13 +79,18 @@ so the installer writes per-event wrapper scripts under
 `"forktty"` group in `~/.gemini/config/hooks.json` at them. Other top-level
 groups in that file are left untouched, and `hooks remove antigravity`
 deletes only the `"forktty"` group and the generated scripts directory.
-Antigravity v1.0.3 supports `PreInvocation`, `PreToolUse`, and `PostToolUse`;
-`PreInvocation` uses Antigravity's flat lifecycle-hook handler shape, while
-tool hooks use the nested matcher plus `hooks` array shape.
-unknown event names are dropped silently, and hook stdout is unmarshaled
+Antigravity supports `PreInvocation`, `PostInvocation`, `PreToolUse`,
+`PostToolUse`, and `Stop`. The three lifecycle events use Antigravity's flat
+handler shape, while tool hooks use the nested matcher plus `hooks` array shape.
+Unknown event names are dropped silently, and hook stdout is unmarshaled
 strictly. ForkTTY therefore avoids the `continue` JSON used by other
 providers; it returns an explicit `{"decision":"allow"}` for the gating
-`PreToolUse` hook and `{}` for non-gating Antigravity hooks.
+`PreToolUse` and `Stop` hooks, and `{}` for advisory Antigravity hooks. Only a
+clean `Stop` with an explicit boolean `fullyIdle: true` returns the lifecycle
+to ready; missing or invalid idle state remains non-reclaimable. Provider
+errors and exhausted step budgets publish an error, while live background tasks
+remain running. A failed stop with live background tasks keeps the red error
+presentation but a running lifecycle.
 Antigravity runs the generated wrapper scripts from its config directory, so
 ForkTTY derives Antigravity `resume_cwd` from the hook payload's
 `workspacePaths` instead of the wrapper process cwd.
@@ -115,8 +120,8 @@ current executable; a still-executable recorded launcher remains healthy even
 when doctor itself runs from another path. Re-run `forktty hooks setup` to
 rewrite unusable managed commands.
 The doctor JSON also exposes `supportedEvents`, the list of provider-side
-event names ForkTTY can install hooks for (Codex: 10; Claude Code: 25
-lifecycle / 28 full; Antigravity: 3; OpenCode plugin events: 11).
+event names ForkTTY can install hooks for (Codex: 11; Claude Code: 25
+lifecycle / 28 full; Antigravity: 5; OpenCode plugin events: 11).
 For Claude Code it also reports `installedProfile` as `lifecycle`, `full`, or
 `not_installed`.
 
@@ -210,10 +215,11 @@ quoting automatically.
 
 The `timeout` field is provider-defined. Claude Code and Codex measure it in
 **seconds** (Codex default 600 s; Claude default 600 s, 30 s for
-`UserPromptSubmit`), and ForkTTY pins those entries at 30 s. Antigravity has no
-verified timeout field, so its entries omit one. The intent is the same for
-every provider: a hook should not block the agent loop longer than a local
-socket round-trip needs.
+`UserPromptSubmit`). ForkTTY pins routine entries at 30 s and Codex
+`SessionEnd` at that event's three-second maximum. Antigravity has no verified
+timeout field, so its entries omit one. The intent is the same for every
+provider: a hook should not block the agent loop longer than a local socket
+round-trip needs.
 
 Each command is guarded by a per-agent disable variable:
 
