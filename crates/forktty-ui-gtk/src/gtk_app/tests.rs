@@ -603,6 +603,39 @@ fn first_launch_bootstrap_opens_main_workspace_in_startup_home() {
 }
 
 #[test]
+fn config_recovery_notification_survives_session_restore() {
+    crate::test_env::with_isolated_user_dirs(|| {
+        let project_dir = tempfile::tempdir().unwrap();
+        let mut persisted_model = WorkspaceModel::new();
+        persisted_model.create_workspace("saved", project_dir.path());
+        session::save_session(&persisted_model.to_session_data()).unwrap();
+
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal,
+            "/bin/sh",
+            PathBuf::from(std::env::var("XDG_RUNTIME_DIR").unwrap()).join("forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+
+        restore_or_bootstrap_workspaces(
+            &state,
+            project_dir.path().to_path_buf(),
+            Some("Recovered invalid config"),
+        )
+        .unwrap();
+
+        let model = model.lock().unwrap();
+        assert_eq!(model.active_workspace().unwrap().name, "saved");
+        assert!(model.list_notifications().iter().any(|notification| {
+            notification.title == "Config Issue" && notification.body == "Recovered invalid config"
+        }));
+    });
+}
+
+#[test]
 fn settings_change_rebases_onto_externally_modified_config() {
     // While the Settings dialog is open, an external save (e.g. the F9
     // sidebar toggle) can change other fields; a dialog save must apply only

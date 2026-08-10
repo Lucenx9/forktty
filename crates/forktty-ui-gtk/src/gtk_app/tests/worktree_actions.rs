@@ -670,6 +670,13 @@ fn remove_and_merge_resolve_base_checkout_from_linked_workspace() {
         active_workspace_repo_cwd_string(&state).unwrap(),
         repo_dir.path().to_string_lossy()
     );
+    assert_eq!(
+        repository_context_text_for_test(
+            &(info.branch.clone(), PathBuf::from(&info.path)),
+            repo_dir.path(),
+        ),
+        format!("{} · from {}", repo_dir.path().display(), info.branch)
+    );
 }
 
 #[cfg(target_os = "linux")]

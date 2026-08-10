@@ -69,6 +69,18 @@ fn active_workspace_repo_cwd(state: &SocketAppState) -> Option<PathBuf> {
         .or(Some(workspace_cwd))
 }
 
+fn repository_context_text(
+    source_workspace: Option<&(String, PathBuf)>,
+    base_checkout: Option<&Path>,
+    fallback: &str,
+) -> String {
+    match (source_workspace, base_checkout) {
+        (Some((name, _)), Some(path)) => format!("{} · from {name}", compact_path(path)),
+        (None, Some(path)) => compact_path(path),
+        _ => fallback.to_string(),
+    }
+}
+
 pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState) {
     let dialog = gtk::Window::builder()
         .title("Worktree")
@@ -95,9 +107,9 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     header.append(&title);
     header.append(&subtitle);
 
-    // Create/Attach follow the live shell CWD; Remove/Merge stay on the
-    // modeled workspace checkout so a shell that left the repo cannot point
-    // destructive git ops at an unrelated tree.
+    // Create/Attach follow the live shell CWD; Remove/Merge resolve the modeled
+    // workspace to its common base checkout so a shell that left the repo
+    // cannot point destructive git ops at an unrelated tree.
     let base_workspace = active_worktree_discovery_base(state);
     let discovery_cwd = base_workspace.as_ref().map(|(_, cwd)| cwd.clone());
     let repo_cwd = active_workspace_repo_cwd(state);
@@ -109,10 +121,11 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
                 .map(|path| compact_path(&path))
                 .unwrap_or_else(|_| "Current directory".to_string())
         });
-    let repo_context_text = repo_cwd
-        .as_ref()
-        .map(|cwd| compact_path(cwd))
-        .unwrap_or_else(|| discovery_context_text.clone());
+    let repo_context_text = repository_context_text(
+        base_workspace.as_ref(),
+        repo_cwd.as_deref(),
+        &discovery_context_text,
+    );
     let context = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     context.add_css_class("worktree-context");
     context.update_property(&[gtk::accessible::Property::Label(&format!(
@@ -430,8 +443,8 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
             set_status_message(&status_for_action, &err, StatusKind::Error);
             return;
         }
-        // Create/Attach need a discovery path; Remove/Merge need the stable
-        // workspace checkout. Missing either is "no active workspace".
+        // Create/Attach need a discovery path; Remove/Merge need the resolved
+        // common base checkout. Missing either is "no active workspace".
         let op_cwd = if mode.uses_workspace_repo_base() {
             repo_cwd_for_action.clone()
         } else {
@@ -1322,4 +1335,16 @@ pub(super) fn active_workspace_repo_cwd_string(state: &SocketAppState) -> Result
     active_workspace_repo_cwd(state)
         .map(|path| path.to_string_lossy().to_string())
         .ok_or_else(no_active_workspace_message)
+}
+
+#[cfg(test)]
+pub(super) fn repository_context_text_for_test(
+    source_workspace: &(String, PathBuf),
+    base_checkout: &Path,
+) -> String {
+    repository_context_text(
+        Some(source_workspace),
+        Some(base_checkout),
+        "Current directory",
+    )
 }

@@ -13,7 +13,8 @@
 Exercise ForkTTY's visible workflows in a real Wayland session, repair defects
 found at observable boundaries, and retain regression evidence for those
 repairs. The changes make linked-worktree actions use and describe the correct
-repository and keep notification row actions clickable while scrolling.
+repository, keep notification row actions clickable while scrolling, and retain
+config-recovery errors after saved-session restore.
 
 ## Goals and non-goals
 
@@ -24,6 +25,7 @@ repository and keep notification row actions clickable while scrolling.
 - Make Create and Attach work when invoked from a linked worktree.
 - Make Merge and Remove identify the checkout they actually mutate.
 - Keep the notification scrollbar clear of row-level Dismiss buttons.
+- Keep the `Config Issue` notification after workspace session restore.
 
 ### Non-goals
 
@@ -31,6 +33,9 @@ repository and keep notification row actions clickable while scrolling.
 - Import real browser data; browser import verification stops at preview.
 - Change Chromium keyring behavior. A real profile's cookie preview completed
   slowly while the UI and Cancel action remained responsive.
+- Guess the primary checkout for an external `--separate-git-dir` repository
+  whose metadata does not expose a verifiable worktree. Mutating operations
+  reject that layout instead.
 
 ## Scope and approvals
 
@@ -65,7 +70,8 @@ isolated XDG state. Browser import was not executed.
 | REQ-002 | Attaching from a linked worktree uses the common repository layout. | Core regression test and manual Attach flow. |
 | REQ-003 | Merge and Remove show the resolved primary checkout before acting. | GTK regression test and visual dialog checks. |
 | REQ-004 | Notification scrolling never overlays the Dismiss controls. | GTK regression test plus populated-panel click check. |
-| REQ-005 | The release UI and optional browser UI remain functional across the documented surface matrix. | Manual matrix and repository gates below. |
+| REQ-005 | The release UI and optional browser UI remain functional across the documented surface matrix, including all four supported agent harnesses. | Manual matrix and repository gates below. |
+| REQ-006 | A config quarantine warning remains visible after saved-session restore. | GTK startup regression test, socket inspection, and visual panel check. |
 
 ## Acceptance scenarios
 
@@ -99,9 +105,17 @@ isolated XDG state. Browser import was not executed.
 - **Then:** onboarding, Settings, sidebar modes and placement, command palette,
   panes/tabs, terminal search/menu/copy, notifications, Agent HUD, workspaces,
   worktrees, shortcuts/About, browser navigation/automation/profiles/history/
-  bookmarks/import preview, session restore, and corrupt-config recovery remain
-  usable.
+  bookmarks/import preview, session restore, corrupt-config recovery, and the
+  Claude/Codex/Antigravity/OpenCode hook harnesses remain usable.
 - **Covers:** REQ-005
+
+### SCN-005: config recovery after session restore
+
+- **Given:** a saved workspace session and a structurally invalid config.
+- **When:** ForkTTY quarantines the config and restores the session.
+- **Then:** the restored model retains a visible `Config Issue` notification
+  naming the quarantined file.
+- **Covers:** REQ-006
 
 ## Failure, recovery, and edge cases
 
@@ -110,7 +124,8 @@ isolated XDG state. Browser import was not executed.
 | EDGE-001 | Operation starts from a linked checkout. | Resolve Git administration through the common repository without losing the caller's HEAD. | Existing worktree transaction and rollback behavior remains unchanged. | REQ-001, REQ-002 |
 | EDGE-002 | Modeled workspace is linked or cannot be resolved. | Show the primary checkout when resolvable; otherwise preserve the stable modeled workspace path. | Existing chooser/error flow remains available. | REQ-003 |
 | EDGE-003 | Many notification rows. | Reserve scrollbar width rather than cover row actions. | Dismiss and Clear still refresh immediately. | REQ-004 |
-| EDGE-004 | Structurally invalid config. | Quarantine the file and start with usable defaults. | The `.bad-*` file preserves the invalid input. | REQ-005 |
+| EDGE-004 | Structurally invalid config. | Quarantine the file, restore or create a usable workspace, and retain the `Config Issue` notification. | The `.bad-*` file preserves the invalid input. | REQ-005, REQ-006 |
+| EDGE-005 | External separate git directory has no verifiable primary checkout. | Reject mutating worktree operations instead of guessing from the git-directory parent. | Use a standard checkout or configure verifiable `core.worktree` metadata. | REQ-001, REQ-002, REQ-003 |
 
 Worktree commit points and rollback rules are unchanged; this change only
 selects the established common-repository owner before those paths run.
@@ -127,14 +142,15 @@ selects the established common-repository owner before those paths run.
 
 ## Architecture and release impact
 
-- **Owning crate/module:** `forktty-core::worktree`, GTK worktree dialog, and
-  GTK notification panel.
+- **Owning crate/module:** `forktty-core::worktree`, GTK worktree dialog,
+  notification panel, and app bootstrap.
 - **Dependency direction:** unchanged.
 - **Feature combinations:** `gtk-ghostty` and `browser` both verified.
 - **Session/config/socket compatibility:** no format or protocol change.
 - **Packaging/runtime:** no loader or artifact-layout change.
-- **Public site/docs:** worktree behavior synchronized in the docs page and both
-  LLM context files in the separate `forktty-site` checkout.
+- **Public site/docs:** worktree/config behavior synchronized in the docs page,
+  both LLM context files, and their contract test in the separate
+  `forktty-site` checkout.
 
 ## Implementation outline
 
@@ -142,7 +158,8 @@ selects the established common-repository owner before those paths run.
    repository while preserving the active source HEAD.
 2. Resolve GTK Merge/Remove context to the base checkout and reserve a
    notification scrollbar gutter.
-3. Update contracts and verify the full application matrix and build gates.
+3. Publish config recovery only after session restore has replaced the model.
+4. Update contracts and verify the full application matrix and build gates.
 
 ## Requirement traceability
 
@@ -152,7 +169,8 @@ selects the established common-repository owner before those paths run.
 | REQ-002 | `cargo test -p forktty-core attach_from_linked_worktree_uses_common_repository_layout` | SPEC, README, CHANGELOG, site | Test passes; manual Attach opened the expected workspace from the primary layout. |
 | REQ-003 | `cargo test -p forktty-ui-gtk --no-default-features --features gtk-ghostty remove_and_merge_resolve_base_checkout_from_linked_workspace` | SPEC, CHANGELOG | Test passes; Merge and Remove dialogs visually showed the primary checkout before successful operations. |
 | REQ-004 | `cargo test -p forktty-ui-gtk --no-default-features --features gtk-ghostty notification_panel_scrollbar_does_not_overlay_dismiss_buttons` | CHANGELOG | Test passes; populated panel showed a separate scrollbar gutter and Dismiss reduced the count. |
-| REQ-005 | full local gate plus manual matrix | This brief | Manual matrix completed; final automated gate results are recorded in the PR. |
+| REQ-005 | full local gate plus manual matrix and `forktty hooks test <provider>` for each provider | This brief | Manual matrix completed; `hooks test claude`, `hooks test codex`, `hooks test antigravity`, and `hooks test opencode` each passed against the isolated live app. The workspace tests/clippy passed for `gtk-ghostty`; 1,025 browser-feature tests passed with 2 profiling tests ignored; browser clippy, both builds, xtask, GTK smoke, desktop validation, deb build/RUNPATH, and `cargo audit` passed. |
+| REQ-006 | `cargo test -p forktty-ui-gtk --no-default-features --features gtk-ghostty config_recovery_notification_survives_session_restore` | CHANGELOG, SPEC, site | Test passes; isolated relaunch quarantined `config.toml` and retained `Config Issue` in socket/UI after restoring the saved workspace. |
 
 ## Pre-implementation consistency review
 
@@ -171,6 +189,9 @@ selects the established common-repository owner before those paths run.
 | Finding | Classification | Requirement/source | Evidence | Resolution |
 | --- | --- | --- | --- | --- |
 | POST-001 | partial | REQ-005 | Chromium cookie preview took about 50 seconds against a real locked/keyring-backed profile, but completed and Cancel stayed responsive. | Accepted as dataset/keyring-dependent behavior; no import was run and non-cookie preview completed in about one second. |
+| POST-002 | missing | REQ-005, EDGE-004 | Runtime recovery quarantined the file but session restore replaced the startup notification. | Fixed by publishing `Config Issue` after restore; regression test and repeat visual/socket check pass. |
+| POST-003 | partial | REQ-005 | The first evidence row did not name the four requested harness executions. | Fixed by recording each provider harness in REQ-005 evidence. |
+| POST-004 | partial | REQ-001, REQ-002, REQ-003 | An external separate git directory could make the common-directory parent look like a checkout. | Fixed by verifying the candidate checkout maps to the same common repository and rejecting unresolved layouts. |
 
 **Fixed review point:** merge-base with `origin/main` at `da00ff1f`.
 

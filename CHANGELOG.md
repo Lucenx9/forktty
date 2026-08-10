@@ -16,6 +16,8 @@ All notable changes to ForkTTY are documented here.
   primary checkout they will operate on.
 - The notification panel now reserves a scrollbar gutter so its scrollbar no
   longer covers row-level Dismiss controls.
+- Config recovery notifications now survive saved-session restore, so a
+  quarantined file remains visible in the app after startup.
 - Codex hook setup now installs the provider's `SessionEnd` event with a bounded
   round-trip deadline so closing a session releases its lifecycle status and
   learned surface claim. Antigravity setup now also installs `PostInvocation`

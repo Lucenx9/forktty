@@ -701,12 +701,26 @@ pub fn repository_root(repo_path: &str) -> Result<PathBuf, WorktreeError> {
 }
 
 fn repository_root_for_repo(repo: &Repository) -> Result<PathBuf, WorktreeError> {
-    let common_dir = repo.commondir();
-    common_dir
-        .parent()
-        .map(Path::to_path_buf)
-        .or_else(|| repo.workdir().map(Path::to_path_buf))
-        .ok_or(WorktreeError::RepositoryRootUnresolved)
+    let common_dir = std::fs::canonicalize(repo.commondir())?;
+    let common_repo = repo
+        .is_worktree()
+        .then(|| Repository::open(&common_dir))
+        .transpose()
+        .map_err(|_| WorktreeError::RepositoryRootUnresolved)?;
+    let candidate = common_repo
+        .as_ref()
+        .unwrap_or(repo)
+        .workdir()
+        .ok_or(WorktreeError::RepositoryRootUnresolved)?;
+    let candidate = std::fs::canonicalize(candidate)?;
+    let candidate_repo =
+        Repository::open(&candidate).map_err(|_| WorktreeError::RepositoryRootUnresolved)?;
+    if candidate_repo.is_worktree()
+        || std::fs::canonicalize(candidate_repo.commondir())? != common_dir
+    {
+        return Err(WorktreeError::RepositoryRootUnresolved);
+    }
+    Ok(candidate)
 }
 
 pub fn run_hook(worktree_path: &str, hook_name: &str) -> Result<Option<i32>, WorktreeError> {
@@ -773,8 +787,8 @@ fn open_repo(path: &str) -> Result<Repository, WorktreeError> {
 
 fn open_worktree_admin_repo(path: &str) -> Result<Repository, WorktreeError> {
     let repo = open_repo(path)?;
+    let root = repository_root_for_repo(&repo)?;
     if repo.is_worktree() {
-        let root = repository_root_for_repo(&repo)?;
         return Repository::open(&root).map_err(WorktreeError::from);
     }
     Ok(repo)
@@ -2724,6 +2738,25 @@ mod tests {
             Some(linked_head)
         );
         assert!(!Path::new(&first.path).join(".worktrees").exists());
+    }
+
+    #[test]
+    fn mutating_worktree_ops_reject_unresolvable_separate_git_dir_base() {
+        let container = tempfile::tempdir().unwrap();
+        let main = container.path().join("main");
+        fs::create_dir(&main).unwrap();
+        init_repo_dir(&main);
+        let admin = container.path().join("admin.git");
+        fs::rename(main.join(".git"), &admin).unwrap();
+        fs::write(main.join(".git"), format!("gitdir: {}\n", admin.display())).unwrap();
+        assert!(matches!(
+            repository_root(main.to_str().unwrap()),
+            Err(WorktreeError::RepositoryRootUnresolved)
+        ));
+        assert!(matches!(
+            create(main.to_str().unwrap(), "first", "nested"),
+            Err(WorktreeError::RepositoryRootUnresolved)
+        ));
     }
 
     #[cfg(unix)]
