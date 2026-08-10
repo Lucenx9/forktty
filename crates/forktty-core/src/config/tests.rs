@@ -806,6 +806,30 @@ fn sidebar_visible_defaults_to_true_when_missing() {
 }
 
 #[test]
+fn sidebar_pinned_defaults_to_false_when_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    fs::write(
+        &path,
+        r#"
+            [appearance]
+            sidebar_position = "right"
+            "#,
+    )
+    .unwrap();
+
+    let config = load_config_from_path(&path).unwrap();
+    assert!(!config.appearance.sidebar_pinned);
+
+    save_config_to_path(&path, &config).unwrap();
+
+    let saved = fs::read_to_string(&path).unwrap();
+    assert!(saved.contains("sidebar_pinned = false"));
+    let reloaded = load_config_from_path(&path).unwrap();
+    assert!(!reloaded.appearance.sidebar_pinned);
+}
+
+#[test]
 fn pr_lookup_defaults_to_disabled_when_missing() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");
@@ -947,6 +971,19 @@ fn sidebar_visible_round_trips_through_save_and_load() {
     let loaded = load_config_from_path(&path).unwrap();
     assert!(!loaded.appearance.sidebar_visible);
     assert!(loaded.general.enable_pr_lookup);
+}
+
+#[test]
+fn sidebar_pinned_round_trips_through_save_and_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let mut config = AppConfig::default();
+    config.appearance.sidebar_pinned = true;
+
+    save_config_to_path(&path, &config).unwrap();
+
+    let loaded = load_config_from_path(&path).unwrap();
+    assert!(loaded.appearance.sidebar_pinned);
 }
 
 #[test]

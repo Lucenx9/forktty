@@ -24,11 +24,13 @@ Use these rules for GTK UI changes so the app stays quiet, dense, and native.
   bar for workspace, pane-count, or shortcut information already available in
   the titlebar, pane chrome, sidebar, tooltips, or command palette.
 - Group titlebar tools and window controls with spacing, not decorative rules.
-- Keep the workspace sidebar as a narrow Adwaita overlay so opening it does not
-  reflow terminal panes. Workspace rows are flat navigation, and routine agent
-  summaries stay hidden unless the workspace needs attention or reports an
-  error or terminal-exit state. Model refreshes reuse unchanged rows instead of
-  rebuilding the full list, preserving unaffected row identity and interaction.
+- Keep the workspace sidebar narrow and default it to an Adwaita overlay so
+  opening it does not reflow terminal panes. Its header may pin the same sidebar
+  beside the workbench when the user wants a persistent navigation surface.
+  Workspace rows are flat navigation, and routine agent summaries stay hidden
+  unless the workspace needs attention or reports an error or terminal-exit
+  state. Model refreshes reuse unchanged rows instead of rebuilding the full
+  list, preserving unaffected row identity and interaction.
 - Keep Settings compact and goal-oriented: core pages precede optional
   integrations under General, Integrations, and System navigation. Preference
   groups use one subtle raised surface; navigation headings stay sentence case.

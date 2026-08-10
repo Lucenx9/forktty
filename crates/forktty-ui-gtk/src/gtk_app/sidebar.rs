@@ -43,6 +43,28 @@ pub(super) struct SidebarUi {
     pub(super) context_popover: Rc<RefCell<Option<gtk::Popover>>>,
 }
 
+pub(super) fn build_sidebar_pin_button(pinned: bool) -> gtk::ToggleButton {
+    let button = gtk::ToggleButton::builder()
+        .icon_name("view-pin-symbolic")
+        .has_frame(false)
+        .build();
+    button.add_css_class("flat");
+    button.add_css_class("sidebar-header-action");
+    sync_sidebar_pin_button(&button, pinned);
+    button
+}
+
+pub(super) fn sync_sidebar_pin_button(button: &gtk::ToggleButton, pinned: bool) {
+    button.set_active(pinned);
+    let tooltip = if pinned {
+        "Unpin sidebar"
+    } else {
+        "Pin sidebar beside terminal"
+    };
+    button.set_tooltip_text(Some(tooltip));
+    set_accessible_button_text(button.upcast_ref(), "Keep sidebar beside terminal", None);
+}
+
 fn sidebar_workspace_row_signature(row: &SidebarWorkspaceRow) -> String {
     format!(
         "{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}",

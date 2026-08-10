@@ -173,6 +173,7 @@ persist_terminal_processes = false
 persistent_scrollback_lines = 0
 sidebar_position = "left"
 sidebar_visible = true
+sidebar_pinned = false
 window_mode = "normal"
 
 [notifications]
@@ -198,10 +199,12 @@ PR lookup, update checks, telemetry, notification filters, and notification
 commands. Settings > Worktrees exposes `general.persist_terminal_processes` and
 reports whether `dtach` is detectable on the ForkTTY process `PATH`.
 
-The GTK workspace sidebar is a collapsed libadwaita overlay, so showing or
-hiding it does not resize the terminal layout. `appearance.sidebar_position`
-chooses the left or right edge and `appearance.sidebar_visible` remains the
-persisted startup preference used by Settings and the Ctrl+B/F9 action.
+The GTK workspace sidebar is a collapsed libadwaita overlay by default, so
+showing or hiding it does not resize the terminal layout. Its header pin
+control sets `appearance.sidebar_pinned = true` and presents the sidebar beside
+the terminal instead. `appearance.sidebar_position` chooses the left or right
+edge, while `appearance.sidebar_visible` remains the independent persisted
+startup preference used by Settings and the Ctrl+B/F9 action.
 
 Legacy `general.theme_source`, `font_family`, `font_size`, `scrollback_lines`,
 `terminal_audible_bell`, `terminal_renderer`, `terminal_theme`, and the temporary

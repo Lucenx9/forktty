@@ -9,6 +9,12 @@ where
     app.add_action(&action);
 }
 
+pub(super) fn toggle_sidebar_visibility(overlay: &adw::OverlaySplitView) -> bool {
+    let visible = !overlay.shows_sidebar();
+    overlay.set_show_sidebar(visible);
+    visible
+}
+
 pub(super) fn install_actions(
     app: &adw::Application,
     window: &adw::ApplicationWindow,
@@ -210,8 +216,7 @@ pub(super) fn install_actions(
     add_action(app, "toggle-sidebar", {
         let workbench_overlay = workbench_overlay.clone();
         move || {
-            let visible = !workbench_overlay.shows_sidebar();
-            workbench_overlay.set_show_sidebar(visible);
+            let visible = toggle_sidebar_visibility(&workbench_overlay);
             // Read-modify-write of the config file off the main thread; the
             // toggle itself must not wait on disk.
             std::thread::spawn(move || {
