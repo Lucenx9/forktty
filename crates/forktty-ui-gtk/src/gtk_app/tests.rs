@@ -630,7 +630,7 @@ fn config_recovery_notification_survives_session_restore() {
         let model = model.lock().unwrap();
         assert_eq!(model.active_workspace().unwrap().name, "saved");
         assert!(model.list_notifications().iter().any(|notification| {
-            notification.title == "Config Issue" && notification.body == "Recovered invalid config"
+            notification.title == "Config issue" && notification.body == "Recovered invalid config"
         }));
     });
 }

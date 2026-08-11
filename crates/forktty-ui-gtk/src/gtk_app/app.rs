@@ -1254,7 +1254,7 @@ pub(super) fn restore_or_bootstrap_workspaces(
         }
     };
     if let Some(message) = config_load_warning {
-        create_global_notification(state, "Config Issue", message, NotificationKind::Error);
+        create_global_notification(state, "Config issue", message, NotificationKind::Error);
     }
     result
 }

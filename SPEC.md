@@ -191,7 +191,7 @@ anonymous_ping = true
 
 Config files are regular-file checked and capped at 1 MiB. Malformed or
 invalid content is quarantined; transient I/O errors are reported without
-renaming the file. After workspace session restore, GTK retains a `Config Issue`
+renaming the file. After workspace session restore, GTK retains a `Config issue`
 notification that names the recovered/quarantined config instead of losing it
 when the saved model replaces startup state. Load validates and normalizes
 `general.shell` from manual TOML edits, while the Settings dialog intentionally
@@ -572,14 +572,14 @@ Worktree and hook paths are canonicalized. Hook execution is limited to `.forktt
 
 The GTK Merge and Remove flows resolve a linked active workspace to the common
 repository checkout before discovery and execution. Their context text shows
-that resolved checkout, so the displayed target matches the repository that
-the operation mutates.
+that resolved checkout alongside the source workspace and path, so the
+displayed target matches the repository that the operation mutates without
+losing the initiating checkout's identity.
 
 ForkTTY rejects mutating worktree operations when an external
 `--separate-git-dir` layout does not expose a verifiable primary checkout
 through repository metadata. It does not guess a checkout by taking the parent
-of the shared git directory; a configured `core.worktree` that resolves back
-to the same common repository remains usable.
+of the shared git directory.
 
 The modeled worktree identity is the exact `(worktree_name,
 canonical_worktree_path)` pair. After Create or Attach returns a verified

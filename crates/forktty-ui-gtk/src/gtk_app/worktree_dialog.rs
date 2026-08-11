@@ -75,7 +75,21 @@ fn repository_context_text(
     fallback: &str,
 ) -> String {
     match (source_workspace, base_checkout) {
-        (Some((name, _)), Some(path)) => format!("{} · from {name}", compact_path(path)),
+        (Some((name, source_path)), Some(path)) => {
+            let base_path = compact_path(path);
+            let source_label = compact_path(source_path);
+            if source_label == base_path {
+                format!("{base_path}\nFrom {name}")
+            } else {
+                let source_label = source_path
+                    .strip_prefix(path)
+                    .ok()
+                    .filter(|relative| !relative.as_os_str().is_empty())
+                    .map(compact_path)
+                    .unwrap_or(source_label);
+                format!("{base_path}\nFrom {name} · {source_label}")
+            }
+        }
         (None, Some(path)) => compact_path(path),
         _ => fallback.to_string(),
     }
@@ -115,7 +129,7 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     let repo_cwd = active_workspace_repo_cwd(state);
     let discovery_context_text = base_workspace
         .as_ref()
-        .map(|(name, cwd)| format!("{} · {}", name, compact_path(cwd)))
+        .map(|(name, cwd)| format!("{name}\n{}", compact_path(cwd)))
         .unwrap_or_else(|| {
             std::env::current_dir()
                 .map(|path| compact_path(&path))
@@ -1040,6 +1054,27 @@ mod tests {
     }
 
     #[test]
+    fn repository_context_keeps_base_and_source_identity_visible() {
+        let source = (
+            "feature/login".to_string(),
+            PathBuf::from("/tmp/project/.worktrees/feature-login"),
+        );
+
+        assert_eq!(
+            repository_context_text(Some(&source), Some(Path::new("/tmp/project")), "fallback"),
+            "/tmp/project\nFrom feature/login · .worktrees/feature-login"
+        );
+        assert_eq!(
+            repository_context_text(
+                Some(&("main".to_string(), PathBuf::from("/tmp/project"))),
+                Some(Path::new("/tmp/project")),
+                "fallback",
+            ),
+            "/tmp/project\nFrom main"
+        );
+    }
+
+    #[test]
     fn discovery_status_preserves_mode_consequences() {
         assert_eq!(
             worktree_dialog_hint(WorktreeDialogMode::Remove, WorktreeDiscoveryState::Failed),
@@ -1335,16 +1370,4 @@ pub(super) fn active_workspace_repo_cwd_string(state: &SocketAppState) -> Result
     active_workspace_repo_cwd(state)
         .map(|path| path.to_string_lossy().to_string())
         .ok_or_else(no_active_workspace_message)
-}
-
-#[cfg(test)]
-pub(super) fn repository_context_text_for_test(
-    source_workspace: &(String, PathBuf),
-    base_checkout: &Path,
-) -> String {
-    repository_context_text(
-        Some(source_workspace),
-        Some(base_checkout),
-        "Current directory",
-    )
 }

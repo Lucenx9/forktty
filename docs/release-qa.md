@@ -132,7 +132,7 @@ Use this for visible GTK changes. It applies the visual rules in
 
 ## Config Recovery Smoke
 
-- Stop the app, then corrupt `$XDG_CONFIG_HOME/forktty/config.toml` (`echo "{ broken" >$XDG_CONFIG_HOME/forktty/config.toml`). Relaunch; ForkTTY should start with defaults, show a Config Issue notification that names the quarantined file, and rename the corrupt config to `*.bad-<timestamp>` or `*.bad-<timestamp>-N` if that name already exists.
+- Stop the app, then corrupt `$XDG_CONFIG_HOME/forktty/config.toml` (`echo "{ broken" >$XDG_CONFIG_HOME/forktty/config.toml`). Relaunch; ForkTTY should start with defaults, show a Config issue notification that names the quarantined file, and rename the corrupt config to `*.bad-<timestamp>` or `*.bad-<timestamp>-N` if that name already exists.
 - Replace `$XDG_CONFIG_HOME/forktty/config.toml` with a broken symlink, then relaunch; ForkTTY should start with defaults and rename the symlink aside instead of repeatedly treating it as a missing config.
 - Replace `$XDG_CONFIG_HOME/forktty/config.toml` with a directory, then relaunch; ForkTTY should start with defaults and rename the directory aside instead of warning on every launch.
 - Hand-edit enum values with harmless whitespace or case, for example `worktree_layout = " SIBLING "`; relaunch should use `sibling` instead of resetting to `nested`.
