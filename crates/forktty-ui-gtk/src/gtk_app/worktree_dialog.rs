@@ -32,25 +32,31 @@ pub(super) fn worktree_dialog_choices_from_list(
         .collect()
 }
 
-/// Repo discovery base for Create/Attach: prefer the focused surface's live
-/// shell CWD so a pane that has `cd`'d into another checkout can spawn a
-/// worktree there. Destructive Remove/Merge must not use this — see
-/// [`active_workspace_repo_cwd`].
-#[cfg(test)]
-fn active_worktree_discovery_base(state: &SocketAppState) -> Option<(String, PathBuf)> {
-    let _ = forktty_socket::sync_live_surface_cwds(state);
-    let snapshot = active_worktree_snapshot(state)?;
-    let cwd = snapshot
-        .surface_cwd
-        .filter(|cwd| cwd.is_dir())
-        .unwrap_or(snapshot.workspace_cwd);
-    Some((snapshot.name, cwd))
-}
-
 struct ActiveWorktreeSnapshot {
     name: String,
     surface_cwd: Option<PathBuf>,
     workspace_cwd: PathBuf,
+}
+
+impl ActiveWorktreeSnapshot {
+    fn discovery_cwd(&self) -> PathBuf {
+        self.surface_cwd
+            .as_ref()
+            .filter(|cwd| cwd.is_dir())
+            .cloned()
+            .unwrap_or_else(|| self.workspace_cwd.clone())
+    }
+
+    fn modeled_workspace(&self) -> (String, PathBuf) {
+        (self.name.clone(), self.workspace_cwd.clone())
+    }
+
+    fn repo_cwd(&self) -> PathBuf {
+        self.workspace_cwd
+            .to_str()
+            .and_then(|cwd| worktree::repository_root(cwd).ok())
+            .unwrap_or_else(|| self.workspace_cwd.clone())
+    }
 }
 
 fn active_worktree_snapshot(state: &SocketAppState) -> Option<ActiveWorktreeSnapshot> {
@@ -66,16 +72,6 @@ fn active_worktree_snapshot(state: &SocketAppState) -> Option<ActiveWorktreeSnap
     })
 }
 
-/// Stable modeled identity for destructive-operation context.
-///
-/// This intentionally does not inspect the focused surface CWD: a pane can
-/// leave its workspace checkout without changing which checkout initiated a
-/// Merge or Remove operation.
-fn active_modeled_workspace(state: &SocketAppState) -> Option<(String, PathBuf)> {
-    let snapshot = active_worktree_snapshot(state)?;
-    Some((snapshot.name, snapshot.workspace_cwd))
-}
-
 /// Stable base-checkout path for Remove/Merge and their chooser.
 ///
 /// Starts from the modeled `working_dir`, never the focused surface's ephemeral
@@ -83,11 +79,7 @@ fn active_modeled_workspace(state: &SocketAppState) -> Option<(String, PathBuf)>
 /// checkout. Shell CWD can leave the repo entirely (`cd /tmp`), and routing a
 /// destructive worktree op through that path hits the wrong repository.
 fn active_workspace_repo_cwd(state: &SocketAppState) -> Option<PathBuf> {
-    let (_, workspace_cwd) = active_modeled_workspace(state)?;
-    workspace_cwd
-        .to_str()
-        .and_then(|cwd| worktree::repository_root(cwd).ok())
-        .or(Some(workspace_cwd))
+    active_worktree_snapshot(state).map(|snapshot| snapshot.repo_cwd())
 }
 
 struct WorktreeDialogContext {
@@ -105,26 +97,14 @@ fn worktree_dialog_context(state: &SocketAppState) -> WorktreeDialogContext {
 fn worktree_dialog_context_from_snapshot(
     snapshot: Option<ActiveWorktreeSnapshot>,
 ) -> WorktreeDialogContext {
-    let discovery_workspace = snapshot.as_ref().map(|snapshot| {
-        let cwd = snapshot
-            .surface_cwd
-            .as_ref()
-            .filter(|cwd| cwd.is_dir())
-            .cloned()
-            .unwrap_or_else(|| snapshot.workspace_cwd.clone());
-        (snapshot.name.clone(), cwd)
-    });
+    let discovery_workspace = snapshot
+        .as_ref()
+        .map(|snapshot| (snapshot.name.clone(), snapshot.discovery_cwd()));
     let source_workspace = snapshot
         .as_ref()
-        .map(|snapshot| (snapshot.name.clone(), snapshot.workspace_cwd.clone()));
+        .map(ActiveWorktreeSnapshot::modeled_workspace);
     let discovery_cwd = discovery_workspace.as_ref().map(|(_, cwd)| cwd.clone());
-    let repo_cwd = snapshot.as_ref().map(|snapshot| {
-        snapshot
-            .workspace_cwd
-            .to_str()
-            .and_then(|cwd| worktree::repository_root(cwd).ok())
-            .unwrap_or_else(|| snapshot.workspace_cwd.clone())
-    });
+    let repo_cwd = snapshot.as_ref().map(ActiveWorktreeSnapshot::repo_cwd);
     let discovery_text = discovery_workspace
         .as_ref()
         .map(|(name, cwd)| format!("{name}\n{}", compact_path(cwd)))
@@ -1364,9 +1344,7 @@ pub(super) async fn open_worktree_from_gtk_async(
 ) -> Result<(), String> {
     // Create/Attach intentionally follow the live shell discovery base so a
     // pane that `cd`'d into another repo can open a worktree there.
-    let cwd = active_worktree_discovery_base(state)
-        .map(|(_, cwd)| cwd)
-        .ok_or_else(no_active_workspace_message)?;
+    let cwd = active_workspace_cwd(state).ok_or_else(no_active_workspace_message)?;
     open_worktree_from_gtk_async_at_cwd(state, &cwd, name, action).await
 }
 
@@ -1521,7 +1499,8 @@ pub(super) fn no_active_workspace_message() -> String {
 /// Create/Attach discovery base (live shell CWD preferred). Not for Remove/Merge.
 #[cfg(test)]
 pub(super) fn active_workspace_cwd(state: &SocketAppState) -> Option<PathBuf> {
-    active_worktree_discovery_base(state).map(|(_, cwd)| cwd)
+    let _ = forktty_socket::sync_live_surface_cwds(state);
+    active_worktree_snapshot(state).map(|snapshot| snapshot.discovery_cwd())
 }
 
 #[cfg(test)]
