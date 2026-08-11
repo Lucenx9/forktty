@@ -356,18 +356,23 @@ pub fn create(
     branch_name: &str,
     layout: &str,
 ) -> Result<WorktreeInfo, WorktreeError> {
-    let repo = open_repo(repo_path)?;
+    let source_repo = open_repo(repo_path)?;
     let branch_name = validate_worktree_name(branch_name).map_err(WorktreeError::InvalidName)?;
+    let repo = open_worktree_admin_repo(repo_path)?;
     if let Some((existing_name, existing_path)) = find_worktree_by_branch(&repo, branch_name)? {
         let setup_warning = run_setup_hook_advisory(&existing_path);
         let mut info = info(&repo, branch_name.to_string(), existing_path, existing_name);
         info.setup_warning = setup_warning;
         return Ok(info);
     }
-    let head_commit = repo
+    let head_oid = source_repo
         .head()
         .map_err(WorktreeError::NoHead)?
         .peel_to_commit()
+        .map_err(WorktreeError::HeadNotCommit)?
+        .id();
+    let head_commit = repo
+        .find_commit(head_oid)
         .map_err(WorktreeError::HeadNotCommit)?;
     let worktree_name = derive_worktree_name(&repo, branch_name);
     if worktree_exists(&repo, &worktree_name) {
@@ -426,7 +431,7 @@ pub fn attach(
     branch_name: &str,
     layout: &str,
 ) -> Result<WorktreeInfo, WorktreeError> {
-    let repo = open_repo(repo_path)?;
+    let repo = open_worktree_admin_repo(repo_path)?;
     let branch_name = validate_worktree_name(branch_name).map_err(WorktreeError::InvalidName)?;
     let branch = repo
         .find_branch(branch_name, BranchType::Local)
@@ -696,12 +701,26 @@ pub fn repository_root(repo_path: &str) -> Result<PathBuf, WorktreeError> {
 }
 
 fn repository_root_for_repo(repo: &Repository) -> Result<PathBuf, WorktreeError> {
-    let common_dir = repo.commondir();
-    common_dir
-        .parent()
-        .map(Path::to_path_buf)
-        .or_else(|| repo.workdir().map(Path::to_path_buf))
-        .ok_or(WorktreeError::RepositoryRootUnresolved)
+    let common_dir = std::fs::canonicalize(repo.commondir())?;
+    let common_repo = repo
+        .is_worktree()
+        .then(|| Repository::open(&common_dir))
+        .transpose()
+        .map_err(|_| WorktreeError::RepositoryRootUnresolved)?;
+    let candidate = common_repo
+        .as_ref()
+        .unwrap_or(repo)
+        .workdir()
+        .ok_or(WorktreeError::RepositoryRootUnresolved)?;
+    let candidate = std::fs::canonicalize(candidate)?;
+    let candidate_repo =
+        Repository::open(&candidate).map_err(|_| WorktreeError::RepositoryRootUnresolved)?;
+    if candidate_repo.is_worktree()
+        || std::fs::canonicalize(candidate_repo.commondir())? != common_dir
+    {
+        return Err(WorktreeError::RepositoryRootUnresolved);
+    }
+    Ok(candidate)
 }
 
 pub fn run_hook(worktree_path: &str, hook_name: &str) -> Result<Option<i32>, WorktreeError> {
@@ -768,8 +787,8 @@ fn open_repo(path: &str) -> Result<Repository, WorktreeError> {
 
 fn open_worktree_admin_repo(path: &str) -> Result<Repository, WorktreeError> {
     let repo = open_repo(path)?;
+    let root = repository_root_for_repo(&repo)?;
     if repo.is_worktree() {
-        let root = repository_root_for_repo(&repo)?;
         return Repository::open(&root).map_err(WorktreeError::from);
     }
     Ok(repo)
@@ -2675,6 +2694,69 @@ mod tests {
         assert_eq!(attached.path, created.path);
         assert_eq!(attached.worktree_name, created.worktree_name);
         assert_eq!(list(dir.path().to_str().unwrap()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn attach_from_linked_worktree_uses_common_repository_layout() {
+        let dir = make_repo();
+        let first = create(dir.path().to_str().unwrap(), "first", "nested").unwrap();
+        create_branch(dir.path(), "attach-from-linked");
+
+        let attached = attach(&first.path, "attach-from-linked", "nested").unwrap();
+
+        assert_eq!(
+            Path::new(&attached.path),
+            dir.path().join(".worktrees/attach-from-linked")
+        );
+        assert!(!Path::new(&first.path).join(".worktrees").exists());
+    }
+
+    #[test]
+    fn create_from_linked_worktree_uses_common_layout_and_current_head() {
+        let dir = make_repo();
+        let first = create(dir.path().to_str().unwrap(), "first", "nested").unwrap();
+        commit_file(Path::new(&first.path), "linked.txt", "linked head\n");
+        let linked_head = Repository::open(&first.path)
+            .unwrap()
+            .head()
+            .unwrap()
+            .target()
+            .unwrap();
+
+        let created = create(&first.path, "second", "nested").unwrap();
+
+        assert_eq!(
+            Path::new(&created.path),
+            dir.path().join(".worktrees/second")
+        );
+        assert_eq!(
+            Repository::open(&created.path)
+                .unwrap()
+                .head()
+                .unwrap()
+                .target(),
+            Some(linked_head)
+        );
+        assert!(!Path::new(&first.path).join(".worktrees").exists());
+    }
+
+    #[test]
+    fn mutating_worktree_ops_reject_unresolvable_separate_git_dir_base() {
+        let container = tempfile::tempdir().unwrap();
+        let main = container.path().join("main");
+        fs::create_dir(&main).unwrap();
+        init_repo_dir(&main);
+        let admin = container.path().join("admin.git");
+        fs::rename(main.join(".git"), &admin).unwrap();
+        fs::write(main.join(".git"), format!("gitdir: {}\n", admin.display())).unwrap();
+        assert!(matches!(
+            repository_root(main.to_str().unwrap()),
+            Err(WorktreeError::RepositoryRootUnresolved)
+        ));
+        assert!(matches!(
+            create(main.to_str().unwrap(), "first", "nested"),
+            Err(WorktreeError::RepositoryRootUnresolved)
+        ));
     }
 
     #[cfg(unix)]

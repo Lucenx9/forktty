@@ -1280,3 +1280,37 @@ fn terminal_notification_icon_data_decodes_png_pixbuf() {
     assert_eq!(pixbuf.width(), 1);
     assert_eq!(pixbuf.height(), 1);
 }
+
+#[cfg(feature = "gtk-ghostty")]
+#[test]
+fn notification_panel_scrollbar_does_not_overlay_dismiss_buttons() {
+    let _ = crate::test_env::with_gtk_test(|| {
+        crate::test_env::with_isolated_user_dirs(|| {
+            let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+            let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+            let state = SocketAppState::new(
+                model.clone(),
+                terminal,
+                "/bin/sh",
+                PathBuf::from(std::env::var("XDG_RUNTIME_DIR").unwrap()).join("forktty.sock"),
+            )
+            .with_notification_dispatch(false);
+            {
+                let mut model = model.lock().unwrap();
+                let workspace = model.create_workspace("main", "/tmp/project");
+                model.create_notification(
+                    "Action needed",
+                    "Keep the dismiss control reachable",
+                    NotificationKind::Prompt,
+                    Some(workspace.id),
+                    None,
+                );
+            }
+            let parent = adw::ApplicationWindow::builder().build();
+            let panel = NotificationPanel::new(&parent, &state, None);
+            let scroll = rendered_notification_scroll(&panel.dialog);
+
+            assert!(!scroll.is_overlay_scrolling());
+        });
+    });
+}

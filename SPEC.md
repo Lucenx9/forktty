@@ -191,9 +191,11 @@ anonymous_ping = true
 
 Config files are regular-file checked and capped at 1 MiB. Malformed or
 invalid content is quarantined; transient I/O errors are reported without
-renaming the file. Load validates and normalizes `general.shell` from manual
-TOML edits, while the Settings dialog intentionally does not expose a shell
-editor. Saved settings validate worktree layout, terminal-process persistence,
+renaming the file. After workspace session restore, GTK retains a `Config issue`
+notification that names the recovered/quarantined config instead of losing it
+when the saved model replaces startup state. Load validates and normalizes
+`general.shell` from manual TOML edits, while the Settings dialog intentionally
+does not expose a shell editor. Saved settings validate worktree layout, terminal-process persistence,
 persistent scrollback bounds (max 1,000 lines), sidebar position, window mode,
 PR lookup, update checks, telemetry, notification filters, and notification
 commands. Settings > Worktrees exposes `general.persist_terminal_processes` and
@@ -549,14 +551,35 @@ Worktree operations use `git2` and avoid shelling out to git.
 Implemented operations:
 
 - list worktrees;
-- create worktree and branch; if the requested branch already has a linked worktree in one of ForkTTY's supported layouts, `worktree.create` returns that existing worktree so a retry can recover after a crash between Git registration and ForkTTY session persistence; if that worktree's directory was deleted out from under git, the stale registration is pruned and the worktree recreated in place (adopting the existing branch);
-- attach existing branch/worktree (the same stale-registration recovery applies);
+- create worktree and branch from either the primary checkout or a linked
+  worktree; linked-worktree callers branch from their current HEAD while Git
+  registration and configured layout remain owned by the common repository;
+  if the requested branch already has a linked worktree in one of ForkTTY's
+  supported layouts, `worktree.create` returns that existing worktree so a
+  retry can recover after a crash between Git registration and ForkTTY session
+  persistence; if that worktree's directory was deleted out from under git,
+  the stale registration is pruned and the worktree recreated in place
+  (adopting the existing branch);
+- attach existing branch/worktree from either the primary checkout or a linked
+  worktree, using the common repository's configured layout (the same
+  stale-registration recovery applies);
 - remove worktree after dirty-state and metadata validation;
 - merge worktree branch with dirty-target/conflict checks and abort incomplete merges before returning failure;
 - run `.forktty/setup` after open/create as advisory setup; failures are reported but do not hide an already-created worktree;
 - run `.forktty/teardown` before removal; failures block removal, and dirty state is rechecked after the hook before deleting files.
 
 Worktree and hook paths are canonicalized. Hook execution is limited to `.forktty/setup` and `.forktty/teardown` inside verified worktrees.
+
+The GTK Merge and Remove flows resolve a linked active workspace to the common
+repository checkout before discovery and execution. Their context text shows
+that resolved checkout alongside the source workspace and path, so the
+displayed target matches the repository that the operation mutates without
+losing the initiating checkout's identity.
+
+ForkTTY rejects mutating worktree operations when an external
+`--separate-git-dir` layout does not expose a verifiable primary checkout
+through repository metadata. It does not guess a checkout by taking the parent
+of the shared git directory.
 
 The modeled worktree identity is the exact `(worktree_name,
 canonical_worktree_path)` pair. After Create or Attach returns a verified

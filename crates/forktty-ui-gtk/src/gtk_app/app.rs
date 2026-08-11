@@ -245,9 +245,6 @@ pub(super) fn build_ui(app: &adw::Application) {
     let state = SocketAppState::new(model.clone(), backend.clone(), shell.clone(), socket_path);
     #[cfg(feature = "browser")]
     let state = state.with_browser_cmd(browser_cmd_tx);
-    if let Some(message) = config_load_warning.as_deref() {
-        create_global_notification(&state, "Config Issue", message, NotificationKind::Error);
-    }
     let ui_alive = Rc::new(Cell::new(true));
     let close_phase = Rc::new(Cell::new(ClosePhase::Running));
     let socket_server_handle = Rc::new(RefCell::new(None::<SocketServerHandle>));
@@ -822,7 +819,11 @@ pub(super) fn build_ui(app: &adw::Application) {
         if !persist_terminal_processes_on_startup {
             cleanup_pty_persistence_sessions(&state_for_bootstrap, false);
         }
-        if let Err(err) = restore_or_bootstrap_workspaces(&state_for_bootstrap, startup_dir) {
+        if let Err(err) = restore_or_bootstrap_workspaces(
+            &state_for_bootstrap,
+            startup_dir,
+            config_load_warning.as_deref(),
+        ) {
             eprintln!("Failed to restore workspace session: {err}");
             create_global_notification(
                 &state_for_bootstrap,
@@ -1204,8 +1205,9 @@ pub(super) fn cleanup_pty_persistence_sessions(
 pub(super) fn restore_or_bootstrap_workspaces(
     state: &SocketAppState,
     cwd: PathBuf,
+    config_load_warning: Option<&str>,
 ) -> Result<(), String> {
-    match session::load_session() {
+    let result = match session::load_session() {
         Ok(Some(mut data)) if !data.workspaces.is_empty() => {
             let repaired_paths = repair_restored_workspace_paths(&mut data, &cwd);
             let worktree_identity_snapshots =
@@ -1250,7 +1252,11 @@ pub(super) fn restore_or_bootstrap_workspaces(
             );
             bootstrap_default_workspace(state, cwd)
         }
+    };
+    if let Some(message) = config_load_warning {
+        create_global_notification(state, "Config issue", message, NotificationKind::Error);
     }
+    result
 }
 
 pub(super) fn repair_restored_workspace_paths(

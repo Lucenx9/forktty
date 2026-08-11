@@ -32,36 +32,124 @@ pub(super) fn worktree_dialog_choices_from_list(
         .collect()
 }
 
-/// Repo discovery base for Create/Attach: prefer the focused surface's live
-/// shell CWD so a pane that has `cd`'d into another checkout can spawn a
-/// worktree there. Destructive Remove/Merge must not use this — see
-/// [`active_workspace_repo_cwd`].
-fn active_worktree_discovery_base(state: &SocketAppState) -> Option<(String, PathBuf)> {
-    let _ = forktty_socket::sync_live_surface_cwds(state);
-    let (name, surface_cwd, workspace_cwd) = state.model.lock().ok().and_then(|model| {
-        let workspace = model.active_workspace()?;
-        let surface_cwd = model
-            .surface(&workspace.focused_surface_id)
-            .map(|surface| surface.cwd.clone());
-        Some((workspace.name, surface_cwd, workspace.working_dir))
-    })?;
-    let cwd = surface_cwd
-        .filter(|cwd| cwd.is_dir())
-        .unwrap_or(workspace_cwd);
-    Some((name, cwd))
+struct ActiveWorktreeSnapshot {
+    name: String,
+    surface_cwd: Option<PathBuf>,
+    workspace_cwd: PathBuf,
 }
 
-/// Stable workspace checkout path for Remove/Merge and their chooser.
+impl ActiveWorktreeSnapshot {
+    fn discovery_cwd(&self) -> PathBuf {
+        self.surface_cwd
+            .as_ref()
+            .filter(|cwd| cwd.is_dir())
+            .cloned()
+            .unwrap_or_else(|| self.workspace_cwd.clone())
+    }
+
+    fn modeled_workspace(&self) -> (String, PathBuf) {
+        (self.name.clone(), self.workspace_cwd.clone())
+    }
+
+    fn repo_cwd(&self) -> PathBuf {
+        self.workspace_cwd
+            .to_str()
+            .and_then(|cwd| worktree::repository_root(cwd).ok())
+            .unwrap_or_else(|| self.workspace_cwd.clone())
+    }
+}
+
+fn active_worktree_snapshot(state: &SocketAppState) -> Option<ActiveWorktreeSnapshot> {
+    let model = state.model.lock().ok()?;
+    let workspace = model.active_workspace()?;
+    let surface_cwd = model
+        .surface(&workspace.focused_surface_id)
+        .map(|surface| surface.cwd.clone());
+    Some(ActiveWorktreeSnapshot {
+        name: workspace.name,
+        surface_cwd,
+        workspace_cwd: workspace.working_dir,
+    })
+}
+
+/// Stable base-checkout path for Remove/Merge and their chooser.
 ///
-/// Uses the modeled `working_dir`, never the focused surface's ephemeral shell
-/// CWD. Shell CWD can leave the repo entirely (`cd /tmp`), and routing a
+/// Starts from the modeled `working_dir`, never the focused surface's ephemeral
+/// shell CWD, then resolves linked worktrees to the repository's common base
+/// checkout. Shell CWD can leave the repo entirely (`cd /tmp`), and routing a
 /// destructive worktree op through that path hits the wrong repository.
 fn active_workspace_repo_cwd(state: &SocketAppState) -> Option<PathBuf> {
-    state.model.lock().ok().and_then(|model| {
-        model
-            .active_workspace()
-            .map(|workspace| workspace.working_dir.clone())
-    })
+    active_worktree_snapshot(state).map(|snapshot| snapshot.repo_cwd())
+}
+
+struct WorktreeDialogContext {
+    discovery_cwd: Option<PathBuf>,
+    repo_cwd: Option<PathBuf>,
+    discovery_text: String,
+    repo_text: String,
+}
+
+fn worktree_dialog_context(state: &SocketAppState) -> WorktreeDialogContext {
+    let _ = forktty_socket::sync_live_surface_cwds(state);
+    worktree_dialog_context_from_snapshot(active_worktree_snapshot(state))
+}
+
+fn worktree_dialog_context_from_snapshot(
+    snapshot: Option<ActiveWorktreeSnapshot>,
+) -> WorktreeDialogContext {
+    let discovery_workspace = snapshot
+        .as_ref()
+        .map(|snapshot| (snapshot.name.clone(), snapshot.discovery_cwd()));
+    let source_workspace = snapshot
+        .as_ref()
+        .map(ActiveWorktreeSnapshot::modeled_workspace);
+    let discovery_cwd = discovery_workspace.as_ref().map(|(_, cwd)| cwd.clone());
+    let repo_cwd = snapshot.as_ref().map(ActiveWorktreeSnapshot::repo_cwd);
+    let discovery_text = discovery_workspace
+        .as_ref()
+        .map(|(name, cwd)| format!("{name}\n{}", compact_path(cwd)))
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .map(|path| compact_path(&path))
+                .unwrap_or_else(|_| "Current directory".to_string())
+        });
+    let repo_text = repository_context_text(
+        source_workspace.as_ref(),
+        repo_cwd.as_deref(),
+        &discovery_text,
+    );
+    WorktreeDialogContext {
+        discovery_cwd,
+        repo_cwd,
+        discovery_text,
+        repo_text,
+    }
+}
+
+fn repository_context_text(
+    source_workspace: Option<&(String, PathBuf)>,
+    base_checkout: Option<&Path>,
+    fallback: &str,
+) -> String {
+    match (source_workspace, base_checkout) {
+        (Some((name, source_path)), Some(path)) => {
+            let base_path = compact_path(path);
+            let source_label = compact_path(source_path);
+            if source_label == base_path {
+                format!("{base_path}\nFrom {name}")
+            } else {
+                let source_label = source_path
+                    .strip_prefix(path)
+                    .ok()
+                    .filter(|relative| !relative.as_os_str().is_empty())
+                    .map(compact_path)
+                    .unwrap_or(source_label);
+                format!("{base_path}\nFrom {name} · {source_label}")
+            }
+        }
+        (None, Some(path)) => compact_path(path),
+        _ => fallback.to_string(),
+    }
 }
 
 pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &SocketAppState) {
@@ -90,25 +178,15 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     header.append(&title);
     header.append(&subtitle);
 
-    // Create/Attach follow the live shell CWD; Remove/Merge stay on the
-    // modeled workspace checkout so a shell that left the repo cannot point
-    // destructive git ops at an unrelated tree.
-    let base_workspace = active_worktree_discovery_base(state);
-    let discovery_cwd = base_workspace.as_ref().map(|(_, cwd)| cwd.clone());
-    let repo_cwd = active_workspace_repo_cwd(state);
-    let discovery_context_text = base_workspace
-        .as_ref()
-        .map(|(name, cwd)| format!("{} · {}", name, compact_path(cwd)))
-        .unwrap_or_else(|| {
-            std::env::current_dir()
-                .map(|path| compact_path(&path))
-                .unwrap_or_else(|_| "Current directory".to_string())
-        });
-    let repo_context_text = base_workspace
-        .as_ref()
-        .zip(repo_cwd.as_ref())
-        .map(|((name, _), cwd)| format!("{} · {}", name, compact_path(cwd)))
-        .unwrap_or_else(|| discovery_context_text.clone());
+    // Create/Attach follow the live shell CWD; Remove/Merge resolve the modeled
+    // workspace to its common base checkout so a shell that left the repo
+    // cannot point destructive git ops at an unrelated tree.
+    let WorktreeDialogContext {
+        discovery_cwd,
+        repo_cwd,
+        discovery_text: discovery_context_text,
+        repo_text: repo_context_text,
+    } = worktree_dialog_context(state);
     let context = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     context.add_css_class("worktree-context");
     context.update_property(&[gtk::accessible::Property::Label(&format!(
@@ -426,8 +504,8 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
             set_status_message(&status_for_action, &err, StatusKind::Error);
             return;
         }
-        // Create/Attach need a discovery path; Remove/Merge need the stable
-        // workspace checkout. Missing either is "no active workspace".
+        // Create/Attach need a discovery path; Remove/Merge need the resolved
+        // common base checkout. Missing either is "no active workspace".
         let op_cwd = if mode.uses_workspace_repo_base() {
             repo_cwd_for_action.clone()
         } else {
@@ -1023,6 +1101,119 @@ mod tests {
     }
 
     #[test]
+    fn repository_context_keeps_base_and_source_identity_visible() {
+        let source = (
+            "feature/login".to_string(),
+            PathBuf::from("/tmp/project/.worktrees/feature-login"),
+        );
+
+        assert_eq!(
+            repository_context_text(Some(&source), Some(Path::new("/tmp/project")), "fallback"),
+            "/tmp/project\nFrom feature/login · .worktrees/feature-login"
+        );
+        assert_eq!(
+            repository_context_text(
+                Some(&("main".to_string(), PathBuf::from("/tmp/project"))),
+                Some(Path::new("/tmp/project")),
+                "fallback",
+            ),
+            "/tmp/project\nFrom main"
+        );
+    }
+
+    #[test]
+    fn destructive_context_keeps_modeled_source_when_live_cwd_leaves_workspace() {
+        let workspace_dir = tempfile::tempdir().unwrap();
+        let outside_dir = tempfile::tempdir().unwrap();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal,
+            "/bin/sh",
+            outside_dir.path().join("forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("feature", workspace_dir.path());
+            assert!(model.set_surface_cwd(
+                &workspace.focused_surface_id,
+                outside_dir.path().to_path_buf()
+            ));
+        }
+
+        let context = worktree_dialog_context(&state);
+
+        assert_eq!(context.discovery_cwd.as_deref(), Some(outside_dir.path()));
+        assert_eq!(context.repo_cwd.as_deref(), Some(workspace_dir.path()));
+        assert_eq!(
+            context.discovery_text,
+            format!("feature\n{}", outside_dir.path().display())
+        );
+        assert_eq!(
+            context.repo_text,
+            format!("{}\nFrom feature", workspace_dir.path().display())
+        );
+    }
+
+    #[test]
+    fn worktree_dialog_context_stays_with_one_workspace_snapshot() {
+        let first_dir = tempfile::tempdir().unwrap();
+        let first_live_dir = tempfile::tempdir().unwrap();
+        let second_dir = tempfile::tempdir().unwrap();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal,
+            "/bin/sh",
+            second_dir.path().join("forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let first_id = {
+            let mut model = model.lock().unwrap();
+            let first = model.create_workspace("first", first_dir.path());
+            assert!(model.set_surface_cwd(
+                &first.focused_surface_id,
+                first_live_dir.path().to_path_buf()
+            ));
+            let first_id = first.id.clone();
+            model.create_workspace("second", second_dir.path());
+            model
+                .select_workspace(WorkspaceSelector::Id(&first_id))
+                .unwrap();
+            first_id
+        };
+
+        let snapshot = active_worktree_snapshot(&state).unwrap();
+        model
+            .lock()
+            .unwrap()
+            .select_workspace(WorkspaceSelector::Name("second"))
+            .unwrap();
+        let context = worktree_dialog_context_from_snapshot(Some(snapshot));
+
+        assert_eq!(
+            context.discovery_cwd.as_deref(),
+            Some(first_live_dir.path())
+        );
+        assert_eq!(context.repo_cwd.as_deref(), Some(first_dir.path()));
+        assert_eq!(
+            context.discovery_text,
+            format!("first\n{}", first_live_dir.path().display())
+        );
+        assert_eq!(
+            context.repo_text,
+            format!("{}\nFrom first", first_dir.path().display())
+        );
+        assert_ne!(
+            model.lock().unwrap().active_workspace_id().as_deref(),
+            Some(first_id.as_str())
+        );
+    }
+
+    #[test]
     fn discovery_status_preserves_mode_consequences() {
         assert_eq!(
             worktree_dialog_hint(WorktreeDialogMode::Remove, WorktreeDiscoveryState::Failed),
@@ -1153,9 +1344,7 @@ pub(super) async fn open_worktree_from_gtk_async(
 ) -> Result<(), String> {
     // Create/Attach intentionally follow the live shell discovery base so a
     // pane that `cd`'d into another repo can open a worktree there.
-    let cwd = active_worktree_discovery_base(state)
-        .map(|(_, cwd)| cwd)
-        .ok_or_else(no_active_workspace_message)?;
+    let cwd = active_workspace_cwd(state).ok_or_else(no_active_workspace_message)?;
     open_worktree_from_gtk_async_at_cwd(state, &cwd, name, action).await
 }
 
@@ -1310,7 +1499,8 @@ pub(super) fn no_active_workspace_message() -> String {
 /// Create/Attach discovery base (live shell CWD preferred). Not for Remove/Merge.
 #[cfg(test)]
 pub(super) fn active_workspace_cwd(state: &SocketAppState) -> Option<PathBuf> {
-    active_worktree_discovery_base(state).map(|(_, cwd)| cwd)
+    let _ = forktty_socket::sync_live_surface_cwds(state);
+    active_worktree_snapshot(state).map(|snapshot| snapshot.discovery_cwd())
 }
 
 #[cfg(test)]
