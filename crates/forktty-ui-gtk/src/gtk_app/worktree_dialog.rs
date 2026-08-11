@@ -51,6 +51,20 @@ fn active_worktree_discovery_base(state: &SocketAppState) -> Option<(String, Pat
     Some((name, cwd))
 }
 
+/// Stable modeled identity for destructive-operation context.
+///
+/// This intentionally does not inspect the focused surface CWD: a pane can
+/// leave its workspace checkout without changing which checkout initiated a
+/// Merge or Remove operation.
+fn active_modeled_workspace(state: &SocketAppState) -> Option<(String, PathBuf)> {
+    state
+        .model
+        .lock()
+        .ok()?
+        .active_workspace()
+        .map(|workspace| (workspace.name, workspace.working_dir))
+}
+
 /// Stable base-checkout path for Remove/Merge and their chooser.
 ///
 /// Starts from the modeled `working_dir`, never the focused surface's ephemeral
@@ -58,15 +72,44 @@ fn active_worktree_discovery_base(state: &SocketAppState) -> Option<(String, Pat
 /// checkout. Shell CWD can leave the repo entirely (`cd /tmp`), and routing a
 /// destructive worktree op through that path hits the wrong repository.
 fn active_workspace_repo_cwd(state: &SocketAppState) -> Option<PathBuf> {
-    let workspace_cwd = state.model.lock().ok().and_then(|model| {
-        model
-            .active_workspace()
-            .map(|workspace| workspace.working_dir.clone())
-    })?;
+    let (_, workspace_cwd) = active_modeled_workspace(state)?;
     workspace_cwd
         .to_str()
         .and_then(|cwd| worktree::repository_root(cwd).ok())
         .or(Some(workspace_cwd))
+}
+
+struct WorktreeDialogContext {
+    discovery_cwd: Option<PathBuf>,
+    repo_cwd: Option<PathBuf>,
+    discovery_text: String,
+    repo_text: String,
+}
+
+fn worktree_dialog_context(state: &SocketAppState) -> WorktreeDialogContext {
+    let discovery_workspace = active_worktree_discovery_base(state);
+    let source_workspace = active_modeled_workspace(state);
+    let discovery_cwd = discovery_workspace.as_ref().map(|(_, cwd)| cwd.clone());
+    let repo_cwd = active_workspace_repo_cwd(state);
+    let discovery_text = discovery_workspace
+        .as_ref()
+        .map(|(name, cwd)| format!("{name}\n{}", compact_path(cwd)))
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .map(|path| compact_path(&path))
+                .unwrap_or_else(|_| "Current directory".to_string())
+        });
+    let repo_text = repository_context_text(
+        source_workspace.as_ref(),
+        repo_cwd.as_deref(),
+        &discovery_text,
+    );
+    WorktreeDialogContext {
+        discovery_cwd,
+        repo_cwd,
+        discovery_text,
+        repo_text,
+    }
 }
 
 fn repository_context_text(
@@ -124,22 +167,12 @@ pub(super) fn show_worktree_dialog(parent: &adw::ApplicationWindow, state: &Sock
     // Create/Attach follow the live shell CWD; Remove/Merge resolve the modeled
     // workspace to its common base checkout so a shell that left the repo
     // cannot point destructive git ops at an unrelated tree.
-    let base_workspace = active_worktree_discovery_base(state);
-    let discovery_cwd = base_workspace.as_ref().map(|(_, cwd)| cwd.clone());
-    let repo_cwd = active_workspace_repo_cwd(state);
-    let discovery_context_text = base_workspace
-        .as_ref()
-        .map(|(name, cwd)| format!("{name}\n{}", compact_path(cwd)))
-        .unwrap_or_else(|| {
-            std::env::current_dir()
-                .map(|path| compact_path(&path))
-                .unwrap_or_else(|_| "Current directory".to_string())
-        });
-    let repo_context_text = repository_context_text(
-        base_workspace.as_ref(),
-        repo_cwd.as_deref(),
-        &discovery_context_text,
-    );
+    let WorktreeDialogContext {
+        discovery_cwd,
+        repo_cwd,
+        discovery_text: discovery_context_text,
+        repo_text: repo_context_text,
+    } = worktree_dialog_context(state);
     let context = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     context.add_css_class("worktree-context");
     context.update_property(&[gtk::accessible::Property::Label(&format!(
@@ -1071,6 +1104,42 @@ mod tests {
                 "fallback",
             ),
             "/tmp/project\nFrom main"
+        );
+    }
+
+    #[test]
+    fn destructive_context_keeps_modeled_source_when_live_cwd_leaves_workspace() {
+        let workspace_dir = tempfile::tempdir().unwrap();
+        let outside_dir = tempfile::tempdir().unwrap();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal,
+            "/bin/sh",
+            outside_dir.path().join("forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        {
+            let mut model = model.lock().unwrap();
+            let workspace = model.create_workspace("feature", workspace_dir.path());
+            assert!(model.set_surface_cwd(
+                &workspace.focused_surface_id,
+                outside_dir.path().to_path_buf()
+            ));
+        }
+
+        let context = worktree_dialog_context(&state);
+
+        assert_eq!(context.discovery_cwd.as_deref(), Some(outside_dir.path()));
+        assert_eq!(context.repo_cwd.as_deref(), Some(workspace_dir.path()));
+        assert_eq!(
+            context.discovery_text,
+            format!("feature\n{}", outside_dir.path().display())
+        );
+        assert_eq!(
+            context.repo_text,
+            format!("{}\nFrom feature", workspace_dir.path().display())
         );
     }
 
