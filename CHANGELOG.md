@@ -11,9 +11,10 @@ All notable changes to ForkTTY are documented here.
 
 ### Fixed
 - Worktree Create and Attach now work from an already linked checkout while
-  keeping new worktrees in the primary repository layout and branching from
-  the active checkout's HEAD. Merge and Remove dialogs also name the actual
-  primary checkout they will operate on.
+  keeping new worktrees in the primary repository layout. Create branches from
+  the active checkout's HEAD, while Attach uses the selected branch reference.
+  Merge and Remove dialogs also name the actual primary checkout they will
+  operate on.
 - The notification panel now reserves a scrollbar gutter so its scrollbar no
   longer covers row-level Dismiss controls.
 - Config recovery notifications now survive saved-session restore, so a

@@ -36,19 +36,34 @@ pub(super) fn worktree_dialog_choices_from_list(
 /// shell CWD so a pane that has `cd`'d into another checkout can spawn a
 /// worktree there. Destructive Remove/Merge must not use this — see
 /// [`active_workspace_repo_cwd`].
+#[cfg(test)]
 fn active_worktree_discovery_base(state: &SocketAppState) -> Option<(String, PathBuf)> {
     let _ = forktty_socket::sync_live_surface_cwds(state);
-    let (name, surface_cwd, workspace_cwd) = state.model.lock().ok().and_then(|model| {
-        let workspace = model.active_workspace()?;
-        let surface_cwd = model
-            .surface(&workspace.focused_surface_id)
-            .map(|surface| surface.cwd.clone());
-        Some((workspace.name, surface_cwd, workspace.working_dir))
-    })?;
-    let cwd = surface_cwd
+    let snapshot = active_worktree_snapshot(state)?;
+    let cwd = snapshot
+        .surface_cwd
         .filter(|cwd| cwd.is_dir())
-        .unwrap_or(workspace_cwd);
-    Some((name, cwd))
+        .unwrap_or(snapshot.workspace_cwd);
+    Some((snapshot.name, cwd))
+}
+
+struct ActiveWorktreeSnapshot {
+    name: String,
+    surface_cwd: Option<PathBuf>,
+    workspace_cwd: PathBuf,
+}
+
+fn active_worktree_snapshot(state: &SocketAppState) -> Option<ActiveWorktreeSnapshot> {
+    let model = state.model.lock().ok()?;
+    let workspace = model.active_workspace()?;
+    let surface_cwd = model
+        .surface(&workspace.focused_surface_id)
+        .map(|surface| surface.cwd.clone());
+    Some(ActiveWorktreeSnapshot {
+        name: workspace.name,
+        surface_cwd,
+        workspace_cwd: workspace.working_dir,
+    })
 }
 
 /// Stable modeled identity for destructive-operation context.
@@ -57,12 +72,8 @@ fn active_worktree_discovery_base(state: &SocketAppState) -> Option<(String, Pat
 /// leave its workspace checkout without changing which checkout initiated a
 /// Merge or Remove operation.
 fn active_modeled_workspace(state: &SocketAppState) -> Option<(String, PathBuf)> {
-    state
-        .model
-        .lock()
-        .ok()?
-        .active_workspace()
-        .map(|workspace| (workspace.name, workspace.working_dir))
+    let snapshot = active_worktree_snapshot(state)?;
+    Some((snapshot.name, snapshot.workspace_cwd))
 }
 
 /// Stable base-checkout path for Remove/Merge and their chooser.
@@ -87,10 +98,33 @@ struct WorktreeDialogContext {
 }
 
 fn worktree_dialog_context(state: &SocketAppState) -> WorktreeDialogContext {
-    let discovery_workspace = active_worktree_discovery_base(state);
-    let source_workspace = active_modeled_workspace(state);
+    let _ = forktty_socket::sync_live_surface_cwds(state);
+    worktree_dialog_context_from_snapshot(active_worktree_snapshot(state))
+}
+
+fn worktree_dialog_context_from_snapshot(
+    snapshot: Option<ActiveWorktreeSnapshot>,
+) -> WorktreeDialogContext {
+    let discovery_workspace = snapshot.as_ref().map(|snapshot| {
+        let cwd = snapshot
+            .surface_cwd
+            .as_ref()
+            .filter(|cwd| cwd.is_dir())
+            .cloned()
+            .unwrap_or_else(|| snapshot.workspace_cwd.clone());
+        (snapshot.name.clone(), cwd)
+    });
+    let source_workspace = snapshot
+        .as_ref()
+        .map(|snapshot| (snapshot.name.clone(), snapshot.workspace_cwd.clone()));
     let discovery_cwd = discovery_workspace.as_ref().map(|(_, cwd)| cwd.clone());
-    let repo_cwd = active_workspace_repo_cwd(state);
+    let repo_cwd = snapshot.as_ref().map(|snapshot| {
+        snapshot
+            .workspace_cwd
+            .to_str()
+            .and_then(|cwd| worktree::repository_root(cwd).ok())
+            .unwrap_or_else(|| snapshot.workspace_cwd.clone())
+    });
     let discovery_text = discovery_workspace
         .as_ref()
         .map(|(name, cwd)| format!("{name}\n{}", compact_path(cwd)))
@@ -1140,6 +1174,62 @@ mod tests {
         assert_eq!(
             context.repo_text,
             format!("{}\nFrom feature", workspace_dir.path().display())
+        );
+    }
+
+    #[test]
+    fn worktree_dialog_context_stays_with_one_workspace_snapshot() {
+        let first_dir = tempfile::tempdir().unwrap();
+        let first_live_dir = tempfile::tempdir().unwrap();
+        let second_dir = tempfile::tempdir().unwrap();
+        let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+        let terminal = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+        let state = SocketAppState::new(
+            model.clone(),
+            terminal,
+            "/bin/sh",
+            second_dir.path().join("forktty.sock"),
+        )
+        .with_notification_dispatch(false);
+        let first_id = {
+            let mut model = model.lock().unwrap();
+            let first = model.create_workspace("first", first_dir.path());
+            assert!(model.set_surface_cwd(
+                &first.focused_surface_id,
+                first_live_dir.path().to_path_buf()
+            ));
+            let first_id = first.id.clone();
+            model.create_workspace("second", second_dir.path());
+            model
+                .select_workspace(WorkspaceSelector::Id(&first_id))
+                .unwrap();
+            first_id
+        };
+
+        let snapshot = active_worktree_snapshot(&state).unwrap();
+        model
+            .lock()
+            .unwrap()
+            .select_workspace(WorkspaceSelector::Name("second"))
+            .unwrap();
+        let context = worktree_dialog_context_from_snapshot(Some(snapshot));
+
+        assert_eq!(
+            context.discovery_cwd.as_deref(),
+            Some(first_live_dir.path())
+        );
+        assert_eq!(context.repo_cwd.as_deref(), Some(first_dir.path()));
+        assert_eq!(
+            context.discovery_text,
+            format!("first\n{}", first_live_dir.path().display())
+        );
+        assert_eq!(
+            context.repo_text,
+            format!("{}\nFrom first", first_dir.path().display())
+        );
+        assert_ne!(
+            model.lock().unwrap().active_workspace_id().as_deref(),
+            Some(first_id.as_str())
         );
     }
 
