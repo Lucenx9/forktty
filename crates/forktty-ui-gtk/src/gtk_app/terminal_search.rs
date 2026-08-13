@@ -76,24 +76,50 @@ fn for_each_char_match_start(
     }
     let first_needle = needle[0];
     let mut index = 0;
-    while index + needle.len() <= haystack.len() {
-        // Fast-path: short-circuit the full substring check if the first character
-        // doesn't match, avoiding iterator overhead in the common case.
-        if !chars_eq_ignore_case(haystack[index], first_needle) {
-            index += 1;
-            continue;
-        }
-        let matched = haystack[index + 1..index + needle.len()]
-            .iter()
-            .zip(&needle[1..])
-            .all(|(a, b)| chars_eq_ignore_case(*a, *b));
-        if matched {
-            if !visit(index) {
-                return;
+
+    if first_needle.is_ascii() {
+        let first_lower = first_needle.to_ascii_lowercase();
+        let first_upper = first_needle.to_ascii_uppercase();
+
+        while index + needle.len() <= haystack.len() {
+            let h = haystack[index];
+            if h != first_lower && h != first_upper {
+                index += 1;
+                continue;
             }
-            index += needle.len();
-        } else {
-            index += 1;
+            let matched = haystack[index + 1..index + needle.len()]
+                .iter()
+                .zip(&needle[1..])
+                .all(|(a, b)| chars_eq_ignore_case(*a, *b));
+            if matched {
+                if !visit(index) {
+                    return;
+                }
+                index += needle.len();
+            } else {
+                index += 1;
+            }
+        }
+    } else {
+        while index + needle.len() <= haystack.len() {
+            // Fast-path: short-circuit the full substring check if the first character
+            // doesn't match, avoiding iterator overhead in the common case.
+            if !chars_eq_ignore_case(haystack[index], first_needle) {
+                index += 1;
+                continue;
+            }
+            let matched = haystack[index + 1..index + needle.len()]
+                .iter()
+                .zip(&needle[1..])
+                .all(|(a, b)| chars_eq_ignore_case(*a, *b));
+            if matched {
+                if !visit(index) {
+                    return;
+                }
+                index += needle.len();
+            } else {
+                index += 1;
+            }
         }
     }
 }
