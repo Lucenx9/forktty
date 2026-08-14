@@ -1,0 +1,3 @@
+## 2026-08-14 - Fast-Path ASCII checks in Terminal Search
+**Learning:** Hoisting the computation of ASCII lowercase and uppercase values for the needle's first character outside the hot search loop and doing inline ASCII equality checks `h == first_lower || h == first_upper` eliminates function call overhead (`chars_eq_ignore_case`) for the vast majority of non-matching characters during massive terminal scrollback searches.
+**Action:** Always consider manually hoisting lightweight checks (like ASCII case bounds) out of hot iterator loops in Rust when dealing with millions of character iterations.
