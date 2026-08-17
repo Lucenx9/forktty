@@ -1,0 +1,3 @@
+## 2024-08-17 - Avoid redundant String cloning when counting/iterating over surfaces
+**Learning:** In the `forktty-core`'s `model.list_surfaces()` method, it allocates memory to return `Vec<Surface>` by `cloned().collect()`. In cases where we only need to count surfaces via `.len()`, or find/any via `.iter()`, this leads to unnecessary memory allocation and iteration costs.
+**Action:** Created `iter_surfaces` which yields an `impl Iterator<Item = &Surface>` and `surface_count` which uses `.count()` over that iterator, avoiding any cloned allocations when just evaluating counts or matching elements.

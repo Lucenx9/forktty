@@ -26,7 +26,7 @@ fn repeated_exact_worktree_identity_reuses_workspace_without_allocating_surface(
         "feature-wt",
         &[],
     );
-    let surface_count = model.list_surfaces(None).len();
+    let surface_count = model.surface_count(None);
     let resolved_identities = resolved_worktree_identities(&model);
     let second = model.find_or_create_worktree_workspace(
         "feature",
@@ -40,7 +40,7 @@ fn repeated_exact_worktree_identity_reuses_workspace_without_allocating_surface(
     assert!(!second.created);
     assert_eq!(second.workspace.id, first.workspace.id);
     assert_eq!(model.list_workspaces().len(), 1);
-    assert_eq!(model.list_surfaces(None).len(), surface_count);
+    assert_eq!(model.surface_count(None), surface_count);
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn reusing_exact_worktree_identity_selects_and_refreshes_metadata_without_renami
         .unwrap();
     model.workspaces.get_mut(&workspace.id).unwrap().working_dir = root.path().join("stale-path");
     let other = model.create_workspace("other", root.path());
-    let surface_count = model.list_surfaces(None).len();
+    let surface_count = model.surface_count(None);
     let resolved_identities = resolved_worktree_identities(&model);
 
     let resolution = model.find_or_create_worktree_workspace(
@@ -111,7 +111,7 @@ fn reusing_exact_worktree_identity_selects_and_refreshes_metadata_without_renami
     );
     assert!(resolution.workspace.active);
     assert!(!model.workspaces[&other.id].active);
-    assert_eq!(model.list_surfaces(None).len(), surface_count);
+    assert_eq!(model.surface_count(None), surface_count);
 }
 
 #[test]

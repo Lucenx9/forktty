@@ -25,7 +25,7 @@ fn add_tab_creates_new_surface_in_same_leaf_and_focuses_it() {
     // Active points to the newly added tab.
     assert_eq!(workspace.pane_tree.leaf_active_id(), Some(&new_surface.id));
     // Surface count should be 2.
-    assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 2);
+    assert_eq!(model.surface_count(Some(&workspace.id)), 2);
 }
 
 #[test]

@@ -255,7 +255,7 @@ fn open_ssh_splits_into_ssh_surface() {
     assert_eq!(new_surface.title, "ssh:server.local");
     let workspace = model.list_workspaces().remove(0);
     assert_eq!(workspace.focused_surface_id, new_surface.id);
-    assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 2);
+    assert_eq!(model.surface_count(Some(&workspace.id)), 2);
 }
 
 #[test]
