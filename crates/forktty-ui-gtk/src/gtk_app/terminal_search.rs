@@ -75,14 +75,26 @@ fn for_each_char_match_start(
         return;
     }
     let first_needle = needle[0];
+    let is_ascii_fast_path = first_needle.is_ascii();
+    let first_lower = first_needle.to_ascii_lowercase();
+    let first_upper = first_needle.to_ascii_uppercase();
+
     let mut index = 0;
     while index + needle.len() <= haystack.len() {
-        // Fast-path: short-circuit the full substring check if the first character
-        // doesn't match, avoiding iterator overhead in the common case.
-        if !chars_eq_ignore_case(haystack[index], first_needle) {
+        let h = haystack[index];
+        if is_ascii_fast_path {
+            if h != first_lower
+                && h != first_upper
+                && (h.is_ascii() || !chars_eq_ignore_case(h, first_needle))
+            {
+                index += 1;
+                continue;
+            }
+        } else if !chars_eq_ignore_case(h, first_needle) {
             index += 1;
             continue;
         }
+
         let matched = haystack[index + 1..index + needle.len()]
             .iter()
             .zip(&needle[1..])
