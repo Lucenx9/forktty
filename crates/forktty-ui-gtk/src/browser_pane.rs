@@ -4,7 +4,6 @@
 use gtk4 as gtk;
 
 use gtk::glib;
-use gtk::prelude::*;
 use webkit6::prelude::*;
 use webkit6::WebView;
 
