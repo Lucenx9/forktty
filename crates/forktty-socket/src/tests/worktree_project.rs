@@ -626,11 +626,7 @@ async fn cancelled_worktree_create_keeps_writer_until_model_and_runtime_commit()
     let started_fifo = fifo_dir.path().join("socket-create-started");
     let release_fifo = fifo_dir.path().join("socket-create-release");
     for fifo in [&started_fifo, &release_fifo] {
-        assert!(std::process::Command::new("mkfifo")
-            .arg(fifo)
-            .status()
-            .unwrap()
-            .success());
+        make_fifo(fifo);
     }
     commit_blocking_setup_hook(repo_dir.path(), &started_fifo, &release_fifo);
 
@@ -838,11 +834,7 @@ async fn cancelled_worktree_remove_keeps_writer_during_teardown_and_commits_remo
     let started_fifo = fifo_dir.path().join("socket-remove-started");
     let release_fifo = fifo_dir.path().join("socket-remove-release");
     for fifo in [&started_fifo, &release_fifo] {
-        assert!(std::process::Command::new("mkfifo")
-            .arg(fifo)
-            .status()
-            .unwrap()
-            .success());
+        make_fifo(fifo);
     }
     commit_blocking_teardown_hook(&worktree_path, &started_fifo, &release_fifo);
 

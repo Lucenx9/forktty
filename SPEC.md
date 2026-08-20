@@ -74,6 +74,11 @@ Splits are represented as recursive `PaneNode::Split { axis, children, sizes }`;
 4. If the embedding library cannot load or the Ghostty surface cannot be
    created, ForkTTY records a terminal spawn failure and does not open a
    classic-renderer fallback pane.
+   New workspaces, tabs, and splits remain provisional until their first queued
+   terminal materializes. A late failure rolls back the modeled addition,
+   restores the previous workspace selection or pane layout, releases the
+   process-local surface guard after that rollback, and persists the restored
+   state.
    Restored agent terminals follow the same fail-closed rule: an invalid
    persisted session ID, resume cwd, or unsupported provider records a red
    surface status, error log, and notification and never falls back to the
@@ -408,8 +413,11 @@ manual cleanup paths are in the
 [README upgrade guide](README.md#upgrading-from-orchestration-builds).
 
 `workspace.create` and `workspace.create_ssh` default an omitted name to the
-allocated workspace id. Workspace selectors accept an id, name, or linked
-worktree name where documented; surface selectors override workspace focus.
+allocated workspace id. Their successful response acknowledges an accepted
+terminal spawn; the workspace remains provisional until the first terminal
+materializes, and a later backend failure removes it and restores the previous
+active workspace. Workspace selectors accept an id, name, or linked worktree
+name where documented; surface selectors override workspace focus.
 `system.identify` resolves explicit selectors first and otherwise reports active
 focus. `system.capabilities` returns only methods dispatchable by the current
 build plus PTY-persistence diagnostics; browser methods appear only in browser

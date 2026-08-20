@@ -39,6 +39,8 @@ or CLI parser tests), so they should be treated as regressions if they fail in C
   broken symlinks, and invalid workspace/surface invariants)
 - workspace model invariants around split/focus/close/restore and metadata cleanup
   after workspace removal
+- deferred terminal-spawn rollback for workspace, tab, and split creation,
+  including restored focus/layout, persisted session state, and guard release
 - hook installer safety paths (dry-run semantics, symlink handling, invalid JSON,
   and backup behavior)
 - worktree `.forktty/setup` hook failure visibility: failure stays non-fatal but

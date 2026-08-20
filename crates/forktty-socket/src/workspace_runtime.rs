@@ -1,21 +1,22 @@
 use crate::{
     close_replacement_terminal_surface_if_present, close_terminal_surfaces_or_restore,
-    current_model_surfaces, ensure_terminal_for_active_workspace,
-    evict_hook_session_targets_for_surfaces,
+    current_model_surfaces, deferred_workspace_creation_failure_handler,
+    ensure_terminal_for_active_workspace, evict_hook_session_targets_for_surfaces,
     hook_session::{hook_target_gates_for_surfaces, lock_hook_target_gates},
-    rollback_replacement_if_redundant, rollback_workspace_creation, spawn_workspace_terminal,
+    rollback_replacement_if_redundant, rollback_workspace_creation,
+    spawn_surface_terminal_with_failure_handler, spawn_workspace_terminal,
     topology_params::{
         WorkspaceCreateRequest, WorkspaceCreateSshRequest, WorkspaceSelectorRequest,
     },
     DispatchError, SocketAppState,
 };
-use forktty_core::WorkspaceSelector;
+use forktty_core::{session, WorkspaceSelector};
 use serde_json::{json, Value};
 
 pub(crate) async fn create(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
     let request = WorkspaceCreateRequest::decode(params)?;
-    let _surface_set_guard = state.surface_set_guard().await;
-    let (workspace, previous_active_id) = {
+    let surface_set_guard = state.surface_set_guard().await;
+    let (workspace, surface, previous_active_id) = {
         let mut model = state
             .model
             .lock()
@@ -25,10 +26,21 @@ pub(crate) async fn create(state: &SocketAppState, params: &Value) -> Result<Val
             Some(name) => model.create_workspace(name, request.cwd),
             None => model.create_auto_named_workspace(request.cwd),
         };
-        (workspace, previous_active_id)
+        let surface = model
+            .surface(&workspace.focused_surface_id)
+            .expect("new workspace owns its focused surface")
+            .clone();
+        (workspace, surface, previous_active_id)
     };
-    if let Err(err) = spawn_workspace_terminal(state, &workspace) {
-        rollback_workspace_creation(state, &workspace.id, previous_active_id)?;
+    let failure_handler = deferred_workspace_creation_failure_handler(
+        state,
+        &workspace.id,
+        previous_active_id,
+        surface_set_guard,
+        save_session_after_deferred_workspace_restore,
+    );
+    if let Err(err) = spawn_surface_terminal_with_failure_handler(state, &surface, failure_handler)
+    {
         return Err(err.into());
     }
     Ok(json!(workspace))
@@ -39,8 +51,8 @@ pub(crate) async fn create_ssh(
     params: &Value,
 ) -> Result<Value, DispatchError> {
     let request = WorkspaceCreateSshRequest::decode(params)?;
-    let _surface_set_guard = state.surface_set_guard().await;
-    let (workspace, previous_active_id) = {
+    let surface_set_guard = state.surface_set_guard().await;
+    let (workspace, surface, previous_active_id) = {
         let mut model = state
             .model
             .lock()
@@ -50,13 +62,33 @@ pub(crate) async fn create_ssh(
             Some(name) => model.create_ssh_workspace(name, request.cwd, request.host),
             None => model.create_auto_named_ssh_workspace(request.cwd, request.host),
         };
-        (workspace, previous_active_id)
+        let surface = model
+            .surface(&workspace.focused_surface_id)
+            .expect("new SSH workspace owns its focused surface")
+            .clone();
+        (workspace, surface, previous_active_id)
     };
-    if let Err(err) = spawn_workspace_terminal(state, &workspace) {
-        rollback_workspace_creation(state, &workspace.id, previous_active_id)?;
+    let failure_handler = deferred_workspace_creation_failure_handler(
+        state,
+        &workspace.id,
+        previous_active_id,
+        surface_set_guard,
+        save_session_after_deferred_workspace_restore,
+    );
+    if let Err(err) = spawn_surface_terminal_with_failure_handler(state, &surface, failure_handler)
+    {
         return Err(err.into());
     }
     Ok(json!(workspace))
+}
+
+fn save_session_after_deferred_workspace_restore(state: &SocketAppState) {
+    let Some(data) = crate::session_data_from_state(state) else {
+        return;
+    };
+    if let Err(err) = session::save_session(&data) {
+        eprintln!("Failed to save session after deferred workspace spawn rollback: {err}");
+    }
 }
 
 pub(crate) async fn select(state: &SocketAppState, params: &Value) -> Result<Value, DispatchError> {
