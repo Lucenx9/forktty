@@ -4,6 +4,8 @@ All notable changes to ForkTTY are documented here.
 
 ## [Unreleased]
 
+## [0.2.0-alpha.21] - 2026-08-20
+
 ### Added
 - The workspace sidebar can now be pinned beside terminal content from its
   header or left in the existing overlay presentation. The choice persists
