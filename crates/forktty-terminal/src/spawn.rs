@@ -939,8 +939,8 @@ mod tests {
         let mut unset_keys = Vec::new();
         let mut set_keys = Vec::new();
         let mut saw_set = false;
-        let mut options = helper_options.chunks_exact(2);
-        for option in &mut options {
+        let (options, remainder) = helper_options.as_chunks::<2>();
+        for option in options {
             match option[0].as_str() {
                 "--unset" => {
                     assert!(!saw_set, "unsets must precede assignments");
@@ -953,7 +953,7 @@ mod tests {
                 other => panic!("unexpected AppImage helper option {other}"),
             }
         }
-        assert!(options.remainder().is_empty());
+        assert!(remainder.is_empty());
         let mut sorted_unset_keys = unset_keys.clone();
         sorted_unset_keys.sort();
         assert_eq!(unset_keys, sorted_unset_keys);

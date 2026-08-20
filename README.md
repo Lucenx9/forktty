@@ -13,18 +13,18 @@ place work in dedicated git worktrees without tying the UI to one agent vendor.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Build](https://img.shields.io/github/actions/workflow/status/Lucenx9/forktty/ci.yml?branch=main)](https://github.com/Lucenx9/forktty/actions)
-[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.20)
+[![Release](https://img.shields.io/github/v/release/Lucenx9/forktty?include_prereleases)](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.21)
 [![Rust](https://img.shields.io/badge/rust-1.96%2B-orange.svg)](https://rustup.rs/)
 [![GTK4](https://img.shields.io/badge/GTK4%20%2B%20Ghostty-native-blue.svg)](docs/native-gtk-ghostty.md)
 
 [Website](https://forktty.dev/) ·
 [Docs](https://forktty.dev/docs) ·
 [Agent context](https://forktty.dev/llms.txt) ·
-[Download v0.2.0-alpha.20 AppImage](https://github.com/Lucenx9/forktty/releases/download/v0.2.0-alpha.20/forktty-0.2.0-alpha.20-x86_64.AppImage)
+[Download v0.2.0-alpha.21 AppImage](https://github.com/Lucenx9/forktty/releases/download/v0.2.0-alpha.21/forktty-0.2.0-alpha.21-x86_64.AppImage)
 
 </div>
 
-> **Status**: Early alpha (v0.2.0-alpha.20). ForkTTY is Linux-only and the GTK/Ghostty runtime is now the primary implementation. The AppImage is the primary Linux download for this alpha; the Debian package remains available for Debian/Ubuntu users.
+> **Status**: Early alpha (v0.2.0-alpha.21). ForkTTY is Linux-only and the GTK/Ghostty runtime is now the primary implementation. The AppImage is the primary Linux download for this alpha; the Debian package remains available for Debian/Ubuntu users.
 
 ![ForkTTY workspace running several coding agents across split terminal panes](docs/assets/forktty-workspace.png)
 
@@ -55,12 +55,12 @@ the linked guides carry the detailed contracts.
 ## Install
 
 The fastest paths are the prebuilt artifacts from the
-[v0.2.0-alpha.20 release](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.20).
+[v0.2.0-alpha.21 release](https://github.com/Lucenx9/forktty/releases/tag/v0.2.0-alpha.21).
 Each release ships:
 
-- `forktty-0.2.0-alpha.20-x86_64.AppImage` — recommended portable Linux package.
-- `forktty-0.2.0-alpha.20-x86_64.AppImage.zsync` — AppImage delta-update metadata for external AppImage managers.
-- `forktty_0.2.0.alpha.20_amd64.deb` — Debian/Ubuntu package.
+- `forktty-0.2.0-alpha.21-x86_64.AppImage` — recommended portable Linux package.
+- `forktty-0.2.0-alpha.21-x86_64.AppImage.zsync` — AppImage delta-update metadata for external AppImage managers.
+- `forktty_0.2.0~alpha.21_amd64.deb` — Debian/Ubuntu package.
 - `SHA256SUMS` — checksums for release artifacts.
 
 After downloading, verify checksums:
@@ -72,8 +72,8 @@ sha256sum -c SHA256SUMS
 ### AppImage
 
 ```bash
-chmod +x forktty-0.2.0-alpha.20-x86_64.AppImage
-./forktty-0.2.0-alpha.20-x86_64.AppImage
+chmod +x forktty-0.2.0-alpha.21-x86_64.AppImage
+./forktty-0.2.0-alpha.21-x86_64.AppImage
 ```
 
 The AppImage carries ForkTTY's private Ghostty libraries and a bundled
@@ -91,9 +91,9 @@ so external AppImage managers remain in control. If the UI renders incorrectly,
 retry with the alternate GTK OpenGL renderer name:
 
 ```bash
-GSK_RENDERER=gl ./forktty-0.2.0-alpha.20-x86_64.AppImage
+GSK_RENDERER=gl ./forktty-0.2.0-alpha.21-x86_64.AppImage
 # or
-GSK_RENDERER=ngl ./forktty-0.2.0-alpha.20-x86_64.AppImage
+GSK_RENDERER=ngl ./forktty-0.2.0-alpha.21-x86_64.AppImage
 ```
 
 Use `GSK_RENDERER=cairo` only as a slower software-rendering fallback. More
@@ -106,9 +106,9 @@ Debian 12/Bookworm is below the package baseline because it does not provide
 libadwaita 1.4+.
 
 ```bash
-sudo apt install ./forktty_0.2.0.alpha.20_amd64.deb
+sudo apt install ./forktty_0.2.0~alpha.21_amd64.deb
 # or, if apt cannot read the file path directly:
-sudo dpkg -i forktty_0.2.0.alpha.20_amd64.deb
+sudo dpkg -i forktty_0.2.0~alpha.21_amd64.deb
 sudo apt -f install
 ```
 

@@ -1025,7 +1025,7 @@ fn cairo_argb32_from_rgba(rgba: &[u8], width: u32, height: u32) -> Option<Vec<u8
     if out.try_reserve_exact(len).is_err() {
         return None;
     }
-    for pixel in rgba[..len].chunks_exact(4) {
+    for pixel in rgba[..len].as_chunks::<4>().0 {
         let alpha = u16::from(pixel[3]);
         let premultiply = |value: u8| ((u16::from(value) * alpha + 127) / 255) as u8;
         out.extend_from_slice(&[
