@@ -29,4 +29,4 @@ tokio.workspace = true
 
 [dev-dependencies]
 rusqlite.workspace = true
-serial_test = "3"
+serial_test = "4"
