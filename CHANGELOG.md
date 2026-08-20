@@ -10,6 +10,10 @@ All notable changes to ForkTTY are documented here.
   across restarts without changing Ctrl+B/F9 visibility behavior.
 
 ### Fixed
+- New workspaces now remain provisional until embedded Ghostty materializes
+  their first terminal. A late GTK spawn failure removes the failed workspace,
+  restores the previously active workspace, persists that rollback, and
+  releases the shared surface transaction for both UI and socket creation.
 - Worktree Create and Attach now work from an already linked checkout while
   keeping new worktrees in the primary repository layout. Create branches from
   the active checkout's HEAD, while Attach uses the selected branch reference.

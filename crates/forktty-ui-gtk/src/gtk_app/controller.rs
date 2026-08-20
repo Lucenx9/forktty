@@ -1720,6 +1720,118 @@ mod tests {
     }
 
     #[test]
+    fn open_workspace_synchronous_spawn_persists_committed_workspace() {
+        crate::test_env::with_isolated_user_dirs(|| {
+            let original_dir = tempfile::tempdir().unwrap();
+            let opened_dir = tempfile::tempdir().unwrap();
+            let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+            model
+                .lock()
+                .unwrap()
+                .create_workspace("main", original_dir.path());
+            let backend = Arc::new(forktty_terminal::HeadlessTerminalBackend::new());
+            let state = SocketAppState::new(
+                model,
+                backend,
+                "/bin/sh",
+                PathBuf::from(std::env::var("XDG_RUNTIME_DIR").unwrap()).join("forktty.sock"),
+            )
+            .with_notification_dispatch(false);
+
+            glib::MainContext::new()
+                .block_on(open_workspace_from_path(
+                    &state,
+                    opened_dir.path().to_path_buf(),
+                ))
+                .unwrap();
+
+            assert!(state.try_surface_set_guard().is_some());
+            let saved = session::load_session()
+                .unwrap()
+                .expect("synchronous workspace creation should persist its commit");
+            assert_eq!(saved.workspaces.len(), 2);
+            assert_eq!(
+                saved
+                    .workspaces
+                    .iter()
+                    .filter(|workspace| workspace.active)
+                    .count(),
+                1
+            );
+            assert_eq!(
+                saved
+                    .workspaces
+                    .iter()
+                    .find(|workspace| workspace.active)
+                    .unwrap()
+                    .working_dir,
+                opened_dir.path()
+            );
+        });
+    }
+
+    #[test]
+    fn open_workspace_deferred_spawn_failure_restores_previous_workspace() {
+        let _ = crate::test_env::with_gtk_test(|| {
+            crate::test_env::with_isolated_user_dirs(|| {
+                let original_dir = tempfile::tempdir().unwrap();
+                let opened_dir = tempfile::tempdir().unwrap();
+                let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+                let original_workspace_id = model
+                    .lock()
+                    .unwrap()
+                    .create_workspace("main", original_dir.path())
+                    .id;
+                let (tx, rx) = mpsc::channel();
+                let backend = Arc::new(GtkTerminalBackend::new(tx));
+                let state = SocketAppState::new(
+                    model.clone(),
+                    backend.clone(),
+                    "/bin/sh",
+                    PathBuf::from(std::env::var("XDG_RUNTIME_DIR").unwrap()).join("forktty.sock"),
+                )
+                .with_notification_dispatch(false);
+                let container = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+                let parent = adw::ApplicationWindow::builder().build();
+                let mut controller =
+                    TerminalController::new(container, parent.clone(), model.clone(), backend);
+                controller.attach_state(state.clone());
+                session::save_session(&model.lock().unwrap().to_session_data()).unwrap();
+
+                glib::MainContext::new()
+                    .block_on(open_workspace_from_path(
+                        &state,
+                        opened_dir.path().to_path_buf(),
+                    ))
+                    .unwrap();
+                let spawn = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+                assert!(
+                    state.try_surface_set_guard().is_none(),
+                    "workspace creation must remain provisional until GTK materializes it"
+                );
+                let provisional_saved = session::load_session().unwrap().unwrap();
+                assert_eq!(provisional_saved.workspaces.len(), 1);
+                assert_eq!(provisional_saved.workspaces[0].id, original_workspace_id);
+                drop(opened_dir);
+                controller.handle(spawn);
+
+                assert!(state.try_surface_set_guard().is_some());
+                let workspaces = model.lock().unwrap().list_workspaces();
+                assert_eq!(workspaces.len(), 1);
+                assert_eq!(workspaces[0].id, original_workspace_id);
+                assert!(workspaces[0].active);
+                let saved = session::load_session()
+                    .unwrap()
+                    .expect("deferred rollback should persist the restored workspace");
+                assert_eq!(saved.workspaces.len(), 1);
+                assert_eq!(saved.workspaces[0].id, original_workspace_id);
+                assert!(saved.workspaces[0].active);
+                parent.close();
+            });
+        });
+    }
+
+    #[test]
     fn ignored_deferred_spawn_commands_disarm_their_rollback() {
         let _ = crate::test_env::with_gtk_test(|| {
             for existing_widget in [false, true] {

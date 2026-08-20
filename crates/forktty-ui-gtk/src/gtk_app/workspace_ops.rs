@@ -21,7 +21,7 @@ pub(super) fn spawn_surface_gtk(
     spawn_surface_gtk_with_failure_handler(state, surface, None)
 }
 
-fn spawn_surface_gtk_with_failure_handler(
+pub(super) fn spawn_surface_gtk_with_failure_handler(
     state: &SocketAppState,
     surface: &Surface,
     failure_handler: Option<DeferredSpawnFailureHandler>,

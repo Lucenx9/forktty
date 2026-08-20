@@ -52,24 +52,41 @@ pub(super) async fn open_workspace_from_path(
         .filter(|name| !name.trim().is_empty())
         .unwrap_or("workspace")
         .to_string();
+    create_workspace_transaction(state, move |model| model.create_workspace(name, path)).await
+}
+
+async fn create_workspace_transaction(
+    state: &SocketAppState,
+    create: impl FnOnce(&mut WorkspaceModel) -> forktty_core::Workspace,
+) -> Result<(), String> {
     let surface_set_guard = state.surface_set_guard().await;
-    let (workspace, previous_active_id) = {
+    let (workspace, surface, previous_active_id) = {
         let mut model = state
             .model
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
         let previous_active_id = model.active_workspace_id();
-        (model.create_workspace(name, path), previous_active_id)
+        let workspace = create(&mut model);
+        let surface = model
+            .surface(&workspace.focused_surface_id)
+            .expect("new workspace owns its focused surface")
+            .clone();
+        (workspace, surface, previous_active_id)
     };
-    if let Err(err) = state.terminal.spawn(SpawnRequest::for_workspace(
-        &workspace,
-        state.shell.clone(),
-        state.socket_path.clone(),
-    )) {
-        rollback_workspace_creation_gtk(state, &workspace.id, previous_active_id)?;
+    let failure_handler = forktty_socket::deferred_workspace_creation_failure_handler(
+        state,
+        &workspace.id,
+        previous_active_id,
+        surface_set_guard,
+        save_session_from_state,
+    );
+    if let Err(err) = spawn_surface_gtk_with_failure_handler(state, &surface, Some(failure_handler))
+    {
         return Err(err.to_string());
     }
-    drop(surface_set_guard);
+    // Synchronous backends disarm before returning, so persist their commit
+    // now. GTK still owns the surface guard here; controller materialization
+    // performs the authoritative save for the queued production path.
     save_session_from_state(state);
     Ok(())
 }
@@ -82,22 +99,11 @@ pub(super) fn create_plain_workspace(state: &SocketAppState) {
 }
 
 pub(super) async fn create_plain_workspace_transaction(state: &SocketAppState) -> bool {
-    let surface_set_guard = state.surface_set_guard().await;
     let cwd = default_startup_workspace_dir();
-    let (workspace, previous_active_id) = {
-        let mut model = match state.model.lock() {
-            Ok(model) => model,
-            Err(_) => return false,
-        };
-        let previous_active_id = model.active_workspace_id();
-        (model.create_auto_named_workspace(cwd), previous_active_id)
-    };
-    if let Err(err) = state.terminal.spawn(SpawnRequest::for_workspace(
-        &workspace,
-        state.shell.clone(),
-        state.socket_path.clone(),
-    )) {
-        let _ = rollback_workspace_creation_gtk(state, &workspace.id, previous_active_id);
+    if let Err(err) =
+        create_workspace_transaction(state, move |model| model.create_auto_named_workspace(cwd))
+            .await
+    {
         eprintln!("Failed to create workspace terminal: {err}");
         create_global_notification(
             state,
@@ -107,8 +113,6 @@ pub(super) async fn create_plain_workspace_transaction(state: &SocketAppState) -
         );
         false
     } else {
-        drop(surface_set_guard);
-        save_session_from_state(state);
         true
     }
 }

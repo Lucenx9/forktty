@@ -455,11 +455,7 @@ async fn worktree_create_waits_for_remove_transaction_rollback_or_commit() {
     .unwrap();
     let fifo_dir = tempfile::tempdir().unwrap();
     let setup_started_fifo = fifo_dir.path().join("setup-started");
-    assert!(std::process::Command::new("mkfifo")
-        .arg(&setup_started_fifo)
-        .status()
-        .unwrap()
-        .success());
+    make_fifo(&setup_started_fifo);
     commit_signaling_setup_hook(repo_dir.path(), &setup_started_fifo);
     let (setup_started_tx, setup_started_rx) = mpsc::channel();
     let setup_reader = std::thread::spawn(move || {

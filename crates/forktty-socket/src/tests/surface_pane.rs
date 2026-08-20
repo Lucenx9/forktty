@@ -262,7 +262,10 @@ async fn pane_select_tab_returns_not_found_for_unknown_surface() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn pane_new_tab_rolls_back_model_when_spawn_fails() {
+    let state_dir = tempfile::tempdir().unwrap();
+    let _state_home = EnvGuard::set("XDG_STATE_HOME", state_dir.path().to_str().unwrap());
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let bootstrap_backend = Arc::new(HeadlessTerminalBackend::new());
     let bootstrap_state = SocketAppState::new(

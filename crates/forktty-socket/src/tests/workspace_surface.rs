@@ -815,7 +815,10 @@ async fn surface_list_includes_runtime_pid_when_known() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn workspace_create_rolls_back_model_when_spawn_fails() {
+    let state_dir = tempfile::tempdir().unwrap();
+    let _state_home = EnvGuard::set("XDG_STATE_HOME", state_dir.path().to_str().unwrap());
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let bootstrap_backend = Arc::new(HeadlessTerminalBackend::new());
     let bootstrap_state = SocketAppState::new(
@@ -851,7 +854,174 @@ async fn workspace_create_rolls_back_model_when_spawn_fails() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
+async fn workspace_create_deferred_spawn_failure_rolls_back_model_focus_and_session() {
+    let state_dir = tempfile::tempdir().unwrap();
+    let _state_home = EnvGuard::set("XDG_STATE_HOME", state_dir.path().to_str().unwrap());
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let bootstrap_backend = Arc::new(HeadlessTerminalBackend::new());
+    let bootstrap_state = SocketAppState::new(
+        model.clone(),
+        bootstrap_backend,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&bootstrap_state, PathBuf::from("/tmp")).unwrap();
+    let original_workspace_id = model.lock().unwrap().active_workspace_id().unwrap();
+    let backend = Arc::new(DeferredSpawnFailureBackend::default());
+    let state = SocketAppState::new(
+        model.clone(),
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+
+    let created = dispatch(
+        &state,
+        "workspace.create",
+        json!({"name": "failed-later", "workingDir": "/tmp"}),
+    )
+    .await
+    .unwrap();
+
+    assert!(created["id"].is_string());
+    assert_eq!(backend.pending_failure_count(), 1);
+    assert!(
+        state.try_surface_set_guard().is_none(),
+        "surface guard must remain held until the queued spawn resolves"
+    );
+    forktty_core::session::save_session(&model.lock().unwrap().to_session_data()).unwrap();
+    assert_eq!(
+        forktty_core::session::load_session()
+            .unwrap()
+            .unwrap()
+            .workspaces
+            .len(),
+        2,
+        "fixture must persist the provisional workspace before deferred failure"
+    );
+    backend.fail_next_spawn();
+
+    assert!(state.try_surface_set_guard().is_some());
+    let workspaces = model.lock().unwrap().list_workspaces();
+    assert_eq!(workspaces.len(), 1);
+    assert_eq!(workspaces[0].id, original_workspace_id);
+    assert!(workspaces[0].active);
+    let saved = forktty_core::session::load_session().unwrap().unwrap();
+    assert_eq!(saved.workspaces.len(), 1);
+    assert_eq!(saved.workspaces[0].id, original_workspace_id);
+    assert!(saved.workspaces[0].active);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn workspace_create_ssh_deferred_spawn_failure_rolls_back_model_and_focus() {
+    let state_dir = tempfile::tempdir().unwrap();
+    let _state_home = EnvGuard::set("XDG_STATE_HOME", state_dir.path().to_str().unwrap());
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let bootstrap_backend = Arc::new(HeadlessTerminalBackend::new());
+    let bootstrap_state = SocketAppState::new(
+        model.clone(),
+        bootstrap_backend,
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    bootstrap_default_workspace(&bootstrap_state, PathBuf::from("/tmp")).unwrap();
+    let original_workspace_id = model.lock().unwrap().active_workspace_id().unwrap();
+    let backend = Arc::new(DeferredSpawnFailureBackend::default());
+    let state = SocketAppState::new(
+        model.clone(),
+        backend.clone(),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+
+    dispatch(
+        &state,
+        "workspace.create_ssh",
+        json!({
+            "name": "ssh-failed-later",
+            "workingDir": "/tmp",
+            "host": "example.test",
+        }),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(backend.pending_failure_count(), 1);
+    assert!(state.try_surface_set_guard().is_none());
+    backend.fail_next_spawn();
+
+    assert!(state.try_surface_set_guard().is_some());
+    let workspaces = model.lock().unwrap().list_workspaces();
+    assert_eq!(workspaces.len(), 1);
+    assert_eq!(workspaces[0].id, original_workspace_id);
+    assert!(workspaces[0].active);
+    let saved = forktty_core::session::load_session().unwrap().unwrap();
+    assert_eq!(saved.workspaces.len(), 1);
+    assert_eq!(saved.workspaces[0].id, original_workspace_id);
+    assert!(saved.workspaces[0].active);
+}
+
+#[tokio::test]
+async fn deferred_workspace_spawn_failure_recovers_poisoned_model_for_rollback() {
+    let model = Arc::new(Mutex::new(WorkspaceModel::new()));
+    let (original_workspace_id, provisional_workspace_id) = {
+        let mut model = model.lock().unwrap();
+        let original_workspace_id = model.create_workspace("main", "/tmp").id;
+        let provisional_workspace_id = model.create_workspace("provisional", "/tmp").id;
+        (original_workspace_id, provisional_workspace_id)
+    };
+    let state = SocketAppState::new(
+        model.clone(),
+        Arc::new(HeadlessTerminalBackend::new()),
+        "/bin/sh",
+        PathBuf::from("/tmp/forktty.sock"),
+    )
+    .with_notification_dispatch(false);
+    let surface_guard = state.surface_set_guard().await;
+    let after_restore_ran = Arc::new(AtomicBool::new(false));
+    let after_restore_observer = after_restore_ran.clone();
+    let handler = deferred_workspace_creation_failure_handler(
+        &state,
+        &provisional_workspace_id,
+        Some(original_workspace_id.clone()),
+        surface_guard,
+        move |_| after_restore_observer.store(true, Ordering::SeqCst),
+    );
+
+    let poison_model = model.clone();
+    assert!(std::thread::spawn(move || {
+        let _model = poison_model.lock().unwrap();
+        panic!("poison model before deferred workspace spawn rollback");
+    })
+    .join()
+    .is_err());
+    assert!(model.is_poisoned());
+
+    handler.run();
+
+    assert!(
+        !model.is_poisoned(),
+        "completed rollback must clear the recovered model poison"
+    );
+    let workspaces = model.lock().unwrap().list_workspaces();
+    assert_eq!(workspaces.len(), 1);
+    assert_eq!(workspaces[0].id, original_workspace_id);
+    assert!(workspaces[0].active);
+    assert!(after_restore_ran.load(Ordering::SeqCst));
+    assert!(state.try_surface_set_guard().is_some());
+}
+
+#[tokio::test]
+#[serial_test::serial]
 async fn surface_split_rolls_back_model_when_spawn_fails() {
+    let state_dir = tempfile::tempdir().unwrap();
+    let _state_home = EnvGuard::set("XDG_STATE_HOME", state_dir.path().to_str().unwrap());
     let model = Arc::new(Mutex::new(WorkspaceModel::new()));
     let bootstrap_backend = Arc::new(HeadlessTerminalBackend::new());
     let bootstrap_state = SocketAppState::new(

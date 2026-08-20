@@ -36,6 +36,7 @@ mod topology_params;
 mod topology_runtime;
 mod topology_view;
 mod unix_connect;
+mod workspace_creation;
 mod workspace_runtime;
 mod worktree_params;
 mod worktree_runtime;
@@ -239,6 +240,7 @@ pub(crate) use unix_connect::{
     client_peer_uid_allowed, connect_owner_unix_stream_with_timeout_for_uid, unix_socket_address,
 };
 pub use unix_connect::{connect_owner_unix_stream_with_timeout, connect_unix_stream_with_timeout};
+pub use workspace_creation::deferred_workspace_creation_failure_handler;
 pub use worktree_runtime::{
     finish_prepared_worktree_removal, open_worktree_transaction, open_worktree_workspace,
     remove_worktree_transaction, rollback_created_worktree_after_runtime_failure,
@@ -813,13 +815,14 @@ mod tests {
 
     #[test]
     fn env_guard_serializes_with_guarded_readers() {
-        let original_path = with_env_read_lock(|| std::env::var("PATH").ok());
-        let dir = tempfile::tempdir().unwrap();
-        let temp_path = dir.path().to_str().unwrap().to_string();
+        const TEST_ENV_KEY: &str = "FORKTTY_ENV_GUARD_TEST";
+        const TEST_ENV_VALUE: &str = "temporary-test-value";
+
+        let original_value = with_env_read_lock(|| std::env::var(TEST_ENV_KEY).ok());
         let (writer_ready_tx, writer_ready_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         let writer = std::thread::spawn(move || {
-            let _path = EnvGuard::set("PATH", &temp_path);
+            let _value = EnvGuard::set(TEST_ENV_KEY, TEST_ENV_VALUE);
             writer_ready_tx.send(()).unwrap();
             release_rx.recv().unwrap();
         });
@@ -828,7 +831,7 @@ mod tests {
         let (reader_tx, reader_rx) = mpsc::channel();
         let reader = std::thread::spawn(move || {
             reader_tx
-                .send(with_env_read_lock(|| std::env::var("PATH").ok()))
+                .send(with_env_read_lock(|| std::env::var(TEST_ENV_KEY).ok()))
                 .unwrap();
         });
         assert!(
@@ -837,9 +840,9 @@ mod tests {
         );
         release_tx.send(()).unwrap();
         writer.join().unwrap();
-        let observed_path = reader_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let observed_value = reader_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         reader.join().unwrap();
-        assert_eq!(observed_path, original_path);
+        assert_eq!(observed_value, original_value);
     }
 
     /// RAII guard that sets an environment variable for the duration of a test
@@ -887,6 +890,12 @@ mod tests {
         }
         fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
         program
+    }
+
+    fn make_fifo(path: &Path) {
+        let status =
+            with_env_read_lock(|| std::process::Command::new("mkfifo").arg(path).status()).unwrap();
+        assert!(status.success());
     }
 
     fn write_fake_codex(dir: &Path) -> PathBuf {
