@@ -75,25 +75,60 @@ fn for_each_char_match_start(
         return;
     }
     let first_needle = needle[0];
-    let mut index = 0;
-    while index + needle.len() <= haystack.len() {
-        // Fast-path: short-circuit the full substring check if the first character
-        // doesn't match, avoiding iterator overhead in the common case.
-        if !chars_eq_ignore_case(haystack[index], first_needle) {
-            index += 1;
-            continue;
-        }
-        let matched = haystack[index + 1..index + needle.len()]
-            .iter()
-            .zip(&needle[1..])
-            .all(|(a, b)| chars_eq_ignore_case(*a, *b));
-        if matched {
-            if !visit(index) {
-                return;
+
+    // Fast-path for the most common case: ASCII search queries.
+    if first_needle.is_ascii() {
+        let first_lower = first_needle.to_ascii_lowercase();
+        let first_upper = first_needle.to_ascii_uppercase();
+
+        let mut index = 0;
+        while index + needle.len() <= haystack.len() {
+            let h = haystack[index];
+
+            // Check direct ASCII match first to avoid function call overhead
+            if h != first_lower && h != first_upper {
+                // If it's pure ASCII and doesn't match, we can safely skip.
+                // For non-ASCII haystack characters, we must fallback to the full
+                // unicode-aware check, as characters like Kelvin sign ('\u{212A}')
+                // uppercase/lowercase to ASCII 'k'.
+                if h.is_ascii() || !chars_eq_ignore_case(h, first_needle) {
+                    index += 1;
+                    continue;
+                }
             }
-            index += needle.len();
-        } else {
-            index += 1;
+
+            let matched = haystack[index + 1..index + needle.len()]
+                .iter()
+                .zip(&needle[1..])
+                .all(|(a, b)| chars_eq_ignore_case(*a, *b));
+            if matched {
+                if !visit(index) {
+                    return;
+                }
+                index += needle.len();
+            } else {
+                index += 1;
+            }
+        }
+    } else {
+        let mut index = 0;
+        while index + needle.len() <= haystack.len() {
+            if !chars_eq_ignore_case(haystack[index], first_needle) {
+                index += 1;
+                continue;
+            }
+            let matched = haystack[index + 1..index + needle.len()]
+                .iter()
+                .zip(&needle[1..])
+                .all(|(a, b)| chars_eq_ignore_case(*a, *b));
+            if matched {
+                if !visit(index) {
+                    return;
+                }
+                index += needle.len();
+            } else {
+                index += 1;
+            }
         }
     }
 }
