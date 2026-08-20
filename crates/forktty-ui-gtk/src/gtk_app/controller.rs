@@ -1653,7 +1653,7 @@ mod tests {
                 let workspace = model.lock().unwrap().active_workspace().unwrap();
                 assert_eq!(workspace.pane_tree, original_tree);
                 assert_eq!(workspace.focused_surface_id, focused_surface_id);
-                assert_eq!(model.lock().unwrap().list_surfaces(None).len(), 2);
+                assert_eq!(model.lock().unwrap().surface_count(None), 2);
                 let saved = session::load_session()
                     .unwrap()
                     .expect("deferred rollback should persist the restored layout");
@@ -1708,7 +1708,7 @@ mod tests {
                 let workspace = model.lock().unwrap().active_workspace().unwrap();
                 assert_eq!(workspace.pane_tree, original_tree);
                 assert_eq!(workspace.focused_surface_id, focused_surface_id);
-                assert_eq!(model.lock().unwrap().list_surfaces(None).len(), 2);
+                assert_eq!(model.lock().unwrap().surface_count(None), 2);
                 let saved = session::load_session()
                     .unwrap()
                     .expect("deferred rollback should persist the restored layout");

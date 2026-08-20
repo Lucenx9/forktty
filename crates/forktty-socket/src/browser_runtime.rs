@@ -169,7 +169,7 @@ pub(crate) fn profile_delete(
             .model
             .lock()
             .map_err(|_| "Lock poisoned".to_string())?;
-        let in_use = model.list_surfaces(None).iter().any(|s| {
+        let in_use = model.iter_surfaces(None).any(|s| {
             matches!(
                 &s.kind,
                 SurfaceKind::Browser { profile, .. } if *profile == request.id

@@ -299,7 +299,7 @@ fn gtk_last_worktree_close_failure_keeps_model_and_cleans_replacement() {
     assert_eq!(workspaces.len(), 1);
     assert_eq!(workspaces[0].id, workspace_id);
     assert!(workspaces[0].active);
-    assert_eq!(model.list_surfaces(Some(&workspace_id)).len(), 1);
+    assert_eq!(model.surface_count(Some(&workspace_id)), 1);
     drop(model);
     let backend_surfaces = terminal.surfaces().unwrap();
     assert_eq!(backend_surfaces.len(), 1);
@@ -346,7 +346,7 @@ fn close_last_worktree_workspace_keeps_old_workspace_when_replacement_spawn_fail
     assert_eq!(workspaces.len(), 1);
     assert_eq!(workspaces[0].id, workspace_id);
     assert!(workspaces[0].active);
-    assert_eq!(model.list_surfaces(Some(&workspace_id)).len(), 1);
+    assert_eq!(model.surface_count(Some(&workspace_id)), 1);
     let backend_surfaces = terminal.surfaces().unwrap();
     assert_eq!(backend_surfaces.len(), 1);
     assert_eq!(backend_surfaces[0].surface_id, surface_id);

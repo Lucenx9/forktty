@@ -1012,6 +1012,19 @@ impl WorkspaceModel {
             .collect()
     }
 
+    pub fn iter_surfaces<'a>(
+        &'a self,
+        workspace_id: Option<&'a str>,
+    ) -> impl Iterator<Item = &'a Surface> + 'a {
+        self.surfaces
+            .values()
+            .filter(move |surface| workspace_id.is_none_or(|id| surface.workspace_id == id))
+    }
+
+    pub fn surface_count(&self, workspace_id: Option<&str>) -> usize {
+        self.iter_surfaces(workspace_id).count()
+    }
+
     /// Reserve a generated workspace id that may still be referenced outside
     /// the current model snapshot.
     ///

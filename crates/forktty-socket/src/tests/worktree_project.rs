@@ -474,7 +474,7 @@ async fn worktree_create_repeatedly_returns_same_workspace_with_one_surface() {
     assert_eq!(second["id"], first["id"]);
     let workspace_id = first["id"].as_str().unwrap();
     let model = state.model.lock().unwrap();
-    assert_eq!(model.list_surfaces(Some(workspace_id)).len(), 1);
+    assert_eq!(model.surface_count(Some(workspace_id)), 1);
     assert_eq!(
         model
             .list_workspaces()
@@ -592,7 +592,7 @@ async fn concurrent_worktree_create_requests_converge_on_one_workspace() {
     assert_eq!(second["id"], first["id"]);
     let workspace_id = first["id"].as_str().unwrap();
     let model = state.model.lock().unwrap();
-    assert_eq!(model.list_surfaces(Some(workspace_id)).len(), 1);
+    assert_eq!(model.surface_count(Some(workspace_id)), 1);
     assert_eq!(
         model
             .list_workspaces()
@@ -1146,7 +1146,7 @@ async fn existing_worktree_workspace_survives_missing_runtime_spawn_failure() {
         .list_workspaces()
         .iter()
         .any(|workspace| workspace.id == workspace_id));
-    assert_eq!(model.list_surfaces(Some(&workspace_id)).len(), 1);
+    assert_eq!(model.surface_count(Some(&workspace_id)), 1);
     assert_eq!(
         model.active_workspace_id().as_deref(),
         Some(previous_workspace_id.as_str())

@@ -30,7 +30,7 @@ fn new_workspace_has_one_surface_and_leaf() {
     let workspace = model.create_workspace("main", "/tmp");
 
     assert_eq!(workspace.id, "workspace-1");
-    assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 1);
+    assert_eq!(model.surface_count(Some(&workspace.id)), 1);
     assert!(matches!(workspace.pane_tree, PaneNode::Leaf { .. }));
 }
 
@@ -139,7 +139,7 @@ fn split_surface_adds_second_surface_and_focuses_it() {
 
     let workspace = model.list_workspaces().remove(0);
     assert_eq!(workspace.focused_surface_id, new_surface.id);
-    assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 2);
+    assert_eq!(model.surface_count(Some(&workspace.id)), 2);
     assert!(matches!(workspace.pane_tree, PaneNode::Split { .. }));
 }
 
@@ -318,7 +318,7 @@ fn repeated_same_axis_splits_are_siblings() {
     assert_eq!(children.len(), 3);
     assert_eq!(sizes.len(), 3);
     assert_eq!(workspace.focused_surface_id, third.id);
-    assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 3);
+    assert_eq!(model.surface_count(Some(&workspace.id)), 3);
 }
 
 #[test]
@@ -534,7 +534,7 @@ fn can_close_a_split_surface() {
     model.close_surface(&new_surface.id).unwrap();
 
     let workspace = model.list_workspaces().remove(0);
-    assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 1);
+    assert_eq!(model.surface_count(Some(&workspace.id)), 1);
     assert!(matches!(workspace.pane_tree, PaneNode::Leaf { .. }));
 }
 
@@ -558,7 +558,7 @@ fn can_close_surface_nested_after_unrelated_split() {
     assert!(model.surface(&third.id).is_none());
     assert!(model.surface(&fourth.id).is_some());
     let workspace = model.list_workspaces().remove(0);
-    assert_eq!(model.list_surfaces(Some(&workspace.id)).len(), 3);
+    assert_eq!(model.surface_count(Some(&workspace.id)), 3);
     crate::session::validate_session_data(&model.to_session_data()).unwrap();
 }
 
@@ -1259,7 +1259,7 @@ fn can_restore_model_from_session_data() {
 
     assert_eq!(restored.list_workspaces().len(), 1);
     assert!(restored.list_workspaces()[0].active);
-    assert_eq!(restored.list_surfaces(None).len(), 2);
+    assert_eq!(restored.surface_count(None), 2);
     assert!(restored.surface(&split.id).is_some());
     assert_eq!(restored.to_session_data().workspaces[0].name, "main");
 }

@@ -27,7 +27,7 @@ pub(crate) fn status_summary_at(
         .list_workspaces()
         .into_iter()
         .find(|workspace| workspace.id == workspace_id)?;
-    let surface_count = model.list_surfaces(Some(workspace_id)).len();
+    let surface_count = model.surface_count(Some(workspace_id));
     Some(json!({
         "workspace": {
             "id": workspace.id,

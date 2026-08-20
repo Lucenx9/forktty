@@ -276,7 +276,7 @@ fn add_new_tab_surface_rolls_back_model_when_spawn_fails() {
         workspace.pane_tree.leaf_tabs().unwrap(),
         std::slice::from_ref(&surface_id)
     );
-    assert_eq!(model.list_surfaces(Some(&workspace_id)).len(), 1);
+    assert_eq!(model.surface_count(Some(&workspace_id)), 1);
     assert!(model.list_notifications().iter().any(|notification| {
         notification.title == "New Tab Failed" && notification.body.contains("spawn failed")
     }));
@@ -694,7 +694,7 @@ fn split_surface_by_id_targets_background_workspace_without_selecting_it() {
     let model = model.lock().unwrap();
     assert_eq!(model.active_workspace().unwrap().id, active_id);
     assert_eq!(request.workspace_id, background_id);
-    assert_eq!(model.list_surfaces(Some(&background_id)).len(), 2);
+    assert_eq!(model.surface_count(Some(&background_id)), 2);
 }
 
 #[test]
@@ -857,7 +857,7 @@ fn split_active_surface_rolls_back_model_when_spawn_fails() {
         .unwrap();
     assert_eq!(workspace.focused_surface_id, surface_id);
     assert_eq!(workspace.pane_tree, original_tree);
-    assert_eq!(model.list_surfaces(Some(&workspace_id)).len(), 2);
+    assert_eq!(model.surface_count(Some(&workspace_id)), 2);
     assert!(model.list_notifications().iter().any(|notification| {
         notification.title == "Split Failed" && notification.body.contains("spawn failed")
     }));

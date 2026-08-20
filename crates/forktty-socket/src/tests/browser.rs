@@ -23,11 +23,11 @@ async fn browser_open_waits_for_surface_set_guard_before_model_commit() {
             .is_err(),
         "browser topology creation must wait for the surface transaction"
     );
-    assert_eq!(state.model.lock().unwrap().list_surfaces(None).len(), 1);
+    assert_eq!(state.model.lock().unwrap().surface_count(None), 1);
 
     drop(guard);
     open.await.unwrap().unwrap();
-    assert_eq!(state.model.lock().unwrap().list_surfaces(None).len(), 2);
+    assert_eq!(state.model.lock().unwrap().surface_count(None), 2);
 }
 
 #[tokio::test]

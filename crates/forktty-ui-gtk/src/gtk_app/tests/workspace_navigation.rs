@@ -593,7 +593,7 @@ fn close_active_workspace_keeps_model_when_backend_close_fails() {
     let workspaces = model.list_workspaces();
     assert_eq!(workspaces.len(), 1);
     assert_eq!(workspaces[0].name, "project");
-    assert_eq!(model.list_surfaces(Some(&workspaces[0].id)).len(), 1);
+    assert_eq!(model.surface_count(Some(&workspaces[0].id)), 1);
     assert_eq!(terminal.surfaces().unwrap().len(), 1);
     assert!(terminal
         .surfaces()
@@ -1009,7 +1009,7 @@ fn close_tab_surface_refuses_single_tab_leaf() {
         .find(|workspace| workspace.id == workspace_id)
         .unwrap();
     assert_eq!(workspace.focused_surface_id, surface_id);
-    assert_eq!(model.list_surfaces(Some(&workspace_id)).len(), 1);
+    assert_eq!(model.surface_count(Some(&workspace_id)), 1);
     let backend_surfaces = terminal.surfaces().unwrap();
     assert_eq!(backend_surfaces.len(), 1);
     assert_eq!(backend_surfaces[0].surface_id, surface_id);

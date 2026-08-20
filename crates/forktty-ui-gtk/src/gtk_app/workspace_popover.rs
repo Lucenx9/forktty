@@ -23,9 +23,9 @@ pub(super) fn show_workspace_popover<W: IsA<gtk::Widget>>(
         let ssh_hosts: std::collections::BTreeMap<String, String> = workspaces
             .iter()
             .filter_map(|ws| {
-                model.list_surfaces(Some(&ws.id)).into_iter().find_map(|s| {
-                    if let forktty_core::SurfaceKind::Ssh { host } = s.kind {
-                        Some((ws.id.clone(), host))
+                model.iter_surfaces(Some(&ws.id)).find_map(|s| {
+                    if let forktty_core::SurfaceKind::Ssh { host } = &s.kind {
+                        Some((ws.id.clone(), host.clone()))
                     } else {
                         None
                     }
