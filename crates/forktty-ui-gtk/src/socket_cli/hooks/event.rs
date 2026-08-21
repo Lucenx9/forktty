@@ -54,7 +54,7 @@ pub(in crate::socket_cli) fn handle_hook_event(
 ) -> CliResult<()> {
     let agent_name = args
         .first()
-        .map(|value| normalize_agent_name(value))
+        .map(|value| normalize_agent_name(value).into_owned())
         .unwrap_or_default();
     let event = args
         .get(1)

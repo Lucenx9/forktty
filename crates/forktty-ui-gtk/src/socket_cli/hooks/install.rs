@@ -270,12 +270,19 @@ pub(in crate::socket_cli) fn agent_spec(agent: &str) -> Option<&'static AgentSpe
     AGENTS.iter().find(|spec| spec.key == agent)
 }
 
-pub(in crate::socket_cli) fn normalize_agent_name(agent: &str) -> String {
-    match agent.to_lowercase().as_str() {
-        "claude-code" | "claude_code" => "claude".to_string(),
-        "open-code" | "open_code" => "opencode".to_string(),
-        "agy" => "antigravity".to_string(),
-        other => other.to_string(),
+pub(in crate::socket_cli) fn normalize_agent_name(agent: &str) -> std::borrow::Cow<'_, str> {
+    // Optimization: Avoid eager allocation by checking if the string is already lowercase.
+    let lowercased = if agent.chars().any(|c| c.is_uppercase()) {
+        std::borrow::Cow::Owned(agent.to_lowercase())
+    } else {
+        std::borrow::Cow::Borrowed(agent)
+    };
+
+    match lowercased.as_ref() {
+        "claude-code" | "claude_code" => std::borrow::Cow::Borrowed("claude"),
+        "open-code" | "open_code" => std::borrow::Cow::Borrowed("opencode"),
+        "agy" => std::borrow::Cow::Borrowed("antigravity"),
+        _ => lowercased,
     }
 }
 

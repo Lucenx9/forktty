@@ -930,7 +930,7 @@ pub(super) fn single_agent_command(
     let Some(agent) = args.first() else {
         return Err(CliError::new(format!("{command} requires an agent")));
     };
-    let normalized = normalize_agent_name(agent);
+    let normalized = normalize_agent_name(agent).into_owned();
     let spec = agent_spec(&normalized)
         .ok_or_else(|| CliError::new(format!("Unsupported {command} agent: {agent}")))?;
     Ok((spec, args[1..].to_vec()))
