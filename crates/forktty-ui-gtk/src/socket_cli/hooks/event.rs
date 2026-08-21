@@ -287,9 +287,11 @@ pub(in crate::socket_cli) fn hook_debug(context: &CliContext, message: &str) {
 }
 
 pub(in crate::socket_cli) fn is_truthy_env(key: &str) -> bool {
-    trimmed_env(key)
-        .map(|value| matches!(value.to_lowercase().as_str(), "1" | "true" | "yes"))
-        .unwrap_or(false)
+    // ⚡ Bolt optimization: Avoid eager `String` allocation from `.to_lowercase()`
+    // by using `eq_ignore_ascii_case` on the borrowed slice. Also simplify `map/unwrap_or` to `is_some_and`.
+    trimmed_env(key).is_some_and(|value| {
+        value == "1" || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("yes")
+    })
 }
 
 /// Hook event ordering must survive wall-clock steps (NTP, manual `date`):
