@@ -1154,10 +1154,13 @@ impl WorkspaceModel {
         kind: SurfaceKind,
         title: String,
     ) -> Option<Surface> {
-        let source = self.surfaces.get(surface_id)?.clone();
+        let (workspace_id, cwd) = {
+            let source = self.surfaces.get(surface_id)?;
+            (source.workspace_id.clone(), source.cwd.clone())
+        };
         // Pre-validate the workspace still owns this surface in its pane tree
         // before allocating an id, so failure paths don't leak monotonic ids.
-        let workspace_ref = self.workspaces.get(&source.workspace_id)?;
+        let workspace_ref = self.workspaces.get(&workspace_id)?;
         if !has_leaf_surface_id(&workspace_ref.pane_tree, surface_id) {
             return None;
         }
@@ -1169,8 +1172,8 @@ impl WorkspaceModel {
         let new_id = self.next_surface_id();
         let new_surface = Surface {
             id: new_id.clone(),
-            workspace_id: source.workspace_id.clone(),
-            cwd: source.cwd.clone(),
+            workspace_id: workspace_id.clone(),
+            cwd,
             title,
             unread: false,
             needs_attention: false,
@@ -1180,7 +1183,7 @@ impl WorkspaceModel {
         };
         let workspace = self
             .workspaces
-            .get_mut(&source.workspace_id)
+            .get_mut(&workspace_id)
             .expect("workspace existence verified above");
         let inserted = replace_leaf_with_split(
             &mut workspace.pane_tree,
@@ -1282,8 +1285,10 @@ impl WorkspaceModel {
     /// The new tab becomes the active tab of that pane and the workspace focus.
     /// Returns the newly created Surface on success.
     pub fn add_tab(&mut self, near_surface_id: &str) -> Option<Surface> {
-        let source = self.surfaces.get(near_surface_id)?.clone();
-        let workspace_id = source.workspace_id.clone();
+        let (workspace_id, cwd) = {
+            let source = self.surfaces.get(near_surface_id)?;
+            (source.workspace_id.clone(), source.cwd.clone())
+        };
         // Verify the surface lives in a leaf of its workspace.
         if !has_leaf_surface_id(
             &self.workspaces.get(&workspace_id)?.pane_tree,
@@ -1295,7 +1300,7 @@ impl WorkspaceModel {
         let new_surface = Surface {
             id: new_id.clone(),
             workspace_id: workspace_id.clone(),
-            cwd: source.cwd.clone(),
+            cwd,
             title: String::from("shell"),
             unread: false,
             needs_attention: false,
@@ -1608,8 +1613,8 @@ impl WorkspaceModel {
     }
 
     pub fn prepare_root_surface_replacement(&mut self, surface_id: &str) -> Option<Surface> {
-        let surface = self.surfaces.get(surface_id)?.clone();
         let (workspace_id, working_dir) = {
+            let surface = self.surfaces.get(surface_id)?;
             let workspace = self.workspaces.get(&surface.workspace_id)?;
             // Only allow replacement for the root leaf that has exactly one tab
             // equal to surface_id. Multi-tab leaves are handled by close_surface.
@@ -1645,9 +1650,11 @@ impl WorkspaceModel {
         surface_id: &str,
         prepared_replacement: Option<Surface>,
     ) -> Option<Surface> {
-        let surface = self.surfaces.get(surface_id)?.clone();
-        let workspace_id = surface.workspace_id.clone();
-        let working_dir = self.workspaces.get(&workspace_id)?.working_dir.clone();
+        let (workspace_id, working_dir) = {
+            let surface = self.surfaces.get(surface_id)?;
+            let workspace = self.workspaces.get(&surface.workspace_id)?;
+            (workspace.id.clone(), workspace.working_dir.clone())
+        };
 
         // Check if this surface is one of multiple tabs in its leaf.
         // If so, just remove it from the tab list without collapsing the leaf.
