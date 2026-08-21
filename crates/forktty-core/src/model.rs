@@ -1187,7 +1187,8 @@ impl WorkspaceModel {
             surface_id,
             axis,
             PaneNode::single_leaf(new_id.clone()),
-        );
+        )
+        .is_ok();
         debug_assert!(inserted, "leaf existence pre-validated");
         if !inserted {
             return None;
@@ -1307,7 +1308,7 @@ impl WorkspaceModel {
             .workspaces
             .get_mut(&workspace_id)
             .expect("workspace verified above");
-        if !push_tab_to_leaf(&mut workspace.pane_tree, near_surface_id, new_id.clone()) {
+        if push_tab_to_leaf(&mut workspace.pane_tree, near_surface_id, new_id.clone()).is_err() {
             return None;
         }
         workspace.focused_surface_id = new_id.clone();
