@@ -287,9 +287,9 @@ pub(in crate::socket_cli) fn hook_debug(context: &CliContext, message: &str) {
 }
 
 pub(in crate::socket_cli) fn is_truthy_env(key: &str) -> bool {
-    trimmed_env(key)
-        .map(|value| matches!(value.to_lowercase().as_str(), "1" | "true" | "yes"))
-        .unwrap_or(false)
+    trimmed_env(key).is_some_and(|v| {
+        v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+    })
 }
 
 /// Hook event ordering must survive wall-clock steps (NTP, manual `date`):
