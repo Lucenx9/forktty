@@ -643,23 +643,33 @@ pub(super) fn set_leaf_active_for_surface(node: &mut PaneNode, surface_id: &str)
 
 /// Push `new_tab_id` to the tabs of the leaf containing `near_surface_id`.
 /// Sets `active` to the new tab's index. Returns `true` if found.
+// ⚡ Bolt: Prevent redundant heap allocations when searching the pane tree.
+// By returning the `new_tab_id` string instead of cloning it for every node,
+// we eliminate O(N) string allocations during `push_tab_to_leaf` calls.
 pub(super) fn push_tab_to_leaf(
     node: &mut PaneNode,
     near_surface_id: &str,
     new_tab_id: SurfaceId,
-) -> bool {
+) -> Result<(), SurfaceId> {
     match node {
         PaneNode::Leaf { tabs, active } => {
             if tabs.iter().any(|id| id == near_surface_id) {
                 tabs.push(new_tab_id);
                 *active = tabs.len() - 1;
-                true
+                Ok(())
             } else {
-                false
+                Err(new_tab_id)
             }
         }
-        PaneNode::Split { children, .. } => children
-            .iter_mut()
-            .any(|child| push_tab_to_leaf(child, near_surface_id, new_tab_id.clone())),
+        PaneNode::Split { children, .. } => {
+            let mut current_tab = new_tab_id;
+            for child in children.iter_mut() {
+                match push_tab_to_leaf(child, near_surface_id, current_tab) {
+                    Ok(()) => return Ok(()),
+                    Err(returned_tab) => current_tab = returned_tab,
+                }
+            }
+            Err(current_tab)
+        }
     }
 }
