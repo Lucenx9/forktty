@@ -647,19 +647,26 @@ pub(super) fn push_tab_to_leaf(
     node: &mut PaneNode,
     near_surface_id: &str,
     new_tab_id: SurfaceId,
-) -> bool {
+) -> Result<(), SurfaceId> {
     match node {
         PaneNode::Leaf { tabs, active } => {
             if tabs.iter().any(|id| id == near_surface_id) {
                 tabs.push(new_tab_id);
                 *active = tabs.len() - 1;
-                true
+                Ok(())
             } else {
-                false
+                Err(new_tab_id)
             }
         }
-        PaneNode::Split { children, .. } => children
-            .iter_mut()
-            .any(|child| push_tab_to_leaf(child, near_surface_id, new_tab_id.clone())),
+        PaneNode::Split { children, .. } => {
+            let mut current = new_tab_id;
+            for child in children.iter_mut() {
+                match push_tab_to_leaf(child, near_surface_id, current) {
+                    Ok(()) => return Ok(()),
+                    Err(returned) => current = returned,
+                }
+            }
+            Err(current)
+        }
     }
 }

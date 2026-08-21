@@ -1,0 +1,3 @@
+## 2024-08-03 - [Avoid clone in pane_tree's push_tab_to_leaf]
+**Learning:** In Rust performance optimization, avoid eagerly allocating cloned data (like `.clone()` on strings or identifiers) when passed into recursive search functions (e.g., `push_tab_to_leaf`). We can pass the value by ownership and return it back in the `Err` variant of a `Result` on a cache miss (e.g., `Result<(), SurfaceId>`).
+**Action:** Use this pattern `Result<(), T>` instead of `bool` when transferring ownership into nested tree traversals. This allows the caller to reuse the same allocation for subsequent loop iterations without calling `.clone()`.
