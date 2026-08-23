@@ -75,11 +75,24 @@ fn for_each_char_match_start(
         return;
     }
     let first_needle = needle[0];
+    let first_is_ascii = first_needle.is_ascii();
+    let first_lower = first_needle.to_ascii_lowercase();
+    let first_upper = first_needle.to_ascii_uppercase();
+
     let mut index = 0;
     while index + needle.len() <= haystack.len() {
+        let h = haystack[index];
         // Fast-path: short-circuit the full substring check if the first character
-        // doesn't match, avoiding iterator overhead in the common case.
-        if !chars_eq_ignore_case(haystack[index], first_needle) {
+        // doesn't match, avoiding function call overhead in the common case.
+        // We only short-circuit if both characters are ASCII. Non-ASCII characters
+        // (like the Kelvin sign) can fold to ASCII, so they must fall back to
+        // full Unicode comparison.
+        if first_is_ascii && h.is_ascii() && h != first_lower && h != first_upper {
+            index += 1;
+            continue;
+        }
+
+        if !chars_eq_ignore_case(h, first_needle) {
             index += 1;
             continue;
         }
